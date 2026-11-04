@@ -178,13 +178,10 @@ function requireSource(
     legacyTaskId(runtime) !== attestation.taskId
   )
     throw new Error("Legacy source is not a protected serving runtime");
-  requireQuiet(runtime, attestation);
+  requireQuiet(runtime);
 }
-function requireQuiet(runtime: RuntimeRecord, attestation: LegacyAttestation) {
-  if (
-    runtime.workCounts?.recording !== 0 ||
-    runtime.workCounts.pending_admission !== attestation.pendingAdmission
-  )
+function requireQuiet(runtime: RuntimeRecord) {
+  if (runtime.workCounts?.recording !== 0)
     throw new Error("Legacy source is not a quiet serving runtime");
 }
 function requestBound(
@@ -267,7 +264,6 @@ function runtimeCheck(
   table: string,
 ): TransactWriteItem {
   const quiet = input.purpose !== "cancel";
-  const attestation = input.next.attestation;
   const condition: ConditionCheck = {
     TableName: table,
     Key: marshall({
@@ -282,7 +278,6 @@ function runtimeCheck(
             authorizedGeneration: input.control.servingGeneration,
             retirementRequest: null,
             "workCounts.recording": 0,
-            "workCounts.pending_admission": attestation?.pendingAdmission,
           }
         : {}),
     }),

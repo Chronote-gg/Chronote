@@ -188,30 +188,31 @@ test("legacy prepare seals the attested inventory and consumes it with warming",
   expect(f.writes()).toBe(4);
 });
 
-test.each([
-  ["pending_admission", /quiet serving runtime/, "attested_legacy"],
-  ["lease", /after its backup/, "requested"],
-])(
-  "legacy prepare refuses when %s changed after attestation",
-  async (change, message, state) => {
-    const f = legacyFixture();
-    await f.coordinator.attestPreservation();
-    if (change === "lease")
-      f.state.leases.push({
-        ownerInstanceId: "old",
-        createdAt: new Date(1_000_000).toISOString(),
-      });
-    else f.state.rows.old.workCounts = { ...counts(), pending_admission: 1 };
-    await expect(f.coordinator.prepare()).rejects.toThrow(message);
-    expect(f.state.launched).toBe(false);
-    expect(f.state.artifacts.get("old")?.state).toBe(state);
-    await expect(f.coordinator.cancelPreparation()).resolves.toEqual({
-      kind: "cancelled",
-    });
-    expect(f.state.artifacts.get("old")?.state).toBe("attested_legacy");
-    expect(f.state.ctl.deployment?.phase).toBe("complete");
-  },
-);
+test("legacy prepare refuses when a lease appeared after attestation", async () => {
+  const f = legacyFixture();
+  await f.coordinator.attestPreservation();
+  f.state.leases.push({
+    ownerInstanceId: "old",
+    createdAt: new Date(1_000_000).toISOString(),
+  });
+  await expect(f.coordinator.prepare()).rejects.toThrow(/after its backup/);
+  expect(f.state.launched).toBe(false);
+  expect(f.state.artifacts.get("old")?.state).toBe("requested");
+  await expect(f.coordinator.cancelPreparation()).resolves.toEqual({
+    kind: "cancelled",
+  });
+  expect(f.state.artifacts.get("old")?.state).toBe("attested_legacy");
+  expect(f.state.ctl.deployment?.phase).toBe("complete");
+});
+
+test("legacy prepare refuses a source that started recording after attestation", async () => {
+  const f = legacyFixture();
+  await f.coordinator.attestPreservation();
+  f.state.rows.old.workCounts = counts(1);
+  await expect(f.coordinator.prepare()).rejects.toThrow(/quiet/);
+  expect(f.state.launched).toBe(false);
+  expect(f.state.artifacts.get("old")?.state).toBe("attested_legacy");
+});
 
 test("legacy cancellation refuses once a candidate task exists", async () => {
   const f = legacyFixture();
@@ -253,11 +254,12 @@ test("settled and pre-window meetings do not block attestation", async () => {
   });
 });
 
-test("an unchanged pending admission count is tolerated through launch", async () => {
+test("a fluctuating pending admission count is tolerated through launch", async () => {
   const f = legacyFixture();
   f.state.rows.old.workCounts = { ...counts(), pending_admission: 1 };
   await f.coordinator.attestPreservation();
   expect(f.state.artifacts.get("old")?.attestation?.pendingAdmission).toBe(1);
+  f.state.rows.old.workCounts = { ...counts(), pending_admission: 0 };
   await expect(f.coordinator.prepare()).resolves.toEqual({ kind: "warming" });
 });
 
