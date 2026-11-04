@@ -105,6 +105,8 @@ function retryNotices(view: ProcessingRetryView, props: Props): Notice[] {
 type RetryModalProps = {
   opened: boolean;
   requiresReplaceConfirm: boolean;
+  /** The mixed recording has no per-speaker tracks, so a re-transcription loses attribution. */
+  losesSpeakers: boolean;
   onClose(): void;
   onConfirm(): void;
 };
@@ -112,6 +114,7 @@ type RetryModalProps = {
 function RetryModal({
   opened,
   requiresReplaceConfirm,
+  losesSpeakers,
   onClose,
   onConfirm,
 }: RetryModalProps) {
@@ -127,6 +130,12 @@ function RetryModal({
           Chronote will re-run the steps that failed and update this meeting and
           its Discord posts.
         </Text>
+        {losesSpeakers ? (
+          <Text size="sm">
+            This meeting has no per-speaker audio, so the new transcript and
+            notes won&apos;t say who said what.
+          </Text>
+        ) : null}
         {requiresReplaceConfirm ? (
           <>
             <Text size="sm">
@@ -208,6 +217,7 @@ export function MeetingProcessingRetry(props: Props) {
       <RetryModal
         opened={modalOpened}
         requiresReplaceConfirm={view.requiresReplaceConfirm}
+        losesSpeakers={view.transcriptSource === "mixed"}
         onClose={() => setModalOpened(false)}
         onConfirm={() => onRetry(view.requiresReplaceConfirm)}
       />
