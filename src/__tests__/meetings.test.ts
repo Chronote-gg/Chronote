@@ -441,6 +441,26 @@ describe("initializeMeeting", () => {
     ).rejects.toThrow("not_serving");
     expect(joinVoiceChannel).not.toHaveBeenCalled();
   });
+  it("logs a sealed admission so the alarm metric filter can count it", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    jest
+      .mocked(tryAcquireMeetingLease)
+      .mockResolvedValueOnce({ kind: "blocked", reason: "voice_uncertain" });
+    await expect(
+      initializeMeeting({
+        ...buildMeetingOptions(),
+        transcribeMeeting: true,
+        generateNotes: true,
+      }),
+    ).rejects.toThrow("Voice session admission blocked: voice_uncertain");
+    // Verbatim text matched by the voice-admission-blocked metric filter in
+    // _infra/alerts-voice.tf. Callers that only store the message (the meeting
+    // control worker) rely on this line existing.
+    expect(warn).toHaveBeenCalledWith(
+      "Voice session admission blocked: voice_uncertain",
+    );
+    warn.mockRestore();
+  });
   it.each(["reservation", "voice"] as const)(
     "a control fenced during held %s cannot begin capture",
     async (boundary) => {

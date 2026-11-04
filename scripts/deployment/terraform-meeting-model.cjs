@@ -8,7 +8,7 @@ const { bindingHash } = require("./binding-hash.cjs");
 const { digest } = require("./collector-payload.cjs");
 // Source audit and maintenance contract: docs/terraform-meeting-source-model.md.
 const sourceModel =
-  "700a03aa1d6d3398ab64ba83dd19248f165b0c3833b8bfd3d2d0596321b71fce";
+  "e55a21e1c385e9b85dce25182c8a854c0e49aa9171bcc8840f7a4797356bea8d";
 const awsProvider = "registry.terraform.io/hashicorp/aws";
 const tableAddress = "aws_dynamodb_table.meeting_history_table";
 const resourceChecks = [

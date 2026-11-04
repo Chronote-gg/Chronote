@@ -16,3 +16,14 @@ moved {
   from = aws_security_group.api_alb_sg[0]
   to   = aws_security_group.api_alb_sg
 }
+
+# aws_cloudwatch_metric_alarm.alb_unhealthy_hosts moved from a count to a
+# for_each over both halves of the blue/green target group pair, so the serving
+# group is always covered. The api_tg instance keeps the original alarm name, so
+# this migrates the live alarm's state address instead of destroying it and
+# recreating it under the same name.
+
+moved {
+  from = aws_cloudwatch_metric_alarm.alb_unhealthy_hosts[0]
+  to   = aws_cloudwatch_metric_alarm.alb_unhealthy_hosts["api_tg"]
+}

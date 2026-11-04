@@ -16,6 +16,7 @@ import { z } from "zod";
 import type { DeploymentControlRepository } from "../repositories/deploymentControlRepository";
 import type { RecoveryClaim } from "../types/meetingRecovery";
 import type { RecoveryDisposition } from "../types/recordingCheckpoint";
+import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
 import {
   readRecoveryContent,
   recoverTranscript,
@@ -598,6 +599,18 @@ async function completeRecoveryExport(
   await finish(claim, "completed", deps, true);
 }
 
+/**
+ * A recovered transcript is only as complete as the capture behind it. An absent or
+ * non-terminal capture state is unknown, so neither outcome is claimed rather than
+ * reporting a partial recording no evidence supports.
+ */
+function recoveredTranscriptionOutcome(
+  capture: RecoveryClaim["history"]["capture"],
+): Pick<MeetingProcessingOutcome, "transcription"> {
+  if (capture?.kind === "complete") return { transcription: "ready" };
+  return capture?.kind === "interrupted" ? { transcription: "partial" } : {};
+}
+
 export async function recoverMeeting(
   claim: RecoveryClaim,
   deps: RecoveryDependencies,
@@ -663,8 +676,7 @@ export async function recoverMeeting(
         claim,
         {
           processing: {
-            transcription:
-              claim.history.capture?.kind === "complete" ? "ready" : "partial",
+            ...recoveredTranscriptionOutcome(claim.history.capture),
             notes: "skipped",
             summary: "skipped",
           },

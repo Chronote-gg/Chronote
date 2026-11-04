@@ -12,10 +12,53 @@ export const EMPTY_RECORDING_NOTICE =
 export const PARTIAL_TRANSCRIPT_NOTICE =
   "Some audio could not be transcribed. These notes may be incomplete.";
 
-export function classifyTranscription(
+/**
+ * Failed per-turn snippets below this count do not demote a Discord recording that has
+ * usable speech. The unit matters: a caller whose segments are few and long, such as the
+ * personal upload path's 300 second chunks, must pass its own threshold instead.
+ * A meeting attempts hundreds of per-turn snippets, so a single failure is one transient
+ * provider hiccup rather than a gap worth warning about. Three is a judgement, not a
+ * fitted number: six weeks of production held no meeting between one and eight failed
+ * snippets, so any floor in that range behaves identically. A percentage is deliberately
+ * not used; measured genuine failures sit at 2.65 and 3.64 percent of attempted snippets,
+ * so every rate at or above three percent misses one of them, while two percent of a
+ * median meeting is about three snippets and only restates this floor with
+ * length-dependent wobble.
+ */
+export const FAILED_SEGMENT_PARTIAL_THRESHOLD = 3;
+
+/**
+ * The single rule for whether a recording shows lost transcription work. The floor
+ * exists to stop a few lost snippets demoting a recording that otherwise worked, so it
+ * does not apply without usable speech: there, any failure is the whole recording.
+ */
+function hasTranscriptionLoss(
+  facts: TranscriptionFacts,
+  failedSegmentThreshold: number,
+): boolean {
+  return facts.usableSegments > 0
+    ? facts.failedSegments >= failedSegmentThreshold
+    : facts.failedSegments > 0;
+}
+
+/**
+ * A personal upload is split into few, long chunks rather than hundreds of per-turn
+ * snippets, so one lost chunk is a real gap in the audio and not a transient hiccup.
+ * Named rather than a threshold argument at the call site, so the unit stays legible.
+ */
+export function classifyUploadTranscription(
   facts: TranscriptionFacts,
 ): TranscriptionOutcome {
-  const incomplete = facts.failedSegments > 0 || facts.captureIncomplete;
+  return classifyTranscription(facts, 1);
+}
+
+export function classifyTranscription(
+  facts: TranscriptionFacts,
+  failedSegmentThreshold = FAILED_SEGMENT_PARTIAL_THRESHOLD,
+): TranscriptionOutcome {
+  const incomplete =
+    hasTranscriptionLoss(facts, failedSegmentThreshold) ||
+    facts.captureIncomplete;
   if (facts.usableSegments > 0) return incomplete ? "partial" : "ready";
   return incomplete ? "failed" : "empty";
 }
@@ -52,7 +95,7 @@ export function assertMeetingProcessingSucceeded(meeting: MeetingData): void {
   const facts = getAudioTranscriptionFacts(meeting.audioData);
   if (
     facts.captureIncomplete ||
-    facts.failedSegments > 0 ||
+    hasTranscriptionLoss(facts, FAILED_SEGMENT_PARTIAL_THRESHOLD) ||
     Object.values(meeting.processing ?? {}).includes("failed") ||
     meeting.processing?.transcription === "partial"
   )

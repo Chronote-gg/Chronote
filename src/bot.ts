@@ -156,7 +156,7 @@ import {
   startMeetingContextCommand,
 } from "./commands/startMeetingContextMenu";
 import { claimInteractionReceipt } from "./services/interactionIdempotencyService";
-import { tryReplyToUnacknowledgedInteraction } from "./services/interactionResponseService";
+import { sendInteractionNotice } from "./services/interactionResponseService";
 import { checkBotPermissions } from "./utils/permissions";
 
 const TOKEN = config.discord.botToken;
@@ -666,8 +666,14 @@ async function executeInteractionWork(
   let unregister = () => {};
   try {
     if (interaction.isRepliable()) {
-      if (await isForeignOwnedInteraction(interaction, ownerControl, local))
+      if (await isForeignOwnedInteraction(interaction, ownerControl, local)) {
+        // Acknowledging here makes the owner's defer fail, losing the stop.
+        console.log("Skipping foreign-owned interaction", {
+          interactionId: interaction.id,
+          interactionKind: resolveInteractionKind(interaction),
+        });
         return;
+      }
       const authority = await work.authority();
       receiptAttempted = true;
       const claimed = await work.trackEffect(() =>
@@ -690,26 +696,18 @@ async function executeInteractionWork(
       work.acknowledgeInteractionStop(e.original, e.signal, e.deadline);
     if (receiptAttempted) work.fence();
     console.error("Unknown error processing command: ", e);
-    if (work.signal.aborted) return;
-    try {
-      if (interaction.isRepliable()) {
-        const sent = await tryReplyToUnacknowledgedInteraction(
-          interaction,
-          "Unknown Error handling request.",
-        );
-        if (!sent) {
-          console.log(
-            "Skipped unknown error reply because interaction is acknowledged",
-            {
-              interactionId: interaction.id,
-              interactionKind: resolveInteractionKind(interaction),
-            },
-          );
-        }
-      }
-    } catch (e2) {
-      console.error("Error replying to interaction about initial error", e2);
+    if (work.signal.aborted) {
+      await sendInteractionNotice(interaction, {
+        content: "That request did not complete. Please try again.",
+        ephemeral: true,
+      });
+      return;
     }
+    if (interaction.isRepliable())
+      await sendInteractionNotice(
+        interaction,
+        "Unknown Error handling request.",
+      );
   } finally {
     await work.settle();
     unregister();

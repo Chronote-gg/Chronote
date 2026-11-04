@@ -513,8 +513,15 @@ async function initializeNewMeeting(
           },
         };
   const admission = await tryAcquireMeetingLease(input);
-  if (admission.kind === "blocked")
-    throw new Error(`Voice session admission blocked: ${admission.reason}`);
+  if (admission.kind === "blocked") {
+    // Logged here rather than in each caller's catch: this is the only place a
+    // blocked admission becomes a failure, and a caller that stores the message
+    // without logging it (the meeting control worker) leaves the
+    // voice-admission-blocked alarm with nothing to count.
+    const message = `Voice session admission blocked: ${admission.reason}`;
+    console.warn(message);
+    throw new Error(message);
+  }
   const initialization: { meeting?: MeetingData; cleanup: Array<() => void> } =
     { cleanup: [] };
   try {

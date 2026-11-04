@@ -1346,13 +1346,12 @@ describe("H4 review outcome and fence regressions", () => {
     async (failure) => {
       const meeting = finalizationFixture();
       meeting.transcribeMeeting = true;
-      meeting.audioData.audioFiles = [
-        {
-          transcript: "",
-          processing: false,
-          transcriptionFailed: failure === "failed-segment",
-        },
-      ] as never;
+      const failedSegment = failure === "failed-segment";
+      meeting.audioData.audioFiles = Array.from({ length: 3 }, () => ({
+        transcript: "",
+        processing: false,
+        transcriptionFailed: failedSegment,
+      })) as never;
       meeting.audioData.captureIncomplete = failure === "capture-incomplete";
       if (failure === "partial")
         meeting.processing = { transcription: "partial" };

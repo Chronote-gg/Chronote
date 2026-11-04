@@ -12,21 +12,64 @@ import {
   fenceRuntimeWorkAdmission,
   getRuntimeWorkAdmissionCheckpoints,
 } from "../../src/services/runtimeWorkAdmissionService";
+const refuseIndependentWork = (): { settle: () => void } => {
+  throw new Error("Unexpected independent work");
+};
+let independentWork = refuseIndependentWork;
+const noActiveLease = async (): Promise<
+  { leaseExpiresAt: number } | undefined
+> => undefined;
+let activeLease = noActiveLease;
 jest.mock("../../src/services/runtimeLifecycleService", () => ({
   isRuntimeWarm: () => false,
-  beginRuntimeWork: () => {
-    throw new Error("Unexpected independent work");
-  },
+  beginRuntimeWork: () => independentWork(),
 }));
 jest.mock("../../src/db", () => ({
   tryCreateInteractionReceipt: (...args: unknown[]) =>
     mockStopEnvironment.receipt(...args),
+  getActiveMeetingLease: () => activeLease(),
   getDeploymentControlRepository: () => ({
     getMeetingHistory: () => mockStopEnvironment.terminalRead(),
   }),
 }));
 const capturedClient: { value?: Client } = {};
 const currentBot = () => capturedClient.value!;
+const interactionListener = () =>
+  currentBot().listeners("interactionCreate")[0] as (
+    value: unknown,
+  ) => Promise<void>;
+const interactionResponseSpies = () => ({
+  editReply: jest.fn(async () => {}),
+  followUp: jest.fn(async () => {}),
+  reply: jest.fn(async () => {}),
+});
+const stopRoutes = ["button", "leave", "context"] as const;
+const stopOutcomes = [
+  "acknowledged",
+  "receipt_lost",
+  "defer_lost",
+  "already_deferred",
+  "duplicate",
+  "held_receipt",
+  "held_defer",
+] as const;
+/**
+ * A stop that cannot settle must still tell the user exactly one thing, and a
+ * deferred update's `editReply` would overwrite the control message the whole
+ * channel sees, so on that route the one notice has to follow up instead.
+ */
+const expectedNotices = (
+  route: (typeof stopRoutes)[number],
+  outcome: (typeof stopOutcomes)[number],
+  deferred: boolean,
+): { total: number; followUp: number } => {
+  const deferredUpdate =
+    route === "button" && deferred && outcome !== "already_deferred";
+  return {
+    total: outcome === "duplicate" ? 0 : 1,
+    followUp: deferredUpdate ? 1 : 0,
+  };
+};
 beforeAll(async () => {
   jest.spyOn(Client.prototype, "login").mockImplementation(async function (
     this: Client,
@@ -41,18 +84,10 @@ afterAll(async () => {
   await currentBot().destroy();
   jest.restoreAllMocks();
 });
-describe.each(["button", "leave", "context"] as const)(
-  "%s stop route",
-  (route) => {
-    test.each([
-      "acknowledged",
-      "receipt_lost",
-      "defer_lost",
-      "already_deferred",
-      "duplicate",
-      "held_receipt",
-      "held_defer",
-    ] as const)("preserves exact receipt/defer proof: %s", async (outcome) => {
+describe.each(stopRoutes)("%s stop route", (route) => {
+  test.each(stopOutcomes)(
+    "preserves exact receipt/defer proof: %s",
+    async (outcome) => {
       jest.clearAllMocks();
       mockStopEnvironment.ownership = new AbortController();
       mockStopEnvironment.reservations.length = 0;
@@ -95,6 +130,7 @@ describe.each(["button", "leave", "context"] as const)(
           releaseSettledBuffers: jest.fn(),
         },
       } as unknown as MeetingData;
+      let deferred = outcome === "already_deferred";
       const defer = jest.fn(async () => {
         if (outcome === "already_deferred")
           throw new Error("Interaction already acknowledged");
@@ -104,6 +140,7 @@ describe.each(["button", "leave", "context"] as const)(
         }
         if (outcome === "defer_lost")
           throw new Error("Synthetic lost defer ACK");
+        deferred = true;
       });
       const interaction = {
         id: `synthetic-interaction-${route}-${outcome}`,
@@ -122,19 +159,16 @@ describe.each(["button", "leave", "context"] as const)(
         isUserContextMenuCommand: () => route === "context",
         isModalSubmit: () => false,
         isChannelSelectMenu: () => false,
-        deferred: outcome === "already_deferred",
+        get deferred() {
+          return deferred;
+        },
         replied: false,
         deferUpdate: defer,
         deferReply: defer,
-        editReply: jest.fn(async () => {}),
-        followUp: jest.fn(async () => {}),
-        reply: jest.fn(async () => {}),
+        ...interactionResponseSpies(),
       };
       try {
-        const listener = currentBot().listeners("interactionCreate")[0] as (
-          value: unknown,
-        ) => Promise<void>;
-        const handling = listener(interaction);
+        const handling = interactionListener()(interaction);
         if (outcome === "held_receipt" || outcome === "held_defer") {
           await entered.promise;
           fenceRuntimeWorkAdmission(interaction.id);
@@ -147,7 +181,13 @@ describe.each(["button", "leave", "context"] as const)(
           acknowledgment.release();
         }
         await handling;
-        expect(interaction.followUp).not.toHaveBeenCalled();
+        const notices = expectedNotices(route, outcome, deferred);
+        expect(
+          interaction.reply.mock.calls.length +
+            interaction.editReply.mock.calls.length +
+            interaction.followUp.mock.calls.length,
+        ).toBe(notices.total);
+        expect(interaction.followUp.mock.calls.length).toBe(notices.followUp);
         expect(mockStopEnvironment.reconcile).not.toHaveBeenCalled();
         cleanup.release();
         const interruption = getMeetingInterruptionCheckpoints().find(
@@ -179,6 +219,48 @@ describe.each(["button", "leave", "context"] as const)(
           ({ meeting }) => meeting === mockStopEnvironment.meeting,
         )?.actual;
       }
+    },
+  );
+});
+
+test("delivers nothing while another runtime owns the meeting", async () => {
+  jest.clearAllMocks();
+  // No local reservation plus an unexpired durable lease is a foreign owner.
+  mockStopEnvironment.reservations.length = 0;
+  activeLease = async () => ({
+    leaseExpiresAt: Math.floor(Date.now() / 1000) + 60,
+  });
+  independentWork = () => ({ settle: () => {} });
+  const logged = jest.spyOn(console, "log").mockImplementation(() => {});
+  const interaction = {
+    id: "synthetic-foreign-owned",
+    guildId: "synthetic-foreign-guild",
+    user: { id: "synthetic-user" },
+    customId: "end_meeting",
+    isRepliable: () => true,
+    isButton: () => true,
+    isChatInputCommand: () => false,
+    isUserContextMenuCommand: () => false,
+    deferred: false,
+    replied: false,
+    deferUpdate: jest.fn(async () => {}),
+    ...interactionResponseSpies(),
+  };
+  try {
+    await interactionListener()(interaction);
+    // Any acknowledgement here makes the owner's defer fail, losing the stop.
+    expect(interaction.reply).not.toHaveBeenCalled();
+    expect(interaction.editReply).not.toHaveBeenCalled();
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    expect(interaction.deferUpdate).not.toHaveBeenCalled();
+    // A silent drop with no trace is what made the original defect invisible.
+    expect(logged).toHaveBeenCalledWith("Skipping foreign-owned interaction", {
+      interactionId: interaction.id,
+      interactionKind: "button:end_meeting",
     });
-  },
-);
+  } finally {
+    logged.mockRestore();
+    activeLease = noActiveLease;
+    independentWork = refuseIndependentWork;
+  }
+});
