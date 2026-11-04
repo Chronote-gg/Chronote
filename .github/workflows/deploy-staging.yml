@@ -467,6 +467,16 @@ jobs:
           echo "DEPLOYMENT_RUN_TOKEN=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
           echo "DEPLOYMENT_CANDIDATE_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
 
+      - name: Package supported publication release metadata
+        run: node scripts/operator/build-publication-release.cjs
+
+      - name: Save operator release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-publication-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: scripts/operator/recovery-publication-releases.json
+          retention-days: 90
+
       - name: Protect serving runtime and warm candidate
         id: prepare
         env:

@@ -1,3 +1,4 @@
+import { firstPublicationControlFields } from "./firstPublicationControl";
 import {
   fixtureInputEvidenceSchema,
   fixtureGenerationSchema,
@@ -179,6 +180,7 @@ export const controlRecordSchema = z
     coordinatorEpoch: generation,
     coordinatorExpiresAt: epochSecond,
     servingGeneration: generation,
+    ...firstPublicationControlFields,
     recoveryScanCursor: z
       .object({ guildId: id, channelId_timestamp: id })
       .strict()

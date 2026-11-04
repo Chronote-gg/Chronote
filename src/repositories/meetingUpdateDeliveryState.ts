@@ -132,6 +132,10 @@ export function canCompareContentWrite(
 ): row is MeetingHistory {
   return Boolean(
     row &&
+    !(
+      row.publicationRepair?.kind === "running" &&
+      row.publicationRepair.purpose === "first_publication"
+    ) &&
     canonicalWriterAllowsEdit(row) &&
     contentMatches(row, input) &&
     (!input.expectedPublication ||
@@ -396,12 +400,15 @@ function attributeBytes(value: AttributeValue): number {
     return value.BS.reduce((sum, item) => sum + item.byteLength, 0);
   return 1;
 }
-export function assertMeetingItemSize(history: MeetingHistory): void {
-  const item = marshall(history, { removeUndefinedValues: true });
-  const size = Object.entries(item).reduce(
+export function dynamoItemBytes(value: object): number {
+  const item = marshall(value, { removeUndefinedValues: true });
+  return Object.entries(item).reduce(
     (sum, [key, value]) => sum + Buffer.byteLength(key) + attributeBytes(value),
     0,
   );
+}
+export function assertMeetingItemSize(history: MeetingHistory): void {
+  const size = dynamoItemBytes(history);
   if (size > MAX_MEETING_ITEM_BYTES)
     throw new Error("Meeting item size exceeds DynamoDB limit");
 }

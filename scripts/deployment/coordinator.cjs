@@ -43,19 +43,7 @@ function createCoordinator(options = {}) {
     );
   const config = configuration(options.env ?? process.env);
   const callAws = createAwsCaller(options.aws ?? awsCli, diagnostic);
-  const aws = async (service, operation, input) => {
-    if (
-      [
-        "update-item",
-        "transact-write-items",
-        "register-task-definition",
-        "update-service",
-        "modify-listener",
-      ].includes(operation)
-    )
-      await assertWriter();
-    return callAws(service, operation, input);
-  };
+  const aws = (...args) => publication.aws(...args);
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   const sleep =
     options.sleep ??
@@ -113,6 +101,16 @@ function createCoordinator(options = {}) {
         "Routing authority changed",
       );
   }
+  const publication =
+    require("./publication-compatibility.cjs").publicationDeployment({
+      control,
+      config,
+      options,
+      tables,
+      callAws,
+      assertWriter,
+      production,
+    });
   async function assertWriter() {
     const response = await callAws("dynamodb", "get-item", {
       TableName: tables.deploymentControl,
@@ -184,6 +182,8 @@ function createCoordinator(options = {}) {
     return row;
   }
   async function save(previous, next) {
+    ({ previous, next } = await publication.enroll(previous, next));
+
     if (production) {
       await assertWriter();
       return production.save(previous, next);
