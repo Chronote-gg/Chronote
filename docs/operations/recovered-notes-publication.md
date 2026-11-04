@@ -61,6 +61,12 @@ It retains original language, partial-recording notices and safe mentions. It
 creates notes posts, verifies each by GET, and registers their IDs conditionally.
 Automatic delivery and Notion remain held.
 
+Duplicate evidence inspects up to 100 messages around the original meeting start
+plus the latest 100 messages in the destination. It looks for matching bot-authored
+notes or summary posts. This bound can miss older manual bot publications in busy
+channels. An empty search does not prove complete historical absence. Durable
+publication receipts and stored message IDs support repeat-run verification.
+
 ## Interrupted runs and ordinary blockers
 
 ```text
