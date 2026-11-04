@@ -12,6 +12,9 @@ import {
   loseNextWriteResponse,
   persistenceRow,
 } from "../fixtures/guildVoiceOperation";
+
+/** Lands after the 5 s settlement deadline, since the REST read starts 1.5 s before it. */
+const LATE_REST_DELAY_MS = 2_000;
 jest.mock("../../src/db", () => ({
   getDeploymentControlRepository: jest.fn(),
 }));
@@ -722,6 +725,7 @@ test.each([
   ["rest-in-voice", "waiting", "rest_in_voice"],
   ["rest-unavailable", "waiting", "rest_unavailable"],
   ["late-gateway", "settled", "late_gateway_leave"],
+  ["late-rest", "settled", "late_rest_not_in_voice"],
 ])(
   "%s proof route produces a content-free settlement log",
   async (route, phase, reason) => {
@@ -729,6 +733,13 @@ test.each([
     const f = fixture();
     if (route === "rest-not-in-voice")
       f.fetchVoiceState.mockRejectedValue(unknownVoiceState());
+    if (route === "late-rest")
+      f.fetchVoiceState.mockImplementation(
+        () =>
+          new Promise((_resolve, reject) =>
+            setTimeout(() => reject(unknownVoiceState()), LATE_REST_DELAY_MS),
+          ),
+      );
     if (route === "rest-in-voice")
       f.fetchVoiceState.mockResolvedValue({ channelId: "channel" });
     await joinKnownSession(f);
@@ -740,6 +751,12 @@ test.each([
     if (route === "late-gateway") {
       f.packet(null, 2);
       await f.whenOwnedVoiceSettled(f.reservation);
+    }
+    if (route === "late-rest") {
+      expect(f.storage.get()?.state).toBe("uncertain");
+      await jest.advanceTimersByTimeAsync(LATE_REST_DELAY_MS);
+      await f.whenOwnedVoiceSettled(f.reservation);
+      expect(f.storage.get()?.state).toBe("settled");
     }
     expect(console.info).toHaveBeenCalledWith("Owned voice settlement", {
       phase,
