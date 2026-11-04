@@ -37,12 +37,17 @@ const {
   processingRetryTargets,
   validateProcessingRetryPlan,
 } = require("./validate-processing-retry-plan.cjs");
+const {
+  artifactPreservationTargets,
+  validateArtifactPreservationPlan,
+} = require("./validate-artifact-preservation-plan.cjs");
 const scopedValidators = {
   "deployment-prerequisites": validatePrerequisitePlan,
   "deployment-runtime": validateRuntimePlan,
   "site-delivery": validateSitePlan,
   "sandbox-site-permissions": validateSandboxSitePermissionsPlan,
   "processing-retry": validateProcessingRetryPlan,
+  "artifact-preservation": validateArtifactPreservationPlan,
 };
 // Bound scopes revalidate their restored plan before Apply.
 const appliedScopes = new Set([
@@ -50,12 +55,14 @@ const appliedScopes = new Set([
   "site-delivery",
   "sandbox-site-permissions",
   "processing-retry",
+  "artifact-preservation",
 ]);
 const scopedTargets = {
   "deployment-runtime": runtimeTargets,
   "site-delivery": siteTargets,
   "sandbox-site-permissions": sandboxSitePermissionsTargets,
   "processing-retry": processingRetryTargets,
+  "artifact-preservation": artifactPreservationTargets,
 };
 // Resource names differ by environment while sandbox and production share an account.
 const scopeBinding = (options, invocation) =>

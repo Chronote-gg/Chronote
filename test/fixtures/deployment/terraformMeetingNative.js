@@ -96,7 +96,7 @@ export function installationRecords() {
         JSON.stringify({
           terraform_version: "1.17.1",
           provider_selections: {
-            "registry.terraform.io/hashicorp/aws": "6.70.0",
+            "registry.terraform.io/hashicorp/aws": "6.71.0",
           },
         }),
       ).toString("base64"),

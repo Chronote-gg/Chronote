@@ -3,7 +3,7 @@ title: Privacy Policy
 slug: /legal/privacy
 ---
 
-Last updated: October 16, 2026
+Last updated: November 4, 2026
 
 This policy explains what Chronote records, what we store, who else processes it, and what you can do about it. It is written to be read by the people it affects, not only by lawyers.
 
@@ -17,6 +17,7 @@ Chronote is operated by BASIC BIT LLC ("we", "us"). If you add Chronote to a Dis
 - Meeting records are visible to people in your Discord server, subject to the access rules below, and to anyone you deliberately share a public link with.
 - You can archive a meeting so it drops out of your library views, and an authorized requester can ask us to delete Chronote's stored meeting record.
 - Product analytics connect website and Discord actions to understand first use, buying difficulties and repeat use. They include elapsed time from capture stop to first and complete Discord notes delivery, timing availability and first-acknowledgement source, recording-limit encounters, notice delivery, introductory-offer visibility, renewal changes, payment recovery and billing outcomes without meeting content or promotion-code values; browser Do Not Track does not apply to the bot.
+- Our API writes one short-lived log line per web request so we can diagnose errors and availability problems. A line records the caller's IP address, the path requested, the user agent and the time. It stays in storage we control, and expires 30 days after it is written.
 
 ## What Chronote records, and when
 
@@ -54,6 +55,7 @@ During a meeting, Chronote captures:
 | Pending dictionary-teaching drafts and correction excerpts. Each temporary record has its own 15-minute expiration beginning when that record is created                                                                                                                                      | DynamoDB                                              |
 | Subscription and payment records (not card numbers)                                                                                                                                                                                                                                           | DynamoDB, alongside Stripe                            |
 | Access logs and operational logs                                                                                                                                                                                                                                                              | DynamoDB and Amazon CloudWatch                        |
+| Web request logs for our API: the caller's IP address and port, the requested path and query string, the response status, the request time, the user agent, and the connection's security details                                                                                             | Amazon S3, in a separate log bucket                   |
 | Notion and MCP connection tokens, if you connect them                                                                                                                                                                                                                                         | DynamoDB, encrypted or hashed                         |
 
 We do not receive or store your payment card details. Stripe handles card data directly.
@@ -84,6 +86,8 @@ Server admins (members with the Discord **Manage Server** permission) can also t
 
 Server and application logs held in Amazon CloudWatch expire after 365 days. Access records stored in our database do not expire on their own and are kept until we remove them.
 
+Our API also writes one line per web request it serves, so we can diagnose errors and availability problems. A line records the caller's IP address and port, the requested path including its query string, the response status, the time of the request, the user agent the caller sent, and the security details of the connection. It carries no meeting content. These lines go to a storage bucket we control rather than to another provider. The bucket expires each line, including older copies of it, 30 days after it is written, and the physical deletion can happen shortly after that.
+
 Chronote's pending correction-excerpt record becomes unusable 15 minutes after a notes correction is applied and is then eligible for DynamoDB's automatic deletion; physical deletion can occur later. If a member generates proposed dictionary entries, the correction-excerpt record remains available for revisions until its original expiration, and a separate proposal-draft record begins its own 15-minute timer when that record is created. Reading or editing either record does not extend its timer, and deleting the meeting does not accelerate either timer. These limits apply only to Chronote's temporary DynamoDB records. Copies processed by OpenAI or stored in Langfuse traces may remain longer. We do not promise that the 15-minute limits or a meeting-deletion request deletes those provider copies, and we do not currently promise another fixed deletion deadline for them.
 
 Chronote's proposal-draft DynamoDB record does not have a separate instruction field, but it can retain exact evidence quotes from the natural-language instruction, the notes diff, or the transcript excerpt so the member can review why a term was proposed. The instruction is also sent to OpenAI and can appear in Langfuse traces as described above. Observed misspellings included in an approved entry are alternate forms shown during review and retained as audit context with that entry; they are not added to the transcription prompt. An approved dictionary entry is a separate server setting: deleting the meeting that informed it does not delete the entry, its observed forms, or its meeting- or correction-linked approval provenance. A member with the required dictionary permission can remove the entry or clear the dictionary. That deletes the entry, forms, and provenance from Chronote's DynamoDB records, but does not promise deletion of copies already processed by OpenAI or stored in Langfuse traces. A later AI-assisted approval replaces the entry's previous last-approval provenance; a manual `/dictionary` update leaves that provenance unchanged. Notes correction history remains with the meeting under the meeting retention described above.
@@ -108,7 +112,7 @@ We use PostHog to understand how people use Chronote, both on the website and in
 
 While you are signed in, browser events and actions attributed to you are tied to your Discord account rather than to an anonymous browser identifier, so that your activity on the website and in Discord is understood as one person rather than two strangers. Signing out unlinks the browser from your account again.
 
-Share link ids, promotion-code values and raw recording-limit query values in page URLs are stripped before analytics are sent. Share ids act as passwords for a shared meeting. Your IP address is discarded on arrival, so we do not derive a location from it.
+Share link ids, promotion-code values and raw recording-limit query values in page URLs are stripped before analytics are sent. Share ids act as passwords for a shared meeting. Your IP address is discarded before analytics are sent, so we do not derive a location from it. The web request logs described under [How long we keep things](#how-long-we-keep-things) are separate from analytics and do record the caller's IP address.
 
 **Turning it off.** These are two separate things, and it is worth being clear about which is which.
 

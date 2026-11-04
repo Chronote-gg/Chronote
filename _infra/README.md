@@ -115,17 +115,129 @@ that address.
 
 ### What triggers an alert
 
-| Alarm                         | Condition                                     | Period    |
-| ----------------------------- | --------------------------------------------- | --------- |
-| ECS no running tasks          | Bot service running task count < 1 for 10 min | 5 min x 2 |
-| ALB target 5xx errors         | 10+ target HTTP 5xx responses in 10 min       | 5 min x 2 |
-| ALB unhealthy hosts           | Any unhealthy target for 10 min               | 5 min x 2 |
-| Grafana token rotation errors | Rotation Lambda error in 24 h                 | 1 day x 1 |
-| Checkout lock stuck           | `Checkout lock stuck` app log line in 1 h     | 1 h x 1   |
-| OpenAI requests rejected      | Any OpenAI quota, credit, or 429 log line     | 5 min x 1 |
-| Processing retry worker       | `Processing retry worker failed` log line     | 5 min x 1 |
+| Alarm                         | Condition                                      | Period    |
+| ----------------------------- | ---------------------------------------------- | --------- |
+| ECS no running tasks          | Bot service running task count < 1 for 10 min  | 5 min x 2 |
+| ECS disk leak                 | Bot task disk minimum above 16 GB for 3 h      | 1 h x 3   |
+| ECS disk critical             | Bot task disk at or above 20.4 of 21.47 GB     | 5 min x 1 |
+| ALB target 5xx errors         | 10+ target HTTP 5xx responses in 10 min        | 5 min x 2 |
+| ALB ELB 5xx errors            | 5+ load-balancer HTTP 5xx responses in 5 min   | 5 min x 1 |
+| ALB ELB 5xx sustained         | 5+ load-balancer HTTP 5xx responses in 1 h     | 1 h x 1   |
+| ALB unhealthy hosts           | Any unhealthy target in `api-tg` for 10 min    | 5 min x 2 |
+| ALB spare unhealthy hosts     | Any unhealthy target in `api-spare` for 10 min | 5 min x 2 |
+| Grafana token rotation errors | Rotation Lambda error in 24 h                  | 1 day x 1 |
+| Checkout lock stuck           | `Checkout lock stuck` app log line in 1 h      | 1 h x 1   |
+| OpenAI requests rejected      | Any OpenAI quota, credit, or 429 log line      | 5 min x 1 |
+| Processing retry worker       | `Processing retry worker failed` log line      | 5 min x 1 |
+| Voice settlement unresolved   | Unreleased voice session or lease log line     | 5 min x 1 |
+| Voice admission blocked       | Recording refused for uncertain voice state    | 5 min x 1 |
 
 All alarms also send an OK notification when the condition clears.
+
+The two unhealthy-host alarms cover both halves of the blue/green target group
+pair, one alarm each, because a generation swap moves serving traffic between
+them and a single hardcoded dimension is wrong again after the next swap. An idle
+group publishes no `UnHealthyHostCount` datapoints, so with `notBreaching` its
+alarm sits OK until it starts serving, and coverage follows traffic on its own.
+
+`HTTPCode_ELB_5XX_Count` is separate from the target 5xx alarm on purpose. The
+load balancer answers 502, 503 or 504 itself when it has no healthy target to
+forward to, and target 5xx stays at zero for the whole window, so this is the
+only alarm that sees a swap landing on an empty target group. It is also
+deliberately more sensitive than the target 5xx alarm, at 5 in a single period
+rather than 10 across two, because an ELB 5xx means there was nothing healthy to
+forward to and is rarely benign, whereas target 5xx is an application error rate
+that needs a higher bar; do not harmonise the two.
+
+**There are two alarms on `HTTPCode_ELB_5XX_Count` on purpose, and neither is
+redundant.** They share a metric and a dimension and differ only in time base.
+The 5-minute alarm catches a concentrated burst within five minutes but misses a
+trickle, because a trickle never reaches 5 in any single period. The 1-hour
+alarm catches that trickle, at the cost of up to an hour of latency. No single
+time base covers both shapes, so deleting either one reopens the gap they exist
+to close. The sizing comes from the 2026-11-02 outage, which produced 4, 14 and
+2 ELB 5xx across three consecutive hourly buckets with target 5xx at zero
+throughout: the 14 crosses the hourly threshold, so that incident would have
+paged. A burst big enough to trip the fast alarm will usually trip the slow one
+too, so expect one real outage to notify twice.
+
+The two voice alarms match single app log lines, each a thrown error message:
+`Meeting voice or lease release remains unresolved` for a meeting that finished
+without releasing its voice session or lease, and
+`Voice session admission blocked: voice_uncertain` for a recording refused
+because a previous runtime's voice state is still uncertain. Neither moves an
+ECS, ALB or OpenAI metric, so without these filters the only symptom is one
+meeting that never finishes or never starts. Both fire on a single occurrence,
+because one is already worth looking at.
+
+**The two ephemeral storage alarms exist because a task with a full disk is
+still running.** It passes its health check and keeps answering the load
+balancer, so running task count, target health and both 5xx metrics stay clean
+while recording, transcription and notes fail on write. That is the shape of the
+incident that motivated them: the serving task reached 21 GB used and 0 free
+with every alarm in the account reading OK.
+
+**The leak alarm uses `Minimum`, not `Average` or `Maximum`, and that is the
+whole point.** Healthy operation peaks to 19.4 and 19.5 GB in a busy hour and
+falls back to a 13.3 GB floor, so a static threshold on Average or Maximum fires
+on a healthy busy hour and gets muted as noise. Only a leak raises the floor: the
+measured leak took the hourly minimum from 13.3 to 18.1 overnight and then to the
+21.5 ceiling, and 13.3 against 18.1 separates cleanly. **The pair is deliberate
+and neither half is redundant.** They share a metric and dimensions and differ in
+statistic and time base, so the hourly `Minimum` catches a slow leak over three
+hours and the five-minute `Maximum` catches an imminent ceiling at once. Deleting
+either reopens half the gap.
+
+**Both thresholds are fractions (about 75 and 95 percent) of 21.47 GB, which is
+the decimal-GB reading of the 20 GiB Fargate default.**
+`ephemeralStorageSizeInGiB` is not declared on the task definition, so the
+default applies and `EphemeralStorageReserved` sits flat at 21.47. If ephemeral
+storage is ever declared or raised, both thresholds must move with it, or the
+leak alarm becomes a routine-usage alarm and the critical alarm stops meaning
+"nearly full". Raising it is also not a one-step change: it is a Terraform change
+plus a backend deploy, because `aws_ecs_service` carries
+`ignore_changes = [task_definition]`, so an apply registers a new task definition
+revision while the service keeps running the old one until a deploy repoints it.
+
+### ALB access logs
+
+**Off by default, behind `ENABLE_ALB_ACCESS_LOGS` (default `false`), and the
+privacy notice has to ship before it is flipped.** Access logs retain client IP
+addresses, which is a new category of personal data in a new place, and
+`apps/docs-site/docs/legal/privacy.md` promises notice on the page and in the
+What's New feed before a material change takes effect. With the flag off, no
+bucket is created and the load balancer has no `access_logs` block at all, so
+merging this does not start collecting anything. Flip it by setting a
+`TFVAR_ENABLE_ALB_ACCESS_LOGS` GitHub Actions **variable** to `true`, not by
+editing the `TERRAFORM_TFVARS_JSON` secret, per the rule earlier in this file:
+the secret is write-only and a flag parked in it cannot be read back or
+reviewed. Then apply.
+
+Once enabled, the API load balancer writes access logs to its own bucket,
+`<project>-<environment>-alb-logs-<account id>`, under the `alb/` prefix. The
+alarms above say that an outage happened; these say which requests it happened
+to, which is what attributing a 4xx or a load-balancer 5xx to a route, a method
+or a client needs.
+
+Two details are deliberate and easy to break:
+
+- **The bucket is encrypted with SSE-S3, not the `app_general` KMS key the other
+  buckets use.** Elastic Load Balancing supports only S3-managed keys for access
+  log delivery. A customer managed key does not fail loudly; log delivery simply
+  never starts.
+- **The bucket policy grants the `logdelivery.elasticloadbalancing.amazonaws.com`
+  service principal**, which AWS documents for all regions, rather than the
+  legacy regional Elastic Load Balancing account id (`127311923021` for
+  `us-east-1`). The legacy form is still accepted in older regions but AWS
+  recommends replacing it. The policy is restricted by `aws:SourceArn` to this
+  account's load balancers, and the object path carries the account id, which
+  AWS requires rather than merely suggesting.
+
+A 30-day lifecycle rule expires the logs: the forensic value of a raw request log
+drops off quickly, and the short window also bounds how long client IP addresses
+are retained. The bucket is versioned, so the rule expires noncurrent versions
+after a day as well; without that, expiring the current version would only write
+a delete marker and retain those addresses indefinitely.
 
 `Checkout lock stuck` is logged when a billing page load finds a server's purchase
 lock past its checkout expiry but unreleasable: Stripe still reports the session
@@ -319,7 +431,8 @@ See [private Terraform delivery](../docs/terraform-private-delivery.md) for revi
 configuration, supported protection rules and unknown-acknowledgment handling.
 
 `plan_scope` accepts only `full`, `purchase-permission`,
-`deployment-prerequisites`, `deployment-runtime`, `site-delivery` or `processing-retry`. `full` remains untargeted; `purchase-permission`
+`deployment-prerequisites`, `deployment-runtime`, `site-delivery`,
+`processing-retry` or `artifact-preservation`. `full` remains untargeted; `purchase-permission`
 continues to target only `aws_iam_role_policy.initial_purchase_condition`.
 Unsupported scope values fail before the plan command, and no scope accepts
 arbitrary Terraform arguments.
@@ -475,6 +588,26 @@ Production order:
 4. Apply that plan at the same SHA.
 5. Turn on `meetings.processingRetry.enabled` once `ProcessingRetryDueIndex` is
    ACTIVE.
+
+`artifact-preservation` is production only and targets exactly
+`aws_iam_policy.transcripts_s3_policy`, the task roles' transcripts bucket grant,
+so the `s3:GetObjectVersion` that artifact preservation needs can ship through
+this workflow instead of a hand-run local apply.
+`scripts/deployment/validate-artifact-preservation-plan.cjs` checks the Plan and
+the restored Apply plan. It allows one in-place update to one statement that
+keeps the same bucket and grants exactly `s3:PutObject`, `s3:GetObject`,
+`s3:GetObjectVersion`, `s3:AbortMultipartUpload` and `s3:ListBucket`, with no
+condition, no deny and no other managed resource anywhere in the plan. The policy
+builds its bucket ARN from `local.transcripts_bucket_name` rather than from
+`aws_s3_bucket.transcripts`, which is what keeps the bucket out of the targeted
+graph; a refreshed bucket in the plan means that decoupling regressed and the
+validator refuses it.
+
+Production order: apply `_infra/production-bootstrap` with
+`enable_artifact_preservation_policy = true`, which both grants the executor role
+the transcripts policy and moves the dependency metadata reads out of the inline
+policy to make room; then Plan; then Apply. Without that flag the Plan is denied
+rather than silently narrowed.
 
 Standalone policy adoption requires a separate reviewed plan and approval; it is
 outside the four-target Apply. The actual state-backed prerequisite plan must

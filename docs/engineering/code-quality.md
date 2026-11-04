@@ -76,7 +76,7 @@ governs a shared-tool comparison.
 
 ## Local tool setup
 
-Use Node 24.22.1 or a newer Node 24 release. CI reads the exact version from `.nvmrc`; keep the Docker base and application engine floor aligned when changing it. Keep the tool separate from the application checkout. For example, in PowerShell:
+Use Node 24.22.2 or a newer Node 24 release. CI reads the exact version from `.nvmrc`; keep the Docker base and application engine floor aligned when changing it. Keep the tool separate from the application checkout. For example, in PowerShell:
 
 ```powershell
 git clone https://github.com/BASIC-BIT/quality-ratchet.git D:/tools/quality-ratchet

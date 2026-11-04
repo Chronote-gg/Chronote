@@ -9,7 +9,7 @@ an excluded check. This model does not authorize a plan, Apply or deployment.
 ## Source and installation boundary
 
 `terraform-meeting-model.cjs` pins the filenames and SHA-256 content digests of all
-23 top-level `_infra/*.tf`, `*.tf.json` and `.terraform.lock.hcl` files through
+25 top-level `_infra/*.tf`, `*.tf.json` and `.terraform.lock.hcl` files through
 `bindingHash`. Only this source-model calculation normalizes CRLF to LF. Raw lock,
 saved plan, command capture, policy and bundle bytes retain their existing checks.
 Added or removed files (including overrides), symlinks and changed source refuse.
@@ -21,7 +21,7 @@ source relation. A later Apply commit is allowed only under the existing verifie
 relation proving Terraform inputs unchanged. The model then binds an opaque proof
 to that exact rendering. A boolean, digest supplied by a caller, or another plan's
 proof cannot enable it. Readonly init must succeed and a subsequent version JSON
-record must identify Terraform 1.17.1 and installed AWS 6.70.0. The checked lock
+record must identify Terraform 1.17.1 and installed AWS 6.71.0. The checked lock
 pins the installation. Older captures without that record remain refused.
 
 ## Dependency audit
@@ -78,12 +78,12 @@ resource reads either local, the log group or the topic.
 
 ## Computed GSI representation
 
-The official `table.go` files at v6.69.1 and v6.70.0 are byte-identical. In
-[AWS provider v6.70.0 table.go](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/dynamodb/table.go#L619-L642),
+The official `table.go` files at v6.69.1, v6.70.0 and v6.71.0 are byte-identical. In
+[AWS provider v6.71.0 table.go](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/internal/service/dynamodb/table.go#L619-L642),
 `warmThroughputSchema` is both optional and computed, as are its read/write unit
 fields. The GSI schema uses it too. It is writable when configured, so a computed
 mask by itself cannot justify ignoring it.
-The same version's [GSI update comparison](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/dynamodb/table.go#L2256-L2272)
+The same version's [GSI update comparison](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/internal/service/dynamodb/table.go#L2256-L2272)
 skips a warm-throughput update when the new configuration omits it or leaves it
 empty. This guard requires actual configuration absence before using that rule.
 
@@ -139,11 +139,29 @@ lookup. Its closure, excluded checks, unknown handling and installed-provider
 requirements are unchanged. The source pin is refreshed only for these declared
 edits to `sandbox-deployment.tf` and `production-deployment.tf`.
 
-The checked application lock and exceptional meeting model both require AWS 6.70.0;
+The checked application lock and exceptional meeting model both require AWS 6.71.0;
 the model also requires Terraform 1.17.1 and post-init installation evidence.
 Offline mocks use their own checked locks and the CI Terraform 1.16.0 toolchain;
 they do not prove native meeting-model acceptance. The exact version refusals
 stay intact, and site-policy installation acceptance remains separate.
+
+### Weekly provider audit (2026-11-02)
+
+The application lock advances AWS 6.70.0 to 6.71.0 and refreshes signed provider
+checksums. All top-level Terraform configuration files are unchanged. The
+23-file source manifest is recomputed for the new lock. The DynamoDB implementation
+is byte-identical across these provider versions, including the computed GSI
+schema and update comparison described above. The closure, excluded checks,
+allowed effects and unknown-value refusals are unchanged. Installed-provider
+records and synthetic fixtures now require 6.71.0; a regression rejects 6.70.0
+records, and existing tests still reject changed source and raw lock bytes.
+
+The production bootstrap separately advances its compatible AWS lock from 6.68.0
+to 6.71.0. Its IAM role, role policy, policy, S3 bucket, versioning, public-access,
+encryption and bucket-policy implementations are byte-identical between those
+versions. Its offline mock tests and validation use the required Terraform 1.16.0.
+The sandbox bootstrap retains its intentional exact AWS 6.69.1 pin. No live plan,
+Apply, policy installation or private acceptance evidence is produced by this audit.
 
 ### Sandbox site check classification (2026-11-03)
 
@@ -208,6 +226,77 @@ buckets or general KMS key. The six-resource site closure, six required passed
 checks and thirteen excluded checks therefore remain exact under the updated
 whole-source pin. Neither artifact permission is allowed by the site scope.
 
+### Ephemeral storage alarm audit (2026-11-04)
+
+Two CloudWatch alarms were added to `_infra/notifications.tf` on
+`ECS/ContainerInsights` `EphemeralStorageUtilized`, scoped by cluster and service
+name. The inventory stays at 25 files, because an existing file was edited rather
+than a new one added, so only the content hash moved. Neither alarm is read by the
+delivery closure: both take their dimensions from the ECS cluster and service and
+their action from the existing critical-alerts topic, which the no-running-tasks
+alarm already references in the same way. Neither declares a `validation` block or
+a `lifecycle` precondition, so the plan gains no new check descriptor and
+`excludedCheck` has nothing new to refuse.
+
+### Production alarm coverage audit (2026-11-04)
+
+The alarm coverage change adds `alerts-voice.tf` and `alb-access-logs.tf` and
+edits `api.tf`, `moved.tf` and `notifications.tf`, taking the hashed inventory
+from 23 files to 25. Every added resource is a CloudWatch metric filter, a
+CloudWatch alarm, or part of the `ENABLE_ALB_ACCESS_LOGS` S3 log sink. The two
+voice metric filters and their alarms address the app log group and the
+critical-alerts topic by name through `local.app_log_group_name` and
+`local.critical_alerts_topic_arn`, exactly as the processing-retry filter does,
+so they take no edge on the KMS key policy. The log bucket is deliberately
+SSE-S3 rather than `app_general`, because Elastic Load Balancing refuses CMK
+delivery, so it does not read the key either; it reads only `name_prefix`,
+`aws_region`, caller identity and `ENABLE_API_ALB`. No table, DynamoDB access
+policy or KMS key depends on any of it, and the closure remains the same 32
+addresses.
+
+`ENABLE_ALB_ACCESS_LOGS` declares no `validation` block and none of the added
+resources declares a `lifecycle` pre- or postcondition, so the plan gains no
+check descriptor and the nine resource and ten variable excluded-check
+identities are unchanged. The `moved` block retargets the unhealthy-hosts alarm
+from a count instance to a `for_each` key; both addresses are outside the
+closure. Installed-provider requirements and the typed retry-index gate are
+unchanged. The source pin is refreshed only for these five reviewed files.
+
+### Artifact-preservation plan scope audit (2026-11-04)
+
+The transcripts policy now builds its bucket ARN from `local.transcripts_bucket_name`
+instead of `aws_s3_bucket.transcripts.arn`. The rendered policy document is
+unchanged, because `aws_s3_bucket.transcripts` sets `bucket` from that same local,
+so the two expressions produce the same string. The edit removes a resource
+reference edge and adds none, as the site-permissions audit did for the listener
+count predicate. The local reads only `TRANSCRIPTS_BUCKET`, `name_prefix` and the
+caller identity, all of which the closure already depends on.
+
+The purpose is the new production `artifact-preservation` plan scope, which targets
+only `aws_iam_policy.transcripts_s3_policy`. With the reference removed the bucket
+is no longer in that targeted graph, so the GitHub Terraform executor role needs no
+read permission on the transcripts bucket at all, including `s3:ListBucket`, which
+would otherwise expose transcript object keys.
+`validate-artifact-preservation-plan.cjs` refuses any managed resource other than
+the policy, so a reappearing bucket refresh fails the scope rather than passing
+quietly.
+
+The transcripts policy stays outside the 32-resource delivery closure and outside
+the six-resource site graph, and no resource in either reads it. The closure,
+excluded checks, installed-provider requirements, typed retry-index gate and
+permitted delivery effects are unchanged. The whole-source pin is refreshed only
+for this one reviewed `main.tf` edit. Refreshing it does not permit the IAM change
+through the meeting-delivery or site scopes; the new scope has its own validator,
+its own bootstrap grant and its own approved apply.
+
+That refresh was superseded by the merge with the alarm coverage change. Both
+branches edited the pin over their own file set, so neither committed value
+matched the merged tree. The pin here is recomputed over the merged inventory:
+master's 25 files with this audit's `main.tf` edit applied, which is the only
+hashed file that differs from master. The method was validated by reproducing
+both parents' committed values from their own trees before the new one was
+trusted.
+
 ### Announcement delivery table audit (2026-11-04)
 
 The operator-announcement change adds `aws_dynamodb_table.announcement_delivery_table`
@@ -220,13 +309,40 @@ the new table or the variable, and neither appears in `tables` or `excludedCheck
 With the flag off the table has no instances. The change adds no check identity
 and no planned change, so the meeting closure, the site graph, the excluded
 checks, the typed retry-index gate and the installed-provider requirements are
-unchanged. The source pin is refreshed only for these two declared edits.
+unchanged. The source pin was refreshed only for these two declared edits.
+
+That refresh was superseded by the merge with the alarm coverage and
+artifact-preservation plan scope changes. The pin is recomputed over the merged
+inventory: master's 25 files with this audit's `config.tf` and `main.tf` edits
+applied, the only hashed files that differ from master. Both parents' committed
+values were reproduced from their own trees before the new one was trusted.
 
 Enabling the flag is a separate reviewed change. The production bootstrap
-Terraform role allows `dynamodb:CreateTable` only on the deployment control
-table, and the DynamoDB KMS encryption context only for the control and
-subscription table names. The Sandbox role allows neither. Both roles need a
+Terraform role's inline policy allows `dynamodb:CreateTable` only on the
+deployment control table, and the DynamoDB KMS encryption context only for the
+control and subscription table names. Of its attached policies, only
+processing-retry adds that context, for MeetingHistory alone; the
+artifact-preservation and alerting-delivery policies grant no DynamoDB or KMS
+action. The Sandbox role allows neither. Both roles need a
 grant for this table name first. This audit permits no plan, Apply or deployment.
+
+### Recomputing the pin
+
+There is no script for this. The pin is `bindingHash` over a map of filename to
+SHA-256 of each file's bytes with CRLF normalized to LF, over exactly the
+`isSource` inventory of the committed `_infra` tree at the checkout's HEAD.
+Reproduce the outgoing value from the parent commit's tree first; a method that
+cannot reproduce the committed pin is wrong, and a pin nobody can derive twice
+is not a guard. `test/scripts/terraformMeetingNative.test.js` is the check that
+matters, because `copyModelSource` runs `verifySource` against the real
+committed `_infra`: it fails on a stale pin and passes on a correct one.
+
+**This pin covers every top-level Terraform source file, so two concurrent
+branches that each add or edit one will each invalidate the other's refresh.**
+Each branch's pin is computed over its own file set, both are individually
+correct, and whichever merges second lands a pin that does not match the merged
+tree. The second merge must recompute; do not try to precompute a value valid
+for both, since neither tree exists yet.
 
 ### Future source changes
 

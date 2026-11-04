@@ -547,6 +547,7 @@ test.each([
   "failed-init",
   "writable-lock",
   "wrong-provider",
+  "previous-provider",
   "wrong-terraform",
   "raw-lock",
   "wrong-source",
@@ -560,10 +561,15 @@ test.each([
   if (fault === "writable-lock") output[0].args.pop();
   if (fault === "raw-lock") overrides.lockfileSha256 = "0".repeat(64);
   if (fault === "wrong-source") overrides.sourceSha = "0".repeat(40);
-  if (fault === "wrong-provider" || fault === "wrong-terraform") {
+  if (
+    fault === "wrong-provider" ||
+    fault === "previous-provider" ||
+    fault === "wrong-terraform"
+  ) {
     const v = JSON.parse(Buffer.from(output[1].stdout, "base64").toString());
-    if (fault === "wrong-provider")
-      v.provider_selections["registry.terraform.io/hashicorp/aws"] = "6.69.1";
+    if (fault !== "wrong-terraform")
+      v.provider_selections["registry.terraform.io/hashicorp/aws"] =
+        fault === "previous-provider" ? "6.70.0" : "6.69.1";
     else v.terraform_version = "1.16.0";
     output[1].stdout = Buffer.from(JSON.stringify(v)).toString("base64");
   }

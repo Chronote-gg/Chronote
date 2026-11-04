@@ -32,7 +32,7 @@ Plan uses the restrictive inline session policy in `terraform-plan.yml`, interse
 
 ## Site action inventory
 
-The application root locks AWS provider 6.70.0. The bootstrap root separately locks
+The application root locks AWS provider 6.71.0. The bootstrap root separately locks
 6.69.1. Their offline checks use their own locks. The targeted application graph
 must contain only the two site targets, two buckets, existing application key,
 existing deployment role and its identity metadata. Distribution IDs are inputs,
@@ -47,13 +47,13 @@ so this operation needs no CloudFront grant.
 | Bucket refresh, including deprecated inline controls | `s3:ListBucket` for HeadBucket; `s3:GetBucketPolicy`, `s3:GetBucketAcl`, `s3:GetBucketCORS`, `s3:GetBucketWebsite`, `s3:GetBucketVersioning`, `s3:GetAccelerateConfiguration`, `s3:GetBucketRequestPayment`, `s3:GetBucketLogging`, `s3:GetLifecycleConfiguration`, `s3:GetReplicationConfiguration`, `s3:GetEncryptionConfiguration`, `s3:GetBucketObjectLockConfiguration`, `s3:GetBucketTagging` | Only the two reviewed bucket ARNs, no objects                                                               |
 | Application key refresh                              | Existing `kms:DescribeKey`, `kms:GetKeyPolicy`, `kms:GetKeyRotationStatus`, `kms:ListResourceTags`                                                                                                                                                                                                                                                                                                  | Existing exact application key, unchanged                                                                   |
 
-Provider evidence is pinned to the application lock: [policy resource](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/iam/policy.go),
-[tag handling](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/iam/tags.go),
-[role resource](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/iam/role.go),
-[attachment](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/iam/role_policy_attachment.go),
-[OIDC lookup](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/iam/openid_connect_provider_data_source.go),
-[bucket resource](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/s3/bucket.go),
-and [key refresh](https://github.com/hashicorp/terraform-provider-aws/blob/v6.70.0/internal/service/kms/key.go).
+Provider evidence is pinned to the application lock: [policy resource](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/internal/service/iam/policy.go),
+[tag handling](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/internal/service/iam/tags.go),
+[role resource](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/internal/service/iam/role.go),
+[attachment](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/internal/service/iam/role_policy_attachment.go),
+[OIDC lookup](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/internal/service/iam/openid_connect_provider_data_source.go),
+[bucket resource](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/internal/service/s3/bucket.go),
+and [key refresh](https://github.com/hashicorp/terraform-provider-aws/blob/v6.71.0/internal/service/kms/key.go).
 `GetRole` and `GetOpenIDConnectProvider` return tags directly. Policy tags need a
 separate list read; create-with-default-tags requires `TagPolicy` authority.
 Updates retain the four reviewed default tags. Tag removal, delayed default-version

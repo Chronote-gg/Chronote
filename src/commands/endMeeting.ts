@@ -14,6 +14,7 @@ import {
 } from "../services/meetingStopInterruption";
 import { acknowledgeRecordingDeliveryHistory } from "../services/recordingDeliveryService";
 import { interruptOwnedMeeting } from "../services/ownedMeetingInterruption";
+import { deferInteractionUpdate } from "../services/interactionResponseService";
 import {
   checkpointRecordingContext,
   checkpointCompletedTranscription,
@@ -223,7 +224,9 @@ export async function handleEndMeetingButton(
     }
 
     if (!interaction.deferred && !interaction.replied) {
-      await deferMeetingStopInteraction(work, () => interaction.deferUpdate());
+      await deferMeetingStopInteraction(work, () =>
+        deferInteractionUpdate(interaction),
+      );
     }
     work?.signal.throwIfAborted();
     await persistExplicitMeetingStop(meeting, MEETING_END_REASONS.BUTTON);
