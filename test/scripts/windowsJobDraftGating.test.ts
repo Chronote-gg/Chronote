@@ -72,8 +72,13 @@ test("ci.yml gates Visual Regression and the Desktop Check input on the draft fl
   );
 });
 
-test("desktop-package.yml cancels a superseded run instead of finishing the bundle", () => {
+test("desktop-package.yml cancels a superseded pull request run but never a master one", () => {
   const { concurrency } = workflow("desktop-package.yml");
-  expect(concurrency["cancel-in-progress"]).toBe(true);
   expect(concurrency.group).toContain("github.event.pull_request.number");
+  // Cancelling unconditionally would let a second merge landing quickly kill
+  // the first one's run, and that run is the only post-merge validation the
+  // packaged artifact gets.
+  expect(concurrency["cancel-in-progress"]).toContain(
+    "github.event_name == 'pull_request'",
+  );
 });
