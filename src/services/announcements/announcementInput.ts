@@ -107,17 +107,21 @@ const labelledTexts = (announcement: Announcement): LabelledText[] => [
   ]),
 ];
 
-const findContentProblems = (texts: LabelledText[]): string[] =>
-  texts.flatMap(({ label, text }) => [
-    ...Array.from(
-      text.matchAll(PLACEHOLDER_PATTERN),
-      ([, name]) => `${label}: unfilled placeholder {{${name}}}`,
-    ),
-    ...Array.from(
+const findMentionProblems = (texts: LabelledText[]): string[] =>
+  texts.flatMap(({ label, text }) =>
+    Array.from(
       text.matchAll(MENTION_PATTERN),
       ([mention]) => `${label}: mention syntax ${mention} is not allowed`,
     ),
-  ]);
+  );
+
+// Scanned over the whole file before parsing: a placeholder in the id, or a
+// bare {{...}} that YAML reads as a mapping, must still be reported by name.
+const findPlaceholderProblems = (content: string): string[] =>
+  Array.from(
+    content.replace(HTML_COMMENT_PATTERN, "").matchAll(PLACEHOLDER_PATTERN),
+    ([, name]) => `unfilled placeholder {{${name}}}`,
+  );
 
 const findSnowflakeWarnings = (texts: LabelledText[]): string[] =>
   texts.flatMap(({ label, text }) =>
@@ -137,10 +141,12 @@ export const parseAnnouncement = (
   content: string,
   format: AnnouncementFormat,
 ): { announcement: Announcement; warnings: string[] } => {
+  const placeholders = findPlaceholderProblems(content);
+  if (placeholders.length > 0) throw new AnnouncementInputError(placeholders);
   const announcement =
     format === "markdown" ? parseMarkdown(content) : parseJson(content);
   const texts = labelledTexts(announcement);
-  const problems = findContentProblems(texts);
+  const problems = findMentionProblems(texts);
   if (problems.length > 0) throw new AnnouncementInputError(problems);
   return { announcement, warnings: findSnowflakeWarnings(texts) };
 };

@@ -15,7 +15,7 @@ type Candidate = { source: PostSource; channelId: string };
 
 const GUILD_TEXT_CHANNEL = 0;
 const GUILD_ANNOUNCEMENT_CHANNEL = 5;
-const POSTABLE_CHANNEL_TYPES = new Set([
+export const POSTABLE_CHANNEL_TYPES = new Set([
   GUILD_TEXT_CHANNEL,
   GUILD_ANNOUNCEMENT_CHANNEL,
 ]);
@@ -31,7 +31,7 @@ type CandidateResult =
   | { postable: true; channelId: string }
   | { postable: false; rejection: CandidateRejection };
 
-const missingPermissions = (
+export const missingPermissions = (
   snapshot: GuildSnapshot,
   botUserId: string,
   channel: DiscordChannel,
