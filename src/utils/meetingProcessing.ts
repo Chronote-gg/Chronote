@@ -25,15 +25,23 @@ export const PARTIAL_TRANSCRIPT_NOTICE =
  */
 export const FAILED_SEGMENT_PARTIAL_THRESHOLD = 3;
 
+/**
+ * The single rule for whether a recording shows lost transcription work. The floor
+ * exists to stop a few lost snippets demoting a recording that otherwise worked, so it
+ * does not apply without usable speech: there, any failure is the whole recording.
+ */
+function hasTranscriptionLoss(facts: TranscriptionFacts): boolean {
+  return facts.usableSegments > 0
+    ? facts.failedSegments >= FAILED_SEGMENT_PARTIAL_THRESHOLD
+    : facts.failedSegments > 0;
+}
+
 export function classifyTranscription(
   facts: TranscriptionFacts,
 ): TranscriptionOutcome {
-  const incomplete =
-    facts.failedSegments >= FAILED_SEGMENT_PARTIAL_THRESHOLD ||
-    facts.captureIncomplete;
+  const incomplete = hasTranscriptionLoss(facts) || facts.captureIncomplete;
   if (facts.usableSegments > 0) return incomplete ? "partial" : "ready";
-  // Without usable speech, any failed snippet is the whole recording, so it is not empty.
-  return incomplete || facts.failedSegments > 0 ? "failed" : "empty";
+  return incomplete ? "failed" : "empty";
 }
 
 export function getMeetingProcessingNotice(
@@ -68,7 +76,7 @@ export function assertMeetingProcessingSucceeded(meeting: MeetingData): void {
   const facts = getAudioTranscriptionFacts(meeting.audioData);
   if (
     facts.captureIncomplete ||
-    facts.failedSegments >= FAILED_SEGMENT_PARTIAL_THRESHOLD ||
+    hasTranscriptionLoss(facts) ||
     Object.values(meeting.processing ?? {}).includes("failed") ||
     meeting.processing?.transcription === "partial"
   )

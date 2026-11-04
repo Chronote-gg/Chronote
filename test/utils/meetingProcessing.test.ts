@@ -39,6 +39,21 @@ test("a couple of lost snippets keep normal finalization", () => {
   ).toThrow("incomplete");
 });
 
+// A wholly failed recording must not reach the accidental-recording classifier, which
+// runs before the transcription outcome is written and sees only an empty transcript.
+test("a recording whose only snippet failed is never treated as complete", () => {
+  expect(() =>
+    assertMeetingProcessingSucceeded(meetingWithSnippets(0, 1)),
+  ).toThrow("incomplete");
+  expect(
+    classifyTranscription({
+      usableSegments: 0,
+      failedSegments: 1,
+      captureIncomplete: false,
+    }),
+  ).toBe("failed");
+});
+
 // captureIncomplete still demotes because it now records only decoder, stream and
 // subscription loss; a speaking turn without PCM no longer arms it.
 test.each([
