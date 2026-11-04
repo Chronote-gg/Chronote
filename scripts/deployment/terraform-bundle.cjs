@@ -27,6 +27,10 @@ const invocationSchema = z
       "full",
       "purchase-permission",
       "deployment-prerequisites",
+      "deployment-runtime",
+      "site-delivery",
+      "sandbox-site-permissions",
+      "processing-retry",
       "meeting-update-delivery",
     ]),
   })
@@ -63,12 +67,19 @@ function parseInvocation(value) {
     parsed.environment === "production" ? "default" : "sandbox",
   );
   if (parsed.environment === "sandbox")
-    assert.equal(
-      parsed.scope,
-      "meeting-update-delivery",
-      "Sandbox supports only meeting-update-delivery",
+    assert.ok(
+      [
+        "meeting-update-delivery",
+        "processing-retry",
+        "sandbox-site-permissions",
+      ].includes(parsed.scope),
+      "Unsupported Sandbox scope",
     );
-  if (parsed.scope === "meeting-update-delivery")
+  if (
+    ["meeting-update-delivery", "sandbox-site-permissions"].includes(
+      parsed.scope,
+    )
+  )
     assert.equal(parsed.environment, "sandbox");
   return parsed;
 }

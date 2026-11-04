@@ -1,5 +1,22 @@
 # Infrastructure Notes
 
+## Bot worker capacity
+
+The task definition selects CPU and memory from `environment`:
+
+| Environment                           | CPU      | Memory |
+| ------------------------------------- | -------- | ------ |
+| `prod`                                | 1 vCPU   | 2 GiB  |
+| Other environments, including Sandbox | 0.5 vCPU | 1 GiB  |
+
+Task reservations and container limits use the same values. Recording buffer
+limits remain independent of the task size.
+
+A Terraform apply registers the new task definition. The service ignores task
+definition changes from Terraform, so a protected backend deployment is also
+required to move the running worker to the new size. Keep the intended image
+and active-work protections when deploying a capacity change.
+
 ## Terraform state bootstrap
 
 The standalone `_infra_state_mgmt` stack provisions the remote state bucket and
@@ -106,6 +123,7 @@ that address.
 | Grafana token rotation errors | Rotation Lambda error in 24 h                 | 1 day x 1 |
 | Checkout lock stuck           | `Checkout lock stuck` app log line in 1 h     | 1 h x 1   |
 | OpenAI requests rejected      | Any OpenAI quota, credit, or 429 log line     | 5 min x 1 |
+| Processing retry worker       | `Processing retry worker failed` log line     | 5 min x 1 |
 
 All alarms also send an OK notification when the condition clears.
 
@@ -300,8 +318,8 @@ private storage or supported native protection metadata refuses execution.
 See [private Terraform delivery](../docs/terraform-private-delivery.md) for review,
 configuration, supported protection rules and unknown-acknowledgment handling.
 
-`plan_scope` accepts only `full`, `purchase-permission`, or
-`deployment-prerequisites`. `full` remains untargeted; `purchase-permission`
+`plan_scope` accepts only `full`, `purchase-permission`,
+`deployment-prerequisites`, `deployment-runtime`, `site-delivery` or `processing-retry`. `full` remains untargeted; `purchase-permission`
 continues to target only `aws_iam_role_policy.initial_purchase_condition`.
 Unsupported scope values fail before the plan command, and no scope accepts
 arbitrary Terraform arguments.
@@ -343,6 +361,120 @@ settings are unchanged. The key and encrypted DynamoDB tables do not depend on
 that policy resource, keeping CloudFront dependencies out of prerequisite plans.
 Encrypted CloudWatch log groups and the critical-alert SNS topic explicitly wait
 for the policy's service grants during cold creation.
+
+`deployment-runtime` carries what production needs after the prerequisites and
+before a cold cutover and the first ordinary deploy of `master`. It targets exactly:
+
+1. `aws_iam_role.production_deploy[0]`, `aws_iam_role_policy.production_deploy[0]`
+   and `aws_iam_role_policy_attachment.production_deploy_routing[0]`
+2. `aws_iam_policy.site_publishing[0]` and its attachment
+3. `aws_iam_role_policy.production_exec_channels[0]`
+4. `aws_iam_policy.dynamodb_access_policy`, whose `DescribeSubscriptionReadiness`
+   statement the candidate needs at startup
+5. `aws_dynamodb_table.guild_subscription_table`, adding `RenewalRecoveryDueIndex`
+6. `aws_lb_target_group.api_tg[0]` and `aws_lb_target_group.api_spare_tg[0]`,
+   lowering `deregistration_delay` from 300 to 5 seconds so a draining legacy
+   task stops starting meetings sooner. The tradeoff: a draining task's long
+   in-flight requests, such as MCP live-transcript streams and slow portal
+   requests, are cut after 5 seconds instead of finishing
+7. `aws_iam_role.production_introduction["prompt-guard"]` and
+   `aws_iam_role_policy.production_prompt_guard[0]`
+
+The prompt guard role needs `TFVAR_enable_production_prompt_guard_role=true`, which
+enables it without introduction authority or reviewed task definitions. The deploy
+and prompt guard policies build the service, task family, container, repository,
+execution role and managed policy ARNs from names, and both OIDC data sources look
+the provider up by ARN, so the plan never reads the ECS service, task definition,
+AppConfig or Bedrock resources. The site publishing policy grants by distribution
+ID from `frontend_distribution_id` and `docs_distribution_id`, so the plan reads no
+CloudFront resource. Production and Sandbox must set `TFVAR_FRONTEND_DISTRIBUTION_ID`
+and `TFVAR_DOCS_DISTRIBUTION_ID` to the same values as the existing
+`FRONTEND_DISTRIBUTION_ID` and `DOCS_DISTRIBUTION_ID` deploy variables. The policy
+refuses to plan without them, and each distribution has a postcondition that fails
+a full plan if its variable names another distribution.
+
+Production's distributions lagged master in routing (a docs cache behavior,
+frontend error responses and route rewrite function, and the `crawler_noindex`
+headers policy). Those change live portal routing, so they ship through the
+separate `site-delivery` scope below, not this one. GitHub variables such as `PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` and
+`PRODUCTION_PROMPT_GUARD_ROLE_ARN` stay outside the scope and are set by hand.
+
+`scripts/deployment/validate-runtime-plan.cjs` checks the Plan before bundling and
+again on Apply. It requires the existing key and HTTPS listener as no-ops, allows
+create or update only at those addresses, and refuses replacements, deletes, moves
+and imports. Both new roles must trust only the in-account GitHub provider for the
+production environment subject. The five policy documents may not grant `*`,
+`iam:*` or `sts:*`, use NotAction or NotResource, or pair `Resource: "*"` with
+anything but Describe or List actions, registry login and the ECS Exec channels.
+Apply passes the account from the private storage binding; the CLI takes it as its
+only argument. The subscription table may change only by gaining that index and its
+two key attributes (its recomputed `stream_arn` and `stream_label` may be unknown);
+each API target group only its drain delay, to 5.
+
+`site-delivery` targets exactly `aws_cloudfront_function.frontend_route_rewrite`,
+`aws_cloudfront_response_headers_policy.crawler_noindex` and both distributions.
+`scripts/deployment/validate-site-plan.cjs` checks the Plan and the restored Apply
+plan. It allows only creating that function (with the repository's exact code) and
+headers policy, and updating the distributions in place:
+
+- frontend: the 403 response becomes 404 with `/404.html` and the old
+  `/index.html` fallbacks go; the default behavior gains the viewer-request route
+  rewrite; one new `/share/*` behavior uses the rewrite and the noindex headers.
+- docs: one new `/search*` behavior uses the existing docs rewrite and the noindex
+  headers.
+
+Every existing behavior, origin, alias, certificate and setting must be unchanged.
+The site buckets and docs function must be no-ops; the KMS key and HTTPS listener
+are not in this graph. Apply only after a frontend build with `404.html` and the
+extensionless public-route documents is in the bucket; `sync-frontend` uploads
+both on every deploy. When `scripts/public-routes.json` gains a route, the route
+rewrite's `publicRoutes` list must gain it too, and this scope ships the change.
+The Terraform role's CloudFront writes come from the separate managed policy in
+`_infra/production-bootstrap/site-delivery.tf`.
+
+`processing-retry` ships the processing retry infrastructure in Sandbox and
+Production. It targets exactly `aws_dynamodb_table.meeting_history_table`,
+`aws_cloudwatch_log_metric_filter.processing_retry_worker_failed[0]` and
+`aws_cloudwatch_metric_alarm.processing_retry_worker_failed[0]`.
+`scripts/deployment/validate-processing-retry-plan.cjs` checks the Plan and the
+restored Apply plan in both environments, binding names to the environment because
+both share an account. It allows only:
+
+- an in-place table update that adds `processingRetryQueue` (S),
+  `processingRetryDueAt` (N) and the KEYS_ONLY `ProcessingRetryDueIndex`. Every
+  other attribute, index, billing, stream, recovery and encryption setting must be
+  unchanged; only the recomputed `stream_arn` and `stream_label` may be unknown.
+- creating the filter and alarm with the repository's pattern, metric, namespace,
+  period, threshold, comparison and missing-data handling, with alarm and OK
+  actions on the critical alerts topic only. Already existing ones must be no-ops.
+
+The KMS key, reached through the table, must be a no-op, and no other managed
+resource may appear. Production must carry the filter and alarm; Sandbox may omit
+both when its alerting is off (the `[0]` targets then match no instance and plan
+nothing). The filter names the app log group through `local.app_log_group_name`
+and the alarm builds the critical alerts topic ARN from
+`local.critical_alerts_topic`, instead of referencing either resource. Both
+resources depend on `aws_kms_key_policy.app_general`, and targeting includes
+dependencies, so a reference would pull the key policy (and through it both
+CloudFront distributions) into this plan. Pending site or key policy drift
+therefore does not block this scope, and the verifier refuses a plan that still
+contains the key policy, log group or topic.
+
+The plan is also refused when the before state lacks `UpdateDeliveryDueIndex`,
+because it would then add two indexes. `meeting-update-delivery` is Sandbox-only,
+so no workflow in this repository adds that index in production. Production lacks
+it today, and this scope refuses there until a one-time operator `UpdateTable` adds
+it through the private operations route.
+
+Production order:
+
+1. The delivery index exists (operator route above).
+2. Apply `_infra/production-bootstrap` with `enable_processing_retry_policy = true`.
+   Plan needs its log, alarm and topic reads, not only Apply's writes.
+3. Plan `production`/`default`/`processing-retry` on `master`.
+4. Apply that plan at the same SHA.
+5. Turn on `meetings.processingRetry.enabled` once `ProcessingRetryDueIndex` is
+   ACTIVE.
 
 Standalone policy adoption requires a separate reviewed plan and approval; it is
 outside the four-target Apply. The actual state-backed prerequisite plan must
@@ -669,7 +801,51 @@ three-hour session to cover bounded warmup and retirement; it has no static-key 
 
 The Sandbox task-role AppConfig policy is scoped to its application, profile,
 environment, configuration and deployment strategy. Production retains its existing
-policy in this change. Frontend, docs and Terraform authentication are separate.
+policy in this change. Terraform authentication remains separate.
+
+### Sandbox site publishing
+
+The Sandbox frontend and docs jobs use the same OIDC role through
+`SANDBOX_BACKEND_DEPLOY_ROLE_ARN` and `AWS_ACCOUNT_ID`. Each job requests a
+one-hour session named `chronote-sandbox-<run_id>-<run_attempt>` and verifies the
+exact account, role and session before any S3 or CloudFront operation.
+`scripts/deployment/sandbox-site-session.cjs` validates the configured account,
+Sandbox role, region and selected site's bucket and distribution. It masks those
+selectors and the resulting policy before exposing the policy to the credentials
+action. Valid custom bucket names are preserved.
+
+The frontend session can list its bucket, publish and delete its objects, abort
+multipart uploads and invalidate its distribution. Docs also retain distribution
+and invalidation reads. KMS use is restricted to S3 in the configured region and
+that site's object encryption context. The session policy intersects with the
+role's installed policy, which restricts KMS to the existing application key.
+Neither job receives backend, IAM, Secrets Manager or other-site permissions.
+Missing docs selectors still skip docs publishing. Preflight requires the account
+and role selectors instead of static keys and retains its production-target guards.
+
+Before enabling these jobs, install and verify the existing
+`aws_iam_policy.site_publishing[0]` and
+`aws_iam_role_policy_attachment.site_publishing[0]` from
+`_infra/site-publishing.tf` through the protected `sandbox-site-permissions`
+Plan/Apply scope and a reviewed saved Terraform plan. This operation is pinned to
+`meeting-notes-sandbox-site-publishing` and
+`meeting-notes-sandbox-github-deploy`; a custom project prefix is refused.
+Install the separately reviewed Sandbox bootstrap runner permissions first, using the [bounded inline-policy update guard](sandbox-bootstrap/README.md#bounded-existing-policy-update) and an independently approved saved bootstrap plan. Its new non-secret bucket inputs must equal the existing deployment selectors. The application target graph uses an exact OIDC ARN and equivalent HTTPS input predicates to avoid account-wide provider discovery and ALB/VPC metadata grants. Source checks do not prove that either policy is installed.
+The operation requires matching storage account/region, known unchanged site
+buckets, the application key equal to the binding key and the existing deployment
+role. Distribution selectors must agree with their `TFVAR_` inputs. It checks
+the complete policy before capture and again after restoration, including no-op
+plans. Its Apply session excludes meeting-update writes. The restricted
+`meeting-update-delivery` workflow still cannot install these permissions.
+Refuse unrelated resources, uncertain private bindings, concurrent owner conflicts
+or permission failures. Use the [private delivery procedure](../docs/terraform-private-delivery.md)
+and native approval; do not bypass the saved-plan gate with direct IAM writes.
+
+Source merge, installed policy, fresh OIDC authentication and actual publishing
+require separate evidence. Source tests establish none of the hosted outcomes.
+There is no static-key fallback. Retire obsolete GitHub key bindings and their
+Terraform producer only after every static caller has migrated and the replacement
+has succeeded; a later Terraform apply must not recreate a retired binding.
 
 Run the mocked policy checks with `terraform -chdir=_infra init -backend=false` and
 `terraform -chdir=_infra test`. Live introduction still requires a reviewed full saved

@@ -1,5 +1,8 @@
 import { describe, expect, test } from "@jest/globals";
-import { buildPortalMeetingUrl } from "../../src/utils/portalLinks";
+import {
+  buildPortalMeetingUrl,
+  buildPortalMeetingsUrl,
+} from "../../src/utils/portalLinks";
 
 describe("portalLinks", () => {
   test("builds direct meeting detail URLs", () => {
@@ -15,4 +18,19 @@ describe("portalLinks", () => {
       "https://app.example.com/portal/meetings/guild-1/voice-1%232026-01-02T00%3A00%3A00.000Z?eventId=line-9&fullScreen=true",
     );
   });
+});
+
+test("builds unified server source URLs with a drawer", () => {
+  expect(
+    buildPortalMeetingsUrl({
+      baseUrl: "https://app.example.com/",
+      scope: { kind: "guild", serverId: "g" },
+      meetingServerId: "personal:u",
+      meetingId: "voice#date",
+      eventId: "e",
+      fullScreen: true,
+    }),
+  ).toBe(
+    "https://app.example.com/portal/meetings?scope=guild&serverId=g&meetingServerId=personal%3Au&meetingId=voice%23date&eventId=e&fullScreen=true",
+  );
 });

@@ -1,6 +1,38 @@
+# Distribution IDs instead of resource references keep a targeted plan of this
+# policy from reading or changing either distribution.
+variable "frontend_distribution_id" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.frontend_distribution_id == "" || can(regex("^E[A-Z0-9]+$", var.frontend_distribution_id))
+    error_message = "frontend_distribution_id must be a CloudFront distribution ID."
+  }
+}
+variable "docs_distribution_id" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.docs_distribution_id == "" || can(regex("^E[A-Z0-9]+$", var.docs_distribution_id))
+    error_message = "docs_distribution_id must be a CloudFront distribution ID."
+  }
+}
+locals {
+  site_distribution_arn = {
+    for site, id in { frontend = var.frontend_distribution_id, docs = var.docs_distribution_id } :
+    site => "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${id}"
+  }
+}
+
 resource "aws_iam_policy" "site_publishing" {
   count = contains(["prod", "sandbox"], var.environment) ? 1 : 0
   name  = "${local.name_prefix}-site-publishing"
+
+  lifecycle {
+    precondition {
+      condition     = var.frontend_distribution_id != "" && var.docs_distribution_id != ""
+      error_message = "Site publishing needs frontend_distribution_id and docs_distribution_id."
+    }
+  }
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -21,13 +53,13 @@ resource "aws_iam_policy" "site_publishing" {
         Sid      = "SiteInvalidation"
         Effect   = "Allow"
         Action   = ["cloudfront:CreateInvalidation"]
-        Resource = [aws_cloudfront_distribution.frontend.arn, aws_cloudfront_distribution.docs.arn]
+        Resource = [local.site_distribution_arn.frontend, local.site_distribution_arn.docs]
       },
       {
         Sid      = "DocsPreflightAndWait"
         Effect   = "Allow"
         Action   = ["cloudfront:GetDistribution", "cloudfront:GetInvalidation"]
-        Resource = [aws_cloudfront_distribution.docs.arn]
+        Resource = [local.site_distribution_arn.docs]
       },
       {
         Sid      = "SiteObjectEncryption"

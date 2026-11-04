@@ -99,11 +99,12 @@ describe("PersonalUpload", () => {
     fireEvent.click(screen.getByTestId("personal-upload-open-meeting"));
 
     expect(mockNavigate).toHaveBeenCalledWith({
-      to: "/portal/meetings/$serverId/$meetingId",
-      params: {
-        serverId: "personal:user-1",
+      to: "/portal/meetings",
+      search: expect.objectContaining({
+        scope: "personal",
+        meetingServerId: "personal:user-1",
         meetingId: "personal#2026-01-01T00:00:00.000Z",
-      },
+      }),
     });
   });
 

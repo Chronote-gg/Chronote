@@ -16,7 +16,7 @@ export function firstPublicationFixture() {
     segments: [],
   });
   const profile = {
-    accountId: "079358094174",
+    accountId: "123456789012",
     region: "us-east-1",
     historyTable: "history",
     activeTable: "active",

@@ -28,6 +28,7 @@ import {
   TextChannel,
   User,
   VoiceBasedChannel,
+  PermissionFlagsBits,
 } from "discord.js";
 import { NoSubscriberBehavior, createAudioPlayer } from "@discordjs/voice";
 import type { SessionReservation } from "./types/deploymentControl";
@@ -244,6 +245,8 @@ async function applyVoiceSessionNickname(
     });
     const botMember = meeting.guild.members.me;
     if (!nicknameSuffix || !botMember) return;
+    // A local permission refusal issues no request and cannot have changed the nickname.
+    if (!botMember.permissions.has(PermissionFlagsBits.ChangeNickname)) return;
 
     const nextNickname = buildVoiceSessionNickname(
       botMember.displayName,
@@ -253,9 +256,17 @@ async function applyVoiceSessionNickname(
     if (botMember.nickname === nextNickname) return;
 
     meeting.botNicknameBeforeSession = botMember.nickname ?? null;
-    await botMember.setNickname(nextNickname);
-    meeting.botNicknameChanged = true;
+    await runMeetingNoticeMutation(
+      meeting,
+      async () => {
+        await botMember.setNickname(nextNickname);
+        meeting.botNicknameChanged = true;
+      },
+      () => false,
+    ); // REST can replay network failures/5xx before a final 4xx; that outcome stays unknown.
+    getMeetingProcessingSignal(meeting).throwIfAborted();
   } catch (error) {
+    getMeetingProcessingSignal(meeting).throwIfAborted();
     signal.throwIfAborted();
     console.warn("Failed to update bot session nickname.", error);
   }

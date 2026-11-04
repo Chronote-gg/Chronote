@@ -1,3 +1,7 @@
+import {
+  meetingBrowseSearchSchema,
+  type MeetingBrowseSearch,
+} from "../utils/meetingBrowseSearch";
 import { useEffect, useState } from "react";
 import { Stack } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -46,8 +50,8 @@ type CompleteUploadMutation = {
 };
 
 type PersonalMeetingNavigate = (options: {
-  to: "/portal/meetings/$serverId/$meetingId";
-  params: { serverId: string; meetingId: string };
+  to: "/portal/meetings";
+  search: MeetingBrowseSearch;
 }) => void;
 
 const PERSONAL_UPLOAD_ACCEPT =
@@ -228,11 +232,12 @@ function openPersonalMeeting(
 ) {
   if (!job?.meetingGuildId || !job.channelId_timestamp) return;
   navigate({
-    to: "/portal/meetings/$serverId/$meetingId",
-    params: {
-      serverId: job.meetingGuildId,
+    to: "/portal/meetings",
+    search: meetingBrowseSearchSchema.parse({
+      scope: "personal",
+      meetingServerId: job.meetingGuildId,
       meetingId: job.channelId_timestamp,
-    },
+    }),
   });
 }
 

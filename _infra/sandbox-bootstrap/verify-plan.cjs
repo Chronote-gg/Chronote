@@ -2,6 +2,11 @@
 const strict = require("node:assert/strict");
 const fs = require("node:fs");
 const crypto = require("node:crypto");
+const {
+  expectedBucketPolicy,
+  expectedTrustPolicy,
+  expectedRolePolicy,
+} = require("./policy-contracts.cjs");
 const AWS = "registry.terraform.io/hashicorp/aws";
 const VARIABLE_NAMES = [
   "administrator_role_arn",
@@ -14,6 +19,8 @@ const VARIABLE_NAMES = [
   "kms_key_arn",
   "reviewer_role_arn",
   "sandbox_account_id",
+  "site_docs_bucket",
+  "site_frontend_bucket",
   "trusted_refs",
 ];
 const TRUSTED_REFS = [
@@ -69,9 +76,22 @@ function bindingVariables(binding) {
       "executor/runtime cannot be the administrator or reader",
     );
   }
+  validateSiteBuckets(input);
   return input;
 }
 
+function validateSiteBuckets(input) {
+  for (const field of ["site_frontend_bucket", "site_docs_bucket"]) {
+    strict.match(input[field], /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/);
+    insist(
+      !input[field].includes("..") &&
+        !/^\d+\.\d+\.\d+\.\d+$/.test(input[field]) &&
+        !/^(xn--|sthree-|amzn-s3-demo-)/.test(input[field]) &&
+        !/(-s3alias|--ol-s3|\.mrap|--x-s3|--table-s3)$/.test(input[field]),
+      "invalid site bucket",
+    );
+  }
+}
 function managedValues(input) {
   const bucket = `meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}`;
   const role = "meeting-notes-sandbox-github-terraform";
@@ -153,35 +173,54 @@ function knownShape(actual, unknown, wanted) {
       knownShape(actual[field], unknown?.[field], wanted[field]);
   } else strict.deepEqual(actual, wanted);
 }
-function noEmbeddedControls(change, config, fields) {
+function noEmbeddedControls(change, config, fields, observed = {}) {
   for (const field of fields) {
     insist(
       !Object.hasOwn(config.expressions, field),
       `configured embedded ${field}`,
     );
     const control = change.after[field];
+    if (
+      Object.hasOwn(observed, field) &&
+      control != null &&
+      !(Array.isArray(control) && control.length === 0)
+    ) {
+      strict.deepEqual(
+        control,
+        observed[field],
+        `unreviewed embedded ${field}`,
+      );
+      continue;
+    }
     insist(
       control == null || (Array.isArray(control) && control.length === 0),
       `embedded ${field}`,
     );
   }
 }
-function validateStorageAndRole(entry, config) {
+function validateStorageAndRole(entry, config, binding) {
   const { change, type } = entry;
   if (type === "aws_s3_bucket") {
-    noEmbeddedControls(change, config, [
-      "acl",
-      "grant",
-      "policy",
-      "lifecycle_rule",
-      "replication_configuration",
-      "object_lock_configuration",
-      "logging",
-      "website",
-      "cors_rule",
-      "server_side_encryption_configuration",
-      "versioning",
-    ]);
+    noEmbeddedControls(
+      change,
+      config,
+      [
+        "acl",
+        "grant",
+        "policy",
+        "lifecycle_rule",
+        "replication_configuration",
+        "object_lock_configuration",
+        "logging",
+        "website",
+        "cors_rule",
+        "server_side_encryption_configuration",
+        "versioning",
+      ],
+      binding.bucketOwnerCanonicalId
+        ? observedBucketControls(binding, change.after)
+        : {},
+    );
     insist(
       !Object.hasOwn(config.expressions, "object_lock_enabled") &&
         change.after.object_lock_enabled !== true,
@@ -189,13 +228,17 @@ function validateStorageAndRole(entry, config) {
     );
   }
   if (type === "aws_iam_role") {
-    noEmbeddedControls(change, config, [
-      "inline_policy",
-      "managed_policy_arns",
-      "permissions_boundary",
-    ]);
+    validateObservedInlinePolicy(entry, config, binding);
+    noEmbeddedControls(
+      change,
+      config,
+      ["managed_policy_arns", "permissions_boundary"],
+      binding.bucketOwnerCanonicalId ? { permissions_boundary: "" } : {},
+    );
     knownShape(
-      change.after.permissions_boundary ?? null,
+      change.after.permissions_boundary === "" && binding.bucketOwnerCanonicalId
+        ? null
+        : (change.after.permissions_boundary ?? null),
       change.after_unknown?.permissions_boundary,
       null,
     );
@@ -205,6 +248,52 @@ function validateStorageAndRole(entry, config) {
       false,
     );
   }
+}
+function observedBucketControls(binding, after) {
+  const values = managedValues(binding.variables);
+  let policy;
+  if (typeof after.policy === "string") {
+    strict.deepEqual(
+      JSON.parse(after.policy),
+      expectedBucketPolicy(binding.variables),
+      "unreviewed bucket policy shadow",
+    );
+    policy = after.policy;
+  }
+  return {
+    grant: [
+      {
+        id: binding.bucketOwnerCanonicalId,
+        permissions: ["FULL_CONTROL"],
+        type: "CanonicalUser",
+        uri: "",
+      },
+    ],
+    policy,
+    server_side_encryption_configuration: [
+      { rule: values.aws_s3_bucket_server_side_encryption_configuration.rule },
+    ],
+    versioning: [{ enabled: true, mfa_delete: false }],
+  };
+}
+function validateObservedInlinePolicy(entry, config, binding) {
+  const inline = entry.change.after.inline_policy ?? [];
+  if (entry.change.actions[0] !== "no-op" || inline.length === 0) {
+    noEmbeddedControls(entry.change, config, ["inline_policy"]);
+    return;
+  }
+  insist(
+    !Object.hasOwn(config.expressions, "inline_policy"),
+    "configured embedded inline_policy",
+  );
+  strict.equal(inline.length, 1);
+  strict.deepEqual(Object.keys(inline[0]).sort(), ["name", "policy"]);
+  strict.equal(inline[0].name, "meeting-notes-sandbox-terraform-prerequisites");
+  strict.equal(
+    digest(inline[0].policy),
+    binding.previousRolePolicySha256,
+    "unreviewed refreshed inline policy",
+  );
 }
 function approvedPolicy(entry, binding) {
   const fields = {
@@ -304,8 +393,7 @@ function configuredResources(plan, managed, metadata) {
   }
   return configs;
 }
-function validateBootstrapPlan(plan, binding) {
-  const input = bindingVariables(binding);
+function validateEnvelope(plan, input, applyable) {
   strict.deepEqual(
     [
       plan.format_version,
@@ -314,7 +402,7 @@ function validateBootstrapPlan(plan, binding) {
       plan.complete,
       plan.errored,
     ],
-    ["1.2", "1.16.0", true, true, false],
+    ["1.2", "1.16.0", applyable, true, false],
     "incomplete or unsupported saved plan",
   );
   for (const field of [
@@ -333,6 +421,37 @@ function validateBootstrapPlan(plan, binding) {
     ),
     input,
   );
+  for (const check of plan.checks ?? [])
+    strict.equal(check.status, "pass", "unresolved check");
+}
+function validateBootstrapPlan(plan, binding) {
+  validateBinding(binding, false);
+  const seen = validatePlan(plan, binding, validateCreate, true, false);
+  insist(
+    Object.keys(managedValues(binding.variables)).every((type) =>
+      seen.has(`${type}.${resourceName(type)}[0]`),
+    ),
+    "missing one of eight creates",
+  );
+  return true;
+}
+function validateBinding(binding, update) {
+  const fields = ["backendKey", "variables", "policySha256"];
+  if (update) {
+    fields.push("previousRolePolicySha256", "bucketOwnerCanonicalId");
+    strict.match(binding.previousRolePolicySha256, /^[a-f0-9]{64}$/);
+    strict.match(binding.bucketOwnerCanonicalId, /^[a-f0-9]{64}$/);
+  }
+  strict.deepEqual(Object.keys(binding).sort(), fields.sort());
+  strict.deepEqual(Object.keys(binding.policySha256).sort(), [
+    "bucket",
+    "role",
+    "trust",
+  ]);
+}
+function validatePlan(plan, binding, inspectManaged, applyable, update) {
+  const input = bindingVariables(binding);
+  validateEnvelope(plan, input, applyable);
   const managed = managedValues(input);
   const metadata = metadataValues(input);
   const configs = configuredResources(plan, managed, metadata);
@@ -358,7 +477,7 @@ function validateBootstrapPlan(plan, binding) {
         config.name === entry.name,
       "configuration identity mismatch",
     );
-    validateResourceBindings(entry, config, input);
+    validateResourceBindings(entry, config, input, update);
     if (entry.mode === "data") validateMetadata(entry, input, metadata);
     else {
       strict.equal(entry.mode, "managed");
@@ -367,463 +486,100 @@ function validateBootstrapPlan(plan, binding) {
         entry.address,
         `${entry.type}.${resourceName(entry.type)}[0]`,
       );
-      strict.deepEqual(entry.change.actions, ["create"]);
-      strict.equal(entry.change.before, null);
-      knownShape(
-        entry.change.after,
-        entry.change.after_unknown,
-        managed[entry.type],
-      );
-      validateStorageAndRole(entry, config);
-      validateAdditionalStorageControls(entry, config);
-      approvedPolicy(entry, binding);
+      inspectManaged(entry, binding);
+      validateManagedControls(entry, config, managed, binding);
     }
   }
+  return seen;
+}
+function validateManagedControls(entry, config, managed, binding) {
+  knownShape(
+    entry.change.after,
+    entry.change.after_unknown,
+    managed[entry.type],
+  );
+  validateStorageAndRole(entry, config, binding);
+  validateAdditionalStorageControls(entry, config);
+  approvedPolicy(entry, binding);
+}
+function validateCreate(entry) {
+  strict.deepEqual(entry.change.actions, ["create"]);
+  strict.equal(entry.change.before, null);
+}
+function validateBootstrapSitePermissionsUpdate(plan, binding) {
+  validateBinding(binding, true);
+  const target = "aws_iam_role_policy.sandbox_terraform[0]";
+  const changed = plan.resource_changes?.some(
+    (r) => r.mode === "managed" && r.change.actions[0] !== "no-op",
+  );
+  const seen = validatePlan(
+    plan,
+    binding,
+    validateUnchangedOrSitePolicy,
+    changed === true,
+    true,
+  );
+  insist(seen.has(target), "missing runner policy");
   insist(
-    Object.keys(managed).every((type) =>
+    Object.keys(managedValues(binding.variables)).every((type) =>
       seen.has(`${type}.${resourceName(type)}[0]`),
     ),
-    "missing one of eight creates",
+    "missing reviewed bootstrap resource",
   );
   return true;
 }
-module.exports = { validateBootstrapPlan };
-if (require.main === module) {
-  insist(
-    process.argv.length === 4,
-    "usage: node verify-plan.cjs PRIVATE_PLAN_JSON REVIEWED_BINDING_JSON",
+function hasUnknown(value) {
+  if (value === true) return true;
+  return (
+    value != null &&
+    typeof value === "object" &&
+    Object.values(value).some(hasUnknown)
   );
-  validateBootstrapPlan(
-    ...process.argv
-      .slice(2)
+}
+function validateUnchangedOrSitePolicy(entry, binding) {
+  const { change } = entry;
+  insist(!hasUnknown(change.after_unknown), "unknown update value");
+  insist(change.before && change.after, "missing existing resource");
+  const before = { ...change.before },
+    after = { ...change.after };
+  if (entry.type === "aws_iam_role_policy") {
+    insist(
+      change.actions.length === 1 &&
+        ["update", "no-op"].includes(change.actions[0]),
+      "policy effect refused",
+    );
+    strict.equal(
+      digest(before.policy),
+      binding.previousRolePolicySha256,
+      "unreviewed installed role policy",
+    );
+    if (change.actions[0] === "update") {
+      delete before.policy;
+      delete after.policy;
+    }
+  } else strict.deepEqual(change.actions, ["no-op"]);
+  strict.deepEqual(before, after, "unrelated existing field changed");
+}
+module.exports = {
+  validateBootstrapPlan,
+  validateBootstrapSitePermissionsUpdate,
+};
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  insist(
+    args.length === 2 ||
+      (args.length === 3 && args[2] === "--site-permissions-update"),
+    "usage: node verify-plan.cjs PRIVATE_PLAN_JSON REVIEWED_BINDING_JSON [--site-permissions-update]",
+  );
+  const validate =
+    args.length === 2
+      ? validateBootstrapPlan
+      : validateBootstrapSitePermissionsUpdate;
+  validate(
+    ...args
+      .slice(0, 2)
       .map((path) => JSON.parse(fs.readFileSync(path, "utf8"))),
   );
-}
-
-// Fixed independently reviewed contract; provider-computed controls are checked separately.
-function expectedBucketPolicy(input) {
-  const reviewedReaders = [
-    `arn:aws:iam::${input.sandbox_account_id}:role/meeting-notes-sandbox-github-terraform`,
-    input.reviewer_role_arn,
-  ];
-  return {
-    Statement: [
-      {
-        Action: "s3:*",
-        Condition: {
-          Bool: {
-            "aws:SecureTransport": "false",
-          },
-        },
-        Effect: "Deny",
-        Principal: "*",
-        Resource: [
-          `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}`,
-          `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/*`,
-        ],
-        Sid: "TLSOnly",
-      },
-      {
-        Action: "s3:*",
-        Condition: {
-          ArnNotEquals: {
-            "aws:PrincipalArn": [
-              `${input.administrator_role_arn}`,
-              `${input.reviewer_role_arn}`,
-              `arn:aws:iam::${input.sandbox_account_id}:role/meeting-notes-sandbox-github-terraform`,
-            ],
-          },
-        },
-        Effect: "Deny",
-        Principal: "*",
-        Resource: [
-          `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}`,
-          `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/*`,
-        ],
-        Sid: "OnlyReviewedPrincipals",
-      },
-      {
-        Condition: {
-          ArnEquals: {
-            "aws:PrincipalArn": `arn:aws:iam::${input.sandbox_account_id}:role/meeting-notes-sandbox-github-terraform`,
-          },
-        },
-        Effect: "Deny",
-        NotAction: [
-          "s3:GetBucketLocation",
-          "s3:GetBucketVersioning",
-          "s3:GetBucketOwnershipControls",
-          "s3:GetBucketPublicAccessBlock",
-          "s3:GetBucketPolicyStatus",
-          "s3:GetBucketPolicy",
-          "s3:GetEncryptionConfiguration",
-          "s3:GetLifecycleConfiguration",
-          "s3:PutObject",
-          "s3:GetObjectVersion",
-        ],
-        Principal: "*",
-        Resource: [
-          `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}`,
-          `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/*`,
-        ],
-        Sid: "CaptureCannotAdminister",
-      },
-      {
-        Condition: {
-          ArnEquals: {
-            "aws:PrincipalArn": `${input.reviewer_role_arn}`,
-          },
-          ArnNotEquals: {
-            "aws:PrincipalArn": `${input.administrator_role_arn}`,
-          },
-        },
-        Effect: "Deny",
-        NotAction: [
-          "s3:GetBucketLocation",
-          "s3:GetBucketVersioning",
-          "s3:GetBucketOwnershipControls",
-          "s3:GetBucketPublicAccessBlock",
-          "s3:GetBucketPolicyStatus",
-          "s3:GetBucketPolicy",
-          "s3:GetEncryptionConfiguration",
-          "s3:GetLifecycleConfiguration",
-          "s3:GetObjectVersion",
-          "s3:ListBucketVersions",
-        ],
-        Principal: "*",
-        Resource: [
-          `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}`,
-          `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/*`,
-        ],
-        Sid: "ReviewerCannotWrite",
-      },
-      {
-        Action: "s3:ListBucketVersions",
-        Condition: {
-          ArnEquals: {
-            "aws:PrincipalArn": `${input.reviewer_role_arn}`,
-          },
-          ArnNotEquals: {
-            "aws:PrincipalArn": `${input.administrator_role_arn}`,
-          },
-          StringNotLike: {
-            "s3:prefix": "terraform/sandbox/*",
-          },
-        },
-        Effect: "Deny",
-        Principal: "*",
-        Resource: `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}`,
-        Sid: "ReviewerNamespaceListOnly",
-      },
-      {
-        Action: ["s3:PutObject", "s3:GetObjectVersion"],
-        Condition: {
-          ArnEquals: {
-            "aws:PrincipalArn": reviewedReaders,
-          },
-          ArnNotEquals: {
-            "aws:PrincipalArn": `${input.administrator_role_arn}`,
-          },
-        },
-        Effect: "Deny",
-        NotResource: `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/terraform/sandbox/*`,
-        Principal: "*",
-        Sid: "CaptureNamespaceOnly",
-      },
-      {
-        Action: "s3:PutObject",
-        Condition: {
-          StringNotEquals: {
-            "s3:if-none-match": "*",
-          },
-        },
-        Effect: "Deny",
-        Principal: "*",
-        Resource: `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/*`,
-        Sid: "ConditionalCreateOnly",
-      },
-      {
-        Action: "s3:PutObject",
-        Condition: {
-          StringNotEquals: {
-            "s3:x-amz-server-side-encryption": "aws:kms",
-          },
-        },
-        Effect: "Deny",
-        Principal: "*",
-        Resource: `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/*`,
-        Sid: "ExactKMSAlgorithm",
-      },
-      {
-        Action: "s3:PutObject",
-        Condition: {
-          StringNotEquals: {
-            "s3:x-amz-server-side-encryption-aws-kms-key-id": `${input.kms_key_arn}`,
-          },
-        },
-        Effect: "Deny",
-        Principal: "*",
-        Resource: `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/*`,
-        Sid: "ExactKMSKey",
-      },
-      {
-        Action: [
-          "s3:GetBucketLocation",
-          "s3:GetBucketVersioning",
-          "s3:GetBucketOwnershipControls",
-          "s3:GetBucketPublicAccessBlock",
-          "s3:GetBucketPolicyStatus",
-          "s3:GetBucketPolicy",
-          "s3:GetEncryptionConfiguration",
-          "s3:GetLifecycleConfiguration",
-        ],
-        Condition: {
-          ArnEquals: {
-            "aws:PrincipalArn": reviewedReaders,
-          },
-        },
-        Effect: "Allow",
-        Principal: {
-          AWS: `arn:aws:iam::${input.sandbox_account_id}:root`,
-        },
-        Resource: `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}`,
-        Sid: "ControlReadback",
-      },
-      {
-        Action: "s3:PutObject",
-        Condition: {
-          ArnEquals: {
-            "aws:PrincipalArn": `arn:aws:iam::${input.sandbox_account_id}:role/meeting-notes-sandbox-github-terraform`,
-          },
-          StringEquals: {
-            "s3:if-none-match": "*",
-            "s3:x-amz-server-side-encryption": "aws:kms",
-            "s3:x-amz-server-side-encryption-aws-kms-key-id": `${input.kms_key_arn}`,
-          },
-        },
-        Effect: "Allow",
-        Principal: {
-          AWS: `arn:aws:iam::${input.sandbox_account_id}:root`,
-        },
-        Resource: `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/terraform/sandbox/*`,
-        Sid: "ConditionalCapture",
-      },
-      {
-        Action: "s3:GetObjectVersion",
-        Condition: {
-          ArnEquals: {
-            "aws:PrincipalArn": reviewedReaders,
-          },
-        },
-        Effect: "Allow",
-        Principal: {
-          AWS: `arn:aws:iam::${input.sandbox_account_id}:root`,
-        },
-        Resource: `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/terraform/sandbox/*`,
-        Sid: "ExactVersionReview",
-      },
-    ],
-    Version: "2012-10-17",
-  };
-}
-
-// Fixed independently reviewed contract; provider-computed controls are checked separately.
-function expectedTrustPolicy(input) {
-  return {
-    Statement: [
-      {
-        Action: "sts:AssumeRoleWithWebIdentity",
-        Condition: {
-          StringEquals: {
-            "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-            "token.actions.githubusercontent.com:ref": [
-              "refs/heads/codex/sandbox-terraform-capture",
-              "refs/heads/master",
-            ],
-            "token.actions.githubusercontent.com:repository_id": `${input.github_repository_id}`,
-            "token.actions.githubusercontent.com:repository_owner_id": `${input.github_owner_id}`,
-            "token.actions.githubusercontent.com:sub":
-              "repo:Chronote-gg/Chronote:environment:sandbox",
-          },
-        },
-        Effect: "Allow",
-        Principal: {
-          Federated: `arn:aws:iam::${input.sandbox_account_id}:oidc-provider/token.actions.githubusercontent.com`,
-        },
-      },
-    ],
-    Version: "2012-10-17",
-  };
-}
-
-// Fixed independently reviewed contract; provider-computed controls are checked separately.
-function expectedRolePolicy(input) {
-  return {
-    Statement: [
-      {
-        Action: ["s3:GetObject", "s3:PutObject"],
-        Effect: "Allow",
-        Resource:
-          "arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/sandbox/meeting-notes-terraform/state",
-        Sid: "ApplicationState",
-      },
-      {
-        Action: "s3:ListBucket",
-        Condition: {
-          StringEquals: {
-            "s3:prefix": [
-              "meeting-notes-terraform/",
-              "meeting-notes-terraform/sandbox/",
-            ],
-          },
-        },
-        Effect: "Allow",
-        Resource: "arn:aws:s3:::meeting-notes-terraform-state-bucket",
-        Sid: "WorkspaceDiscovery",
-      },
-      {
-        Action: "dynamodb:DescribeTable",
-        Effect: "Allow",
-        Resource: `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-terraform-state-locks`,
-        Sid: "StateLockMetadata",
-      },
-      {
-        Action: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"],
-        Condition: {
-          "ForAllValues:StringEquals": {
-            "dynamodb:LeadingKeys": [
-              "meeting-notes-terraform-state-bucket/meeting-notes-terraform/sandbox/meeting-notes-terraform/state",
-              "meeting-notes-terraform-state-bucket/meeting-notes-terraform/sandbox/meeting-notes-terraform/state-md5",
-            ],
-          },
-        },
-        Effect: "Allow",
-        Resource: `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-terraform-state-locks`,
-        Sid: "SandboxStateLocks",
-      },
-      {
-        Action: [
-          "dynamodb:DescribeTable",
-          "dynamodb:DescribeContinuousBackups",
-          "dynamodb:DescribeTimeToLive",
-          "dynamodb:ListTagsOfResource",
-        ],
-        Effect: "Allow",
-        Resource: [
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-AccessLogsTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-ActiveMeetingTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-AskConversationTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-AutoRecordSettingsTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-ChannelContextTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-ChatTtsUsageTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-ConfigOverridesTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-ContactFeedbackTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-DeploymentControlTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-DictionaryTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-EntitlementGrantTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-FeedbackTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-GuildSubscriptionTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-InstallerTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-InteractionReceiptTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-McpOAuthTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-MeetingControlCommandTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-MeetingHistoryTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-MeetingShareTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-MeetingUserIndexTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-NotionIntegrationTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-OnboardingStateTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-PaymentTransactionTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-PersonalMediaUploadJobTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-PersonalRecordingSegmentTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-RecordingTranscriptTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-ServerContextTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-SessionTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-StripeWebhookEventTable`,
-          `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-UserSpeechSettingsTable`,
-        ],
-        Sid: "TableMetadata",
-      },
-      {
-        Action: ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags"],
-        Effect: "Allow",
-        Resource: `arn:aws:iam::${input.sandbox_account_id}:policy/meeting-notes-sandbox-bot-dynamodb-policy`,
-        Sid: "RuntimePolicyMetadata",
-      },
-      {
-        Action: [
-          "kms:DescribeKey",
-          "kms:GetKeyPolicy",
-          "kms:GetKeyRotationStatus",
-          "kms:ListResourceTags",
-        ],
-        Effect: "Allow",
-        Resource: `${input.kms_key_arn}`,
-        Sid: "KeyMetadata",
-      },
-      {
-        Action: "dynamodb:UpdateTable",
-        Effect: "Allow",
-        Resource: `arn:aws:dynamodb:us-east-1:${input.sandbox_account_id}:table/meeting-notes-sandbox-MeetingHistoryTable`,
-        Sid: "HistoryDeliveryIndex",
-      },
-      {
-        Action: ["iam:ListPolicyVersions", "iam:CreatePolicyVersion"],
-        Effect: "Allow",
-        Resource: `arn:aws:iam::${input.sandbox_account_id}:policy/meeting-notes-sandbox-bot-dynamodb-policy`,
-        Sid: "RuntimePolicyVersion",
-      },
-      {
-        Action: [
-          "s3:GetBucketLocation",
-          "s3:GetBucketVersioning",
-          "s3:GetBucketOwnershipControls",
-          "s3:GetBucketPublicAccessBlock",
-          "s3:GetBucketPolicyStatus",
-          "s3:GetBucketPolicy",
-          "s3:GetEncryptionConfiguration",
-          "s3:GetLifecycleConfiguration",
-        ],
-        Effect: "Allow",
-        Resource: `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}`,
-        Sid: "CaptureControls",
-      },
-      {
-        Action: "s3:PutObject",
-        Condition: {
-          StringEquals: {
-            "s3:if-none-match": "*",
-            "s3:x-amz-server-side-encryption": "aws:kms",
-            "s3:x-amz-server-side-encryption-aws-kms-key-id": `${input.kms_key_arn}`,
-          },
-        },
-        Effect: "Allow",
-        Resource: `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/terraform/sandbox/*`,
-        Sid: "ConditionalCapture",
-      },
-      {
-        Action: "s3:GetObjectVersion",
-        Effect: "Allow",
-        Resource: `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/terraform/sandbox/*`,
-        Sid: "ExactVersionCapture",
-      },
-      {
-        Action: ["kms:GenerateDataKey", "kms:Decrypt"],
-        Condition: {
-          StringEquals: {
-            "kms:CallerAccount": `${input.sandbox_account_id}`,
-            "kms:ViaService": "s3.us-east-1.amazonaws.com",
-          },
-          StringLike: {
-            "kms:EncryptionContext:aws:s3:arn": `arn:aws:s3:::meeting-notes-sandbox-private-evidence-${input.sandbox_account_id}/terraform/sandbox/*`,
-          },
-        },
-        Effect: "Allow",
-        Resource: `${input.kms_key_arn}`,
-        Sid: "CaptureKeyUse",
-      },
-    ],
-    Version: "2012-10-17",
-  };
 }
 
 function bindingExpression(expression, field, expected) {
@@ -835,7 +591,7 @@ function bindingExpression(expression, field, expected) {
         expression.references.length === 1 &&
         expression.references[0] === `var.${field}`;
 }
-function validateResourceBindings(entry, config, input) {
+function validateResourceBindings(entry, config, input, update) {
   const { after, after_unknown: unknown = {} } = entry.change;
   const region = config.expressions.region;
   insist(
@@ -857,7 +613,18 @@ function validateResourceBindings(entry, config, input) {
     unknown.expected_bucket_owner !== true,
     "unknown expected bucket owner",
   );
-  if (after.expected_bucket_owner != null)
+  const unchangedEmptyOwner =
+    update === true &&
+    [
+      "aws_s3_bucket_server_side_encryption_configuration",
+      "aws_s3_bucket_versioning",
+    ].includes(entry.type) &&
+    !Object.hasOwn(config.expressions, "expected_bucket_owner") &&
+    entry.change.actions.length === 1 &&
+    entry.change.actions[0] === "no-op" &&
+    entry.change.before?.expected_bucket_owner === "" &&
+    after.expected_bucket_owner === "";
+  if (after.expected_bucket_owner != null && !unchangedEmptyOwner)
     strict.equal(after.expected_bucket_owner, input.sandbox_account_id);
 }
 function hasConfiguredSetting(expression, field) {

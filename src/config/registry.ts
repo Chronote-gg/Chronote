@@ -1,5 +1,7 @@
 import type { ConfigEntry } from "./types";
+import { attendeeAccessConfigEntry } from "./attendeeAccess";
 import { speechDetectionConfigEntry } from "./speechDetection";
+import { transcriptionLanguageConfigEntry } from "./transcriptionLanguage";
 import {
   FAST_SILENCE_THRESHOLD,
   MAX_SNIPPET_LENGTH,
@@ -31,6 +33,7 @@ import {
 
 export const CONFIG_REGISTRY: ConfigEntry[] = [
   speechDetectionConfigEntry,
+  transcriptionLanguageConfigEntry,
   {
     key: "features.experimental",
     label: "Experimental features",
@@ -668,6 +671,20 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "toggle" },
   },
   {
+    key: "meetings.processingRetry.enabled",
+    label: "Processing retry",
+    description:
+      "Let meeting owners and operators re-run failed transcription, notes, or summary processing. Keep this off until the ProcessingRetryDueIndex is active.",
+    category: "Meetings",
+    group: "Experimental",
+    valueType: "boolean",
+    defaultValue: false,
+    scopes: {
+      global: scope(true, true, "superadmin", "toggle"),
+    },
+    ui: { type: "toggle" },
+  },
+  {
     key: "visionCaptions.enabled",
     label: "Vision captions",
     description:
@@ -938,6 +955,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     },
     ui: { type: "segmented", options: ["off", "server", "public"] },
   },
+  attendeeAccessConfigEntry,
   ...buildModelSelectionEntries(),
   ...buildModelParamEntries(),
 ];

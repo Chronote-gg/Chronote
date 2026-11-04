@@ -21,9 +21,10 @@ import { resolveAnalyticsEnvironment } from "../utils/purchaseAnalytics";
  * that needs it and a matching line in the privacy policy.
  */
 
+// String lists exist for enum sets (such as retried stages), never for user content.
 type AnalyticsProperties = Record<
   string,
-  string | number | boolean | undefined
+  string | number | boolean | readonly string[] | undefined
 >;
 
 type CaptureArgs = {

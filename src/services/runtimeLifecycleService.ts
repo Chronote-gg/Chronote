@@ -1,5 +1,10 @@
 import type { MaintenanceHold } from "../types/productionIntroduction";
 import { RuntimeAdmissionUnavailable } from "./runtimeAdmissionError";
+import {
+  createArtifactAdmissionGate,
+  type ArtifactAdmissionGate,
+} from "./artifactAdmissionGate";
+import type { RuntimeArtifactSafety } from "./runtimeArtifactSafety";
 import { admitCompatibleReplacement } from "./runtimeCompatibleReplacementService";
 import type { DeploymentControlRepository } from "../repositories/deploymentControlRepository";
 import { isDeepStrictEqual } from "node:util";
@@ -72,8 +77,12 @@ export function createRuntimeLifecycle(options: {
   now?: () => number;
   probeReadiness: () => Promise<RuntimeReadinessProbe>;
   checkpointAndFence?: () => Promise<void>;
+  artifactAdmission?: ArtifactAdmissionGate;
+  artifactSafety?: RuntimeArtifactSafety;
 }) {
   const { identity, repository, protection } = options;
+  const artifactAdmission =
+    options.artifactAdmission ?? createArtifactAdmissionGate();
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   let row: RuntimeRecord | undefined;
   let allowed = false;
@@ -222,6 +231,7 @@ export function createRuntimeLifecycle(options: {
     if ((await repository.writeRuntime(next)) !== "applied")
       throw new Error("Runtime changed during heartbeat");
     row = next;
+    await options.artifactSafety?.refresh();
     if (await admitCompatibleReplacement(repository, next, now()))
       return refresh();
     maintenance = control.maintenance;
@@ -259,7 +269,10 @@ export function createRuntimeLifecycle(options: {
     }, RUNTIME_HEARTBEAT_MS);
     heartbeat.unref();
   }
-  function beginRuntimeWork(kind: RuntimeWorkKind): RuntimeWorkRegistration {
+  function beginRuntimeWork(
+    kind: RuntimeWorkKind,
+    producesArtifacts = true,
+  ): RuntimeWorkRegistration {
     if (
       !allowed ||
       ineligible ||
@@ -270,6 +283,9 @@ export function createRuntimeLifecycle(options: {
       row.readiness.expiresAt <= now()
     )
       throw new RuntimeAdmissionUnavailable("Runtime is not accepting work");
+    const artifactWork = producesArtifacts
+      ? artifactAdmission.begin()
+      : undefined;
     counts[kind]++;
     let settled = false;
     return {
@@ -284,6 +300,7 @@ export function createRuntimeLifecycle(options: {
           ["releasing", "retired", "stale", "candidate"].includes(row.role)
         )
           throw new Error("Session cannot grant control ownership");
+        const artifacts = artifactWork?.beginOwned();
         counts.ancillary_delivery++;
         let controlSettled = false;
         return {
@@ -291,6 +308,7 @@ export function createRuntimeLifecycle(options: {
             if (controlSettled) return;
             controlSettled = true;
             counts.ancillary_delivery--;
+            artifacts?.settle();
           },
         };
       },
@@ -298,6 +316,7 @@ export function createRuntimeLifecycle(options: {
         if (!settled) {
           settled = true;
           counts[kind]--;
+          artifactWork?.settle();
         }
       },
       // A finalizer keeps the same ownership handle while the runtime drains.
@@ -404,6 +423,7 @@ export function createRuntimeLifecycle(options: {
         };
       if (stored.role === "retired")
         return { kind: "retired", counts: { ...counts } };
+      await options.artifactSafety?.verifyRetirement(request);
       if (stored.role !== "releasing")
         stored = await changeRole(stored, "releasing", retirementEpoch);
       if (request) {
@@ -411,12 +431,7 @@ export function createRuntimeLifecycle(options: {
         if (!current || !(await retirementAuthorized(current, request)))
           throw new Error("Retirement authority changed before release");
       }
-      try {
-        await protection.release();
-      } catch {
-        releaseUncertain = true;
-        throw new Error("Protection release uncertain");
-      }
+      await releaseNativeProtection();
       await changeRole(
         stored,
         "retired",
@@ -430,6 +445,14 @@ export function createRuntimeLifecycle(options: {
         counts: { ...counts },
         reason: "dependency_unavailable",
       };
+    }
+  }
+  async function releaseNativeProtection() {
+    try {
+      await protection.release();
+    } catch {
+      releaseUncertain = true;
+      throw new Error("Protection release uncertain");
     }
   }
   function prepareRuntimeRetirement({
@@ -457,8 +480,10 @@ export function createRuntimeLifecycle(options: {
         Object.values(counts).some((count) => count > 0)
       )
         throw new Error("Runtime is not retired");
+      await options.artifactSafety?.authorizeReactivation();
       await protection.start();
       await changeRole(stored, "candidate", retirementEpoch);
+      await options.artifactSafety?.startupReady();
       unsafe = false;
       ineligible = false;
       await refresh();
@@ -506,6 +531,7 @@ export function createRuntimeLifecycle(options: {
       ineligible = true;
     },
     async shutdown() {
+      options.artifactSafety?.stop();
       allowed = false;
       ineligible = true;
       clearInterval(heartbeat);
@@ -513,6 +539,7 @@ export function createRuntimeLifecycle(options: {
       clearInterval(heartbeat);
     },
     stop() {
+      options.artifactSafety?.stop();
       clearInterval(heartbeat);
       protection.stop();
       allowed = false;
@@ -535,8 +562,10 @@ export function getRuntimeLifecycle(): RuntimeLifecycle {
   if (!runtime) throw new Error("Runtime lifecycle has not started");
   return runtime;
 }
-export const beginRuntimeWork = (kind: RuntimeWorkKind) =>
-  getRuntimeLifecycle().beginRuntimeWork(kind);
+export const beginRuntimeWork = (
+  kind: RuntimeWorkKind,
+  producesArtifacts = true,
+) => getRuntimeLifecycle().beginRuntimeWork(kind, producesArtifacts);
 export const getRuntimeAdmissionContext = () =>
   getRuntimeLifecycle().getRuntimeAdmissionContext();
 export const refreshRuntimeReadiness = () =>

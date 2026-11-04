@@ -1,24 +1,27 @@
 import { saveMeetingArchive } from "./meetingArchiveAction";
-import { updateMeeting } from "../../services/meetingUpdateService";
 import { approvedCorrectionMutation } from "../../services/approvedMeetingCorrection";
+import { meetingBrowseFiltersSchema } from "../../services/meetingBrowseCursor";
+import { updateMeeting } from "../../services/meetingUpdateService";
 import { projectMeetingUpdateDelivery } from "../../services/meetingUpdateStatus";
-import { firstMeeting } from "./firstMeeting";
+import { myMeetingsInputFields } from "../../types/myMeetingsInput";
 import { requireBotInGuild } from "./ensureBotPresence";
+import { firstMeeting } from "./firstMeeting";
 
-import {
-  projectMeetingCapture,
-  resolveCaptureStatus,
-} from "../../utils/meetingCaptureNotice";
 import { TRPCError } from "@trpc/server";
-import { formatHunkDiff } from "../../utils/diff";
-import { z } from "zod";
-import { v4 as uuidv4 } from "uuid";
 import quillDeltaToMarkdownModule from "quill-delta-to-markdown";
+import { v4 as uuidv4 } from "uuid";
+import { z } from "zod";
+import { config } from "../../services/configService";
 import {
-  getMeetingHistoryService,
-  listRecentMeetingsForGuildService,
-  updateMeetingAccessGrantsService,
-} from "../../services/meetingHistoryService";
+  boundDictionaryTeachingNotesDiff,
+  selectDictionaryTeachingTranscriptExcerpt,
+} from "../../services/dictionaryTeachingContextService";
+import { createDictionaryTeachingTokenStore } from "../../services/dictionaryTeachingTokenStore";
+import {
+  listBotGuildsCached,
+  listGuildChannelsCached,
+} from "../../services/discordCacheService";
+import { isDiscordApiError } from "../../services/discordService";
 import {
   ensureManageGuildWithUserToken,
   type GuildSessionCache,
@@ -27,38 +30,36 @@ import {
   listMcpMyMeetings,
   McpMeetingAccessError,
 } from "../../services/mcpMeetingService";
-import { config } from "../../services/configService";
 import {
-  createNotesCorrectionTokenStore,
-  type NotesCorrectionTokenRecord,
-} from "../../services/notesCorrectionTokenStore";
-import { createDictionaryTeachingTokenStore } from "../../services/dictionaryTeachingTokenStore";
-import {
-  boundDictionaryTeachingNotesDiff,
-  selectDictionaryTeachingTranscriptExcerpt,
-} from "../../services/dictionaryTeachingContextService";
-import { DICTIONARY_TEACHING_TOKEN_TTL_MS } from "../../types/dictionaryTeaching";
-import { buildMeetingTimelineEventsFromHistory } from "../../services/meetingTimelineService";
-import {
-  fetchJsonFromS3,
-  getSignedObjectUrl,
-} from "../../services/storageService";
-import { getMeetingSummaryFeedback } from "../../services/summaryFeedbackService";
-import { isDiscordApiError } from "../../services/discordService";
-import {
-  listBotGuildsCached,
-  listGuildChannelsCached,
-} from "../../services/discordCacheService";
-import { CONFIG_KEYS } from "../../config/keys";
+  getMeetingHistoryService,
+  listRecentMeetingsForGuildService,
+  updateMeetingAccessGrantsService,
+} from "../../services/meetingHistoryService";
 import {
   MEETING_NAME_REQUIREMENTS,
   normalizeMeetingName,
   resolveUniqueMeetingName,
 } from "../../services/meetingNameService";
+import { buildMeetingTimelineEventsFromHistory } from "../../services/meetingTimelineService";
+import {
+  createNotesCorrectionTokenStore,
+  type NotesCorrectionTokenRecord,
+} from "../../services/notesCorrectionTokenStore";
+import {
+  fetchJsonFromS3,
+  getSignedObjectUrl,
+} from "../../services/storageService";
+import { getMeetingSummaryFeedback } from "../../services/summaryFeedbackService";
+import { DICTIONARY_TEACHING_TOKEN_TTL_MS } from "../../types/dictionaryTeaching";
+import { formatHunkDiff } from "../../utils/diff";
+import {
+  projectMeetingCapture,
+  resolveCaptureStatus,
+} from "../../utils/meetingCaptureNotice";
 
-import { generateMeetingSummaries } from "../../services/meetingSummaryService";
-import { generateOpenAIText } from "../../services/openaiTextService";
 import { getLangfuseChatPrompt } from "../../services/langfusePromptService";
+import { generateMeetingSummaries } from "../../services/meetingSummaryService";
+import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
 import {
   buildModelOverrides,
   getModelChoice,
@@ -67,7 +68,7 @@ import {
   resolveChatParamsForRole,
   resolveModelParamsForContext,
 } from "../../services/openaiModelParams";
-import { resolveModelChoicesForContext } from "../../services/modelChoiceService";
+import { generateOpenAIText } from "../../services/openaiTextService";
 import type { ChatEntry } from "../../types/chat";
 import type {
   MeetingAccessGrant,
@@ -76,45 +77,38 @@ import type {
 } from "../../types/db";
 import type { MeetingEvent } from "../../types/meetingTimeline";
 
-import type { Participant } from "../../types/participants";
-import type { TranscriptPayload } from "../../types/transcript";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
+import type { TranscriptPayload } from "../../types/transcript";
 
-import { stripCodeFences } from "../../utils/text";
+import { resolveAttendeeAccessEnabled } from "../../services/attendeeAccessSetting";
+import { ensureUserCanAccessMeeting } from "../../services/meetingAccessService";
 import {
-  collectMentionIds,
-  mergeAllowedMentions,
-  stripUnknownMentions,
-} from "../../utils/mentionSanitizer";
+  resolveMeetingArtifactAccess,
+  resolveServerMeetingArtifactAccess,
+} from "../../services/meetingArtifactAccessService";
+import {
+  buildMeetingMentionReplacer,
+  createMeetingMentionReplacer,
+  resolveGuildRoleNames,
+  resolveMentionsInTimelineEvents,
+} from "../../services/meetingMentionService";
+import { resolveMeetingAttendees } from "../../services/meetingSharePayloadService";
 import { buildMentionRosters } from "../../services/mentionRosterService";
 import {
   buildImportedMeetingNotes,
   normalizeImportedNotes,
 } from "../../utils/importedNotes";
-import { resolveAttendeeDisplayName } from "../../utils/participants";
-import {
-  buildMeetingMentionReplacer,
-  buildParticipantMap,
-  createMeetingMentionReplacer,
-  resolveGuildRoleNames,
-  resolveMentionsInTimelineEvents,
-} from "../../services/meetingMentionService";
 import {
   isPersonalMeeting,
   PERSONAL_MEETING_CHANNEL_NAME,
   resolveMeetingOwnerUserId,
 } from "../../utils/meetingOwnership";
-import { ensureUserCanManageChannel } from "../../services/discordPermissionsService";
 import {
-  checkUserMeetingAccess,
-  ensureUserCanAccessMeeting,
-  resolvePersonalMeetingSharedGuildIds,
-  type MeetingAccessMissingPermission,
-} from "../../services/meetingAccessService";
-import {
-  getSnapshotBoolean,
-  resolveConfigSnapshot,
-} from "../../services/unifiedConfigService";
+  collectMentionIds,
+  mergeAllowedMentions,
+  stripUnknownMentions,
+} from "../../utils/mentionSanitizer";
+import { stripCodeFences } from "../../utils/text";
 import {
   authedProcedure,
   correctionProcedure,
@@ -122,49 +116,15 @@ import {
   router,
 } from "../trpc";
 import {
-  resolveMeetingArtifactAccess,
-  resolveServerMeetingArtifactAccess,
-} from "../../services/meetingArtifactAccessService";
-
-const resolveParticipantLabel = (participant: Participant) =>
-  participant.serverNickname ||
-  participant.displayName ||
-  participant.username ||
-  participant.tag ||
-  "Unknown";
-
-const parseChannelIdTimestamp = (channelIdTimestamp: string) => {
-  const hashIndex = channelIdTimestamp.indexOf("#");
-  if (hashIndex <= 0 || hashIndex >= channelIdTimestamp.length - 1) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "Invalid meeting id.",
-    });
-  }
-
-  return {
-    channelId: channelIdTimestamp.slice(0, hashIndex),
-    timestamp: channelIdTimestamp.slice(hashIndex + 1),
-  };
-};
-
-const resolveMeetingAttendees = (history: {
-  participants?: Participant[];
-  attendees?: string[];
-}) => {
-  const participants = buildParticipantMap(history.participants);
-  if (history.attendees?.length) {
-    return history.attendees.map((attendee) =>
-      resolveAttendeeDisplayName(attendee, participants),
-    );
-  }
-  if (history.participants?.length) {
-    return history.participants.map((participant) =>
-      resolveParticipantLabel(participant),
-    );
-  }
-  return [];
-};
+  ensurePortalUserCanAccessMeeting,
+  ensurePortalUserCanEditMeetingNotes,
+  ensurePortalUserCanManageMeetingChannel,
+  parseChannelIdTimestamp,
+} from "./meetingEditPermissions";
+import {
+  resolveProcessingRetryView,
+  retryProcessing,
+} from "./meetingProcessingRetry";
 
 const NOTES_CORRECTION_DIFF_LINE_LIMIT = 600;
 const NOTES_CORRECTION_DIFF_CHAR_LIMIT = 12_000;
@@ -254,89 +214,6 @@ const resolveGuildAndChannelNamesForPrompt = async (options: {
   return { serverName, channelName };
 };
 
-const resolveAttendeeAccessEnabled = async (guildId: string) => {
-  try {
-    const snapshot = await resolveConfigSnapshot({ guildId });
-    return getSnapshotBoolean(
-      snapshot,
-      CONFIG_KEYS.meetings.attendeeAccessEnabled,
-    );
-  } catch (error) {
-    console.warn("Failed to resolve attendee access setting", {
-      guildId,
-      error,
-    });
-    return true;
-  }
-};
-
-const formatMeetingAccessErrorMessage = (options: {
-  missing: MeetingAccessMissingPermission[];
-  attendeeOverrideEnabled: boolean;
-}) => {
-  const reasons: string[] = [];
-  if (options.missing.includes("voice_connect")) {
-    reasons.push(
-      "You need permission to join the meeting voice channel (View Channel + Connect).",
-    );
-  }
-  if (options.missing.includes("notes_read_history")) {
-    reasons.push(
-      "You need permission to read message history in the notes channel (View Channel + Read Message History).",
-    );
-  }
-
-  const detail = reasons.length ? ` ${reasons.join(" ")}` : "";
-  const attendeeHint = options.attendeeOverrideEnabled
-    ? ""
-    : " If you attended this meeting, a server admin can enable Attendee access in Settings.";
-  return `Meeting access required.${detail}${attendeeHint}`.trim();
-};
-
-const ensurePortalUserCanAccessMeeting = async (options: {
-  accessToken?: string;
-  guildId: string;
-  meeting: MeetingHistory;
-  session?: GuildSessionCache;
-  userId: string;
-  attendeeOverrideEnabled: boolean;
-}) => {
-  const sharedGuildIds = await resolvePersonalMeetingSharedGuildIds({
-    accessToken: options.accessToken,
-    meeting: options.meeting,
-    session: options.session,
-    userId: options.userId,
-  });
-  if (sharedGuildIds === null) {
-    throw new TRPCError({
-      code: "TOO_MANY_REQUESTS",
-      message: "Discord rate limited. Please retry.",
-    });
-  }
-  const decision = await checkUserMeetingAccess({
-    guildId: options.guildId,
-    meeting: options.meeting,
-    userId: options.userId,
-    attendeeOverrideEnabled: options.attendeeOverrideEnabled,
-    sharedGuildIds,
-  });
-  if (decision.allowed === null) {
-    throw new TRPCError({
-      code: "TOO_MANY_REQUESTS",
-      message: "Discord rate limited. Please retry.",
-    });
-  }
-  if (!decision.allowed) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: formatMeetingAccessErrorMessage({
-        missing: decision.missing,
-        attendeeOverrideEnabled: options.attendeeOverrideEnabled,
-      }),
-    });
-  }
-};
-
 const ensurePersonalMeetingOwner = (options: {
   meeting: MeetingHistory;
   userId: string;
@@ -379,26 +256,6 @@ const buildPersonalAccessGrants = (input: {
   ];
 };
 
-const ensurePortalUserCanManageMeetingChannel = async (options: {
-  guildId: string;
-  channelId: string;
-  userId: string;
-}) => {
-  const allowed = await ensureUserCanManageChannel(options);
-  if (allowed === null) {
-    throw new TRPCError({
-      code: "TOO_MANY_REQUESTS",
-      message: "Discord rate limited. Please retry.",
-    });
-  }
-  if (!allowed) {
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "Manage channel permission required",
-    });
-  }
-};
-
 const ensurePortalUserCanManageMeetingMetadata = async (params: {
   accessToken?: string;
   guildId: string;
@@ -433,48 +290,6 @@ const ensurePortalUserCanManageMeetingMetadata = async (params: {
       message: "Manage Server permission required for this meeting.",
     });
   }
-};
-
-const ensurePortalUserCanEditMeetingNotes = async (params: {
-  accessToken?: string;
-  guildId: string;
-  meeting: MeetingHistory;
-  channelId: string;
-  session?: GuildSessionCache;
-  userId: string;
-  forbiddenMessage: string;
-}) => {
-  const attendeeOverrideEnabled = isPersonalMeeting(params.meeting)
-    ? true
-    : await resolveAttendeeAccessEnabled(params.guildId);
-  await ensurePortalUserCanAccessMeeting({
-    accessToken: params.accessToken,
-    guildId: params.guildId,
-    meeting: params.meeting,
-    session: params.session,
-    userId: params.userId,
-    attendeeOverrideEnabled,
-  });
-
-  const isMeetingOwner =
-    resolveMeetingOwnerUserId(params.meeting) === params.userId;
-  if (isMeetingOwner) {
-    return;
-  }
-
-  if (params.meeting.isAutoRecording) {
-    await ensurePortalUserCanManageMeetingChannel({
-      guildId: params.guildId,
-      channelId: params.channelId,
-      userId: params.userId,
-    });
-    return;
-  }
-
-  throw new TRPCError({
-    code: "FORBIDDEN",
-    message: params.forbiddenMessage,
-  });
 };
 
 const cleanupExpiredPendingNotesCorrections = () => {
@@ -763,29 +578,27 @@ const list = guildMemberProcedure
 
 const myList = authedProcedure
   .input(
-    z.object({
-      mode: z.enum(["attended", "accessible"]).optional(),
-      range: z.enum(["all", "today", "past_7_days", "custom"]).optional(),
-      limit: z.number().min(1).max(100).optional(),
-      cursor: z.string().min(1).optional(),
-      startDate: z.string().datetime().optional(),
-      endDate: z.string().datetime().optional(),
-      timeZoneOffsetMinutes: z
-        .number()
-        .int()
-        .min(-14 * 60)
-        .max(14 * 60)
-        .optional(),
-      serverIds: z.array(z.string().min(1)).optional(),
-      tags: z.array(z.string().min(1)).optional(),
-      archivedOnly: z.boolean().optional(),
-      includeArchived: z.boolean().optional(),
-    }),
+    z
+      .object({
+        browse: meetingBrowseFiltersSchema.optional(),
+        ...myMeetingsInputFields,
+        limit: z.number().min(1).max(100).optional(),
+      })
+      .refine(
+        (input) =>
+          !input.browse ||
+          (input.mode === "accessible" && !input.serverIds?.length),
+        {
+          message:
+            "Browse requires accessible mode and uses scope instead of serverIds.",
+        },
+      ),
   )
   .query(async ({ ctx, input }) => {
     try {
       return await listMcpMyMeetings({
         userId: ctx.user.id,
+        browse: input.browse,
         mode: input.mode,
         range: input.range,
         limit: input.limit,
@@ -941,6 +754,13 @@ const detail = authedProcedure
         notes,
         updateDelivery: projectMeetingUpdateDelivery(history),
         processing: history.processing,
+        processingRetry: await resolveProcessingRetryView({
+          history,
+          serverId: input.serverId,
+          channelId,
+          user: ctx.user,
+          session: ctx.req.session,
+        }),
         notesDelta: history.notesDelta,
         notesVersion: history.notesVersion ?? 1,
         meetingName: history.meetingName,
@@ -1665,4 +1485,5 @@ export const meetingsRouter = router({
   applyNotesCorrection,
   updateNotes,
   importNotes,
+  retryProcessing,
 });

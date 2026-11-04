@@ -29,6 +29,9 @@ _infra_state_mgmt/.terraform
 /playwright-report
 /test-results
 /test/storybook/screenshots
+/storybook-static
+# ONNX Runtime's in-memory telemetry cache can leave a session sidecar.
+/:memory:.ses
 
 # production
 /build

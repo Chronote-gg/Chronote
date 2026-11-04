@@ -96,6 +96,9 @@ async function continuationMode(options) {
 async function introduceProduction(options, mode) {
   if (!["introduce", "continue"].includes(mode))
     throw Error("introduction_mode_refused");
+  // The v1 action journal has no preservation transaction; a new recipe needs separate review.
+  if (options.binding.manifest.schemaVersion === 1)
+    throw Error("legacy_introduction_recipe_disabled");
   const continuation =
     mode === "continue" ? await continuationMode(options) : undefined;
   await preflight(options, continuation === "warming" ? "warming" : mode);

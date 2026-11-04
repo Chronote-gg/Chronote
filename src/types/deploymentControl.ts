@@ -19,6 +19,13 @@ import {
   recoveryDispositionSchema,
 } from "./recordingCheckpoint";
 import { z } from "zod";
+import {
+  RUNTIME_WORK_KINDS,
+  retirementContinuationSchema,
+  runtimeWorkCountsSchema,
+  type RuntimeWorkKind,
+  type RetirementContinuation,
+} from "./retirementContinuation";
 import type { ActiveMeetingLease, MeetingHistory } from "./db";
 import { MEETING_STATUS, type MeetingStatus } from "./meetingLifecycle";
 
@@ -66,16 +73,12 @@ export const protectionConfirmationSchema = z
 export type ProtectionConfirmation = z.infer<
   typeof protectionConfirmationSchema
 >;
-export const RUNTIME_WORK_KINDS = [
-  "pending_admission",
-  "recording",
-  "finalization",
-  "personal_processing",
-  "recovery_processing",
-  "voice_operation",
-  "ancillary_delivery",
-] as const;
-export type RuntimeWorkKind = (typeof RUNTIME_WORK_KINDS)[number];
+export {
+  RUNTIME_WORK_KINDS,
+  retirementContinuationSchema,
+  type RuntimeWorkKind,
+  type RetirementContinuation,
+};
 export type RuntimeWorkHandle = { settle(): void };
 
 export type SessionOwnership = Pick<
@@ -231,12 +234,11 @@ export const runtimeRecordSchema = z
     canonicalContentWriter: z.literal(1).optional(),
     readiness: runtimeReadinessSchema,
     protection: protectionConfirmationSchema,
-    workCounts: z
-      .record(z.enum(RUNTIME_WORK_KINDS), z.number().int().nonnegative())
-      .optional(),
+    workCounts: runtimeWorkCountsSchema.optional(),
     expiresAt: epochSecond.optional(),
     retirementRequest: retirementRequestSchema.optional(),
     retirementAcknowledgment: retirementAcknowledgmentSchema.optional(),
+    retirementContinuation: retirementContinuationSchema.optional(),
   })
   .strict()
   .superRefine((row, ctx) => {
@@ -273,6 +275,12 @@ export type RuntimeRoleTransition = {
   retirementEpoch: number;
   expectedRetirementRequest?: RetirementRequest;
   expectedRetirementAcknowledgment?: RetirementAcknowledgment;
+};
+export type StoppedOutgoingContinuationInput = {
+  control: ControlRecord;
+  outgoing: RuntimeRecord;
+  continuation: RetirementContinuation;
+  now: number;
 };
 export type RuntimeRetirementRequestInput = {
   record: RuntimeRecord;

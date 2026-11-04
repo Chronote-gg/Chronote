@@ -73,6 +73,7 @@ export function carryforwardFixture() {
     };
   f.state.rows.new.readiness.identity = f.state.rows.new.identity;
   f.state.rows.new.protection.identity = f.state.rows.new.identity;
+  f.state.artifacts.get("new").identity = f.state.rows.new.identity;
   const historical = {
     ...structuredClone(f.state.rows.old),
     identity: lost,
@@ -261,6 +262,7 @@ export function carryforwardFixture() {
       now: () => clock,
       sleep: async () => {
         clock++;
+        f.refreshArtifactProofs(clock);
         for (const row of Object.values(f.state.rows)) {
           row.heartbeatAt = clock;
           row.readiness.provenAt = clock;

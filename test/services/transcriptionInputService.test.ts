@@ -6,6 +6,7 @@ import {
   withPreparedTranscriptionInput,
   TranscriptionInputRequest,
 } from "../../src/services/transcriptionInputService";
+import { createArtifactProducerRegistry } from "../../src/services/artifactProducerRegistry";
 
 let directory: string;
 let request: TranscriptionInputRequest;
@@ -45,6 +46,27 @@ test("consumer errors retain their identity and clean both temporary inputs", as
       throw error;
     }),
   ).rejects.toBe(error);
+});
+
+test("closed producers refuse scratch creation before conversion or consumption", async () => {
+  const producer = createArtifactProducerRegistry().claim({
+    directory,
+    owner: {
+      guildId: "guild",
+      meetingId: "meeting",
+      ownerInstanceId: "worker",
+      executionVersion: 1,
+    },
+  });
+  producer.freeze();
+  request.beginArtifactWrite = (filename) =>
+    producer.beginWrite(filename, { kind: "stored_input" });
+  const consume = jest.fn(async () => "unexpected");
+  await expect(
+    withPreparedTranscriptionInput(request, consume),
+  ).rejects.toThrow("closed");
+  expect(consume).not.toHaveBeenCalled();
+  expect(readdirSync(directory)).toEqual([]);
 });
 test("observer failure cannot replace an assessed admission or consumer result", async () => {
   request.observe = () => {

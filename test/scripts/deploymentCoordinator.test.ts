@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import {
   candidateDefinition,
   runCli,
+  createCoordinator,
 } from "../../scripts/deployment/coordinator.cjs";
 
 import {
@@ -14,6 +15,32 @@ import {
   env,
   counts,
 } from "../deployment/fixtures/coordinatorFixture";
+
+test("quiet override cannot launch a legacy runtime without preservation capability", async () => {
+  const f = fixture();
+  f.state.artifacts.delete("old");
+  const coordinator = createCoordinator({
+    ...f.options,
+    env: { ...f.options.env, HANDOFF_QUIET_OVERRIDE: "1" },
+  });
+  await expect(coordinator.prepare()).rejects.toThrow(/capability/);
+  expect(f.state.launched).toBe(false);
+});
+
+test("guarded cancellation acknowledges only an unconsumed preparation on the original service", async () => {
+  const f = fixture();
+  f.state.artifactAutoSeal = false;
+  await expect(f.coordinator.prepare()).rejects.toThrow(/expired/);
+  expect(f.state.launched).toBe(false);
+  await expect(f.coordinator.cancelPreparation()).rejects.toThrow();
+  // A fresh coordinator lease may request cancellation of the exact expired request, never launch.
+  f.state.ctl.coordinatorExpiresAt = f.options.now() + 120;
+  await expect(f.coordinator.cancelPreparation()).resolves.toEqual({
+    kind: "cancellation_requested",
+  });
+  expect(f.state.artifacts.get("old")?.state).toBe("cancel_requested");
+  expect(f.state.launched).toBe(false);
+});
 
 test("CLI reports unsupported capability before mutation without provider output", async () => {
   const f = fixture();
@@ -302,6 +329,7 @@ test("retirementWithoutAckPreservesProtectedBusyOwner", async () => {
   const f = fixture();
   await f.coordinator.prepare();
   await f.coordinator.promote();
+  f.state.rows.old.workCounts = counts(1);
   await expect(f.coordinator.retire()).rejects.toThrow("incomplete");
   expect(f.state.rows.old.workCounts!.recording).toBe(1);
   expect(await f.coordinator.reconcile()).toMatchObject({

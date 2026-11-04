@@ -121,17 +121,29 @@ export function GuildProvider({ children }: { children: React.ReactNode }) {
     localStorage.getItem(STORAGE_KEY),
   );
   const [error, setError] = useState<string | null>(null);
-  const { state: authState } = useAuth();
+  const { state: authState, protectedQueriesReady, user } = useAuth();
+  const actor = user?.id ?? null;
+  const [metadataActor, setMetadataActor] = useState(actor);
+  const actorMatches = metadataActor === actor;
+  useEffect(() => {
+    if (!actorMatches || !protectedQueriesReady) {
+      setGuilds([]);
+      setSelectedGuildId(null);
+      clearStoredGuild();
+      setMetadataActor(actor);
+    }
+  }, [actor, actorMatches, protectedQueriesReady]);
   const guildQuery = trpc.servers.listEligible.useQuery(undefined, {
     retry: false,
-    enabled: authState === "authenticated",
+    enabled: authState === "authenticated" && protectedQueriesReady,
   });
   const loading =
     authState === "authenticated"
-      ? guildQuery.isLoading
+      ? !protectedQueriesReady || !actorMatches || guildQuery.isLoading
       : authState === "unknown";
 
   useEffect(() => {
+    if (!protectedQueriesReady || !actorMatches) return;
     const data = Array.isArray(guildQuery.data?.guilds)
       ? guildQuery.data?.guilds
       : null;
@@ -144,16 +156,26 @@ export function GuildProvider({ children }: { children: React.ReactNode }) {
       setSelectedGuildId,
       setError,
     });
-  }, [authState, guildQuery.data, guildQuery.error, selectedGuildId]);
+  }, [
+    authState,
+    guildQuery.data,
+    guildQuery.error,
+    selectedGuildId,
+    protectedQueriesReady,
+    actorMatches,
+  ]);
 
   const value = useMemo(
     () => ({
-      guilds,
-      selectedGuildId,
+      guilds: actorMatches && protectedQueriesReady ? guilds : [],
+      selectedGuildId:
+        actorMatches && protectedQueriesReady ? selectedGuildId : null,
       setSelectedGuildId: (id: string | null) => {
         if (
           id &&
-          (authState !== "authenticated" ||
+          (!protectedQueriesReady ||
+            !actorMatches ||
+            authState !== "authenticated" ||
             (!error &&
               guilds.length > 0 &&
               !guilds.some((guild) => guild.id === id)))
@@ -169,7 +191,16 @@ export function GuildProvider({ children }: { children: React.ReactNode }) {
         await guildQuery.refetch();
       },
     }),
-    [authState, guilds, selectedGuildId, loading, error, guildQuery],
+    [
+      authState,
+      guilds,
+      selectedGuildId,
+      loading,
+      error,
+      guildQuery,
+      actorMatches,
+      protectedQueriesReady,
+    ],
   );
 
   return (

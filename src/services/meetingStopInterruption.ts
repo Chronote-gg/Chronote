@@ -1,6 +1,20 @@
 import type { MeetingData } from "../types/meeting-data";
 import type { SessionOwnership } from "../types/deploymentControl";
 import { getMeetingInterruptionCheckpoints } from "./ownedMeetingInterruption";
+import type { RuntimeWorkClaim } from "./runtimeWorkAdmissionService";
+
+/** Only this request's completed defer supplies its stop acknowledgment proof. */
+export async function deferMeetingStopInteraction(
+  work: RuntimeWorkClaim | undefined,
+  defer: () => Promise<unknown>,
+): Promise<void> {
+  if (!work) {
+    await defer();
+    return;
+  }
+  await work.trackEffect(defer);
+  work.acknowledgeInteractionDefer();
+}
 
 export class InitiatingStopInterruption extends Error {
   constructor(

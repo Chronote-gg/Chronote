@@ -1,42 +1,6 @@
 /** @jest-environment node */
-jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
-jest.mock("../../src/services/savedRecordingPrompt", () => ({
-  ...jest.requireActual("../../src/services/savedRecordingPrompt"),
-  snapshotRecordingPrompt: jest.fn(
-    async (name: string, type: string, label: string) => ({
-      name,
-      type,
-      label,
-      version: 11,
-      template:
-        type === "text"
-          ? "{{transcript}}"
-          : [{ role: "user", content: "{{transcript}} {{notes}}" }],
-    }),
-  ),
-}));
-jest.mock("../../src/services/contextService", () => ({
-  ...jest.requireActual("../../src/services/contextService"),
-  collectMeetingContext: jest.fn(async () => ({
-    availability: "available",
-    data: { serverContext: "original generated context" },
-  })),
-}));
-jest.mock("../../src/services/meetingNameService", () => ({
-  listRecentMeetingNamesForPrompt: jest.fn(async () => "Original names"),
-}));
-jest.mock("prism-media", () => ({
-  opus: { Decoder: jest.requireActual("node:stream").PassThrough },
-}));
-jest.mock("../../src/liveVoice", () => ({ maybeRespondLive: jest.fn() }));
-jest.mock("../../src/services/transcriptionService", () => ({
-  ...jest.requireActual("../../src/services/transcriptionService"),
-  transcribeSnippet: jest.fn(),
-  transcribeContentSnippet: jest.fn(async () => ({
-    status: "succeeded",
-    text: "Recovered true tail",
-  })),
-}));
+import { fixture } from "../helpers/recordingContentFixture";
+
 import {
   subscribeToUserVoice,
   userStartTalking,
@@ -48,16 +12,7 @@ import {
 } from "../../src/audio";
 import { compileTranscriptions } from "../../src/services/transcriptCompilationService";
 import { cleanupContentTranscription } from "../../src/services/transcriptionCleanupService";
-jest.mock("../../src/services/transcriptionCleanupService", () => ({
-  ...jest.requireActual("../../src/services/transcriptionCleanupService"),
-  cleanupContentTranscription: jest.fn(),
-}));
-jest.mock("../../src/services/transcriptionPromptService", () => ({
-  ...jest.requireActual("../../src/services/transcriptionPromptService"),
-  getTranscriptionCleanupPrompt: jest.fn(async () => ({
-    messages: [{ role: "system", content: "Synthetic cleanup prompt" }],
-  })),
-}));
+
 import {
   transcribeSnippet,
   transcribeContentSnippet,
@@ -65,8 +20,6 @@ import {
 import { recoverTranscript } from "../../src/services/meetingRecoveryContent";
 import { recoveryFixture } from "./meetingRecoveryFixtures";
 import { PassThrough } from "node:stream";
-import { Collection } from "discord.js";
-import { resolveMeetingRuntimeConfig } from "../../src/services/meetingConfigService";
 import {
   startRecordingContentCheckpoint,
   checkpointCompletedTranscription,
@@ -81,66 +34,7 @@ import {
   completedTranscriptionSchema,
   savedRecordingSettingsSchema,
 } from "../../src/types/recordingContent";
-import type { MeetingData } from "../../src/types/meeting-data";
 import type { CheckpointArtifactInput } from "../../src/types/recordingCheckpoint";
-
-async function fixture(transcribeMeeting = true) {
-  const artifacts: CheckpointArtifactInput[] = [];
-  const runtimeConfig = await resolveMeetingRuntimeConfig({
-    guildId: "generated",
-    channelId: "voice",
-    userId: "creator",
-  });
-  const meeting = {
-    isAutoRecording: false,
-    meetingId: "generated-meeting",
-    guildId: "generated",
-    channelId: "separate-notes",
-    textChannel: { id: "separate-notes", send: jest.fn() },
-    transcribeMeeting,
-    generateNotes: true,
-    captureStartedAt: new Date(2000),
-    creator: { id: "creator" },
-    runtimeConfig,
-    reservation: {
-      sessionMode: "meeting",
-      meetingId: "generated-meeting",
-      guildId: "generated",
-      ownerInstanceId: "owner",
-      executionVersion: 1,
-      voiceOperationAttemptId: "voice",
-      reservedAt: 1000,
-      historyKey: {
-        guildId: "generated",
-        channelId_timestamp: "voice#1970-01-01T00:00:01.000Z",
-      },
-    },
-    ownershipSignal: new AbortController().signal,
-    recordingCapture: {
-      queueContent: (artifact: CheckpointArtifactInput) => {
-        artifacts.push(artifact);
-        return true;
-      },
-    },
-    guild: {
-      id: "generated",
-      name: "Generated server",
-      roles: new Collection(),
-      scheduledEvents: new Collection(),
-      channels: new Collection(),
-      members: {},
-      client: {},
-    },
-    voiceChannel: { id: "voice", name: "Generated voice" },
-    participants: new Map([
-      ["speaker", { id: "speaker", username: "Speaker" }],
-    ]),
-    attendance: new Set(["<@speaker>"]),
-    chatLog: [],
-    audioData: { audioFiles: [] },
-  } as unknown as MeetingData;
-  return { meeting, artifacts };
-}
 
 test("completedTranscriptionCheckpointSurvivesWithoutFinalization", async () => {
   const { meeting, artifacts } = await fixture();
@@ -198,7 +92,7 @@ test("later model/context changes cannot rewrite original generation settings", 
   ).toThrow();
 });
 
-test("legacy recording settings default speech detection to off", async () => {
+test("legacy recording settings default speech detection off and language to en", async () => {
   const { meeting, artifacts } = await fixture();
   startRecordingContentCheckpoint(meeting);
   await meeting.recordingContentTask;
@@ -208,14 +102,16 @@ test("legacy recording settings default speech detection to off", async () => {
   expect(payload.settings.availability).toBe("available");
   if (payload.settings.availability !== "available")
     throw new Error("Original recording settings unavailable");
-  const { speechDetectionMode, ...legacyTranscription } =
+  const { speechDetectionMode, language, ...legacyTranscription } =
     payload.settings.value.transcription;
   expect(speechDetectionMode).toBe("off");
+  expect(language).toBe("en");
   const legacySettings = savedRecordingSettingsSchema.parse({
     ...payload.settings.value,
     transcription: legacyTranscription,
   });
   expect(legacySettings.transcription.speechDetectionMode).toBe("off");
+  expect(legacySettings.transcription.language).toBe("en");
 });
 
 test("disabled generation does not fetch unused templates", async () => {

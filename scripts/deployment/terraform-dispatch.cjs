@@ -29,6 +29,10 @@ function parseDispatch(env, event) {
       "purchase-permission",
       "meeting-update-delivery",
       "deployment-prerequisites",
+      "deployment-runtime",
+      "site-delivery",
+      "sandbox-site-permissions",
+      "processing-retry",
     ]),
   };
   const hash = z.string().regex(/^[a-f0-9]{64}$/);

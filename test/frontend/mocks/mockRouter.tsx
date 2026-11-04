@@ -88,8 +88,21 @@ jest.mock("@tanstack/react-router", () => ({
   Link: ({ children, ...props }: { children: React.ReactNode }) => (
     <a {...props}>{children}</a>
   ),
-  Navigate: ({ to }: { to: string }) => (
-    <span data-testid="navigate" data-to={to} />
+  Navigate: ({
+    to,
+    search,
+    replace,
+  }: {
+    to: string;
+    search?: unknown;
+    replace?: boolean;
+  }) => (
+    <span
+      data-testid="navigate"
+      data-to={to}
+      data-search={JSON.stringify(search)}
+      data-replace={String(replace)}
+    />
   ),
   Outlet: () => <div data-testid="router-outlet" />,
   useNavigate: () => navigate,

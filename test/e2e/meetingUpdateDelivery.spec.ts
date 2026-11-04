@@ -11,6 +11,7 @@ for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 720 });
     const row = {
       id: "synthetic#2026-01-01",
+      serverId: mockGuilds.ddm.id,
       meetingId: "synthetic-session",
       channelId: "111111111111111111",
       channelName: "Planning",
@@ -43,7 +44,12 @@ for (const width of [1280, 390]) {
       release = resolve;
     });
     await mockFirstMeetingRequests(page, {
-      "meetings.list": () => ({ meetings: [row] }),
+      "meetings.myList": () => ({
+        meetings: [row],
+        hasMore: false,
+        nextCursor: null,
+        discoveryComplete: true,
+      }),
       "meetings.importNotes": () => {
         saves++;
         return { ok: true, kind: "saved", delivery: pending };

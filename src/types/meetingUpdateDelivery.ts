@@ -67,21 +67,19 @@ const contentChange = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("summarySentence"), value: z.string() }).strict(),
   z.object({ kind: z.literal("summaryLabel"), value: z.string() }).strict(),
 ]);
+const contentChanges = z
+  .array(contentChange)
+  .min(1)
+  .max(4)
+  .refine(
+    (changes) => new Set(changes.map((c) => c.kind)).size === changes.length,
+  );
 export const meetingUpdateMutationSchema = z.discriminatedUnion("kind", [
   notesMutation,
   renameMutation,
+  z.object({ kind: z.literal("correction"), changes: contentChanges }).strict(),
   z
-    .object({
-      kind: z.literal("correction"),
-      changes: z
-        .array(contentChange)
-        .min(1)
-        .max(4)
-        .refine(
-          (changes) =>
-            new Set(changes.map((c) => c.kind)).size === changes.length,
-        ),
-    })
+    .object({ kind: z.literal("regeneration"), changes: contentChanges })
     .strict(),
   z
     .object({
@@ -109,16 +107,10 @@ export function requestedPartsForMutation(
           ? ["notesWarning"]
           : ["summaryWarning"];
     case "correction":
+    case "regeneration":
       return presentationPartSchema.options.filter((part) =>
-        parsed.changes.some(
-          (change) =>
-            partsForContentChange(change).includes(part) ||
-            (part === "summaryTitle" &&
-              change.kind === "summaryLabel" &&
-              history !== undefined &&
-              !history.meetingName?.trim() &&
-              (history.summaryLabel?.trim() || "Meeting Summary") !==
-                (change.value.trim() || "Meeting Summary")),
+        parsed.changes.some((change) =>
+          partsForContentChange(change, history).includes(part),
         ),
       );
     default: {
@@ -130,10 +122,16 @@ export function requestedPartsForMutation(
 
 function partsForContentChange(
   change: z.infer<typeof contentChange>,
+  history?: Pick<MeetingHistory, "meetingName" | "summaryLabel">,
 ): PresentationPart[] {
-  if (change.kind === "summarySentence" || change.kind === "summaryLabel")
-    return ["summaryBody"];
-  return requestedPartsForMutation(change);
+  if (change.kind === "summarySentence") return ["summaryBody"];
+  if (change.kind !== "summaryLabel") return requestedPartsForMutation(change);
+  const retitled =
+    history !== undefined &&
+    !history.meetingName?.trim() &&
+    (history.summaryLabel?.trim() || "Meeting Summary") !==
+      (change.value.trim() || "Meeting Summary");
+  return retitled ? ["summaryBody", "summaryTitle"] : ["summaryBody"];
 }
 
 const operationBase = z.object({ operationId: id });

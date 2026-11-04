@@ -1,6 +1,7 @@
 /** @jest-environment node */
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   getAllMeetings: () => [],
   stopMeetingInitializations: async () => {},
 }));

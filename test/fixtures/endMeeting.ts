@@ -1,6 +1,10 @@
 import { Collection, type ButtonInteraction } from "discord.js";
 import type { MeetingData } from "../../src/types/meeting-data";
 
+jest.mock("../../src/services/meetingArtifactProducer", () => ({
+  getMeetingArtifactProducer: jest.fn(),
+}));
+
 jest.mock("../../src/services/meetingCompletionPolicyService", () => ({
   ...jest.requireActual("../../src/services/meetingCompletionPolicyService"),
   // This orchestration fixture replaces history persistence; exact policy CAS is tested separately.
@@ -31,6 +35,7 @@ jest.mock("@langfuse/tracing", () => ({
 }));
 
 jest.mock("../../src/services/guildVoiceOperationService", () => ({
+  whenOwnedVoiceSettled: jest.fn(async () => {}),
   settleOwnedVoiceSession: jest.fn(async () => "settled"),
 }));
 
@@ -150,6 +155,7 @@ jest.mock("../../src/utils/meetingLifecycle", () => ({
 }));
 
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   deleteMeeting: jest.fn(),
   getMeeting: jest.fn(),
   hasMeeting: jest.fn(),

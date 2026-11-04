@@ -1,3 +1,6 @@
+import UnifiedMeetingsPage from "../pages/UnifiedMeetingsPage";
+import { MeetingBrowseProvider } from "../contexts/MeetingBrowseContext";
+import { meetingBrowseSearchSchema } from "../utils/meetingBrowseSearch";
 import type { FirstMeetingState } from "../../types/firstMeeting";
 import type { RenewalRecoveryView } from "../../types/renewalRecovery";
 import type { BillingChangeView } from "../../types/billingChange";
@@ -16,6 +19,7 @@ import {
   createRouter,
   Outlet,
   RouterProvider,
+  useSearch,
 } from "@tanstack/react-router";
 import { trpc } from "../services/trpc";
 import {
@@ -39,6 +43,14 @@ import {
   annualIntroOffer,
 } from "../pages/basicIntroFixtures";
 
+function UnifiedMeetingsPreview() {
+  const search = meetingBrowseSearchSchema.parse(useSearch({ strict: false }));
+  return (
+    <MeetingBrowseProvider search={search} enabled>
+      <UnifiedMeetingsPage />
+    </MeetingBrowseProvider>
+  );
+}
 function previewSubscriptionStatus(
   tier: "free" | "basic" | "pro",
   source: "free" | "stripe" | "manual_comp" | "forced",
@@ -135,6 +147,12 @@ function previewResponses({
   const data: Record<string, unknown> = {
     "meetings.firstMeeting": firstMeetingState ?? { kind: "guide" },
     "meetings.list": { meetings: [] },
+    "meetings.myList": {
+      meetings: [],
+      hasMore: false,
+      discoveryComplete: true,
+      nextCursor: null,
+    },
     "notion.automationStatus": { configured: false },
     "auth.me": signedIn
       ? {
@@ -418,6 +436,12 @@ export function UpgradePreview({
         path: "/upgrade/select-server",
         component: UpgradeServerSelect,
         validateSearch: (search) => search,
+      }),
+      createRoute({
+        getParentRoute: () => root,
+        path: "/portal/meetings",
+        component: UnifiedMeetingsPreview,
+        validateSearch: meetingBrowseSearchSchema.parse,
       }),
       createRoute({
         getParentRoute: () => root,

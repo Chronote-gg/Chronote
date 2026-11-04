@@ -346,6 +346,65 @@ async function readyWorkerFixture(guildId?: string) {
   return { f, lifecycle };
 }
 
+test.each([false, true])(
+  "local cleanup retains its actual effect and refuses release after renewal loss: %s",
+  async (loseRenewal) => {
+    await jest.isolateModulesAsync(async () => {
+      const { createMeetingRecoveryWorker } =
+        await import("../../src/services/meetingRecoveryWorkerService");
+      const { beginRuntimeWorkClaim } =
+        await import("../../src/services/runtimeWorkAdmissionService");
+      jest.useFakeTimers({ now: Date.parse("2026-10-14T00:00:00Z") });
+      const { f, lifecycle } = await readyWorkerFixture("local-cleanup");
+      const entered = barrier(),
+        cleanup = barrier();
+      const released = jest.spyOn(f.repository, "releaseRecordingRecovery");
+      const renewed = jest.spyOn(f.repository, "renewRecordingRecovery");
+      if (loseRenewal) renewed.mockResolvedValue(undefined);
+      const prepareLocal = jest.fn(async (claim, signal, effect) => {
+        expect(
+          await f.repository.getRecoveryLease(claim.history.guildId),
+        ).toEqual(claim.lease);
+        await effect(async () => {
+          entered.resolve();
+          await cleanup.promise;
+          signal.throwIfAborted();
+        });
+      });
+      const reconcileLocal = jest.fn(async (claim) => {
+        expect(
+          await f.repository.getRecoveryLease(claim.history.guildId),
+        ).toBeUndefined();
+      });
+      const worker = createMeetingRecoveryWorker({
+        begin: beginRuntimeWorkClaim,
+        ...workerFixture(f, {
+          send: jest.fn(async () => ({ id: "sent" })),
+          notes: async (input) => {
+            input.processing = { ...input.processing, notes: "generated" };
+            return "saved notes";
+          },
+        }),
+        prepareLocal,
+        reconcileLocal,
+      });
+      const processing = worker.process(f.histories.get("local-cleanup")![0]);
+      await entered.promise;
+      expect(released).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(10000);
+      expect(renewed).toHaveBeenCalled();
+      expect(reconcileLocal).not.toHaveBeenCalled();
+      cleanup.resolve();
+      expect(await processing).toBe(!loseRenewal);
+      expect(released).toHaveBeenCalledTimes(loseRenewal ? 0 : 1);
+      expect(reconcileLocal).toHaveBeenCalledTimes(loseRenewal ? 0 : 1);
+      await worker.stop();
+      await lifecycle.shutdown();
+      jest.useRealTimers();
+    });
+  },
+);
+
 test("actual compatible replacement discovers recovery, owns renewal tails, seals synchronously and retains unknown delivery", async () => {
   jest.useFakeTimers({ now: Date.parse("2026-10-14T00:00:00Z") });
   const { f, lifecycle } = await readyWorkerFixture();

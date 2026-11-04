@@ -1,6 +1,7 @@
 /** @jest-environment node */
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 import { PassThrough } from "node:stream";
+import { createCheckpointObjectStore } from "../fixtures/recordingCheckpointEnvironment";
 import { createCheckpointPlaybackTap } from "../../src/services/recordingCheckpointPlayback";
 import { getCheckpointPcmBudget } from "../../src/services/recordingCheckpointCapture";
 
@@ -90,13 +91,7 @@ test("actual playback prefix and producer retain byte duration across boundary j
   const objects = new Map<string, Buffer>();
   const producer = createRecordingCheckpointService({
     repository,
-    objects: {
-      upload: async (key, bytes) => {
-        objects.set(key, Buffer.from(bytes));
-        return key;
-      },
-      read: async (key) => objects.get(key),
-    },
+    objects: createCheckpointObjectStore(objects),
   }).createProducerSession();
   const capture = {
     guildId: history.guildId,

@@ -355,6 +355,15 @@ function checkpointMetadataChanged(
     !isDeepStrictEqual(fixtureInput, previous?.fixtureInput)
   );
 }
+function producerManifest(
+  checkpoint: RecordingCheckpoint,
+  proposed: RecordingManifest,
+  previous: RecordingManifest | undefined,
+): RecordingManifest {
+  // An unchanged revision must retain the exact saved coverage metadata.
+  if (previous?.revision === checkpoint.revision) return previous;
+  return proposed;
+}
 export function createRecordingCheckpointService(
   dependencies: { repository: Repository; objects: Objects } = {
     repository: getDeploymentControlRepository(),
@@ -607,16 +616,20 @@ export function createRecordingCheckpointService(
     if (result === "applied" && producerSession) {
       acknowledged = {
         checkpoint,
-        manifest: {
-          ...fixtureEvidenceFields(fixtureInput),
-          artifactFolder: checkpoint.artifactFolder,
-          schemaVersion: 1,
-          revision: checkpoint.revision,
-          capture,
-          captureState: state,
-          coverage,
-          artifacts,
-        },
+        manifest: producerManifest(
+          checkpoint,
+          {
+            ...fixtureEvidenceFields(fixtureInput),
+            artifactFolder: checkpoint.artifactFolder,
+            schemaVersion: 1,
+            revision: checkpoint.revision,
+            capture,
+            captureState: state,
+            coverage,
+            artifacts,
+          },
+          previous,
+        ),
       };
     }
     return result === "applied"

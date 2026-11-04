@@ -98,7 +98,7 @@ export const RenewalOff: Story = {
     await expect(
       c.getByRole("button", { name: "Turn renewal back on" }),
     ).toBeEnabled();
-    await expect(c.getByText(/\$64.20 paid/)).not.toBeVisible();
+    await expect(c.queryByText(/\$64.20 paid/)).not.toBeInTheDocument();
   },
 };
 export const RenewalOn: Story = {

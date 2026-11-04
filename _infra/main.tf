@@ -258,6 +258,12 @@ variable "HOSTED_ZONE_NAME" {
   default     = ""
 }
 
+variable "ENABLE_PROCESSING_RETRY_INDEX" {
+  description = "Provision the processing retry index; does not enable runtime retries. Disable only when the index is confirmed absent."
+  type        = bool
+  default     = true
+}
+
 variable "ENABLE_OAUTH" {
   sensitive = false
   default   = "false"
@@ -524,6 +530,9 @@ provider "github" {
 
 locals {
   name_prefix             = "${var.project_name}-${var.environment}"
+  bot_task_cpu            = var.environment == "prod" ? 1024 : 512
+  bot_task_memory         = var.environment == "prod" ? 2048 : 1024
+  app_log_group_name      = "/ecs/${local.name_prefix}-bot"
   transcripts_bucket_name = var.TRANSCRIPTS_BUCKET != "" ? var.TRANSCRIPTS_BUCKET : "${local.name_prefix}-transcripts-${data.aws_caller_identity.current.account_id}"
   frontend_bucket_name    = var.FRONTEND_BUCKET != "" ? var.FRONTEND_BUCKET : "${local.name_prefix}-frontend-${data.aws_caller_identity.current.account_id}"
   docs_bucket_name        = var.DOCS_BUCKET != "" ? var.DOCS_BUCKET : "${local.name_prefix}-docs-${data.aws_caller_identity.current.account_id}"
@@ -848,7 +857,7 @@ resource "aws_security_group" "ecs_service_sg" {
 
 resource "aws_cloudwatch_log_group" "app_log_group" {
   depends_on        = [aws_kms_key_policy.app_general]
-  name              = "/ecs/${local.name_prefix}-bot"
+  name              = local.app_log_group_name
   retention_in_days = 365
   kms_key_id        = aws_kms_key.app_general.arn
 
@@ -1273,6 +1282,13 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 
   aliases = var.FRONTEND_DOMAIN != "" ? [var.FRONTEND_DOMAIN] : []
+
+  lifecycle {
+    postcondition {
+      condition     = var.frontend_distribution_id == "" || self.id == var.frontend_distribution_id
+      error_message = "frontend_distribution_id must name this distribution; site publishing grants by that ID."
+    }
+  }
 }
 
 resource "aws_cloudfront_function" "docs_index_rewrite" {
@@ -1402,6 +1418,13 @@ resource "aws_cloudfront_distribution" "docs" {
   }
 
   aliases = var.DOCS_DOMAIN != "" ? [var.DOCS_DOMAIN] : []
+
+  lifecycle {
+    postcondition {
+      condition     = var.docs_distribution_id == "" || self.id == var.docs_distribution_id
+      error_message = "docs_distribution_id must name this distribution; site publishing grants by that ID."
+    }
+  }
 }
 
 resource "aws_s3_bucket_policy" "frontend_oac_policy" {
@@ -1672,6 +1695,7 @@ resource "aws_iam_policy" "transcripts_s3_policy" {
         Action = [
           "s3:PutObject",
           "s3:GetObject",
+          "s3:GetObjectVersion",
           "s3:AbortMultipartUpload",
           "s3:ListBucket"
         ],
@@ -1699,8 +1723,8 @@ resource "aws_ecs_task_definition" "app_task" {
   family                   = "${local.name_prefix}-bot-task"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "512"
-  memory                   = "1024"
+  cpu                      = tostring(local.bot_task_cpu)
+  memory                   = tostring(local.bot_task_memory)
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_app_role.arn
 
@@ -1708,8 +1732,8 @@ resource "aws_ecs_task_definition" "app_task" {
     {
       name        = "${local.name_prefix}-bot"
       image       = aws_ecr_repository.app_ecr_repo.repository_url
-      cpu         = 512
-      memory      = 1024
+      cpu         = local.bot_task_cpu
+      memory      = local.bot_task_memory
       essential   = true
       stopTimeout = 120
       portMappings = [
@@ -2946,11 +2970,38 @@ resource "aws_dynamodb_table" "meeting_history_table" {
     type = "N"
   }
 
+  dynamic "attribute" {
+    for_each = var.ENABLE_PROCESSING_RETRY_INDEX ? [1] : []
+    content {
+      name = "processingRetryQueue"
+      type = "S"
+    }
+  }
+
+  dynamic "attribute" {
+    for_each = var.ENABLE_PROCESSING_RETRY_INDEX ? [1] : []
+    content {
+      name = "processingRetryDueAt"
+      type = "N"
+    }
+  }
+
   global_secondary_index {
     name            = "UpdateDeliveryDueIndex"
     hash_key        = "updateDeliveryQueue"
     range_key       = "updateDeliveryDueAt"
     projection_type = "KEYS_ONLY"
+  }
+
+  # Sparse: only rows with a queued or running processing retry carry the keys.
+  dynamic "global_secondary_index" {
+    for_each = var.ENABLE_PROCESSING_RETRY_INDEX ? [1] : []
+    content {
+      name            = "ProcessingRetryDueIndex"
+      hash_key        = "processingRetryQueue"
+      range_key       = "processingRetryDueAt"
+      projection_type = "KEYS_ONLY"
+    }
   }
 
   # GSI for querying all meetings in a guild by time

@@ -29,7 +29,16 @@ class MockRootRoute extends MockRoute {}
 class MockRouter {
   routeTree: MockRoute;
 
-  constructor(options: { routeTree: MockRoute }) {
+  options: {
+    routeTree: MockRoute;
+    parseSearch: (search: string) => Record<string, unknown>;
+  };
+
+  constructor(options: {
+    routeTree: MockRoute;
+    parseSearch: (search: string) => Record<string, unknown>;
+  }) {
+    this.options = options;
     this.routeTree = options.routeTree;
   }
 }
@@ -44,6 +53,9 @@ const guildState: MockGuildState = { selectedGuildId: null, guilds: [] };
 const portalState: MockPortalState = { lastServerId: null };
 
 jest.mock("@tanstack/react-router", () => ({
+  defaultParseSearch: jest.requireActual<
+    typeof import("@tanstack/react-router")
+  >("@tanstack/react-router").defaultParseSearch,
   RootRoute: MockRootRoute,
   Route: MockRoute,
   Router: MockRouter,
@@ -124,5 +136,17 @@ describe("router", () => {
       (child) => child.path === "settings",
     );
     expect(personalSettingsRoute).toBeDefined();
+  });
+});
+
+test("unified drawer and channel snowflakes retain precision", () => {
+  expect(
+    router.options.parseSearch?.(
+      "?meetingServerId=111111111111111111&channelId=222222222222222222&range=7",
+    ),
+  ).toEqual({
+    meetingServerId: "111111111111111111",
+    channelId: "222222222222222222",
+    range: 7,
   });
 });

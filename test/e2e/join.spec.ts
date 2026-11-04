@@ -137,7 +137,10 @@ test("switching servers clears the pinned target and ignores an old response", a
     releaseOld?.();
     await expect(
       page.getByTestId("join-hero").getByRole("link", { name: "Open portal" }),
-    ).toHaveAttribute("href", `/portal/server/${otherServerId}/library`);
+    ).toHaveAttribute(
+      "href",
+      `/portal/meetings?scope=guild&serverId=${otherServerId}`,
+    );
     await expect(
       page.getByRole("link", { name: "View recording" }),
     ).toHaveCount(0);
@@ -187,11 +190,15 @@ test("focus checks before discovery and visible live polling stops at a terminal
   const initialResponse = new Promise<void>((resolve) => {
     releaseInitial = resolve;
   });
+  const pinnedResponse = Promise.withResolvers<void>();
   await mockFirstMeetingRequests(page, {
     "servers.listEligible": () => guilds,
-    "meetings.firstMeeting": async () => {
+    "meetings.firstMeeting": async (url) => {
       await initialResponse;
       requests += 1;
+      if (url.searchParams.get("input")?.includes(historyId)) {
+        await pinnedResponse.promise;
+      }
       return state;
     },
   });
@@ -226,6 +233,10 @@ test("focus checks before discovery and visible live polling stops at a terminal
   await expect(page.getByText("Recording in progress")).toBeVisible();
   await expect(page).toHaveURL(/historyId=/);
   await expect.poll(() => requests).toBeGreaterThanOrEqual(beforeFocus + 2);
+  await expect(page.getByText("Checking meeting status...")).toBeVisible();
+  // Model a pinned response that finishes after the browser's next event turn.
+  setTimeout(() => pinnedResponse.resolve(), 100);
+  await expect(page.getByText("Checking meeting status...")).toBeHidden();
   const whileRecording = requests;
   await page.clock.fastForward(10_000);
   await expect.poll(() => requests).toBeGreaterThan(whileRecording);
@@ -283,7 +294,10 @@ for (const encoding of ["raw", "quoted"]) {
     );
     await expect(
       page.getByTestId("join-hero").getByRole("link", { name: "Open portal" }),
-    ).toHaveAttribute("href", `/portal/server/${intendedServerId}/library`);
+    ).toHaveAttribute(
+      "href",
+      `/portal/meetings?scope=guild&serverId=${intendedServerId}`,
+    );
     await expect(page.locator("details")).toHaveAttribute("open", "");
     expect(progressInputs[0]).toContain(intendedServerId);
   });

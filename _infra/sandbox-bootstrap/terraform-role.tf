@@ -30,6 +30,11 @@ locals {
   terraform_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      { Sid = "SitePolicy", Effect = "Allow", Action = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions", "iam:CreatePolicy", "iam:TagPolicy", "iam:CreatePolicyVersion"], Resource = "arn:aws:iam::${var.sandbox_account_id}:policy/meeting-notes-sandbox-site-publishing" },
+      { Sid = "SiteAttachment", Effect = "Allow", Action = "iam:AttachRolePolicy", Resource = "arn:aws:iam::${var.sandbox_account_id}:role/meeting-notes-sandbox-github-deploy", Condition = { StringEquals = { "iam:PolicyARN" = "arn:aws:iam::${var.sandbox_account_id}:policy/meeting-notes-sandbox-site-publishing" } } },
+      { Sid = "SiteRoleMetadata", Effect = "Allow", Action = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies"], Resource = "arn:aws:iam::${var.sandbox_account_id}:role/meeting-notes-sandbox-github-deploy" },
+      { Sid = "SiteBucketMetadata", Effect = "Allow", Action = ["s3:ListBucket", "s3:GetBucketPolicy", "s3:GetBucketAcl", "s3:GetBucketCORS", "s3:GetBucketWebsite", "s3:GetBucketVersioning", "s3:GetAccelerateConfiguration", "s3:GetBucketRequestPayment", "s3:GetBucketLogging", "s3:GetLifecycleConfiguration", "s3:GetReplicationConfiguration", "s3:GetEncryptionConfiguration", "s3:GetBucketObjectLockConfiguration", "s3:GetBucketTagging"], Resource = ["arn:aws:s3:::${var.site_frontend_bucket}", "arn:aws:s3:::${var.site_docs_bucket}"] },
+      { Sid = "SiteOidcMetadata", Effect = "Allow", Action = ["iam:GetOpenIDConnectProvider"], Resource = "arn:aws:iam::${var.sandbox_account_id}:oidc-provider/token.actions.githubusercontent.com" },
       { Sid = "ApplicationState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = "arn:aws:s3:::${local.state_bucket}/${local.state_key}" },
       # Terraform 1.16 workspace discovery lists this prefix, including when TF_WORKSPACE is set.
       { Sid = "WorkspaceDiscovery", Effect = "Allow", Action = "s3:ListBucket", Resource = "arn:aws:s3:::${local.state_bucket}", Condition = { StringEquals = { "s3:prefix" = ["meeting-notes-terraform/", "meeting-notes-terraform/sandbox/"] } } },

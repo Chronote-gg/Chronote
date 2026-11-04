@@ -36,6 +36,109 @@ function fixture(
   return { capture, controller, commit, stopped };
 }
 const pcm = () => Buffer.alloc(3840, 1);
+const contextSnapshot = (sequence: number): CheckpointArtifactInput => ({
+  kind: "context",
+  sourceId: "context",
+  sequence,
+  bytes: Buffer.from("{}"),
+  checksumSha256: "a".repeat(64),
+  contentType: "application/json",
+  coverage: { kind: "unknown" },
+});
+
+test("a sealed artifact producer refuses local writes before file creation", async () => {
+  const stopped = jest.fn();
+  const beginWrite = jest.fn(() => {
+    throw new Error("Producer is closed");
+  });
+  const capture = createRecordingCheckpointCapture({
+    directory,
+    startedAt: 0,
+    signal: new AbortController().signal,
+    commit: async () => true,
+    stopCapture: stopped,
+    beginWrite,
+  });
+  expect(capture.queueContent(contextSnapshot(1))).toBe(false);
+  expect(beginWrite).toHaveBeenCalled();
+  expect(readdirSync(directory)).toEqual([]);
+  expect(stopped).toHaveBeenCalledWith("storage_preservation");
+  await capture.settled();
+});
+
+test.each([true, false])(
+  "superseded snapshots are removed only when their replacement is acknowledged (%s)",
+  async (replacementAccepted) => {
+    let finishFirst!: (value: boolean) => void;
+    const first = new Promise<boolean>((resolve) => {
+      finishFirst = resolve;
+    });
+    const commit = jest
+      .fn<Promise<boolean>, [readonly CheckpointArtifactInput[], AbortSignal]>()
+      .mockImplementationOnce(() => first)
+      .mockResolvedValue(replacementAccepted);
+    const f = fixture(commit);
+    const queue = (sequence: number) =>
+      f.capture.queueContent(contextSnapshot(sequence));
+    queue(1);
+    await Promise.resolve();
+    queue(2);
+    queue(3);
+    queue(4);
+    expect(readdirSync(directory).sort()).toEqual([
+      "context-1.json",
+      "context-2.json",
+      "context-3.json",
+      "context-4.json",
+    ]);
+    finishFirst(true);
+    await f.capture.settled();
+    expect(readdirSync(directory).sort()).toEqual(
+      replacementAccepted
+        ? []
+        : ["context-2.json", "context-3.json", "context-4.json"],
+    );
+    expect(commit.mock.calls.map(([items]) => items[0].sequence)).toEqual([
+      1, 4,
+    ]);
+    f.capture.fence();
+    await f.capture.settled();
+    f.capture.releaseSettledBuffers();
+  },
+);
+
+test("sustained storage pressure keeps new audio frames batched", async () => {
+  let resume!: () => void;
+  const storage = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const f = fixture(
+    jest.fn<
+      Promise<boolean>,
+      [readonly CheckpointArtifactInput[], AbortSignal]
+    >(async () => {
+      await storage;
+      return true;
+    }),
+  );
+  try {
+    f.capture.push("first", Buffer.alloc(5760000), 0);
+    f.capture.push("second", Buffer.alloc(2650000), 0);
+    for (let frame = 0; frame < 100; frame++)
+      f.capture.push("first", pcm(), frame * 20);
+
+    expect(f.capture.pending()).toHaveLength(2);
+  } finally {
+    resume();
+    await f.capture.finish();
+    f.capture.releaseSettledBuffers();
+  }
+  expect(
+    f.commit.mock.calls
+      .flatMap(([artifacts]) => artifacts)
+      .reduce((bytes, artifact) => bytes + artifact.bytes.byteLength, 0),
+  ).toBe(5760000 + 2650000 + 100 * 3840);
+});
 
 test("longOpenSnippetStillCheckpointsAtThirtySeconds", async () => {
   const f = fixture();
@@ -191,16 +294,7 @@ test("synchronous context enqueue cannot reenter the active PCM publisher", asyn
     [readonly CheckpointArtifactInput[], AbortSignal]
   >(async () => {
     const sequence = commit.mock.calls.length;
-    if (sequence < 4)
-      f.capture.queueContent({
-        kind: "context",
-        sourceId: "context",
-        sequence,
-        bytes: Buffer.from("{}"),
-        checksumSha256: "a".repeat(64),
-        contentType: "application/json",
-        coverage: { kind: "unknown" },
-      });
+    if (sequence < 4) f.capture.queueContent(contextSnapshot(sequence));
     return false;
   });
   const f = fixture(commit);

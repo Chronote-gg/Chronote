@@ -37,6 +37,16 @@ async function initialize(exists: boolean, status = "ACTIVE", fail = false) {
   const promise = runDynamoInitialization(send);
   return { send, promise };
 }
+/** Other MeetingHistory indexes have their own tests; these assert only the delivery index. */
+const deliveryIndexCreates = (send: jest.Mock) =>
+  send.mock.calls
+    .map(([c]) => c)
+    .filter(
+      (c) =>
+        c instanceof dynamo.UpdateTableCommand &&
+        c.input.GlobalSecondaryIndexUpdates?.[0]?.Create?.IndexName ===
+          "UpdateDeliveryDueIndex",
+    );
 test.each([false, true])(
   "local initialization preserves data and only creates missing meeting index: %s",
   async (exists) => {
@@ -58,9 +68,7 @@ test.each([false, true])(
         Projection: { ProjectionType: "KEYS_ONLY" },
       }),
     );
-    const updates = send.mock.calls
-      .map(([c]) => c)
-      .filter((c) => c instanceof dynamo.UpdateTableCommand);
+    const updates = deliveryIndexCreates(send);
     expect(updates).toHaveLength(exists ? 0 : 1);
     if (!exists)
       expect(updates[0].input).toMatchObject({
@@ -78,9 +86,7 @@ test.each([false, true])(
 test("an in-progress local index is never recreated", async () => {
   const { send, promise } = await initialize(true, "CREATING");
   await promise;
-  expect(
-    send.mock.calls.some(([c]) => c instanceof dynamo.UpdateTableCommand),
-  ).toBe(false);
+  expect(deliveryIndexCreates(send)).toHaveLength(0);
 });
 test("missing-index describe errors propagate instead of reporting readiness", async () => {
   const { promise } = await initialize(false, "ACTIVE", true);

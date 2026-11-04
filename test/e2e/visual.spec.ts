@@ -10,6 +10,7 @@ import { expect, test } from "./fixtures";
 import { mockGuilds, mockLibrary, mockSettings } from "./mockData";
 import { applyVisualDefaults, waitForVisualReady } from "./visualUtils";
 import { registerNotesRoutingVisualTests } from "./notesRoutingVisuals";
+import { registerAskVisualTests } from "./askVisuals";
 import { assertPageCanScroll } from "./scrollAssertions";
 
 const runVisual = process.env.PW_VISUAL === "true";
@@ -427,7 +428,7 @@ test.describe("visual regression", () => {
 
     for (const mode of visualModes) {
       await page.goto(withVisualMode("/portal/meetings", mode));
-      await expect(page.getByTestId("my-meetings-page")).toBeVisible();
+      await expect(page.getByTestId("unified-meetings-page")).toBeVisible();
       await expectVisualScreenshot(page, "my-meetings", mode);
 
       notionState = { connected: true, exported: false, outdated: false };
@@ -452,9 +453,7 @@ test.describe("visual regression", () => {
       const openLibrary = async () => {
         await page.goto(withVisualMode("/portal/select-server", mode));
         await serverSelectPage.openServerByName(mockGuilds.ddm.name);
-        await libraryPage.waitForLoaded();
-        await page.getByTestId("library-range").click();
-        await page.getByRole("option", { name: "All time" }).click();
+        await libraryPage.selectAllTime();
         await libraryPage.waitForLoaded(mockLibrary.meetingCount);
       };
 
@@ -464,6 +463,7 @@ test.describe("visual regression", () => {
       await libraryPage.openFirstMeeting();
       const drawerDialog = page.getByRole("dialog");
       await expect(drawerDialog).toBeVisible();
+      await expect(libraryPage.drawerSummaryLabel()).toBeVisible();
       await expectVisualScreenshot(page, "library-drawer", mode);
 
       await drawerDialog.getByRole("button", { name: "Notes actions" }).click();
@@ -541,23 +541,7 @@ test.describe("visual regression", () => {
     });
   });
 
-  test("ask page @visual", async ({ serverSelectPage, nav, askPage, page }) => {
-    for (const mode of visualModes) {
-      await page.goto(withVisualMode("/portal/select-server", mode));
-      await serverSelectPage.openServerByName(mockGuilds.ddm.name);
-      await nav.goToAsk();
-      await askPage.waitForReady();
-      await expectVisualScreenshot(page, "ask-list", mode);
-
-      await askPage.switchListMode("archived");
-      await askPage.waitForReady();
-      await expectVisualScreenshot(page, "ask-archived", mode);
-
-      await askPage.startNewChat();
-      await expect(askPage.title()).toContainText(/new chat/i);
-      await expectVisualScreenshot(page, "ask-new-chat", mode);
-    }
-  });
+  registerAskVisualTests(expectVisualScreenshot);
 
   test("billing page @visual", async ({
     serverSelectPage,

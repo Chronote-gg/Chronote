@@ -1,3 +1,4 @@
+import { recordSpeechRejection } from "./recordingContentService";
 import { buildTranscriptionVoteCandidate } from "./transcriptionSelectionService";
 import { liveTranscriptionInput } from "./liveTranscriptionInput";
 import {
@@ -65,7 +66,8 @@ import { toLangfuseAttributeMetadata } from "../observability/langfuseMetadata";
 import { ensureMeetingTempDirSync } from "./tempFileService";
 import { evaluateNoiseGate } from "../utils/audioNoiseGate";
 import { countWords } from "../utils/text";
-import { getTranscriptionPrompt } from "./transcriptionPromptService";
+import type { TranscriptionContentInput } from "../types/transcriptionContent";
+export type { TranscriptionContentInput } from "../types/transcriptionContent";
 import { getMeetingModelOverrides } from "./meetingModelOverrides";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 import { withPreparedTranscriptionInput } from "./transcriptionInputService";
@@ -75,6 +77,10 @@ import {
 } from "./speechDetectionPolicy";
 import { getSpeechDetector } from "./speechDetectionService";
 import type { SpeechDetectionMode } from "../config/speechDetection";
+import {
+  meetingTranscriptionLanguage,
+  transcriptionLanguageParam,
+} from "../config/transcriptionLanguage";
 import type { SpeechPhase, SpeechCoverage } from "./speechDetectionTypes";
 import {
   recordSpeechAssessment,
@@ -82,21 +88,6 @@ import {
   recordSpeechRequestSkipped,
   recordSpeechSnippetOutcome,
 } from "../metrics";
-
-export type TranscriptionContentInput = {
-  observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
-  meetingId: string;
-  creator: { id: string };
-  guild: { id: string };
-  voiceChannel: { id: string };
-  signal: AbortSignal;
-  runtimeConfig?: Pick<
-    NonNullable<MeetingData["runtimeConfig"]>,
-    "transcription" | "modelChoices"
-  >;
-  prompt(): ReturnType<typeof getTranscriptionPrompt>;
-  effect<T>(run: () => Promise<T>): Promise<T>;
-};
 
 const DEFAULT_NOISE_GATE_CONFIG = {
   enabled: NOISE_GATE_ENABLED,
@@ -261,6 +252,7 @@ async function transcribeInternal(
   const resolvedPrompt = promptValue.length > 0 ? promptValue : undefined;
   const passMode = context?.noiseGateMode ?? "slow";
   const voteEnabled = resolveTranscriptionVoteEnabled(meeting);
+  const language = meetingTranscriptionLanguage(meeting.runtimeConfig);
 
   const modelChoice = getModelChoice(
     "transcription",
@@ -282,6 +274,7 @@ async function transcribeInternal(
     promptVersion: langfusePrompt?.version,
     promptFallback: langfusePrompt?.isFallback ?? false,
     transcriptionVoteEnabled: voteEnabled,
+    transcriptionLanguage: language,
   };
   const ledger = createTranscriptionAttemptLedger(traceMetadata.audioSeconds);
 
@@ -309,7 +302,7 @@ async function transcribeInternal(
       generationOperation: `transcription-audio-${passMode}`,
       request: {
         model: modelChoice.model,
-        language: "en",
+        ...transcriptionLanguageParam(language),
         temperature: 0,
         response_format: "json",
         include: ["logprobs"],
@@ -566,7 +559,7 @@ async function transcribeInternal(
         "transcription",
         async () => {
           const observationInput = {
-            language: "en",
+            ...transcriptionLanguageParam(language),
             ...(resolvedPrompt ? { prompt: resolvedPrompt } : {}),
           };
           updateActiveObservation(
@@ -771,7 +764,7 @@ const buildSnippetTempFiles = (
   snippet: AudioSnippet,
   suffix: string,
 ): TempSnippetFiles => {
-  const tempDir = ensureMeetingTempDirSync(meeting);
+  const tempDir = meeting.tempDirectory ?? ensureMeetingTempDirSync(meeting);
   return {
     pcmFile: path.join(
       tempDir,
@@ -895,6 +888,7 @@ export async function transcribeContentSnippet(
     return await withPreparedTranscriptionInput<SnippetTranscriptionResult>(
       {
         pcm: buffer,
+        beginArtifactWrite: meeting.beginArtifactWrite,
         ...tempFiles,
         mode,
         phase,
@@ -965,16 +959,26 @@ export async function transcribeContentSnippet(
   }
 }
 
-export function transcribeSnippet(
+export async function transcribeSnippet(
   meeting: MeetingData,
   snippet: AudioSnippet,
   options: Parameters<typeof transcribeContentSnippet>[2] = {},
 ) {
-  return transcribeContentSnippet(
+  const { userId, timestamp } = snippet;
+  const pcmSpans = snippet.pcmSpans?.map((span) => ({ ...span }));
+  const result = await transcribeContentSnippet(
     liveTranscriptionInput(meeting),
     snippet,
     options,
   );
+  if (result.status === "skipped")
+    recordSpeechRejection(
+      meeting,
+      { userId, timestamp, pcmSpans },
+      result.coverage,
+      options.noiseGateMode ?? "slow",
+    );
+  return result;
 }
 
 export { coalesceTranscription } from "./transcriptionCoalesceService";

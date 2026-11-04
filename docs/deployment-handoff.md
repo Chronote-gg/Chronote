@@ -50,6 +50,63 @@ Rollback to the exact prior serving identities is allowed only before any retire
 
 A same-compatible-image replacement can enter serving through exact completed-deployment lineage or the durable compatible-replacement receipt. Incomplete, rolled-back, newer or absent lineage refuses it. The old runtime becomes draining, with its counts and voice guard retained. This is not a general restart or legacy bootstrap policy.
 
+### Handoff starts only on a quiet serving runtime
+
+ECS refuses to protect more tasks than the service's desired count, which is 1. Once the warming candidate holds native protection, the outgoing task's protection renewals fail with `DEPLOYMENT_BLOCKED`. The outgoing runtime then has at most `RUNTIME_PROTECTION_MINUTES` minus `RUNTIME_PROTECTION_MARGIN_SECONDS` (about eight minutes) before its safety handler shuts it down, and ECS stops the task when its health checks fail. A recording or finalization still running at that point is cut off. Promotion cannot help, because it is a Control and listener change that ECS never sees.
+
+`prepare` first reads the serving runtime's `workCounts` before taking the coordinator lease. It waits until `recording`, `finalization` and `voice_operation` are all zero, for up to `HANDOFF_QUIET_SECONDS` (30 minutes), then fails with `outgoing_busy` without writing. Before launching, it also requires the sealed artifact proof described below. Waiting after launch would spend the outgoing runtime's remaining protection.
+
+The artifact preparation closes the remaining start race. Accepted artifact-producing work retains its ownership until actual settlement, while new producers receive a retryable admission refusal. Owned stop controls can still finish the original recording. Billing, ordinary reads and note-update delivery retain their existing admission rules.
+
+`workCounts` is the runtime's in-memory counter, republished on every heartbeat. A leaked counter can refuse every deployment, including the one that repairs it. A retained count can also represent an unresolved voice or provider operation after notes were delivered. Its age, completed history, or zero recording count does not prove a leak. Inspect the exact session, voice attempt and outstanding effects before authorizing an override.
+
+For a separately approved emergency handoff, start the deploy workflow manually with `handoff_quiet_override` checked. The coordinator reads `HANDOFF_QUIET_OVERRIDE=1` and prints a `::warning` naming the counts it overrode. Push-triggered deploys never set it. The override skips only the initial quiet-counter wait. It cannot skip artifact admission, real producer drain, preservation verification, native protection or voice settlement, and it never releases leases.
+
+### Preservation before replacement
+
+The worker publishes a separate `ARTIFACTS#<runtime>/STATE` capability row. Control keeps its existing schema. A preparation request binds the exact source identity, coordinator token and epoch, and serving generation. Its deadline is at most five minutes and remains inside the confirmed native protection window.
+
+The worker seals new producers, drains accepted work and the serialized cleanup queue, then inventories both managed working and retained roots. Preparation verifies remaining files without another deletion pass. Every remaining directory needs an immutable receipt, exact object checksum/version verification and current history ownership. Unknown files, changed bytes, unregistered writers and incomplete receipts refuse replacement. File age, finished notes, a stored key or quiet counters never establish safety. Proofs carry aggregate counts, bytes, a digest and bounded authority snapshots; public diagnostics do not expose customer content or file paths.
+
+Proof consumption and the existing Control phase change from `preparing` to `warming` commit atomically, with native history and runtime conditions. Only then may ECS launch the candidate. The candidate verifies its own managed roots while admission and cleanup remain sealed, before dependency readiness. Promotion checks its fresh startup proof in the native transaction. Producers resume only after serving ownership and protection are established. Before releasing native protection, the outgoing worker rechecks its preserved inventory and records verification bound to its retirement request.
+
+Failed preparation may request `cancel-preparation` only while Control is still `preparing`, the original service definition is unchanged, native source protection is confirmed and the proof is unconsumed. The runtime atomically acknowledges that exact request and marks preparation complete before reopening admission. This closes the failed attempt so a later coordinator can acquire ownership after the current coordinator lease expires. Expiry, lost coordinator authority or a possibly launched candidate never reopens it automatically. A delayed scan is invalidated by explicit cancellation; accepted I/O remains owned until settlement.
+
+Legacy workers without this capability refuse, including under the quiet override. First introduction requires a separately reviewed preservation procedure. Older private action-recipe coordinators also refuse new preparation and promotion until their journal supports these checks. Existing stopped-source availability continuation remains separate: a historical consumed proof can document preservation; absent evidence stays UNKNOWN and never becomes a filesystem proof or retirement acknowledgment.
+
+The v1 introduction entry point is disabled before provider reads, legacy stops or hold changes. Its archived full-execution acceptance cases are explicitly skipped while refusal and preflight tests remain active. Re-enabling that route requires a reviewed preservation journal and restoring those acceptance cases. Normal compatible deployments use the active coordinator and retain their tests.
+
+Both deployment roles need `dynamodb:ConditionCheckItem` on MeetingHistory for these authority checks, without history writes. The runtime also needs `s3:GetObjectVersion` on transcript objects for exact-version verification. These Terraform changes require a fresh protected saved plan and apply before rollout. A merge alone neither grants the permissions nor installs the runtime protocol.
+
+### Delayed voice acknowledgment
+
+The voice service's initial bounded result can be `uncertain` while a matching disconnect acknowledgment is still pending. It keeps the original connection sealed and permits no second leave or reconnect. A monotonic status update for the same known session and original channel does not invalidate a later matching leave acknowledgment.
+
+An acknowledgment-only timeout retains passive observation. `whenOwnedVoiceSettled` resolves only after the matching acknowledgment, actual send drain and durable settlement of the exact original voice attempt. Original-session cleanup must still verify actual local work, preserved or recovered history, notices, nickname cleanup and the exact lease before releasing its work handle. Reconciliation does not regenerate notes or repost messages.
+
+Genuinely ambiguous sends, missing acknowledgments, changed ownership and unproved persistence remain held. A timer, current Discord voice-state absence or a missing local operation cannot supply settlement proof. These cases require separately proven recovery, not a counter reset or automatic lease deletion. See the [voice acknowledgment recovery design](superpowers/specs/2026-10-31-voice-acknowledgment-recovery-design.md).
+
+A submitted lease delete is retained and is not automatically replayed, including after an error or a read that still finds the original lease. A request may have an unknown remote outcome after its client promise settles. A failed or unreadable verification therefore keeps the original reservation held for separately proven recovery. The initial stop response remains bounded. Budget expiry prevents new cleanup writes but does not cancel a dispatched delete.
+
+Voice settlement requires the exact original in-process reservation. A missing or reconstructed reservation causes no best-effort database write; the existing durable `joining` state still blocks admission, just as `uncertain` does. Failure to persist a late acknowledgment also retains the hold instead of replaying an unproved write.
+
+### Outgoing task stopped before acknowledging
+
+If the outgoing task dies after promotion, it can never write its retirement acknowledgment. `retire` then times out with `retirement_incomplete`, `reconcile` reports `recovery_required`, and every later `prepare` would refuse an environment still in `retiring`.
+
+The coordinator completes such a deployment itself. `retire` checks the outgoing task on every poll where the acknowledgment is still missing, and finishes through the continuation as soon as ECS reports it `STOPPED` instead of waiting out its deadline. The next `prepare` does the same before acquiring the environment, and operators can run the same code alone with `node scripts/deployment/coordinator.cjs continue-stopped-outgoing`. It refuses, changing nothing, unless all of the following hold:
+
+- Control is in `retiring`, and the previous coordinator's lease has expired (or the caller holds that same run token).
+- The candidate is the exact promoted membership under `originalGeneration + 1`, its runtime row is `serving` and ready, and its native protection is confirmed.
+- The ECS service has converged exactly as `retire` requires (candidate task definition, one running, none pending, one `COMPLETED` deployment), and its only running task is the candidate.
+- Owned routing, if present, is acknowledged on the candidate and passes the same listener and target checks `retire` makes.
+- The outgoing runtime still holds this deployment's retirement request with no acknowledgment.
+- `describe-tasks` reports the exact outgoing task `STOPPED` with a `stoppedAt`. ECS prunes stopped tasks after about an hour, so a `MISSING` task also counts, but only because the service no longer lists it and the native protection its runtime row last published has expired.
+
+One conditional transaction then marks the outgoing runtime `retired` with a `retirementContinuation` record (stop reason and time, its last `workCounts`, the continuing run and time) and moves Control to `complete`. The Control condition matches the coordinator fields `save` guards, and the runtime condition requires the row to be unchanged since it was read, so a concurrent coordinator or a still-heartbeating runtime wins. The record lives on the runtime row because running runtimes parse Control strictly, and a new Control field would break every runtime still on older code.
+
+Work the dead task still counted is lost; the coordinator prints a `::warning` with those counts and records them on the row. It never deletes a row, releases protection, stops a task or touches a lease. Recovery of that work follows the ordinary lease and recovery paths. A lost transaction race refuses with `continuation_refused`; reread state before retrying.
+
 ## Continuing an existing Sandbox candidate
 
 The existing `sandbox-identity.yml` workflow supports an explicit continuation

@@ -1,15 +1,17 @@
-import type { MeetingUpdatePublicDelivery } from "../../../../services/meetingUpdateStatus";
 import { useEffect, useMemo, useRef } from "react";
-import { trpc } from "../../../services/trpc";
+import type { MeetingUpdatePublicDelivery } from "../../../../services/meetingUpdateStatus";
+import type { LiveMeetingStatus } from "../../../../types/liveMeeting";
+import { MEETING_STATUS } from "../../../../types/meetingLifecycle";
+import type { MeetingEvent } from "../../../../types/meetingTimeline";
 import { useLiveMeetingStream } from "../../../hooks/useLiveMeetingStream";
+import { trpc } from "../../../services/trpc";
 import {
   buildMeetingDetails,
   type MeetingDetailInput,
   type MeetingDetails,
 } from "../../../utils/meetingLibrary";
-import { MEETING_STATUS } from "../../../../types/meetingLifecycle";
-import type { LiveMeetingStatus } from "../../../../types/liveMeeting";
-import type { MeetingEvent } from "../../../../types/meetingTimeline";
+import type { MeetingProcessingRetryProps } from "../components/MeetingProcessingRetry";
+import { useProcessingRetry } from "./useProcessingRetry";
 
 const UPDATE_DELIVERY_REFRESH_MS = 5000;
 const MAX_UPDATE_DELIVERY_REFRESH_READS = 60;
@@ -34,6 +36,7 @@ type UseMeetingDetailResult = {
   displayAttendees: string[];
   displayEvents: MeetingEvent[];
   timelineEmptyLabel: string;
+  processingRetry?: MeetingProcessingRetryProps;
 };
 
 const isDetailQueryEnabled = (params: UseMeetingDetailParams) =>
@@ -166,6 +169,35 @@ const useLiveStreamRefetch = (params: {
   ]);
 };
 
+type RetryPollQuery = {
+  queryHash: string;
+  state: {
+    dataUpdateCount: number;
+    data?: { meeting?: Pick<MeetingDetailInput, "processingRetry"> };
+  };
+};
+
+/** Polls an active retry with the same bounded budget as delivery refresh. */
+const useRetryRefetchInterval = () => {
+  const episode = useRef<{ queryHash: string; firstRead: number } | null>(null);
+  return (query: RetryPollQuery) => {
+    const status = query.state.data?.meeting?.processingRetry?.status;
+    if (status !== "queued" && status !== "running") {
+      episode.current = null;
+      return false;
+    }
+    if (episode.current?.queryHash !== query.queryHash)
+      episode.current = {
+        queryHash: query.queryHash,
+        firstRead: query.state.dataUpdateCount,
+      };
+    const reads = query.state.dataUpdateCount - episode.current.firstRead;
+    return reads < MAX_UPDATE_DELIVERY_REFRESH_READS
+      ? UPDATE_DELIVERY_REFRESH_MS
+      : false;
+  };
+};
+
 const resolveTimelineEmptyLabel = (
   enabled: boolean,
   status: string,
@@ -187,20 +219,39 @@ const resolveTimelineEmptyLabel = (
   }
 };
 
+function resolveAuthorizedDetail(
+  data: { meeting?: MeetingDetailInput } | undefined,
+  errorCode: string | undefined,
+  selectedMeetingId: string | null,
+) {
+  const accessDenied =
+    errorCode === "FORBIDDEN" ||
+    errorCode === "UNAUTHORIZED" ||
+    errorCode === "NOT_FOUND";
+  const queriedDetail = accessDenied ? null : resolveDetail(data);
+  return queriedDetail?.id === selectedMeetingId ? queriedDetail : null;
+}
+
 export const useMeetingDetail = (
   params: UseMeetingDetailParams,
 ): UseMeetingDetailResult => {
+  const retryRefetchInterval = useRetryRefetchInterval();
   const detailQuery = trpc.meetings.detail.useQuery(
     {
       serverId: params.selectedGuildId ?? "",
       meetingId: params.selectedMeetingId ?? "",
     },
-    { enabled: isDetailQueryEnabled(params) },
+    {
+      enabled: isDetailQueryEnabled(params),
+      refetchInterval: retryRefetchInterval,
+    },
   );
 
-  const queriedDetail = resolveDetail(detailQuery.data);
-  const detail =
-    queriedDetail?.id === params.selectedMeetingId ? queriedDetail : null;
+  const detail = resolveAuthorizedDetail(
+    detailQuery.data,
+    detailQuery.error?.data?.code,
+    params.selectedMeetingId,
+  );
   const acknowledgment = params.acknowledgedDelivery;
   const delivery =
     acknowledgment &&
@@ -246,6 +297,12 @@ export const useMeetingDetail = (
     desiredRevision,
     refetch,
   ]);
+
+  const processingRetry = useProcessingRetry(
+    params.selectedGuildId,
+    detail,
+    params.invalidateMeetingLists,
+  );
 
   const meeting = useMemo(() => {
     return buildMeetingFromDetail(detail, params.channelNameMap);
@@ -299,5 +356,6 @@ export const useMeetingDetail = (
     displayAttendees,
     displayEvents,
     timelineEmptyLabel,
+    processingRetry,
   };
 };

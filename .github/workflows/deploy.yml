@@ -4,6 +4,11 @@ run-name: Meeting Notes Bot Deploy ${{ github.actor }}
 
 on:
   workflow_dispatch:
+    inputs:
+      handoff_quiet_override:
+        description: Launch even if the serving runtime reports recording, finalization or voice work (use only for a leaked counter, see docs/deployment-handoff.md)
+        type: boolean
+        default: false
   push:
     branches:
       - master
@@ -191,11 +196,17 @@ jobs:
 
       - name: Protect serving runtime and warm candidate
         id: prepare
+        env:
+          HANDOFF_QUIET_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.handoff_quiet_override && '1' || '' }}
         run: node scripts/deployment/coordinator.cjs prepare
 
       - name: Promote exact ready candidate
         id: promote
         run: node scripts/deployment/coordinator.cjs promote
+
+      - name: Request guarded cancellation of failed preparation
+        if: failure() && steps.hold-guard.outcome == 'success' && steps.prepare.outcome == 'failure'
+        run: node scripts/deployment/coordinator.cjs cancel-preparation
 
       - name: Wait for runtime-owned retirement acknowledgment
         id: retire

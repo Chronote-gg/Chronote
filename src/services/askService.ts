@@ -1,3 +1,4 @@
+import { resolveAttendeeAccessEnabled } from "./attendeeAccessSetting";
 import { listRecentMeetingsForGuildService } from "./meetingHistoryService";
 import { config } from "./configService";
 import { captureEvent } from "./analyticsService";
@@ -5,7 +6,6 @@ import { listDictionaryEntriesService } from "./dictionaryService";
 import { normalizeTags, parseTags } from "../utils/tags";
 import { buildUpgradeTextOnly } from "../utils/upgradePrompt";
 import { ensureUserCanAccessMeeting } from "./meetingAccessService";
-import { CONFIG_KEYS } from "../config/keys";
 import { generateOpenAIText } from "./openaiTextService";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
@@ -14,10 +14,7 @@ import {
   resolveChatParamsForRole,
   resolveModelParamsForContext,
 } from "./openaiModelParams";
-import {
-  getSnapshotBoolean,
-  resolveConfigSnapshot,
-} from "./unifiedConfigService";
+import { resolveConfigSnapshot } from "./unifiedConfigService";
 import { resolveGuildSubscription } from "./subscriptionService";
 import {
   buildDictionaryPromptLines,
@@ -90,22 +87,6 @@ const buildDictionaryBlock = async (guildId: string): Promise<string> => {
   } catch (error) {
     console.warn("Failed to build dictionary block for Ask:", error);
     return "None.";
-  }
-};
-
-const resolveAttendeeAccessEnabled = async (guildId: string) => {
-  try {
-    const snapshot = await resolveConfigSnapshot({ guildId });
-    return getSnapshotBoolean(
-      snapshot,
-      CONFIG_KEYS.meetings.attendeeAccessEnabled,
-    );
-  } catch (error) {
-    console.warn("Failed to resolve attendee access setting", {
-      guildId,
-      error,
-    });
-    return true;
   }
 };
 

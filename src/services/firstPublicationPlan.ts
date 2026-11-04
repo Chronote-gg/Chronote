@@ -1,3 +1,9 @@
+import {
+  assertFirstPublicationCapacity,
+  assertFirstPublicationFits,
+  createFirstPublicationReceipt,
+  type PublicationPreviewCapacity,
+} from "./firstPublicationCapacity";
 import type { MeetingHistory } from "../types/db";
 import {
   buildMeetingNotesEmbeds,
@@ -22,6 +28,10 @@ import {
   type FirstPublicationReceipt,
 } from "./firstPublicationTypes";
 import type { DiscordEditorMessage } from "./discordMessageEditor";
+const PREVIEW_RUN_ID = "f".repeat(36);
+const PREVIEW_PLAN_DIGEST = "f".repeat(64);
+// Operator process identities are local: plus a UUID.
+const LOCAL_PROCESS_ID_LENGTH = 42;
 const components = z.array(
   z.object({
     type: z.literal(1),
@@ -150,15 +160,18 @@ export async function previewFirstPublication(
     throw Error("Select unique 1 to 25 meetings");
   if ((await deps.identity()) !== deps.profile.accountId)
     throw Error("AWS account mismatch");
-  const meetings: PlanMeeting[] = [];
-  for (const key of selection) meetings.push(await previewMeeting(key, deps));
+  const meetings: PlanMeeting[] = [],
+    capacity: PublicationPreviewCapacity = { entries: [], control: {} };
+  for (const key of selection)
+    meetings.push(await previewMeeting(key, deps, capacity));
+  const bounded = boundPreviewCapacity(meetings, capacity);
   const plan: FirstPublicationPlan = {
     schemaVersion: 1,
     operation: "publish",
     profile: deps.profile,
     createdAt: deps.now(),
-    ready: meetings.every((m) => m.outcome !== "blocked"),
-    meetings,
+    ready: bounded.every((m) => m.outcome !== "blocked"),
+    meetings: bounded,
     resolution: [],
     digest: "",
   };
@@ -198,6 +211,7 @@ async function assertEligible(
 async function previewMeeting(
   key: PublicationSelection[number],
   deps: FirstPublicationDependencies,
+  capacity: PublicationPreviewCapacity,
 ): Promise<PlanMeeting> {
   try {
     const row = await deps.repository.getStrong(key);
@@ -246,6 +260,19 @@ async function previewMeeting(
     if (duplicates.ambiguous)
       throw Error("Ambiguous existing publication; reconcile");
     if (runtime.kind !== "compatible") throw Error(runtime.reason);
+    const projectedReceipt = createFirstPublicationReceipt(
+      { key, outcome: "ready", binding },
+      {
+        runId: PREVIEW_RUN_ID,
+        planDigest: PREVIEW_PLAN_DIGEST,
+        generation: (receipt?.generation ?? 0) + 1,
+        now: deps.now(),
+        processId: deps.processId.padEnd(LOCAL_PROCESS_ID_LENGTH, "_"),
+      },
+    );
+    assertFirstPublicationFits(row, projectedReceipt);
+    capacity.entries.push({ row, receipt: projectedReceipt });
+    capacity.control = runtime.control;
     return { key, outcome: "ready", binding };
   } catch (e) {
     return { key, outcome: "blocked", reason: previewError(e) };
@@ -254,4 +281,20 @@ async function previewMeeting(
 function previewError(e: unknown) {
   if (e instanceof z.ZodError) return "Unsupported or invalid recovery data";
   return e instanceof Error ? e.message : "Read failed";
+}
+
+function boundPreviewCapacity(
+  meetings: PlanMeeting[],
+  capacity: PublicationPreviewCapacity,
+): PlanMeeting[] {
+  try {
+    assertFirstPublicationCapacity(capacity.entries, capacity.control);
+    return meetings;
+  } catch (error) {
+    return meetings.map((meeting) =>
+      meeting.outcome === "ready"
+        ? { key: meeting.key, outcome: "blocked", reason: previewError(error) }
+        : meeting,
+    );
+  }
 }

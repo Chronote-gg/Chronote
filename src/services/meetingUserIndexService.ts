@@ -1,6 +1,9 @@
 import { getMeetingUserIndexRepository } from "../repositories/meetingUserIndexRepository";
 import type { MeetingHistory, MeetingUserIndexRecord } from "../types/db";
-import { buildMeetingUserIndexRecords } from "../utils/meetingUserIndex";
+import {
+  buildGuildShareIndexRecords,
+  buildMeetingUserIndexRecords,
+} from "../utils/meetingUserIndex";
 
 const buildIndexKey = (
   record: Pick<MeetingUserIndexRecord, "userId" | "userTimestamp">,
@@ -9,7 +12,10 @@ const buildIndexKey = (
 export async function writeMeetingUserIndexForMeetingService(
   meeting: MeetingHistory,
 ) {
-  const records = buildMeetingUserIndexRecords(meeting);
+  const records = [
+    ...buildMeetingUserIndexRecords(meeting),
+    ...buildGuildShareIndexRecords(meeting),
+  ];
   if (records.length === 0) return;
   await getMeetingUserIndexRepository().write(records);
 }
@@ -18,8 +24,14 @@ export async function replaceMeetingUserIndexForMeetingService(
   previous: MeetingHistory,
   updated: MeetingHistory,
 ) {
-  const previousRecords = buildMeetingUserIndexRecords(previous);
-  const updatedRecords = buildMeetingUserIndexRecords(updated);
+  const previousRecords = [
+    ...buildMeetingUserIndexRecords(previous),
+    ...buildGuildShareIndexRecords(previous),
+  ];
+  const updatedRecords = [
+    ...buildMeetingUserIndexRecords(updated),
+    ...buildGuildShareIndexRecords(updated),
+  ];
   const updatedKeys = new Set(updatedRecords.map(buildIndexKey));
   const staleRecords = previousRecords.filter(
     (record) => !updatedKeys.has(buildIndexKey(record)),

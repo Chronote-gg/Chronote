@@ -14,11 +14,48 @@ import {
 } from "../deployment/controlFixtures";
 import type { MeetingHistory, ActiveMeetingLease } from "../../src/types/db";
 import type { CheckpointArtifactInput } from "../../src/types/recordingCheckpoint";
+/** A 48 kHz stereo PCM checkpoint piece whose intervals all bind `sourceId`. */
+export function pcmArtifact(
+  sourceId: string,
+  sequence: number,
+  bytes: Buffer,
+  intervals: Array<{ startOffsetMs: number; durationMs: number }>,
+): CheckpointArtifactInput {
+  return {
+    kind: "audio",
+    sourceId,
+    sequence,
+    contentType: "audio/pcm",
+    format: { encoding: "pcm_s16le", sampleRate: 48000, channels: 2 },
+    coverage: {
+      kind: "known",
+      intervals: intervals.map((interval) => ({ sourceId, ...interval })),
+    },
+    bytes,
+    checksumSha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+/** Saves the text transcription prompt that recovery re-transcription requires. */
+export function savedTranscriptionPrompt(
+  saved: ReturnType<typeof generationContextSchema.parse>,
+) {
+  saved.prompts.transcription = {
+    availability: "available",
+    value: {
+      name: "original",
+      type: "text",
+      label: "original",
+      version: 1,
+      template: "Saved transcription prompt",
+    },
+  };
+}
 export async function recoveryFixture(
   text = "We agreed to finish the release testing tomorrow.",
   options: {
     guildId?: string;
     nowMs?: number;
+    timestamp?: string;
     requested?: { transcribeMeeting: boolean; generateNotes: boolean };
     artifacts?: CheckpointArtifactInput[];
     context?: (
@@ -33,6 +70,12 @@ export async function recoveryFixture(
   const now = Math.floor(nowMs / 1000);
   const row: MeetingHistory = {
     ...history,
+    ...(options.timestamp
+      ? {
+          timestamp: options.timestamp,
+          channelId_timestamp: `${history.channelId}#${options.timestamp}`,
+        }
+      : {}),
     guildId: options.guildId ?? history.guildId,
     participants: [],
     textChannelId: "text",

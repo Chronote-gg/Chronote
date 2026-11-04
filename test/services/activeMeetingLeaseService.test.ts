@@ -71,10 +71,11 @@ jest.mock("../../src/services/runtimeLifecycleService", () => ({
     now: Math.floor(Date.now() / 1000),
   })),
 }));
-jest.mock("../../src/services/guildVoiceOperationService", () => ({
-  prepareOwnedVoiceSession: jest.fn(),
-  settleOwnedVoiceSession: jest.fn(async () => "settled"),
-}));
+jest.mock("../../src/services/guildVoiceOperationService", () =>
+  jest
+    .requireActual("../fixtures/voiceSession")
+    .createSettledReservationVoiceMock(),
+);
 jest.mock("../../src/services/runtimeInstanceService", () => ({
   getRuntimeInstanceId: () => "instance-1",
 }));
@@ -402,6 +403,9 @@ describe("activeMeetingLeaseService", () => {
       scenario.startsWith("status_read_") ? 0 : 1,
     );
     expect(meeting.ownershipSignal?.aborted).toBe(ownershipUnconfirmed);
+    expect(mockedRenewActiveMeetingLease.mock.calls.at(-1)?.[8]).toBe(
+      meeting.ownershipSignal,
+    );
     finish();
     await releaseSessionReservation(reservation);
   });

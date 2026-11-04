@@ -42,7 +42,7 @@ export const resolveOpenPortalPath = (serverId: string, guilds: Guild[]) => {
     return `/portal/server/${encodedServerId}/ask`;
   }
 
-  return `/portal/server/${encodedServerId}/library`;
+  return `/portal/meetings?scope=guild&serverId=${encodedServerId}`;
 };
 
 export const resolvePostAuthPortalPath = (
@@ -60,7 +60,7 @@ export const resolvePostAuthPortalPath = (
     return `/portal/server/${encodedServerId}/ask`;
   }
 
-  return `/portal/server/${encodedServerId}/library`;
+  return `/portal/meetings?scope=guild&serverId=${encodedServerId}`;
 };
 
 export const resolveBillingPath = (serverId: string) => {

@@ -16,6 +16,14 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 3. **Weekly minutes exhausted.** Your plan's weekly meeting minutes are used up. Wait for the next billing cycle or upgrade your plan.
 4. **You are not in a voice channel.** You must be in the voice channel you want to record before running `/startmeeting`.
 
+## Server still reports an active meeting after recording stops
+
+If Chronote has left voice but `/startmeeting` still says a meeting is active, the previous session may be waiting for confirmation that it ended safely. A delayed disconnect confirmation can let Chronote finish cleanup automatically. This cleanup does not create another recording or rewrite saved notes.
+
+If processing fails after you use the meeting's end button, `/leave confirm:true`, or **Stop recording**, Chronote can finish cleanup automatically once it confirms that the available recording data is preserved and the session has ended. Cleanup does not retry transcription or generate missing notes.
+
+Try `/startmeeting` again after a short wait. If the active-meeting message persists, use **Support** in the portal sidebar and include the server name and approximate recording end time. Chronote keeps the server unavailable when it cannot confirm that the previous session ended safely.
+
 ## Auto-record does not start
 
 **Symptoms**: Someone joins a voice channel with auto-record enabled, but Chronote does not begin recording.
@@ -24,7 +32,7 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 
 1. **Another meeting is active.** Auto-record waits for the current meeting to finish.
 2. **Auto-record is suppressed.** After a meeting is explicitly ended, auto-record is suppressed for that channel until it fully empties. Make sure everyone leaves the channel, then rejoin.
-3. **Missing bot permissions.** The bot needs Connect and Speak in the voice channel, and View Channel, Send Messages, and Read Message History in the configured text channel. If Chronote can send messages but is missing one of the other text permissions, it posts a warning in the configured text channel. If it cannot view or send in that channel, it tries to DM the user who triggered auto-record. Fix the channel overrides, then have everyone leave and rejoin the voice channel.
+3. **Missing bot permissions.** The bot needs Connect and Speak in the voice channel, and View Channel, Send Messages, Read Message History, and Embed Links in the configured text channel. If Chronote can send messages but is missing one of the other text permissions, it posts a warning in the configured text channel. If it cannot view or send in that channel, it tries to DM the user who triggered auto-record. Fix the channel overrides, then have everyone leave and rejoin the voice channel.
 4. **Auto-record is not configured for this channel.** Run `/autorecord list` to check the current rules.
 5. **Weekly minutes exhausted.** Same as above.
 
@@ -64,6 +72,12 @@ If you see "Some audio could not be transcribed. These notes may be incomplete,"
 
 A processing-failure message is different from an empty recording. Any existing upload retries run before Chronote reports a terminal upload failure.
 
+#### Retry processing
+
+When transcription, notes or the summary failed for a server meeting, the meeting's owner (or someone who can manage the channel, for auto-recorded meetings) can choose **Retry processing** on the meeting page. Chronote re-runs the failed steps and anything that depends on them, then updates the meeting and its existing Discord posts. If the notes were already generated, you confirm replacing them first. Notes someone edited are never replaced. Each meeting allows three attempts. Personal uploads retry on their own and do not show this option.
+
+A retry may use the server's current settings when the settings from the original recording are not available. When it does, the meeting page says so.
+
 ## A saved desktop draft is paused
 
 "This draft is preserved and paused. Recovery is not available yet" means that draft cannot currently be submitted. Its saved files remain on your computer. In an updated desktop client, **Retry upload** is disabled and **Open folder** remains available. **Delete** removes the local files only when you choose it.
@@ -95,7 +109,7 @@ Keep the saved files if you want to preserve the draft. You can start a separate
 **Causes and fixes**:
 
 1. **Still processing.** Long meetings (over 30 minutes) can take several minutes to process. Wait for the processing indicator to clear.
-2. **Missing text channel permissions.** The bot needs View Channel, Send Messages, and Read Message History in the text channel. If permissions were changed during the meeting, the bot may not be able to update the status message or post results.
+2. **Missing text channel permissions.** The bot needs View Channel, Send Messages, Read Message History, and Embed Links in the text channel. If permissions were changed during the meeting, the bot may not be able to update the status message or post results.
 3. **Meeting was cancelled.** For auto-recorded meetings with too little content, the meeting is cancelled instead of generating notes. Look for an "Auto-Recording Cancelled" embed.
 
 ## Web portal shows no meetings
@@ -106,7 +120,7 @@ Keep the saved files if you want to preserve the draft. You can start a separate
 
 1. **Filters hide the meeting.** **My Meetings** opens by default with an All time range and includes server, tag, and archive filters. Clear filters, or use **Load more** to fetch older loaded pages.
 2. **Wrong server selected.** Server Library scopes to one server. Use **My Meetings** for a cross-server view, or choose **View servers** to open the expected server.
-3. **Channel permissions.** The portal respects Discord channel permissions. You only see meetings from channels you can access, plus meetings you attended when attendee access is enabled.
+3. **Channel permissions.** The portal respects Discord channel permissions. Attendee access is enabled by default, so recorded attendees can still read their meetings after losing channel access or when the original channel is deleted. Server admins can turn off **Attendee access** in server settings; then current channel permissions are required.
 4. **No meetings recorded yet.** Meetings appear after at least one meeting has been completed successfully.
 
 ## Billing or plan issues

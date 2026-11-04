@@ -1,3 +1,9 @@
+import {
+  firstPublicationOwner as owner,
+  registeredFirstPublication as registeredMeeting,
+  assertFirstPublicationCapacity,
+  assertPublicationTransactionCapacity,
+} from "../services/firstPublicationCapacity";
 import { dynamoSnapshotCondition as condition } from "../utils/dynamoSnapshotCondition";
 import {
   DynamoDBClient,
@@ -57,16 +63,6 @@ export function readPublicationPins(
   );
   if (!parsed.success) throw Error("Invalid publication pins");
   return parsed.data;
-}
-function owner(receipt: FirstPublicationReceipt) {
-  return {
-    kind: "running" as const,
-    purpose: "first_publication" as const,
-    runId: receipt.runId,
-    previewDigest: receipt.planDigest,
-    receiptKey: receipt.authority,
-    snapshot: receipt.sourceDigest,
-  };
 }
 function owns(
   row: MeetingHistory,
@@ -175,6 +171,10 @@ export function createFirstPublicationRepository(
       authorities: input.entries.map((e) => e.receipt.authority),
       settled: [],
     };
+    assertFirstPublicationCapacity(
+      rows.map((r, i) => ({ row: r.before, receipt: attempts[i].after })),
+      control,
+    );
     return (await store.commit({
       controlBefore: control,
       controlAfter: { ...control, publicationPins: pins },
@@ -374,6 +374,11 @@ export function buildFirstPublicationCommit(
   profile: PublicationProfile,
   c: Commit,
 ): TransactWriteItem[] {
+  assertPublicationTransactionCapacity(
+    c.controlAfter,
+    c.rows.map((r) => r.after),
+    c.attempts.map((a) => a.after),
+  );
   const items: TransactWriteItem[] = [];
   const controlProof = condition(c.controlBefore, [
     "servingGeneration",
@@ -509,36 +514,6 @@ export function createDynamoFirstPublicationRepository(
     },
   };
   return createFirstPublicationRepository(store);
-}
-
-function registeredMeeting(
-  after: MeetingHistory,
-  receipt: FirstPublicationReceipt,
-) {
-  const ids = receipt.pages.flatMap((p) =>
-    p.kind === "verified" ? [p.messageId] : [],
-  );
-  if (new Set(ids).size !== ids.length || !after.updateDelivery) return null;
-  after.notesChannelId = receipt.channelId;
-  after.notesMessageIds = ids;
-  after.updateDelivery = {
-    ...after.updateDelivery,
-    parts: {
-      ...after.updateDelivery.parts,
-      notesBody: {
-        ...after.updateDelivery.parts.notesBody,
-        acknowledged: after.updateDelivery.parts.notesBody.desired,
-      },
-    },
-    progress: {
-      kind: "synced",
-      syncedAt: Math.floor(Date.parse(receipt.updatedAt) / 1000),
-    },
-  };
-  delete after.updateDeliveryQueue;
-  delete after.updateDeliveryDueAt;
-
-  return after;
 }
 
 function historyUpdate(

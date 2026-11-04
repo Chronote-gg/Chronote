@@ -75,6 +75,35 @@ run "disabled_by_default" {
     error_message = "Production introduction roles must be absent by default."
   }
 }
+run "prompt_guard_alone" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction, aws_iam_role_policy.production_prompt_guard, aws_iam_role_policy.production_introduction] }
+  variables {
+    environment                         = "prod"
+    github_environment                  = "production"
+    enable_production_prompt_guard_role = true
+  }
+  assert {
+    condition     = keys(aws_iam_role.production_introduction) == ["prompt-guard"] && length(aws_iam_role_policy.production_prompt_guard) == 1 && length(aws_iam_role_policy.production_introduction) == 0
+    error_message = "The prompt guard role must be available without introduction authority or reviewed definitions."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role.production_introduction["prompt-guard"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:workflow"] == "Meeting Notes Bot Deploy" && one([for s in jsondecode(aws_iam_role_policy.production_prompt_guard[0].policy).Statement : s.Resource if try(s.Sid, "") == "ServingServiceMetadata"]) == "arn:aws:ecs:us-east-1:123456789012:service/chronote-prod-bot-cluster/chronote-prod-bot-service"
+    error_message = "The guard role keeps its deploy workflow trust and the exact serving service."
+  }
+}
+run "prompt_guard_flag_never_reaches_sandbox" {
+  command = plan
+  plan_options { target = [aws_iam_role.production_introduction] }
+  variables {
+    environment                         = "sandbox"
+    enable_production_prompt_guard_role = true
+  }
+  assert {
+    condition     = length(aws_iam_role.production_introduction) == 0
+    error_message = "Production authority must never be created for Sandbox."
+  }
+}
 run "sandbox_never_receives_production_roles" {
   command = plan
   plan_options { target = [aws_iam_role.production_introduction] }

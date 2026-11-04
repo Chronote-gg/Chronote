@@ -2,23 +2,6 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { config } from "../services/configService";
 import {
-  buildMcpBearerChallenge,
-  formatMcpScope,
-  hasMcpScopes,
-  markMcpAccessTokenScopeChallenge,
-  validateMcpAccessToken,
-} from "../services/mcpOAuthService";
-import {
-  DEFAULT_MCP_TRANSCRIPT_MAX_CHARS,
-  getMcpMeetingSummary,
-  getMcpMeetingTranscript,
-  listMcpMyMeetings,
-  listMcpMeetings,
-  listMcpServersForToken,
-  MAX_MCP_TRANSCRIPT_MAX_CHARS,
-  McpMeetingAccessError,
-} from "../services/mcpMeetingService";
-import {
   getMcpLiveMeetingStatus,
   getMcpLiveMeetingTranscript,
   getMcpMeetingControlRequest,
@@ -27,15 +10,33 @@ import {
   stopMcpMeetingControl,
 } from "../services/mcpMeetingControlService";
 import {
+  DEFAULT_MCP_TRANSCRIPT_MAX_CHARS,
+  getMcpMeetingSummary,
+  getMcpMeetingTranscript,
+  listMcpMeetings,
+  listMcpMyMeetings,
+  listMcpServersForToken,
+  MAX_MCP_TRANSCRIPT_MAX_CHARS,
+  McpMeetingAccessError,
+} from "../services/mcpMeetingService";
+import {
+  buildMcpBearerChallenge,
+  formatMcpScope,
+  hasMcpScopes,
+  markMcpAccessTokenScopeChallenge,
+  validateMcpAccessToken,
+} from "../services/mcpOAuthService";
+import {
   isMcpServiceAccountToken,
   validateMcpServiceAccountToken,
 } from "../services/mcpServiceAccountService";
+import type { MeetingControlCommandSnapshot } from "../services/meetingControlQueueService";
 import type {
   McpAccessTokenInfo,
   McpScope,
   McpTokenRestriction,
 } from "../types/mcpOAuth";
-import type { MeetingControlCommandSnapshot } from "../services/meetingControlQueueService";
+import { myMeetingsInputFields } from "../types/myMeetingsInput";
 
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const JSON_RPC_VERSION = "2.0";
@@ -96,22 +97,8 @@ const customMyMeetingsDateRangeMessage =
 
 const listMyMeetingsSchema = z
   .object({
-    mode: z.enum(["attended", "accessible"]).optional(),
-    range: z.enum(["all", "today", "past_7_days", "custom"]).optional(),
+    ...myMeetingsInputFields,
     limit: z.number().int().min(1).max(100).optional(),
-    cursor: z.string().min(1).optional(),
-    startDate: z.string().datetime().optional(),
-    endDate: z.string().datetime().optional(),
-    timeZoneOffsetMinutes: z
-      .number()
-      .int()
-      .min(-14 * 60)
-      .max(14 * 60)
-      .optional(),
-    serverIds: z.array(z.string().min(1)).optional(),
-    tags: z.array(z.string().min(1)).optional(),
-    archivedOnly: z.boolean().optional(),
-    includeArchived: z.boolean().optional(),
   })
   .superRefine((input, ctx) => {
     if (

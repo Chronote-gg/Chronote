@@ -12,6 +12,8 @@ variables {
   trusted_refs           = ["refs/heads/codex/sandbox-terraform-capture", "refs/heads/master"]
   github_repository_id   = "123456"
   github_owner_id        = "654321"
+  site_frontend_bucket   = "meeting-notes-sandbox-frontend-123456789012"
+  site_docs_bucket       = "meeting-notes-sandbox-docs-123456789012"
 }
 run "enabled" {
   command = plan

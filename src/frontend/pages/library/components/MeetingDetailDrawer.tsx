@@ -44,7 +44,10 @@ import type { MeetingEventType } from "../../../../types/meetingTimeline";
 import { useMeetingDetail } from "../hooks/useMeetingDetail";
 import { useMeetingUpdateFeedback } from "../hooks/useMeetingUpdateFeedback";
 import { useMeetingNotesSaves } from "../hooks/useMeetingNotesSaves";
-import { resolveDetailErrorMessage } from "../../../utils/meetingLibrary";
+import {
+  processingPanelProps,
+  resolveDetailErrorMessage,
+} from "../../../utils/meetingLibrary";
 import MeetingDetailHeader from "./MeetingDetailHeader";
 import MeetingDetailModals from "./MeetingDetailModals";
 import MeetingAudioPanel from "./MeetingAudioPanel";
@@ -239,6 +242,7 @@ export default function MeetingDetailDrawer({
     displayAttendees,
     displayEvents,
     timelineEmptyLabel,
+    processingRetry,
   } = useMeetingDetail({
     opened,
     acknowledgedDelivery: deliveryFeedback.acknowledgedDelivery,
@@ -1004,12 +1008,8 @@ export default function MeetingDetailDrawer({
       notes={
         displayStatus === "unavailable" ? (detail?.notes ?? "") : meeting.notes
       }
-      processing={meeting.processing}
-      capture={meeting.capture}
-      captureCoverage={meeting.captureCoverage}
-      captureNotice={meeting.captureNotice}
-      recovery={meeting.recovery}
-      recoveryNotice={meeting.recoveryNotice}
+      {...processingPanelProps(meeting)}
+      processingRetry={processingRetry}
       summaryFeedback={summaryFeedback}
       feedbackPending={feedbackMutation.isPending}
       copyDisabled={!canCopySummary}

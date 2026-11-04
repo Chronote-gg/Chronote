@@ -1,3 +1,4 @@
+import { meetingBrowseSearchSchema } from "./utils/meetingBrowseSearch";
 import {
   defaultParseSearch,
   lazyRouteComponent,
@@ -219,7 +220,12 @@ const portalRoute = new Route({
 });
 
 function PortalIndexRedirect() {
-  return <Navigate to="/portal/meetings" />;
+  return (
+    <Navigate
+      to="/portal/meetings"
+      search={meetingBrowseSearchSchema.parse({})}
+    />
+  );
 }
 
 const portalIndexRoute = new Route({
@@ -239,6 +245,7 @@ const portalMyMeetingsRoute = new Route({
   getParentRoute: () => portalRoute,
   path: "meetings",
   component: MyMeetings,
+  validateSearch: meetingBrowseSearchSchema.parse,
 });
 
 const portalPersonalUploadRoute = new Route({
@@ -427,7 +434,13 @@ export const router = new Router({
     const search = defaultParseSearch(searchString) as Record<string, unknown>;
     const params = new URLSearchParams(searchString);
     // Discord identifiers exceed safe integer precision when JSON-parsed.
-    for (const key of ["serverId", "meetingId", "eventId"]) {
+    for (const key of [
+      "serverId",
+      "meetingServerId",
+      "meetingId",
+      "eventId",
+      "channelId",
+    ]) {
       const values = params.getAll(key);
       if (values.length === 1 && /^\d+$/.test(values[0])) {
         search[key] = values[0];

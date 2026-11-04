@@ -91,7 +91,9 @@ export async function runNotionReceiptChain<T>(
   return outcome.value;
 }
 
-export function registerRuntimeNotionOwner(work: RuntimeWorkClaim): () => void {
+export function registerRuntimeNotionOwner(
+  work: Pick<RuntimeWorkClaim, "signal" | "trackEffect" | "fence">,
+): () => void {
   return registerNotionMutationTracker(work.signal, (run) =>
     work.trackEffect(run).catch((error) => {
       work.fence();

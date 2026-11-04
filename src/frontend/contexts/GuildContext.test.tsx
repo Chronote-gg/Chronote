@@ -19,7 +19,11 @@ function DirectServerSelection() {
 
 beforeEach(() => {
   localStorage.clear();
-  mockAuth.mockReturnValue({ state: "authenticated" });
+  mockAuth.mockReturnValue({
+    state: "authenticated",
+    protectedQueriesReady: true,
+    user: { id: "user" },
+  });
   mockGuildQuery.mockReturnValue({
     data: { guilds: [{ id: "other", name: "Other", canManage: true }] },
     error: null,
@@ -52,7 +56,11 @@ it("allows a direct route selection when guild discovery fails", () => {
 it.each(["authenticated", "unauthenticated"])(
   "does not reassert an unavailable server for an %s user",
   (state) => {
-    mockAuth.mockReturnValue({ state });
+    mockAuth.mockReturnValue({
+      state,
+      protectedQueriesReady: state === "authenticated",
+      user: state === "authenticated" ? { id: "user" } : null,
+    });
     render(
       <GuildProvider>
         <DirectServerSelection />

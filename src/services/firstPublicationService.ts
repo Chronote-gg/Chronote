@@ -1,3 +1,7 @@
+import {
+  createFirstPublicationReceipt,
+  assertFirstPublicationFits,
+} from "./firstPublicationCapacity";
 import type { BatchAcquisition } from "../repositories/firstPublicationRepository";
 import { randomUUID } from "node:crypto";
 import {
@@ -33,6 +37,7 @@ async function assertLive(
   const snapshot = firstPublicationSnapshot(row);
   if (receipt) {
     assertReceiptOwner(row, receipt);
+    assertFirstPublicationFits(row, receipt);
     if (m.binding.snapshot.publicationRepair === undefined)
       delete snapshot.publicationRepair;
     else snapshot.publicationRepair = m.binding.snapshot.publicationRepair;
@@ -495,23 +500,13 @@ async function preflightPublication(
     runtime,
     entry: {
       snapshot: m.binding.snapshot,
-      receipt: {
-        schemaVersion: 1,
+      receipt: createFirstPublicationReceipt(m, {
         runId,
-        generation: (prior?.generation ?? 0) + 1,
-        authority: m.binding.authority,
-        key: m.key,
         planDigest: plan.digest,
-        sourceDigest: m.binding.sourceDigest,
-        channelId: m.binding.channelId,
-        botId: m.binding.botId,
-        payloads: m.binding.payloads,
-        pages: m.binding.payloads.map(() => ({ kind: "prepared" })),
-        ownerState: "running",
-        outcome: "pending",
-        updatedAt: deps.now(),
+        generation: (prior?.generation ?? 0) + 1,
+        now: deps.now(),
         processId: deps.processId,
-      },
+      }),
     },
   };
 }

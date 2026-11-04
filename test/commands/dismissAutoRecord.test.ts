@@ -16,6 +16,7 @@ import { handleEndMeetingOther } from "../../src/commands/endMeeting";
 import { MEETING_END_REASONS } from "../../src/types/meetingLifecycle";
 
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   getMeeting: jest.fn(),
 }));
 jest.mock("../../src/services/unifiedConfigService", () => ({
@@ -47,6 +48,13 @@ const makeVoiceChannel = (
 ): MeetingData["voiceChannel"] =>
   ({ id: "voice-1", members }) as MeetingData["voiceChannel"];
 
+const makeGroupVoiceChannel = () =>
+  makeVoiceChannel(
+    makeMembers([
+      ["user-1", false],
+      ["user-2", false],
+    ]),
+  );
 const makeMeeting = (overrides: Partial<MeetingData> = {}): MeetingData =>
   ({
     guildId: "guild-1",
@@ -90,6 +98,19 @@ const makeInteraction = (
     ...overrides,
   }) as unknown as UserContextMenuCommandInteraction;
 
+async function expectAllowedStop(
+  client: Client,
+  interaction: UserContextMenuCommandInteraction,
+  meeting: MeetingData,
+) {
+  await handleDismissAutoRecord(client, interaction);
+  expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
+    client,
+    meeting,
+    undefined,
+    undefined,
+  );
+}
 describe("handleDismissAutoRecord", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -130,13 +151,7 @@ describe("handleDismissAutoRecord", () => {
     mockedGetMeeting.mockReturnValue(meeting);
     mockedResolveConfigEnum.mockResolvedValue("solo_or_admin");
 
-    await handleDismissAutoRecord(client, interaction);
-
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
-      client,
-      meeting,
-      undefined,
-    );
+    await expectAllowedStop(client, interaction, meeting);
     expect(meeting.endReason).toBe(MEETING_END_REASONS.DISMISSED);
     expect(meeting.endTriggeredByUserId).toBe("user-1");
     expect(meeting.cancelled).toBe(true);
@@ -159,14 +174,9 @@ describe("handleDismissAutoRecord", () => {
     });
     mockedGetMeeting.mockReturnValue(meeting);
 
-    await handleDismissAutoRecord(client, interaction);
+    await expectAllowedStop(client, interaction, meeting);
 
     expect(mockedResolveConfigEnum).not.toHaveBeenCalled();
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
-      client,
-      meeting,
-      undefined,
-    );
     expect(meeting.endReason).toBe(MEETING_END_REASONS.BUTTON);
     expect(meeting.endTriggeredByUserId).toBe("user-1");
     expect(meeting.cancelled).toBeUndefined();
@@ -204,129 +214,49 @@ describe("handleDismissAutoRecord", () => {
     const interaction = makeInteraction();
     const meeting = makeMeeting({
       startTriggeredByUserId: "user-1",
-      voiceChannel: makeVoiceChannel(
-        makeMembers([
-          ["user-1", false],
-          ["user-2", false],
-        ]),
-      ),
+      voiceChannel: makeGroupVoiceChannel(),
     });
     mockedGetMeeting.mockReturnValue(meeting);
     mockedResolveConfigEnum.mockResolvedValue("trigger_or_admin");
 
-    await handleDismissAutoRecord(client, interaction);
-
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
-      client,
-      meeting,
-      undefined,
-    );
+    await expectAllowedStop(client, interaction, meeting);
   });
 
   it("allows anyone in channel when policy is anyone_in_channel", async () => {
     const client = makeClient();
     const interaction = makeInteraction();
     const meeting = makeMeeting({
-      voiceChannel: makeVoiceChannel(
-        makeMembers([
-          ["user-1", false],
-          ["user-2", false],
-        ]),
-      ),
+      voiceChannel: makeGroupVoiceChannel(),
     });
     mockedGetMeeting.mockReturnValue(meeting);
     mockedResolveConfigEnum.mockResolvedValue("anyone_in_channel");
 
-    await handleDismissAutoRecord(client, interaction);
-
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
-      client,
-      meeting,
-      undefined,
-    );
+    await expectAllowedStop(client, interaction, meeting);
   });
 
-  it("allows admins regardless of policy", async () => {
-    const client = makeClient();
-    const interaction = makeInteraction({
-      memberPermissions: new PermissionsBitField(
-        PermissionFlagsBits.Administrator,
-      ),
-    });
-    const meeting = makeMeeting({
-      voiceChannel: makeVoiceChannel(
-        makeMembers([
-          ["user-1", false],
-          ["user-2", false],
-        ]),
-      ),
-    });
-    mockedGetMeeting.mockReturnValue(meeting);
-    mockedResolveConfigEnum.mockResolvedValue("trigger_or_admin");
+  it.each(["Administrator", "ManageChannels", "ManageGuild"] as const)(
+    "allows users with %s regardless of policy",
+    async (permission) => {
+      const client = makeClient();
+      const interaction = makeInteraction({
+        memberPermissions: new PermissionsBitField(
+          PermissionFlagsBits[permission],
+        ),
+      });
+      const meeting = makeMeeting({
+        voiceChannel: makeVoiceChannel(
+          makeMembers([
+            ["user-1", false],
+            ["user-2", false],
+          ]),
+        ),
+      });
+      mockedGetMeeting.mockReturnValue(meeting);
+      mockedResolveConfigEnum.mockResolvedValue("trigger_or_admin");
 
-    await handleDismissAutoRecord(client, interaction);
-
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
-      client,
-      meeting,
-      undefined,
-    );
-  });
-
-  it("allows users with ManageChannels", async () => {
-    const client = makeClient();
-    const interaction = makeInteraction({
-      memberPermissions: new PermissionsBitField(
-        PermissionFlagsBits.ManageChannels,
-      ),
-    });
-    const meeting = makeMeeting({
-      voiceChannel: makeVoiceChannel(
-        makeMembers([
-          ["user-1", false],
-          ["user-2", false],
-        ]),
-      ),
-    });
-    mockedGetMeeting.mockReturnValue(meeting);
-    mockedResolveConfigEnum.mockResolvedValue("trigger_or_admin");
-
-    await handleDismissAutoRecord(client, interaction);
-
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
-      client,
-      meeting,
-      undefined,
-    );
-  });
-
-  it("allows users with ManageGuild", async () => {
-    const client = makeClient();
-    const interaction = makeInteraction({
-      memberPermissions: new PermissionsBitField(
-        PermissionFlagsBits.ManageGuild,
-      ),
-    });
-    const meeting = makeMeeting({
-      voiceChannel: makeVoiceChannel(
-        makeMembers([
-          ["user-1", false],
-          ["user-2", false],
-        ]),
-      ),
-    });
-    mockedGetMeeting.mockReturnValue(meeting);
-    mockedResolveConfigEnum.mockResolvedValue("trigger_or_admin");
-
-    await handleDismissAutoRecord(client, interaction);
-
-    expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
-      client,
-      meeting,
-      undefined,
-    );
-  });
-
+      await expectAllowedStop(client, interaction, meeting);
+    },
+  );
   it("does not treat ManageMessages alone as admin", async () => {
     const client = makeClient();
     const interaction = makeInteraction({
@@ -335,12 +265,7 @@ describe("handleDismissAutoRecord", () => {
       ),
     });
     const meeting = makeMeeting({
-      voiceChannel: makeVoiceChannel(
-        makeMembers([
-          ["user-1", false],
-          ["user-2", false],
-        ]),
-      ),
+      voiceChannel: makeGroupVoiceChannel(),
       startTriggeredByUserId: "user-2",
     });
     mockedGetMeeting.mockReturnValue(meeting);

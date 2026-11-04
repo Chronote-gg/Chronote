@@ -48,6 +48,7 @@ describe("permissions", () => {
         PermissionsBitField.Flags.ViewChannel,
         PermissionsBitField.Flags.SendMessages,
         PermissionsBitField.Flags.ReadMessageHistory,
+        PermissionsBitField.Flags.EmbedLinks,
       ),
     );
 
@@ -62,6 +63,7 @@ describe("permissions", () => {
         buildPermissions(
           PermissionsBitField.Flags.ViewChannel,
           PermissionsBitField.Flags.SendMessages,
+          PermissionsBitField.Flags.EmbedLinks,
         ),
       ),
       member,
@@ -81,6 +83,40 @@ describe("permissions", () => {
     expect(canBotSendMessages(textChannel, member)).toBe(true);
   });
 
+  it("blocks meeting embeds without Embed Links while allowing a plain warning", () => {
+    const textChannel = buildTextChannel(
+      buildPermissions(
+        PermissionsBitField.Flags.ViewChannel,
+        PermissionsBitField.Flags.SendMessages,
+        PermissionsBitField.Flags.ReadMessageHistory,
+      ),
+    );
+    const voiceChannel = buildVoiceChannel(
+      buildPermissions(
+        PermissionsBitField.Flags.ViewChannel,
+        PermissionsBitField.Flags.Connect,
+      ),
+    );
+
+    expect(checkBotPermissions(voiceChannel, textChannel, member)).toEqual({
+      success: false,
+      errorMessage: "I am missing **Embed Links** in **notes**.",
+    });
+    expect(canBotSendMessages(textChannel, member)).toBe(true);
+    expect(
+      checkBotPermissions(voiceChannel, textChannel, member, "tts_only"),
+    ).toEqual({ success: true });
+    expect(
+      buildAutoRecordPermissionDmMessage({
+        isAdmin: false,
+        voiceChannelName: "voice",
+        textChannelName: "notes",
+        missingVoicePermissions: [],
+        missingTextPermissions: ["Embed Links"],
+      }),
+    ).toContain("Embed Links");
+  });
+
   it("includes the missing permissions in failure messages", () => {
     const result = checkBotPermissions(
       buildVoiceChannel(
@@ -96,7 +132,7 @@ describe("permissions", () => {
     expect(result).toEqual({
       success: false,
       errorMessage:
-        "I am missing **Send Messages**, **Read Message History** in **notes**.",
+        "I am missing **Send Messages**, **Read Message History**, **Embed Links** in **notes**.",
     });
   });
 

@@ -35,7 +35,11 @@ authorize deployment or publication.
 Save a private selection JSON array of `{guildId, channelId_timestamp}` entries,
 or `{bundle: "relative/path/to/import-bundle.json"}` references. Bundles contribute
 only their selected meeting keys. One batch supports up to 25 unique meetings;
-normal longer notes paginate automatically.
+normal longer notes paginate automatically. Preview also checks the projected
+DynamoDB transaction and item sizes, including room for final message pointers
+and verified receipts. An oversized batch asks for fewer meetings. A meeting
+that cannot fit registration is blocked before claiming or posting; no stored
+history is deleted to make it fit.
 
 ```text
 node -r ts-node/register/transpile-only scripts/publish-recovered-meeting.ts first-publication preview --environment production --selection PRIVATE_SELECTION --out NEW_PRIVATE_DIRECTORY
@@ -129,6 +133,13 @@ reproduced both before their fixes:
   error. An exact approved replay now verifies the existing publication and
   returns success without sending again. Although originally graded minor, this
   was treated as important because interrupted operators must be able to retry.
+
+GitHub review also identified aggregate transaction overflow and final registration
+rows that could exceed the item limit after sending. Preview and acquisition now
+check capacity, including future verified receipts and every final message pointer.
+The DynamoDB transaction builder checks actual writes too. Reproducing regressions
+cover both failures and a successful near-limit publication. These checks follow
+[AWS transaction limits](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html).
 
 A related CLI regression verifies that successful release and release replay
 return exit code 0. No independent-review findings were deferred or left

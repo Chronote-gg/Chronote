@@ -9,6 +9,7 @@ const {
   taskDefinitionInput,
   candidateDefinition,
   assertPreparedTaskDefinition,
+  findCandidateDefinition,
 } = require("./task-definition.cjs");
 const {
   CoordinatorFailure,
@@ -23,6 +24,7 @@ const {
   RENEWAL_MARGIN_SECONDS,
 } = require("./production-capacity.cjs");
 const { runCli } = require("./coordinator-cli.cjs");
+const { serviceConverged } = require("./stopped-outgoing.cjs");
 
 const { configuration } = require("./coordinator-definition.cjs");
 function protocolModules(options) {
@@ -53,6 +55,21 @@ function createCoordinator(options = {}) {
     activeMeeting: `${config.tablePrefix}ActiveMeetingTable`,
   };
   const same = types.sameRuntimeIdentity;
+  const artifacts = require("./artifact-handoff.cjs").createArtifactHandoff({
+    ...options,
+    builders,
+    aws,
+    tables,
+    now,
+    sleep,
+    runtime,
+    control,
+    renew,
+    assertWriter,
+    own,
+    service,
+    protectedTask: (...args) => protectedTask(...args),
+  });
   const { ready, protectedTask } =
     require("./runtime-proof.cjs").createRuntimeProof({
       aws,
@@ -373,41 +390,9 @@ function createCoordinator(options = {}) {
       );
     const nativeProtectionExpiresAt =
       Date.parse((await protectedTask(outgoing[0])).expirationDate) / 1000;
-    return { outgoing: outgoing[0], mode, nativeProtectionExpiresAt };
+    return { outgoing: outgoing[0], mode, nativeProtectionExpiresAt, old };
   }
-  async function findRegistered() {
-    const matches = [];
-    let nextToken;
-    do {
-      const page = await aws("ecs", "list-task-definitions", {
-        familyPrefix: config.family,
-        status: "ACTIVE",
-        sort: "DESC",
-        ...(nextToken ? { nextToken } : {}),
-      });
-      for (const arn of page.taskDefinitionArns) {
-        const task = await definition(arn);
-        if (task.family !== config.family) continue;
-        const container = taskContainer(task, config.tablePrefix);
-        if (
-          container.image === config.image &&
-          container.environment.some(
-            (entry) =>
-              entry.name === "DEPLOYMENT_CANDIDATE_ID" &&
-              entry.value === config.candidateId,
-          )
-        )
-          matches.push(arn);
-      }
-      nextToken = page.nextToken;
-    } while (nextToken);
-    if (matches.length > 1)
-      throw new CoordinatorFailure(
-        "outcome_uncertain",
-        "Ambiguous candidate task definitions require recovery",
-      );
-    return matches[0];
-  }
+  const findRegistered = () => findCandidateDefinition(aws, config);
   async function registerProduction(ctl) {
     const m = production.binding.manifest;
     const pinned = await definition(m.runtime.continuationDefinition);
@@ -514,20 +499,14 @@ function createCoordinator(options = {}) {
     if (ctl.deployment?.runToken === config.runToken) {
       own(ctl);
       if (ctl.deployment.phase !== "preparing") {
+        await artifacts.committed(ctl);
         await assertAcknowledged("launch");
         return { kind: "preserved", phase: ctl.deployment.phase };
       }
       ctl = await renew(ctl);
     } else {
-      if (
-        ctl.coordinatorExpiresAt > now() ||
-        (ctl.deployment && ctl.deployment.phase !== "complete")
-      )
-        throw new CoordinatorFailure(
-          "coordinator_authority_changed",
-          "Another coordinator or unresolved deployment owns this environment",
-        );
-      const previous = await original(ctl, svc);
+      let previous;
+      ({ ctl, previous } = await handoff.acquirable(ctl, svc));
       const traffic = await routing.prepare(svc, previous.outgoing);
       ctl = await save(ctl, {
         ...ctl,
@@ -549,7 +528,7 @@ function createCoordinator(options = {}) {
     }
     ctl = await register(ctl);
     await protectedTask(ctl.deployment.outgoing);
-    ctl = await phase(ctl, "warming");
+    ctl = await artifacts.prepare(ctl);
     await launchCandidate(ctl, svc, deploymentConfiguration);
     const updated = await service();
     if (updated.taskDefinition !== ctl.deployment.taskDefinition)
@@ -600,11 +579,15 @@ function createCoordinator(options = {}) {
     } while (start);
     if (found.length !== 1) return undefined;
     const row = found[0];
-    return row.role === "candidate" &&
+    if (
+      row.role === "candidate" &&
       !row.retirementRequest &&
       ready(row, ctl, row.identity, d.runtimeMode)
-      ? row
-      : undefined;
+    ) {
+      await artifacts.candidate(row.identity);
+      return row;
+    }
+    return undefined;
   }
   function promotionObserved(ctl, target, generation, retained) {
     const expected = [target, ...retained];
@@ -651,17 +634,6 @@ function createCoordinator(options = {}) {
         "continuation_refused",
         "Reviewed candidate changed",
       );
-  }
-  async function promoteCandidate(ctl, promotion, identity, retained) {
-    return production
-      ? await production.promote(ctl, promotion)
-      : await transactPromotion(
-          ctl,
-          builders.buildPromotionTransaction({ ...promotion, tables }),
-          identity,
-          promotion.proposedGeneration,
-          retained,
-        );
   }
   async function promote() {
     await assertWriter();
@@ -724,7 +696,12 @@ function createCoordinator(options = {}) {
           proposedGeneration: d.originalGeneration + 1,
           now: now(),
         };
-        ctl = await promoteCandidate(ctl, promotion, warm.identity, retained);
+        ctl = await artifacts.promote(
+          ctl,
+          promotion,
+          retained,
+          transactPromotion,
+        );
         await completePromotion(ctl, warm.identity);
         return { kind: "promoted" };
       }
@@ -780,67 +757,69 @@ function createCoordinator(options = {}) {
       await writeRetirement(ctl, row, request, identity);
     }
     const observed = await runtime(identity);
-    return (
+    const acknowledged =
       observed.role === "retired" &&
       observed.authorizedGeneration === generation &&
       isDeepStrictEqual(observed.retirementAcknowledgment?.request, request) &&
       observed.workCounts &&
-      Object.values(observed.workCounts).every((count) => count === 0)
+      Object.values(observed.workCounts).every((count) => count === 0);
+    if (acknowledged)
+      await artifacts.retired(identity, observed.retirementAcknowledgment);
+    return acknowledged;
+  }
+  /** Confirms the promoted candidate still serves before any retirement step. */
+  async function assertRetirementReady(ctl, d) {
+    if (!["promoted", "retiring"].includes(d.phase))
+      throw new CoordinatorFailure(
+        "invalid_phase",
+        "Exact promotion required before retirement",
+      );
+    const retained = d.originalMembers.filter(
+      (member) => member.instanceId !== d.outgoing.instanceId,
     );
+    if (
+      !d.candidate ||
+      !promotionObserved(ctl, d.candidate, d.originalGeneration + 1, retained)
+    )
+      throw new CoordinatorFailure(
+        "coordinator_authority_changed",
+        "Serving membership changed before retirement",
+      );
+    if (!ready(await runtime(d.candidate), ctl, d.candidate, d.runtimeMode))
+      throw new CoordinatorFailure(
+        "application_not_ready",
+        "Promoted runtime readiness lost; reconcile before retirement",
+      );
+    await protectedTask(d.candidate);
+    if (!d.routing) return;
+    if (d.routing.state !== "candidate")
+      throw new CoordinatorFailure(
+        "routing_unconfirmed",
+        "Routing acknowledgment required before retirement",
+      );
+    await routing.assertAction(d.routing, true);
+    await routing.serving(ctl, await service());
+  }
+  /** One retirement poll: a completion result, or undefined to keep waiting. */
+  async function retireStep(ctl) {
+    const d = ctl.deployment;
+    if (!(await requestRetirement(ctl, d.outgoing, d.originalGeneration))) {
+      const continuation = await handoff.continueIfStopped(ctl);
+      return continuation && { kind: "complete", continuation };
+    }
+    if (!serviceConverged(await service(), d)) return undefined;
+    await phase(ctl, "complete");
+    return { kind: "complete" };
   }
   async function retire() {
     await assertWriter();
     const deadline = now() + RETIREMENT_SECONDS;
     while (now() <= deadline) {
-      let ctl = await renew(await control());
-      const d = ctl.deployment;
-      if (d.phase === "complete") return { kind: "complete" };
-      if (!["promoted", "retiring"].includes(d.phase))
-        throw new CoordinatorFailure(
-          "invalid_phase",
-          "Exact promotion required before retirement",
-        );
-      const retained = d.originalMembers.filter(
-        (member) => member.instanceId !== d.outgoing.instanceId,
-      );
-      if (
-        !d.candidate ||
-        !promotionObserved(ctl, d.candidate, d.originalGeneration + 1, retained)
-      )
-        throw new CoordinatorFailure(
-          "coordinator_authority_changed",
-          "Serving membership changed before retirement",
-        );
-      const active = await runtime(d.candidate);
-      if (!ready(active, ctl, d.candidate, d.runtimeMode))
-        throw new CoordinatorFailure(
-          "application_not_ready",
-          "Promoted runtime readiness lost; reconcile before retirement",
-        );
-      await protectedTask(d.candidate);
-      if (d.routing) {
-        if (d.routing.state !== "candidate")
-          throw new CoordinatorFailure(
-            "routing_unconfirmed",
-            "Routing acknowledgment required before retirement",
-          );
-        await routing.assertAction(d.routing, true);
-        await routing.serving(ctl, await service());
-      }
-      ctl = await phase(ctl, "retiring");
-      if (await requestRetirement(ctl, d.outgoing, d.originalGeneration)) {
-        const svc = await service();
-        if (
-          svc.taskDefinition === d.taskDefinition &&
-          svc.pendingCount === 0 &&
-          svc.runningCount === 1 &&
-          svc.deployments.length === 1 &&
-          svc.deployments[0].rolloutState === "COMPLETED"
-        ) {
-          await phase(ctl, "complete");
-          return { kind: "complete" };
-        }
-      }
+      const ctl = await renew(await control());
+      if (ctl.deployment.phase === "complete") return { kind: "complete" };
+      await assertRetirementReady(ctl, ctl.deployment);
+      const result = await retireStep(await phase(ctl, "retiring"));
+      if (result) return result;
       await sleep(10000);
     }
     throw new CoordinatorFailure(
@@ -848,6 +827,28 @@ function createCoordinator(options = {}) {
       "Retirement/convergence incomplete; preserve tasks and request recovery",
     );
   }
+  const handoff = require("./handoff-quiet-gate.cjs").createHandoffGate({
+    artifactEvidence: artifacts.sourceEvidence,
+    aws,
+    config,
+    builders,
+    tables,
+    types,
+    now,
+    sleep,
+    production,
+    control,
+    service,
+    runtime,
+    original,
+    ready,
+    protectedTask,
+    routing,
+    promotionObserved,
+    assertWriter,
+    warn: options.warn,
+    env: options.env ?? process.env,
+  });
   async function rollbackReady(ctl, authorizedGeneration) {
     const d = ctl.deployment;
     const old = await runtime(d.outgoing);
@@ -943,9 +944,11 @@ function createCoordinator(options = {}) {
 
   return {
     prepare,
+    cancelPreparation: artifacts.cancelPreparation,
     promote,
     retire,
     reconcile,
+    continueStoppedOutgoing: handoff.continueStoppedOutgoing,
     inspectServing: async () => {
       const ctl = await control();
       const svc = await service();

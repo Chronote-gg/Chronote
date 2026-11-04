@@ -232,6 +232,8 @@ const tables = [
       { AttributeName: "timestamp", AttributeType: "S" },
       { AttributeName: "updateDeliveryQueue", AttributeType: "S" },
       { AttributeName: "updateDeliveryDueAt", AttributeType: "N" },
+      { AttributeName: "processingRetryQueue", AttributeType: "S" },
+      { AttributeName: "processingRetryDueAt", AttributeType: "N" },
     ],
     GlobalSecondaryIndexes: [
       {
@@ -239,6 +241,14 @@ const tables = [
         KeySchema: [
           { AttributeName: "updateDeliveryQueue", KeyType: "HASH" },
           { AttributeName: "updateDeliveryDueAt", KeyType: "RANGE" },
+        ],
+        Projection: { ProjectionType: "KEYS_ONLY" },
+      },
+      {
+        IndexName: "ProcessingRetryDueIndex",
+        KeySchema: [
+          { AttributeName: "processingRetryQueue", KeyType: "HASH" },
+          { AttributeName: "processingRetryDueAt", KeyType: "RANGE" },
         ],
         Projection: { ProjectionType: "KEYS_ONLY" },
       },
@@ -489,7 +499,14 @@ async function createTables() {
   }
 
   await ensureRenewalRecoveryIndexExists();
-  await ensureMeetingUpdateDeliveryIndexExists();
+  await ensureMeetingHistoryIndexExists("UpdateDeliveryDueIndex", [
+    "updateDeliveryQueue",
+    "updateDeliveryDueAt",
+  ]);
+  await ensureMeetingHistoryIndexExists("ProcessingRetryDueIndex", [
+    "processingRetryQueue",
+    "processingRetryDueAt",
+  ]);
   await ensureTableTtlEnabled("MeetingControlCommandTable");
   await ensureTableTtlEnabled("DeploymentControlTable");
   await ensureTableTtlEnabled("ChatTtsUsageTable");
@@ -540,13 +557,13 @@ async function ensureTableTtlEnabled(tableBaseName) {
   }
 }
 
-async function ensureMeetingUpdateDeliveryIndexExists() {
+async function ensureMeetingHistoryIndexExists(indexName, attributeNames) {
   const history = tables.find(
     (table) => table.TableName === "MeetingHistoryTable",
   );
   const name = tableName(history.TableName);
   const index = history.GlobalSecondaryIndexes.find(
-    (index) => index.IndexName === "UpdateDeliveryDueIndex",
+    (index) => index.IndexName === indexName,
   );
   const current = await client.send(
     new DescribeTableCommand({ TableName: name }),
@@ -561,9 +578,7 @@ async function ensureMeetingUpdateDeliveryIndexExists() {
     new UpdateTableCommand({
       TableName: name,
       AttributeDefinitions: history.AttributeDefinitions.filter((attribute) =>
-        ["updateDeliveryQueue", "updateDeliveryDueAt"].includes(
-          attribute.AttributeName,
-        ),
+        attributeNames.includes(attribute.AttributeName),
       ),
       GlobalSecondaryIndexUpdates: [{ Create: index }],
     }),

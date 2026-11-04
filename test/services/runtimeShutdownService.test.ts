@@ -3,12 +3,14 @@ const mockLifecycleStop = jest.fn(async () => {});
 const mockInitStop = jest.fn(async () => {});
 const mockControlStop = jest.fn(async () => {});
 const mockPersonalStop = jest.fn(async () => {});
+const mockProcessingRetryStop = jest.fn(async () => {});
 const mockMeetingUpdateStop = jest.fn(async () => {});
 const mockBillingStop = jest.fn(async () => {});
 const mockSpeechStop = jest.fn(async () => {});
 const mockFence = jest.fn();
 const mockCloseAdmission = jest.fn();
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   getAllMeetings: () => [],
   stopMeetingInitializations: () => mockInitStop(),
 }));
@@ -41,6 +43,9 @@ jest.mock("../../src/services/meetingControlWorkerService", () => ({
 }));
 jest.mock("../../src/services/personalMediaUploadWorkerService", () => ({
   stopPersonalMediaUploadWorker: () => mockPersonalStop(),
+}));
+jest.mock("../../src/services/processingRetryWorkerService", () => ({
+  stopProcessingRetryWorker: () => mockProcessingRetryStop(),
 }));
 jest.mock("../../src/services/analyticsService", () => ({
   shutdownAnalytics: async () => {},
@@ -94,6 +99,7 @@ test("composed owner seals every source synchronously and waits actual worker an
     expect(mockCloseAdmission).toHaveBeenCalledTimes(1);
     expect(mockFence).toHaveBeenCalledTimes(1);
     expect(mockPersonalStop).toHaveBeenCalledTimes(1);
+    expect(mockProcessingRetryStop).toHaveBeenCalledTimes(1);
     expect(mockBillingStop).toHaveBeenCalledTimes(1);
     await Promise.resolve();
     expect(exit).not.toHaveBeenCalled();

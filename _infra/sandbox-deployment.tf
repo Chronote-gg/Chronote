@@ -1,6 +1,6 @@
 data "aws_iam_openid_connect_provider" "github_deploy" {
   count = var.environment == "sandbox" ? 1 : 0
-  url   = "https://token.actions.githubusercontent.com"
+  arn   = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
 }
 
 data "github_organization" "deployment_owner" {
@@ -42,7 +42,7 @@ resource "aws_iam_role" "sandbox_deploy" {
   })
   lifecycle {
     precondition {
-      condition     = var.github_environment == "sandbox" && length(aws_lb_listener.api_https) == 1
+      condition     = var.github_environment == "sandbox" && (var.ENABLE_API_ALB && var.API_DOMAIN != "" && (var.API_CERT_ARN != "" || var.HOSTED_ZONE_NAME != ""))
       error_message = "Sandbox deployment requires the sandbox GitHub environment and HTTPS deployment routing."
     }
   }
@@ -171,6 +171,12 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
         Resource = aws_dynamodb_table.deployment_control_table.arn
       },
       {
+        Sid      = "ArtifactAuthorityChecks",
+        Effect   = "Allow",
+        Action   = ["dynamodb:ConditionCheckItem"],
+        Resource = aws_dynamodb_table.meeting_history_table.arn
+      },
+      {
         Sid    = "SandboxObservationAndPreflight",
         Effect = "Allow",
         Action = [
@@ -180,7 +186,8 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
           aws_dynamodb_table.active_meeting_table.arn,
           aws_dynamodb_table.meeting_history_table.arn,
           aws_dynamodb_table.meeting_control_command_table.arn,
-          aws_dynamodb_table.personal_media_upload_job_table.arn
+          aws_dynamodb_table.personal_media_upload_job_table.arn,
+          aws_dynamodb_table.personal_recording_segment_table.arn
         ]
       },
       {
@@ -200,7 +207,8 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
               aws_dynamodb_table.active_meeting_table.name,
               aws_dynamodb_table.meeting_history_table.name,
               aws_dynamodb_table.meeting_control_command_table.name,
-              aws_dynamodb_table.personal_media_upload_job_table.name
+              aws_dynamodb_table.personal_media_upload_job_table.name,
+              aws_dynamodb_table.personal_recording_segment_table.name
             ]
           }
         }

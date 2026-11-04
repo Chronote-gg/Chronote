@@ -1,3 +1,4 @@
+import Library from "../pages/Library";
 import { useEffect, useMemo } from "react";
 import {
   Navigate,
@@ -56,6 +57,8 @@ export default function PortalServerLayout() {
     }
     setLastServerId(serverId);
   }, [serverId, loading, selectedGuildId, setSelectedGuildId, setLastServerId]);
+
+  if (activeRouteId === "/portal/server/$serverId/library") return <Library />;
 
   if (loading) {
     return null;

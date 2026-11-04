@@ -7,6 +7,18 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Starting again after a delayed disconnect (November 1)
+
+- A delayed Discord disconnect confirmation can let Chronote finish the previous session's cleanup so another meeting can start. Saved notes stay unchanged. If Chronote cannot confirm that the old session ended safely, the server remains unavailable. See [Active meeting after recording stops](/troubleshooting/common-issues/#server-still-reports-an-active-meeting-after-recording-stops).
+
+### One place for your meetings (October 29)
+
+- **Meetings** brings accessible server and personal recordings into one list. Choose a source, filter by actual attendance, or load older meetings. Existing Library and direct meeting links still work. See [Getting started](/getting-started/).
+
+### Retry meetings that failed to process (October 28)
+
+- When a provider outage or error stops transcription, notes or the summary, the meeting's owner can retry from the meeting page. Chronote re-runs the failed steps and anything that depends on them, and existing Discord posts are updated in place. See [Common issues](/troubleshooting/common-issues).
+
 ### Uploads keep their spoken language (October 28)
 
 - Personal uploads and Chronote Desktop recordings are no longer transcribed as English. Chronote detects the spoken language, so meetings in other languages produce complete transcripts in that language. See [Personal media uploads](/features/#personal-media-uploads).

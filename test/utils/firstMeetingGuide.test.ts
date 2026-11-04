@@ -41,7 +41,7 @@ test("installer_explains_first_recording with the approved copy and direct serve
     expect.objectContaining({
       label: "Open portal",
       style: 5,
-      url: "https://chronote.test/portal/server/guild-1/library",
+      url: "https://chronote.test/portal/meetings?scope=guild&serverId=guild-1",
     }),
     expect.objectContaining({
       label: "Open The Workshop",
@@ -91,7 +91,7 @@ test.each(["L".repeat(100), "😀".repeat(50)])(
     );
     expect(buttons).toContainEqual(
       expect.objectContaining({
-        url: "https://chronote.test/portal/server/guild%2F1/library",
+        url: "https://chronote.test/portal/meetings?scope=guild&serverId=guild%2F1",
       }),
     );
   },
@@ -112,7 +112,7 @@ test("installer payload components are plain API objects for the shared browser 
           type: 2,
           style: 5,
           label: "Open portal",
-          url: "https://chronote.test/portal/server/guild-1/library",
+          url: "https://chronote.test/portal/meetings?scope=guild&serverId=guild-1",
         },
         {
           type: 2,

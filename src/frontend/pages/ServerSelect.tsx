@@ -45,16 +45,24 @@ export default function ServerSelect() {
           setLastServerId(guildId);
         }}
         onAction={(guild) => {
-          navigate({
-            to: guild.canManage
-              ? hasPromo
-                ? "/portal/server/$serverId/billing"
-                : "/portal/server/$serverId/library"
-              : "/portal/server/$serverId/ask",
-            params: { serverId: guild.id },
-            search:
-              guild.canManage && hasPromo ? { promo: promoCode } : undefined,
-          });
+          if (guild.canManage && hasPromo) {
+            navigate({
+              to: "/portal/server/$serverId/billing",
+              params: { serverId: guild.id },
+              search: { promo: promoCode },
+            });
+          } else {
+            navigate({
+              to: "/portal/meetings",
+              search: {
+                scope: "guild",
+                serverId: guild.id,
+                attended: false,
+                range: "all",
+                archive: "active",
+              },
+            });
+          }
         }}
         actionLabel={() => "Open server"}
         actionDisabled={() => false}

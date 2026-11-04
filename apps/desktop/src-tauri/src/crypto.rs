@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use rand::{rngs::OsRng, TryRngCore};
+use rand::{rngs::SysRng, TryRng};
 use sha2::{Digest, Sha256};
 use std::{fs, io::Read, path::Path};
 
@@ -23,7 +23,7 @@ pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
 
 pub(crate) fn random_url_token(byte_count: usize) -> Result<String, String> {
     let mut bytes = vec![0_u8; byte_count];
-    OsRng
+    SysRng
         .try_fill_bytes(&mut bytes)
         .map_err(|error| error.to_string())?;
     Ok(URL_SAFE_NO_PAD.encode(bytes))
