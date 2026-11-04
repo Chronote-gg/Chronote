@@ -69,6 +69,7 @@ Tasks 1 and 2 are independent and can run in parallel in separate worktrees. Tas
 **Interfaces:**
 
 - Produces (in `announcementTypes.ts`):
+
   ```ts
   export type AnnouncementKind = "info" | "incident" | "resolved";
   export type AnnouncementField = { name: string; value: string; inline?: boolean };
@@ -84,7 +85,9 @@ Tasks 1 and 2 are independent and can run in parallel in separate worktrees. Tas
     | { kind: "skip"; reason: "opted_out" | "no_channel" | "missing_permissions"; rejected: CandidateRejection[] };
   export class AnnouncementInputError extends Error { constructor(readonly problems: string[]) }
   ```
+
   `DiscordChannel` is the existing type from `src/repositories/types.ts`.
+
 - Produces: `computeChannelPermissions(input: { guildId: string; memberId: string; roles: { id: string; permissions?: string | null }[]; memberRoleIds: string[]; overwrites: DiscordPermissionOverwrite[] }): bigint`, exported from `discordPermissionsService.ts`. Administrator returns every bit (`(1n << 64n) - 1n`).
 - Produces: `parseAnnouncement(content: string, format: "markdown" | "json"): { announcement: Announcement; warnings: string[] }` (throws `AnnouncementInputError`).
 - Produces: `renderAnnouncementEmbed(announcement: Announcement, now: Date): AnnouncementEmbed` (throws `AnnouncementInputError` when over limits).

@@ -16,6 +16,10 @@ import type {
   DiscordGuildMember,
   DiscordRole,
 } from "../repositories/types";
+import {
+  computeGuildBasePermissions,
+  parsePermissions,
+} from "./discordPermissionsCompute";
 
 const MANAGE_GUILD = 1n << 5n;
 const ADMIN = 1n << 3n;
@@ -47,16 +51,6 @@ type EnsureUserGuildOptions = {
 
 const isCacheFresh = (fetchedAt: number | undefined, ttlMs: number) =>
   fetchedAt != null ? Date.now() - fetchedAt < ttlMs : false;
-
-const parsePermissions = (value?: string | null): bigint => {
-  if (!value) return 0n;
-  try {
-    return BigInt(value);
-  } catch (error) {
-    console.warn("Failed to parse permissions value", error);
-    return 0n;
-  }
-};
 
 const hasManageGuildPermissions = (permissions: bigint) =>
   (permissions & MANAGE_GUILD) !== 0n || (permissions & ADMIN) !== 0n;
@@ -154,19 +148,10 @@ const computePermissionsFromRoles = (
   member: DiscordGuildMember,
   guildId: string,
 ) => {
-  const memberPermissions = parsePermissions(member.permissions);
   if (member.permissions) {
-    return memberPermissions;
+    return parsePermissions(member.permissions);
   }
-  const rolePermissions = new Map(
-    roles.map((role) => [role.id, parsePermissions(role.permissions)]),
-  );
-  let permissions = rolePermissions.get(guildId) ?? 0n;
-  const memberRoles = member.roles ?? [];
-  for (const roleId of memberRoles) {
-    permissions |= rolePermissions.get(roleId) ?? 0n;
-  }
-  return permissions;
+  return computeGuildBasePermissions(guildId, roles, member.roles ?? []);
 };
 
 // Installer callbacks carry an unsigned guild hint. Check fresh bot REST data,

@@ -1,9 +1,7 @@
 import { describe, expect, it } from "@jest/globals";
+import { problemsOf } from "./announcementTestHelpers";
 import { parseAnnouncement } from "../../../src/services/announcements/announcementInput";
-import {
-  AnnouncementInputError,
-  type Announcement,
-} from "../../../src/services/announcements/announcementTypes";
+import type { Announcement } from "../../../src/services/announcements/announcementTypes";
 
 const FRONT_MATTER = [
   "id: incident-2026-11-04",
@@ -45,16 +43,6 @@ const validJson = (overrides: Record<string, unknown> = {}) =>
     body: EXPECTED.body,
     ...overrides,
   });
-
-const problemsOf = (run: () => unknown): string[] => {
-  try {
-    run();
-  } catch (error) {
-    if (error instanceof AnnouncementInputError) return error.problems;
-    throw error;
-  }
-  throw new Error("expected an AnnouncementInputError");
-};
 
 describe("parseAnnouncement", () => {
   it("reads front matter and the comment-free Markdown body", () => {

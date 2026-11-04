@@ -15,7 +15,7 @@ export type ChannelPermissionsInput = {
   overwrites: DiscordPermissionOverwrite[];
 };
 
-const parsePermissions = (value?: string | null): bigint => {
+export const parsePermissions = (value?: string | null): bigint => {
   if (!value) return 0n;
   try {
     return BigInt(value);
@@ -60,7 +60,7 @@ const applyRoleOverwrites = (
  * Guild-wide permissions for a member: the @everyone role (whose id equals the
  * guild id) unioned with every role the member holds, before channel overwrites.
  */
-const computeGuildBasePermissions = (
+export const computeGuildBasePermissions = (
   guildId: string,
   roles: PermissionRole[],
   memberRoleIds: string[],

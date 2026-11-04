@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { DiscordChannel } from "../../repositories/types";
 import { DiscordMessageHttpError } from "../discordMessageEditor";
+import { permissionOverwritesSchema } from "../discordRestSchemas";
 import { type AnnouncementEmbed, isSnowflake } from "./announcementTypes";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
@@ -29,7 +30,7 @@ export type AnnouncementDiscordClient = {
   createMessage(
     channelId: string,
     embed: AnnouncementEmbed,
-    options?: { content?: string; signal?: AbortSignal },
+    options?: { content?: string },
   ): Promise<{ id: string }>;
 };
 
@@ -53,16 +54,7 @@ const channelSchema = z
     name: z.string(),
     type: z.number(),
     position: z.number().optional(),
-    permission_overwrites: z
-      .array(
-        z.object({
-          id: z.string(),
-          type: z.number(),
-          allow: z.string(),
-          deny: z.string(),
-        }),
-      )
-      .optional(),
+    permission_overwrites: permissionOverwritesSchema.optional(),
   })
   .passthrough();
 const memberSchema = z.object({ roles: z.array(z.string()) });
@@ -111,10 +103,9 @@ export function createAnnouncementDiscordClient({
   const request = async (
     operation: string,
     path: string,
-    init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+    init: { method?: string; body?: unknown } = {},
   ): Promise<unknown> => {
     for (let attempt = 1; ; attempt += 1) {
-      const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
       // A fetch rejection (timeout, abort, network) propagates unchanged: the
       // caller cannot tell whether a write landed, so it is never retried here.
       const response = await fetchImpl(`${DISCORD_API_BASE}${path}`, {
@@ -125,7 +116,8 @@ export function createAnnouncementDiscordClient({
         },
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
         redirect: "error",
-        signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
+        // No caller signal: an interrupt must not abort a post that may land.
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       if (response.ok) return response.json();
       const body = await readErrorBody(response);
@@ -217,7 +209,6 @@ export function createAnnouncementDiscordClient({
                 ? {}
                 : { content: options.content }),
             },
-            signal: options.signal,
           },
         ),
       ).id,

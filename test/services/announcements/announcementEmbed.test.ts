@@ -1,9 +1,9 @@
 import { describe, expect, it } from "@jest/globals";
+import { problemsOf } from "./announcementTestHelpers";
 import { renderAnnouncementEmbed } from "../../../src/services/announcements/announcementEmbed";
-import {
-  AnnouncementInputError,
-  type Announcement,
-  type AnnouncementKind,
+import type {
+  Announcement,
+  AnnouncementKind,
 } from "../../../src/services/announcements/announcementTypes";
 
 const NOW = new Date("2026-11-04T15:30:00.000Z");
@@ -18,16 +18,6 @@ const announcement = (overrides: Partial<Announcement> = {}): Announcement => ({
   fields: [],
   ...overrides,
 });
-
-const problemsOf = (run: () => unknown): string[] => {
-  try {
-    run();
-  } catch (error) {
-    if (error instanceof AnnouncementInputError) return error.problems;
-    throw error;
-  }
-  throw new Error("expected an AnnouncementInputError");
-};
 
 describe("renderAnnouncementEmbed", () => {
   it("copies the text and stamps the fixed footer and time", () => {

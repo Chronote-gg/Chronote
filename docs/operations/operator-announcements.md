@@ -78,13 +78,13 @@ Check the post in Discord. Then preview again without `--guild-id`, into another
 yarn ts-node scripts/announce.ts send --preview NEW_PRIVATE_DIRECTORY/preview.json --expect-preview-sha256 DIGEST
 ```
 
-Send takes its whole scope from the preview, so account, region, table and server flags are invalid. It refuses when standard input is not an interactive terminal, when the digest differs from the file or the flag, when the preview is more than 60 minutes old, and when the delivery table is missing.
+Send takes its whole scope from the preview, so account, region, table and server flags are invalid. It refuses when standard input is not an interactive terminal, when the digest differs from the file or the flag, when the preview is more than 60 minutes old, and when the delivery table is missing. On Windows, run `send` from Windows Terminal or PowerShell: Git Bash's mintty window reports no interactive terminal, so send refuses there.
 
 Send works one server at a time with at least one second between posts. Before each server it re-reads the opt-out and re-checks the previewed channel. A server that opted out, lost permissions, lost its channel or removed the bot since the preview is skipped with a reason and never redirected. Each server gets a conditional `pending` record, then the post, then `sent`. Ctrl-C stops before the next server and still prints the summary.
 
 ## Read the summary
 
-Send prints one line per server, then one summary line:
+Send prints one line per server, then one summary line. It writes the same lines to `send-TIMESTAMP.log` beside `preview.json` in the private preview directory, with the colons in the timestamp replaced by dashes; keep that file with the preview:
 
 ```text
 announcement incident-2026-11-04: sent=0 owner_dm=0 skipped=0 (opted_out=0 no_channel=0 missing_permissions=0 owner_dms_closed=0 discord_error=0 already_sent=0 pending_unknown=0) failed=0 unknown=0

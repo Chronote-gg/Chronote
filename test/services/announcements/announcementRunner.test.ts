@@ -9,6 +9,7 @@ import {
   type SendCounts,
   sendAnnouncementPreview,
   summaryLine,
+  UnknownGuildError,
 } from "../../../src/services/announcements/announcementRunner";
 import { resolveAnnouncementTarget } from "../../../src/services/announcements/announcementTargets";
 import {
@@ -141,16 +142,23 @@ describe("buildAnnouncementPreview", () => {
     const fakes = createFakes([fakeGuild(1), fakeGuild(2), fakeGuild(3)]);
     fakes.records.set(guildId(1), record(guildId(1), "sent"));
     fakes.records.set(guildId(2), record(guildId(2), "pending"));
-    fakes.records.set(guildId(3), record(guildId(3), "failed"));
+    fakes.records.set(guildId(3), {
+      ...record(guildId(3), "failed"),
+      reason: "discord_403",
+    });
 
     const built = await preview(fakes);
     expect(built.entries.map((entry) => entry.decision)).toEqual([
       { kind: "skip", reason: "already_sent" },
       { kind: "skip", reason: "pending_unknown" },
-      { kind: "skip", reason: "already_sent" },
+      {
+        kind: "skip",
+        reason: "already_sent",
+        detail: "earlier delivery failed (discord_403); use --retry-failed",
+      },
     ]);
     expect(built.warnings).toEqual([
-      `announcement id ${ANNOUNCEMENT_ID} already has 3 delivery records from an earlier preview; those servers will not receive this version. Use a new id for new text.`,
+      `announcement id ${ANNOUNCEMENT_ID} already has 3 delivery records from an earlier preview (1 failed; --retry-failed retries those); those servers will not receive this version. Use a new id for new text.`,
     ]);
 
     const retried = await preview(fakes, { retryFailed: true });
@@ -194,7 +202,11 @@ describe("buildAnnouncementPreview", () => {
 
     await expect(
       preview(fakes, { guildIds: [guildId(1), guildId(8), guildId(9)] }),
-    ).rejects.toThrow(`${guildId(8)}, ${guildId(9)}`);
+    ).rejects.toThrow(
+      new UnknownGuildError(
+        `Chronote is not installed in these servers: ${guildId(8)}, ${guildId(9)}`,
+      ),
+    );
   });
 });
 
@@ -266,7 +278,7 @@ describe("sendAnnouncementPreview", () => {
     expect(fakes.discord.createMessage).toHaveBeenCalledWith(
       updatesChannelId(1),
       built.embed,
-      { content: undefined, signal: undefined },
+      { content: undefined },
     );
     expect(counts).toMatchObject({ sent: 3, ownerDm: 0, failed: 0 });
     expect(lines).toHaveLength(3);
@@ -392,6 +404,26 @@ describe("sendAnnouncementPreview", () => {
     expect(fakes.discord.createMessage).toHaveBeenCalledTimes(1);
     expect(lines.at(-1)).toBe("stopped by interrupt; 2 servers not attempted");
   });
+
+  it("lets a post in flight at the interrupt finish and record sent", async () => {
+    const fakes = createFakes([fakeGuild(1), fakeGuild(2)]);
+    const built = await preview(fakes);
+    const controller = new AbortController();
+    fakes.discord.createMessage.mockImplementationOnce(async (channelId) => {
+      controller.abort();
+      return { id: `9${channelId.slice(1)}` };
+    });
+
+    const { counts, lines } = await send(fakes, built, controller.signal);
+    expect(fakes.discord.createMessage).toHaveBeenCalledTimes(1);
+    expect(fakes.discord.createMessage.mock.calls[0]?.[2]).toEqual({
+      content: undefined,
+    });
+    expect(fakes.records.get(guildId(1))?.status).toBe("sent");
+    expect(fakes.records.has(guildId(2))).toBe(false);
+    expect(counts).toMatchObject({ sent: 1, unknown: 0 });
+    expect(lines.at(-1)).toBe("stopped by interrupt; 1 servers not attempted");
+  });
 });
 
 describe("sendAnnouncementPreview owner DMs", () => {
@@ -419,7 +451,7 @@ describe("sendAnnouncementPreview owner DMs", () => {
     expect(fakes.discord.createMessage).toHaveBeenCalledWith(
       DM_CHANNEL_ID,
       built.embed,
-      { content: expectedContent, signal: undefined },
+      { content: expectedContent },
     );
     expect(counts).toMatchObject({ sent: 1, ownerDm: 1 });
   });
@@ -449,7 +481,7 @@ describe("sendAnnouncementPreview owner DMs", () => {
     expect(skipped(counts)).toEqual({ owner_dms_closed: 1 });
     expect(counts.failed).toBe(0);
     expect(fakes.records.get(guildId(1))).toMatchObject({
-      channelId: OWNER_ID,
+      channelId: "dm_not_opened",
       channelSource: "owner_dm",
       status: "failed",
       reason: "owner_dms_closed",

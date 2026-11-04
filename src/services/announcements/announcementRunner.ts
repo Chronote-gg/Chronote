@@ -67,6 +67,11 @@ export type RunnerDeps = {
   sleep: (ms: number) => Promise<void>;
 };
 
+/** --guild-id named a server the bot is not in: invalid input, not a failure. */
+export class UnknownGuildError extends Error {
+  override name = "UnknownGuildError";
+}
+
 export const TABLE_MISSING_WARNING =
   "delivery table not found; send will refuse until the Terraform change is applied";
 
@@ -77,8 +82,14 @@ const recordDecision = (
   if (!record) return null;
   if (record.status === "pending")
     return { kind: "skip", reason: "pending_unknown" };
-  if (record.status === "failed" && retryFailed) return null;
-  return { kind: "skip", reason: "already_sent" };
+  if (record.status !== "failed")
+    return { kind: "skip", reason: "already_sent" };
+  if (retryFailed) return null;
+  return {
+    kind: "skip",
+    reason: "already_sent",
+    detail: `earlier delivery failed (${record.reason ?? "no reason recorded"}); use --retry-failed`,
+  };
 };
 
 const previewDecision = async (
@@ -124,7 +135,7 @@ const selectGuildIds = (installed: string[], requested?: string[]) => {
   if (!requested) return installed;
   const unknown = requested.filter((id) => !installed.includes(id));
   if (unknown.length > 0)
-    throw new Error(
+    throw new UnknownGuildError(
       `Chronote is not installed in these servers: ${unknown.join(", ")}`,
     );
   return requested;
@@ -161,9 +172,10 @@ export async function buildAnnouncementPreview(
     input.announcement.id,
     warnings,
   );
+  const failed = records.filter((record) => record.status === "failed").length;
   if (records.length > 0)
     warnings.push(
-      `announcement id ${input.announcement.id} already has ${records.length} delivery records from an earlier preview; those servers will not receive this version. Use a new id for new text.`,
+      `announcement id ${input.announcement.id} already has ${records.length} delivery records from an earlier preview${failed > 0 ? ` (${failed} failed; --retry-failed retries those)` : ""}; those servers will not receive this version. Use a new id for new text.`,
     );
   const byGuild = new Map(records.map((record) => [record.guildId, record]));
 

@@ -222,12 +222,14 @@ describe("runAnnounce preview", () => {
     expect(h.connect).not.toHaveBeenCalled();
   });
 
-  it("reports a server the bot is not in", async () => {
+  it("refuses a server the bot is not in as invalid input", async () => {
     const h = harness();
     expect(
       await runAnnounce([...previewArgs(), "--guild-id", guildId(9)], h.deps),
-    ).toBe(1);
-    expect(h.lines.at(-1)).toContain(guildId(9));
+    ).toBe(2);
+    expect(h.lines).toEqual([
+      `Chronote is not installed in these servers: ${guildId(9)}`,
+    ]);
   });
 
   it("rejects invalid arguments with exit code 2", async () => {
@@ -250,6 +252,15 @@ describe("runAnnounce send", () => {
     expect(h.lines[2]).toMatch(
       /^announcement incident-2026-11-04: sent=2 owner_dm=0 skipped=0 /,
     );
+    const log = await readFile(
+      join(
+        root,
+        "out",
+        `send-${PREVIEW_TIME.toISOString().replace(/:/g, "-")}.log`,
+      ),
+      "utf8",
+    );
+    expect(log).toBe(`${h.lines.join("\n")}\n`);
   });
 
   const refusals: [

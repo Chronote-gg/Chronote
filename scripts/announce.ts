@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { extname, resolve } from "node:path";
+import { dirname, extname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
@@ -24,6 +24,7 @@ import {
   type RunnerDeps,
   sendAnnouncementPreview,
   summaryLine,
+  UnknownGuildError,
 } from "../src/services/announcements/announcementRunner";
 import { createAnnouncementSettingsReader } from "../src/services/announcements/announcementSettingsReader";
 import {
@@ -235,8 +236,9 @@ async function runSend(
     throw new Refusal(
       "send needs an interactive terminal; the operator runs it by hand.",
     );
+  const previewPath = resolve(deps.root, command.preview);
   const preview = await readApprovedPreview(
-    resolve(deps.root, command.preview),
+    previewPath,
     command.expectPreviewSha256,
   );
   const runner = await deps.connect(preview.scope);
@@ -252,11 +254,29 @@ async function runSend(
     throw new Refusal(
       "DISCORD_BOT_TOKEN belongs to a different bot than the preview.",
     );
+  const logName = `send-${runner.now().toISOString().replace(/:/g, "-")}.log`;
+  const logLines: string[] = [];
+  const record = (line: string) => {
+    logLines.push(line);
+    deps.report(line);
+  };
   const counts = await sendAnnouncementPreview(runner, preview, {
     signal: deps.signal,
-    onEntry: deps.report,
+    onEntry: record,
   });
-  deps.report(summaryLine(preview.announcement.id, "send", counts));
+  record(summaryLine(preview.announcement.id, "send", counts));
+  // The per-server detail lives beside the preview, in its private directory.
+  try {
+    await privateFile(
+      dirname(previewPath),
+      logName,
+      `${logLines.join("\n")}\n`,
+    );
+  } catch (error) {
+    deps.report(
+      `Send log ${logName} was not written (${error instanceof Error ? error.name : "unknown error"}); keep the lines above.`,
+    );
+  }
   return counts.failed + counts.unknown === 0 && !deps.signal?.aborted ? 0 : 1;
 }
 
@@ -279,7 +299,8 @@ export async function runAnnounce(
   } catch (error) {
     if (
       error instanceof Refusal ||
-      error instanceof DeliveryTableMissingError
+      error instanceof DeliveryTableMissingError ||
+      error instanceof UnknownGuildError
     ) {
       deps.report(error.message);
       return 2;

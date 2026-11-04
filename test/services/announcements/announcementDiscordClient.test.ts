@@ -145,20 +145,16 @@ describe("announcement Discord client", () => {
     });
   });
 
-  it("adds content only when given and honours the caller's signal", async () => {
+  it("adds content only when given", async () => {
     const { client, calls } = setup([json(200, { id: MESSAGE_ID })]);
-    const controller = new AbortController();
     await client.createMessage(DM_CHANNEL_ID, embed, {
       content: "Example line",
-      signal: controller.signal,
     });
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
       embeds: [embed],
       allowed_mentions: { parse: [] },
       content: "Example line",
     });
-    controller.abort();
-    expect(calls[0].init.signal?.aborted).toBe(true);
   });
 
   it("opens a DM channel with the recipient id and returns its id", async () => {

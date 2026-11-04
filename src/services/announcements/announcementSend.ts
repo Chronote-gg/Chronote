@@ -71,7 +71,6 @@ type Outcome = { result: Result; line: string; posted: boolean };
 type SendContext = {
   deps: RunnerDeps;
   preview: AnnouncementPreview;
-  signal?: AbortSignal;
 };
 type Destination = {
   channelId: string;
@@ -136,7 +135,7 @@ const post = async (
   guildId: string,
   destination: Destination,
 ): Promise<Outcome> => {
-  const { deps, preview, signal } = context;
+  const { deps, preview } = context;
   if ((await claim(context, guildId, destination)) === "exists")
     return skip("already_sent", "a delivery record already exists");
   const isDm = destination.channelSource === "owner_dm";
@@ -148,7 +147,7 @@ const post = async (
     ({ id: messageId } = await deps.discord.createMessage(
       destination.channelId,
       preview.embed,
-      { content: destination.content, signal },
+      { content: destination.content },
     ));
   } catch (error) {
     if (!isDefiniteRejection(error))
@@ -237,8 +236,9 @@ const sendOwnerDm = async (
   } catch (error) {
     if (!(error instanceof DiscordMessageHttpError && isClosedDm(error)))
       return skip("discord_error", `DM open failed: ${readFailure(error)}`);
+    // No DM channel exists, so the record holds a marker, not a user id.
     const destination = {
-      channelId: decision.ownerId,
+      channelId: "dm_not_opened",
       channelSource: "owner_dm" as const,
     };
     if ((await claim(context, guildId, destination)) === "exists")
@@ -271,7 +271,8 @@ const deliver = (
 /**
  * Sends an approved preview one server at a time. Each server is re-checked,
  * claimed, posted and recorded in that order, so a rerun never double-posts.
- * An aborted signal stops before the next server and still returns counts.
+ * An aborted signal stops before the next server and still returns counts; it
+ * never cancels a post already in flight, so that post is still recorded.
  */
 export async function sendAnnouncementPreview(
   deps: RunnerDeps,
@@ -279,7 +280,7 @@ export async function sendAnnouncementPreview(
   options: { signal?: AbortSignal; onEntry?: (line: string) => void },
 ): Promise<SendCounts> {
   const { signal, onEntry = () => undefined } = options;
-  const context: SendContext = { deps, preview, signal };
+  const context: SendContext = { deps, preview };
   const counts = emptyCounts();
   let pace = false;
   let attempted = 0;
