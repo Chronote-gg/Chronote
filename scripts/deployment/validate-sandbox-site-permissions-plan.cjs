@@ -3,6 +3,12 @@ const assert = require("node:assert/strict");
 const { readFileSync, readdirSync, lstatSync } = require("node:fs");
 const { join } = require("node:path");
 const { isUtf8 } = require("node:buffer");
+const { execFileSync } = require("node:child_process");
+const {
+  verifySource,
+  verifyChecks,
+  excludedChecks,
+} = require("./terraform-meeting-model.cjs");
 const { digest } = require("./collector-payload.cjs");
 const {
   validateScopedPlan,
@@ -19,6 +25,15 @@ const attachmentAddress = "aws_iam_role_policy_attachment.site_publishing[0]";
 const roleAddress = "aws_iam_role.sandbox_deploy[0]";
 const policyName = "meeting-notes-sandbox-site-publishing";
 const roleName = "meeting-notes-sandbox-github-deploy";
+// Site dependency audit: docs/terraform-meeting-source-model.md.
+const requiredSiteChecks = [
+  "aws_iam_policy.site_publishing",
+  "aws_iam_role.sandbox_deploy",
+  "aws_iam_role.production_deploy",
+  "var.ENABLE_API_ALB",
+  "var.frontend_distribution_id",
+  "var.docs_distribution_id",
+];
 // Reviewed direct attachment expression. Normalize source line endings only.
 const siteSourceSha256 =
   "513d11b5602001d0e8db03d5240a3dd83f393a1342f9d1c2e50ad435f8a5fd9b";
@@ -244,6 +259,53 @@ function checkAttachment(change, b, plan, createdPolicy, directory) {
   } else assert.equal(change.after.policy_arn, policyArn(b));
   if (!created) unchanged(change);
 }
+function verifySiteChecks(plan, directory, sourceSha) {
+  if (Object.hasOwn(plan, "checks")) assert.ok(Array.isArray(plan.checks));
+  for (const check of plan.checks ?? []) {
+    const declared = excludedChecks.find(
+      (address) => address.to_display === check.address?.to_display,
+    );
+    assert.ok(declared, "Undeclared site-plan check");
+    assert.deepEqual(check.address, declared);
+  }
+  const proof = (plan.checks ?? []).some((c) => c.status === "unknown")
+    ? verifySource(
+        directory,
+        sourceSha ??
+          execFileSync("git", ["rev-parse", "HEAD"], {
+            cwd: directory,
+            windowsHide: true,
+          })
+            .toString()
+            .trim(),
+      )
+    : undefined;
+  if (proof)
+    assert.deepEqual(
+      plan.checks.map((c) => c.address.to_display).sort(),
+      excludedChecks.map((address) => address.to_display).sort(),
+      "Incomplete source-declared site checks",
+    );
+  verifyChecks(plan, proof, requiredSiteChecks);
+  for (const check of plan.checks ?? []) {
+    if (check.status !== "pass") continue;
+    const display = check.address.to_display;
+    const expected =
+      check.address.kind === "var"
+        ? [display]
+        : plan.resource_changes
+            .filter(
+              (r) =>
+                r.address === display || r.address.startsWith(`${display}[`),
+            )
+            .map((r) => r.address);
+    assert.deepEqual(
+      (check.instances ?? []).map((i) => i.address.to_display).sort(),
+      expected.sort(),
+      "Unbound site-plan check instances",
+    );
+  }
+}
 function assertPlanContext(plan, b) {
   assert.equal(plan.format_version, "1.2");
   assert.notEqual(plan.errored, true);
@@ -253,12 +315,6 @@ function assertPlanContext(plan, b) {
     "action_invocations",
   ])
     assert.deepEqual(plan[name] ?? [], []);
-  assert.ok(Array.isArray(plan.checks ?? []));
-  for (const check of plan.checks ?? []) {
-    assert.equal(check.status, "pass");
-    for (const instance of check.instances ?? [])
-      assert.equal(instance.status, "pass");
-  }
   for (const [name, value] of Object.entries({
     environment: "sandbox",
     project_name: "meeting-notes",
@@ -293,7 +349,7 @@ function validateSiteDependencies(resources, b) {
 function validateSandboxSitePermissionsPlan(
   plan,
   b,
-  { directory = join(__dirname, "../..") } = {},
+  { directory = join(__dirname, "../.."), sourceSha } = {},
 ) {
   assertBinding(b);
   assertPlanContext(plan, b);
@@ -304,6 +360,12 @@ function validateSandboxSitePermissionsPlan(
     resources.set(r.address, r);
   }
   const dependencyAddresses = validateSiteDependencies(resources, b);
+  assert.deepEqual(
+    [...resources.keys()].sort(),
+    [...dependencyAddresses, ...sandboxSitePermissionsTargets.keys()].sort(),
+    "Unexpected site-plan dependency graph",
+  );
+  verifySiteChecks(plan, directory, sourceSha);
   for (const address of sandboxSitePermissionsTargets.keys())
     assert.equal(resources.get(address)?.mode, "managed");
   const check = ({ address, change }) =>

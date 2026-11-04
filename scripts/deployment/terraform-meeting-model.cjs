@@ -358,7 +358,7 @@ function verifyCheckInstances(check) {
   }
 }
 
-function verifyChecks(plan, evidence) {
+function verifyChecks(plan, evidence, requiredPass = []) {
   if (Object.hasOwn(plan, "checks")) assert.ok(Array.isArray(plan.checks));
   const seen = new Set();
   for (const check of plan.checks ?? []) {
@@ -377,7 +377,8 @@ function verifyChecks(plan, evidence) {
         ["address", "status", "instances"].includes(k),
       ),
     );
-    const excluded = excludedCheck(address);
+    const excluded =
+      excludedCheck(address) && !requiredPass.includes(address.to_display);
     if (check.status === "unknown") {
       assert.ok(evidence && excluded, "Relevant unknown check");
       assert.equal(check.instances, undefined, "Unknown check instances");

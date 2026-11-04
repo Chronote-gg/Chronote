@@ -252,7 +252,7 @@ async function plan(options, invocation, e) {
     validateScope(
       JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
       scopeBinding(options, invocation),
-      { directory: options.directory },
+      { directory: options.directory, sourceSha: invocation.sourceSha },
     );
   }
   const shown = await e.terraform(["show", "-no-color", "tfplan"]);
@@ -361,7 +361,7 @@ async function apply(options, invocation, e, startApply) {
     scopedValidators[invocation.scope](
       JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
       scopeBinding(options, invocation),
-      { directory: options.directory },
+      { directory: options.directory, sourceSha: invocation.sourceSha },
     );
   }
   let prerequisite;
