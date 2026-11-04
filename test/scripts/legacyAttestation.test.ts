@@ -287,6 +287,30 @@ test("a manifest changed after attestation refuses the seal", async () => {
   expect(f.state.artifacts.get("old")?.state).toBe("requested");
 });
 
+test("a resumed unexpired attested seal rechecks the guard before consuming", async () => {
+  const f = legacyFixture();
+  await f.coordinator.attestPreservation();
+  const original = f.aws.getMockImplementation()!;
+  let lose = true;
+  f.aws.mockImplementation(async (service, operation, input) => {
+    const put = (input as { TransactItems?: Array<{ Put?: { Item: never } }> })
+      .TransactItems?.[0]?.Put;
+    if (lose && put && unmarshall(put.Item).state === "consumed") {
+      lose = false;
+      throw new Error("transient failure");
+    }
+    return original(service, operation, input);
+  });
+  await expect(f.coordinator.prepare()).rejects.toThrow(/AWS operation failed/);
+  expect(f.state.artifacts.get("old")?.state).toBe("sealed");
+  f.state.leases.push({
+    ownerInstanceId: "old",
+    createdAt: new Date(1_000_000).toISOString(),
+  });
+  await expect(f.coordinator.prepare()).rejects.toThrow(/after its backup/);
+  expect(f.state.artifacts.get("old")?.state).toBe("sealed");
+});
+
 test("a lapsed attested seal is renewed after a lost consume", async () => {
   const f = legacyFixture();
   await f.coordinator.attestPreservation();
