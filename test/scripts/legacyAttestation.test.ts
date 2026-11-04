@@ -188,14 +188,19 @@ test("legacy prepare seals the attested inventory and consumes it with warming",
   expect(f.writes()).toBe(4);
 });
 
-test("legacy prepare refuses when a lease appeared after attestation", async () => {
-  const f = legacyFixture();
+/** Attests, then records a meeting lease newer than the backup and expects prepare to refuse. */
+async function attestThenRefuseNewerLease(f: ReturnType<typeof legacyFixture>) {
   await f.coordinator.attestPreservation();
   f.state.leases.push({
     ownerInstanceId: "old",
     createdAt: new Date(1_000_000).toISOString(),
   });
   await expect(f.coordinator.prepare()).rejects.toThrow(/after its backup/);
+}
+
+test("legacy prepare refuses when a lease appeared after attestation", async () => {
+  const f = legacyFixture();
+  await attestThenRefuseNewerLease(f);
   expect(f.state.launched).toBe(false);
   expect(f.state.artifacts.get("old")?.state).toBe("requested");
   await expect(f.coordinator.cancelPreparation()).resolves.toEqual({
@@ -265,12 +270,7 @@ test("a fluctuating pending admission count is tolerated through launch", async 
 
 test("attesting a source mid-preparation points at cancel-preparation", async () => {
   const f = legacyFixture();
-  await f.coordinator.attestPreservation();
-  f.state.leases.push({
-    ownerInstanceId: "old",
-    createdAt: new Date(1_000_000).toISOString(),
-  });
-  await expect(f.coordinator.prepare()).rejects.toThrow(/after its backup/);
+  await attestThenRefuseNewerLease(f);
   await expect(f.coordinator.attestPreservation()).rejects.toThrow(
     /run cancel-preparation first/,
   );
