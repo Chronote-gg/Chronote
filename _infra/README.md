@@ -115,17 +115,69 @@ that address.
 
 ### What triggers an alert
 
-| Alarm                         | Condition                                     | Period    |
-| ----------------------------- | --------------------------------------------- | --------- |
-| ECS no running tasks          | Bot service running task count < 1 for 10 min | 5 min x 2 |
-| ALB target 5xx errors         | 10+ target HTTP 5xx responses in 10 min       | 5 min x 2 |
-| ALB unhealthy hosts           | Any unhealthy target for 10 min               | 5 min x 2 |
-| Grafana token rotation errors | Rotation Lambda error in 24 h                 | 1 day x 1 |
-| Checkout lock stuck           | `Checkout lock stuck` app log line in 1 h     | 1 h x 1   |
-| OpenAI requests rejected      | Any OpenAI quota, credit, or 429 log line     | 5 min x 1 |
-| Processing retry worker       | `Processing retry worker failed` log line     | 5 min x 1 |
+| Alarm                         | Condition                                      | Period    |
+| ----------------------------- | ---------------------------------------------- | --------- |
+| ECS no running tasks          | Bot service running task count < 1 for 10 min  | 5 min x 2 |
+| ALB target 5xx errors         | 10+ target HTTP 5xx responses in 10 min        | 5 min x 2 |
+| ALB ELB 5xx errors            | 10+ load-balancer HTTP 5xx responses in 10 min | 5 min x 2 |
+| ALB unhealthy hosts           | Any unhealthy target in `api-tg` for 10 min    | 5 min x 2 |
+| ALB spare unhealthy hosts     | Any unhealthy target in `api-spare` for 10 min | 5 min x 2 |
+| Grafana token rotation errors | Rotation Lambda error in 24 h                  | 1 day x 1 |
+| Checkout lock stuck           | `Checkout lock stuck` app log line in 1 h      | 1 h x 1   |
+| OpenAI requests rejected      | Any OpenAI quota, credit, or 429 log line      | 5 min x 1 |
+| Processing retry worker       | `Processing retry worker failed` log line      | 5 min x 1 |
+| Voice settlement unresolved   | Unreleased voice session or lease log line     | 5 min x 1 |
+| Voice admission blocked       | Recording refused for uncertain voice state    | 5 min x 1 |
 
 All alarms also send an OK notification when the condition clears.
+
+The two unhealthy-host alarms cover both halves of the blue/green target group
+pair, one alarm each, because a generation swap moves serving traffic between
+them and a single hardcoded dimension is wrong again after the next swap. An idle
+group publishes no `UnHealthyHostCount` datapoints, so with `notBreaching` its
+alarm sits OK until it starts serving, and coverage follows traffic on its own.
+
+`HTTPCode_ELB_5XX_Count` is separate from the target 5xx alarm on purpose. The
+load balancer answers 502, 503 or 504 itself when it has no healthy target to
+forward to, and target 5xx stays at zero for the whole window, so this is the
+only alarm that sees a swap landing on an empty target group.
+
+The two voice alarms match single app log lines, each a thrown error message:
+`Meeting voice or lease release remains unresolved` for a meeting that finished
+without releasing its voice session or lease, and
+`Voice session admission blocked: voice_uncertain` for a recording refused
+because a previous runtime's voice state is still uncertain. Neither moves an
+ECS, ALB or OpenAI metric, so without these filters the only symptom is one
+meeting that never finishes or never starts. Both fire on a single occurrence,
+because one is already worth looking at.
+
+### ALB access logs
+
+The API load balancer writes access logs to its own bucket,
+`<project>-<environment>-alb-logs-<account id>`, under the `alb/` prefix. The
+alarms above say that an outage happened; these say which requests it happened
+to, which is what attributing a 4xx or a load-balancer 5xx to a route, a method
+or a client needs.
+
+Two details are deliberate and easy to break:
+
+- **The bucket is encrypted with SSE-S3, not the `app_general` KMS key the other
+  buckets use.** Elastic Load Balancing supports only S3-managed keys for access
+  log delivery. A customer managed key does not fail loudly; log delivery simply
+  never starts.
+- **The bucket policy grants the `logdelivery.elasticloadbalancing.amazonaws.com`
+  service principal**, which AWS documents for all regions, rather than the
+  legacy regional Elastic Load Balancing account id (`127311923021` for
+  `us-east-1`). The legacy form is still accepted in older regions but AWS
+  recommends replacing it. The policy is restricted by `aws:SourceArn` to this
+  account's load balancers, and the object path carries the account id, which
+  AWS requires rather than merely suggesting.
+
+A 30-day lifecycle rule expires the logs: the forensic value of a raw request log
+drops off quickly, and the short window also bounds how long client IP addresses
+are retained. The bucket is versioned, so the rule expires noncurrent versions
+after a day as well; without that, expiring the current version would only write
+a delete marker and retain those addresses indefinitely.
 
 `Checkout lock stuck` is logged when a billing page load finds a server's purchase
 lock past its checkout expiry but unreleasable: Stripe still reports the session

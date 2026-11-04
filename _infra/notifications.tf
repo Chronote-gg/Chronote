@@ -148,12 +148,65 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx_errors" {
   }
 }
 
-# --- ALB: unhealthy hosts ---
+# --- ALB: load balancer answering its own 5xx ---
+# Distinct from the target 5xx alarm above: the load balancer returns 502, 503
+# or 504 itself when it has no healthy target to forward to, and target 5xx
+# stays at zero throughout. That is the only metric that sees a generation swap
+# landing on an empty target group. Same Sum, period and threshold as the
+# target 5xx alarm, because a real outage answers every request this way and a
+# handful of client-aborted requests should not page.
+
+resource "aws_cloudwatch_metric_alarm" "alb_elb_5xx_errors" {
+  count               = local.alerts_enabled && var.ENABLE_API_ALB ? 1 : 0
+  alarm_name          = "${local.name_prefix}-alb-elb-5xx-errors"
+  alarm_description   = "The ALB itself is returning 5xx, which means it has no healthy target to forward to"
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HTTPCode_ELB_5XX_Count"
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 2
+  threshold           = 10
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    LoadBalancer = aws_lb.api_alb[0].arn_suffix
+  }
+
+  alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
+  ok_actions    = [aws_sns_topic.critical_alerts[0].arn]
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
+# --- ALB: unhealthy hosts, one alarm per half of the blue/green pair ---
+# A single hardcoded target group dimension is wrong again after the next
+# generation swap, which is how this alarm came to be pinned OK on a group with
+# no registered targets. Covering both groups makes coverage follow traffic: the
+# idle group publishes no UnHealthyHostCount datapoints, and with notBreaching
+# its alarm sits OK until it starts serving.
+
+locals {
+  alb_unhealthy_host_alarms = local.alerts_enabled && var.ENABLE_API_ALB ? {
+    # api_tg keeps the original alarm name so the live alarm is not replaced.
+    api_tg = {
+      alarm_name   = "${local.name_prefix}-alb-unhealthy-hosts"
+      target_group = aws_lb_target_group.api_tg[0].arn_suffix
+    }
+    api_spare = {
+      alarm_name   = "${local.name_prefix}-alb-spare-unhealthy-hosts"
+      target_group = aws_lb_target_group.api_spare_tg[0].arn_suffix
+    }
+  } : {}
+}
 
 resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
-  count               = local.alerts_enabled && var.ENABLE_API_ALB ? 1 : 0
-  alarm_name          = "${local.name_prefix}-alb-unhealthy-hosts"
-  alarm_description   = "ALB target group has unhealthy hosts"
+  for_each            = local.alb_unhealthy_host_alarms
+  alarm_name          = each.value.alarm_name
+  alarm_description   = "ALB target group ${each.key} has unhealthy hosts"
   namespace           = "AWS/ApplicationELB"
   metric_name         = "UnHealthyHostCount"
   statistic           = "Maximum"
@@ -165,7 +218,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
 
   dimensions = {
     LoadBalancer = aws_lb.api_alb[0].arn_suffix
-    TargetGroup  = aws_lb_target_group.api_tg[0].arn_suffix
+    TargetGroup  = each.value.target_group
   }
 
   alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
