@@ -22,14 +22,16 @@ locals {
   alerting_region = "us-east-1:${var.production_account_id}"
   alb_logs_bucket = "arn:aws:s3:::meeting-notes-prod-alb-logs-${var.production_account_id}"
   api_alb_arn     = "arn:aws:elasticloadbalancing:${local.alerting_region}:loadbalancer/app/meeting-notes-prod-api/*"
-  # Exact alarm names, checked against the alerting change. Five are new;
+  # Exact alarm names, checked against the alerting change. Seven are new;
   # alb-unhealthy-hosts already exists and the alerting change updates it in
   # place (count to for_each, and a per-target-group description), which is
   # still a PutMetricAlarm on that name. It keeps its original name so the live
   # alarm is not destroyed and recreated, and alb-spare-unhealthy-hosts is the
-  # second alarm for the spare target group, not a rename of it. A missing or
+  # second alarm for the spare target group, not a rename of it. The two
+  # ephemeral-storage alarms are one pair on one metric, an hourly Minimum for a
+  # slow leak and a five-minute Maximum for an imminent ceiling. A missing or
   # mistyped name denies PutMetricAlarm rather than granting something wider.
-  alerting_alarms  = ["alb-elb-5xx-errors", "alb-elb-5xx-sustained", "alb-unhealthy-hosts", "alb-spare-unhealthy-hosts", "voice-settlement-unresolved", "voice-admission-blocked"]
+  alerting_alarms  = ["alb-elb-5xx-errors", "alb-elb-5xx-sustained", "alb-unhealthy-hosts", "alb-spare-unhealthy-hosts", "ecs-ephemeral-storage-leak", "ecs-ephemeral-storage-critical", "voice-settlement-unresolved", "voice-admission-blocked"]
   alb_logs_writes  = ["s3:CreateBucket", "s3:PutBucketPolicy", "s3:PutBucketVersioning", "s3:PutEncryptionConfiguration", "s3:PutBucketPublicAccessBlock", "s3:PutBucketOwnershipControls", "s3:PutLifecycleConfiguration", "s3:PutBucketTagging"]
   alb_logs_refresh = ["s3:ListBucket", "s3:GetBucketLocation", "s3:GetBucketPolicy", "s3:GetBucketPolicyStatus", "s3:GetBucketVersioning", "s3:GetEncryptionConfiguration", "s3:GetBucketPublicAccessBlock", "s3:GetBucketOwnershipControls", "s3:GetLifecycleConfiguration", "s3:GetBucketTagging", "s3:GetBucketAcl", "s3:GetBucketCORS", "s3:GetBucketWebsite", "s3:GetAccelerateConfiguration", "s3:GetBucketRequestPayment", "s3:GetBucketLogging", "s3:GetReplicationConfiguration", "s3:GetBucketObjectLockConfiguration"]
 }
