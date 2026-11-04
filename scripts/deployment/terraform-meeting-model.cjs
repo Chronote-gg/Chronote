@@ -402,4 +402,6 @@ module.exports = {
   verifyWarmChange,
   closure,
   excludedChecks,
+  isSource,
+  modelDigest,
 };
