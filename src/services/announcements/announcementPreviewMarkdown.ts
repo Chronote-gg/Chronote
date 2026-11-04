@@ -2,7 +2,9 @@ import type { AnnouncementPreview, PreviewEntry } from "./announcementRunner";
 import { ownerDmContent } from "./announcementSend";
 import type { CandidateRejection } from "./announcementTypes";
 
-const cell = (value: string) => value.replace(/\|/g, "\\|") || "-";
+// Backslash first, so a backslash in the value cannot cancel the pipe escape.
+export const markdownTableCell = (value: string) =>
+  value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|") || "-";
 
 const rejectedText = (rejected: CandidateRejection[]) =>
   rejected
@@ -82,7 +84,7 @@ export const previewMarkdown = (preview: AnnouncementPreview): string => {
     "| Server | Decision | Channel source | Channel | Rejected candidates |",
     "| --- | --- | --- | --- | --- |",
     ...preview.entries.map(
-      (entry) => `| ${row(entry).map(cell).join(" | ")} |`,
+      (entry) => `| ${row(entry).map(markdownTableCell).join(" | ")} |`,
     ),
     "",
   ].join("\n");

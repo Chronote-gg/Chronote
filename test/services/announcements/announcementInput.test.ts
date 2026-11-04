@@ -103,6 +103,42 @@ describe("parseAnnouncement", () => {
     expect(problems).toEqual([expect.stringMatching(/^body:/)]);
   });
 
+  it("rejects an unterminated comment in the body", () => {
+    const problems = problemsOf(() =>
+      parseAnnouncement(
+        markdown("We are investigating.\n<!-- guidance never closed"),
+        "markdown",
+      ),
+    );
+
+    expect(problems).toEqual([expect.stringMatching(/^body: .*comment/)]);
+  });
+
+  it("rejects an unterminated comment in a field value", () => {
+    const problems = problemsOf(() =>
+      parseAnnouncement(
+        validJson({
+          fields: [{ name: "Started", value: "10:00 UTC <!-- fix" }],
+        }),
+        "json",
+      ),
+    );
+
+    expect(problems).toEqual([
+      expect.stringMatching(/^fields\.0\.value: .*comment/),
+    ]);
+  });
+
+  it("cannot leave a comment opener behind from overlapping comments", () => {
+    const { announcement } = parseAnnouncement(
+      markdown("Before <!<!---- x -->-- y --> after."),
+      "markdown",
+    );
+
+    expect(announcement.body).toBe("Before  after.");
+    expect(announcement.body).not.toContain("<!--");
+  });
+
   it("names every unfilled placeholder", () => {
     const problems = problemsOf(() =>
       parseAnnouncement(

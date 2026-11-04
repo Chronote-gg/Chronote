@@ -17,6 +17,19 @@ const SNOWFLAKE_RUN_PATTERN = /(?<!\d)\d{17,20}(?!\d)/g;
 
 const nonEmptyText = z.string().trim().min(1, "must not be empty");
 
+// Repeated until stable, so overlapping input like "<!<!---- x -->-- y -->"
+// cannot reassemble a comment from the pieces one pass leaves behind. Any
+// marker that survives is an unterminated or stray comment and is refused.
+const stripHtmlComments = (text: string): string => {
+  let previous: string;
+  let current = text;
+  do {
+    previous = current;
+    current = current.replace(HTML_COMMENT_PATTERN, "");
+  } while (current !== previous);
+  return current;
+};
+
 const frontMatterShape = {
   id: z
     .string()
@@ -40,7 +53,7 @@ const frontMatterShape = {
 // Templates carry operator guidance in HTML comments; it never reaches Discord.
 const bodySchema = z
   .string()
-  .transform((body) => body.replace(HTML_COMMENT_PATTERN, "").trim())
+  .transform((body) => stripHtmlComments(body).trim())
   .pipe(z.string().min(1, "must not be empty"));
 
 const frontMatterSchema = z.strictObject(frontMatterShape);
@@ -107,6 +120,15 @@ const labelledTexts = (announcement: Announcement): LabelledText[] => [
   ]),
 ];
 
+const findCommentProblems = (texts: LabelledText[]): string[] =>
+  texts.flatMap(({ label, text }) =>
+    text.includes("<!--") || text.includes("-->")
+      ? [
+          `${label}: contains an unterminated or stray HTML comment marker (<!-- or -->)`,
+        ]
+      : [],
+  );
+
 const findMentionProblems = (texts: LabelledText[]): string[] =>
   texts.flatMap(({ label, text }) =>
     Array.from(
@@ -119,7 +141,7 @@ const findMentionProblems = (texts: LabelledText[]): string[] =>
 // bare {{...}} that YAML reads as a mapping, must still be reported by name.
 const findPlaceholderProblems = (content: string): string[] =>
   Array.from(
-    content.replace(HTML_COMMENT_PATTERN, "").matchAll(PLACEHOLDER_PATTERN),
+    stripHtmlComments(content).matchAll(PLACEHOLDER_PATTERN),
     ([, name]) => `unfilled placeholder {{${name}}}`,
   );
 
@@ -146,7 +168,10 @@ export const parseAnnouncement = (
   const announcement =
     format === "markdown" ? parseMarkdown(content) : parseJson(content);
   const texts = labelledTexts(announcement);
-  const problems = findMentionProblems(texts);
+  const problems = [
+    ...findCommentProblems(texts),
+    ...findMentionProblems(texts),
+  ];
   if (problems.length > 0) throw new AnnouncementInputError(problems);
   return { announcement, warnings: findSnowflakeWarnings(texts) };
 };
