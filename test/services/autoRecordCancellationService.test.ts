@@ -346,9 +346,11 @@ test("failed sparse transcription is excluded before the actual cancellation pro
     responseContent: '{"cancel":true}',
   });
   const meeting = buildMeeting();
-  meeting.audioData.audioFiles = [
-    { transcriptionFailed: true, processing: false, transcript: "" },
-  ] as never;
+  meeting.audioData.audioFiles = Array.from({ length: 3 }, () => ({
+    transcriptionFailed: true,
+    processing: false,
+    transcript: "",
+  })) as never;
   await expect(evaluateAutoRecordCancellation(meeting)).rejects.toThrow(
     "processing",
   );

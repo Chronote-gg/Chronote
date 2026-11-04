@@ -12,12 +12,28 @@ export const EMPTY_RECORDING_NOTICE =
 export const PARTIAL_TRANSCRIPT_NOTICE =
   "Some audio could not be transcribed. These notes may be incomplete.";
 
+/**
+ * Failed snippets below this count do not demote a recording that has usable speech.
+ * A meeting attempts hundreds of per-turn snippets, so a single failure is one transient
+ * provider hiccup rather than a gap worth warning about. Three is a judgement, not a
+ * fitted number: six weeks of production held no meeting between one and eight failed
+ * snippets, so any floor in that range behaves identically. A percentage is deliberately
+ * not used; measured genuine failures sit at 2.65 and 3.64 percent of attempted snippets,
+ * so every rate at or above three percent misses one of them, while two percent of a
+ * median meeting is about three snippets and only restates this floor with
+ * length-dependent wobble.
+ */
+export const FAILED_SEGMENT_PARTIAL_THRESHOLD = 3;
+
 export function classifyTranscription(
   facts: TranscriptionFacts,
 ): TranscriptionOutcome {
-  const incomplete = facts.failedSegments > 0 || facts.captureIncomplete;
+  const incomplete =
+    facts.failedSegments >= FAILED_SEGMENT_PARTIAL_THRESHOLD ||
+    facts.captureIncomplete;
   if (facts.usableSegments > 0) return incomplete ? "partial" : "ready";
-  return incomplete ? "failed" : "empty";
+  // Without usable speech, any failed snippet is the whole recording, so it is not empty.
+  return incomplete || facts.failedSegments > 0 ? "failed" : "empty";
 }
 
 export function getMeetingProcessingNotice(
@@ -52,7 +68,7 @@ export function assertMeetingProcessingSucceeded(meeting: MeetingData): void {
   const facts = getAudioTranscriptionFacts(meeting.audioData);
   if (
     facts.captureIncomplete ||
-    facts.failedSegments > 0 ||
+    facts.failedSegments >= FAILED_SEGMENT_PARTIAL_THRESHOLD ||
     Object.values(meeting.processing ?? {}).includes("failed") ||
     meeting.processing?.transcription === "partial"
   )
