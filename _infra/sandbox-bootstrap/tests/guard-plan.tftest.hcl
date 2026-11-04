@@ -22,3 +22,13 @@ run "enabled" {
     enable_sandbox_terraform_role = true
   }
 }
+
+run "artifact_iam" {
+  command = plan
+  variables {
+    enable_private_evidence_store = true
+    enable_sandbox_terraform_role = true
+    artifact_app_kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/22222222-2222-4222-8222-222222222222"
+    artifact_transcripts_bucket = "meeting-notes-sandbox-transcripts-123456789012"
+  }
+}

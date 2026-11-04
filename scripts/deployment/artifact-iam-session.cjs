@@ -49,7 +49,6 @@ function prepareArtifactIamSession({
           "kms:GetKey*",
           "kms:ListResourceTags",
           "s3:GetBucket*",
-          "s3:GetPublicAccessBlock",
           "s3:GetEncryptionConfiguration",
           "s3:GetLifecycleConfiguration",
           "s3:GetAccelerateConfiguration",

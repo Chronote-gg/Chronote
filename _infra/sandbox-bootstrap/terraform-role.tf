@@ -29,7 +29,7 @@ resource "aws_iam_role" "sandbox_terraform" {
 locals {
   terraform_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       { Sid = "SitePolicy", Effect = "Allow", Action = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions", "iam:CreatePolicy", "iam:TagPolicy", "iam:CreatePolicyVersion"], Resource = "arn:aws:iam::${var.sandbox_account_id}:policy/meeting-notes-sandbox-site-publishing" },
       { Sid = "SiteAttachment", Effect = "Allow", Action = "iam:AttachRolePolicy", Resource = "arn:aws:iam::${var.sandbox_account_id}:role/meeting-notes-sandbox-github-deploy", Condition = { StringEquals = { "iam:PolicyARN" = "arn:aws:iam::${var.sandbox_account_id}:policy/meeting-notes-sandbox-site-publishing" } } },
       { Sid = "SiteRoleMetadata", Effect = "Allow", Action = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies"], Resource = "arn:aws:iam::${var.sandbox_account_id}:role/meeting-notes-sandbox-github-deploy" },
@@ -49,7 +49,7 @@ locals {
       { Sid = "ConditionalCapture", Effect = "Allow", Action = "s3:PutObject", Resource = local.capture_objects, Condition = { StringEquals = { "s3:if-none-match" = "*", "s3:x-amz-server-side-encryption" = "aws:kms", "s3:x-amz-server-side-encryption-aws-kms-key-id" = var.kms_key_arn } } },
       { Sid = "ExactVersionCapture", Effect = "Allow", Action = "s3:GetObjectVersion", Resource = local.capture_objects },
       { Sid = "CaptureKeyUse", Effect = "Allow", Action = ["kms:GenerateDataKey", "kms:Decrypt"], Resource = var.kms_key_arn, Condition = { StringEquals = { "kms:ViaService" = "s3.us-east-1.amazonaws.com", "kms:CallerAccount" = var.sandbox_account_id }, StringLike = { "kms:EncryptionContext:aws:s3:arn" = local.capture_objects } } }
-    ]
+    ], local.artifact_iam_statements)
   })
 }
 resource "aws_iam_role_policy" "sandbox_terraform" {
@@ -58,5 +58,11 @@ resource "aws_iam_role_policy" "sandbox_terraform" {
   role       = local.terraform_role_name
   depends_on = [aws_iam_role.sandbox_terraform]
   policy     = local.terraform_role_policy
-  lifecycle { prevent_destroy = true }
+  lifecycle {
+    prevent_destroy = true
+    precondition {
+      condition     = length(replace(local.terraform_role_policy, "/[ \t\r\n]/", "")) <= 10240
+      error_message = "HOLD: executor inline policy exceeds the IAM aggregate quota before other inline policies."
+    }
+  }
 }

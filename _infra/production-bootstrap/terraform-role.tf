@@ -36,9 +36,20 @@ resource "aws_iam_role_policy" "production_terraform" {
   name       = "meeting-notes-prod-terraform-prerequisites"
   role       = local.terraform_role_name
   depends_on = [aws_iam_role.production_terraform]
-  policy = jsonencode({
+  policy     = local.terraform_role_policy
+  lifecycle {
+    prevent_destroy = true
+    precondition {
+      condition     = length(replace(local.terraform_role_policy, "/[ \t\r\n]/", "")) <= 10240
+      error_message = "HOLD: executor inline policy exceeds the IAM aggregate quota before other inline policies."
+    }
+  }
+}
+
+locals {
+  terraform_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       { Sid = "ApplicationState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = "arn:aws:s3:::${local.state_bucket}/${local.state_key}" },
       # Terraform 1.16 Workspaces lists workspace_key_prefix plus '/', even for default.
       { Sid = "DefaultWorkspaceDiscovery", Effect = "Allow", Action = "s3:ListBucket", Resource = "arn:aws:s3:::${local.state_bucket}", Condition = { StringEquals = { "s3:prefix" = "meeting-notes-terraform/" } } },
@@ -80,7 +91,6 @@ resource "aws_iam_role_policy" "production_terraform" {
       { Sid = "EvidenceConditionalCreate", Effect = "Allow", Action = "s3:PutObject", Resource = local.capture_objects, Condition = { StringEquals = { "s3:if-none-match" = "*", "s3:x-amz-server-side-encryption" = "aws:kms", "s3:x-amz-server-side-encryption-aws-kms-key-id" = var.kms_key_arn } } },
       { Sid = "EvidenceVersionReadback", Effect = "Allow", Action = "s3:GetObjectVersion", Resource = local.capture_objects },
       { Sid = "EvidenceEncryption", Effect = "Allow", Action = ["kms:GenerateDataKey", "kms:Decrypt"], Resource = var.kms_key_arn, Condition = { StringEquals = { "kms:ViaService" = "s3.us-east-1.amazonaws.com", "kms:CallerAccount" = var.production_account_id }, StringLike = { "kms:EncryptionContext:aws:s3:arn" = local.capture_objects } } }
-    ]
+    ], local.artifact_iam_statements)
   })
-  lifecycle { prevent_destroy = true }
 }

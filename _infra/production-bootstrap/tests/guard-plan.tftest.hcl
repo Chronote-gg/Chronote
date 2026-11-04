@@ -21,3 +21,14 @@ run "enabled" {
     enable_production_terraform_role = true
   }
 }
+
+run "artifact_iam" {
+  command = plan
+  expect_failures = [aws_iam_role_policy.production_terraform]
+  variables {
+    enable_private_evidence_store = true
+    enable_production_terraform_role = true
+    artifact_app_kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/22222222-2222-4222-8222-222222222222"
+    artifact_transcripts_bucket = "meeting-notes-prod-transcripts-123456789012"
+  }
+}

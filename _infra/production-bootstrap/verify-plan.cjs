@@ -3,7 +3,12 @@ const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const hash = (s) => createHash("sha256").update(s).digest("hex");
+const {
+  artifactIamBootstrapBase,
+  withoutArtifactDefaults,
+} = require("../../scripts/deployment/artifact-iam-bootstrap.cjs");
 function validateBootstrapPlan(plan, binding) {
+  ({ plan, binding } = withoutArtifactDefaults(plan, binding));
   assert.equal(
     binding.backendKey,
     "meeting-notes-terraform/production-bootstrap/state",
@@ -326,13 +331,28 @@ function project(actual, expected) {
   }
   return actual;
 }
+function validateArtifactIamBootstrapUpdate(plan, binding) {
+  const base = artifactIamBootstrapBase(plan, binding, "production");
+  // Reuse the complete create envelope's identity/storage checks on unchanged values.
+  for (const r of base.plan.resource_changes)
+    if (r.mode === "managed") {
+      r.change.before = null;
+      r.change.actions = ["create"];
+      if (r.type === "aws_iam_role") delete r.change.after.inline_policy;
+    }
+  base.plan.applyable = true;
+  delete base.binding.previousRolePolicySha256;
+  return validateBootstrapPlan(base.plan, base.binding);
+}
 if (require.main === module) {
   assert.equal(
     process.argv.length,
-    4,
+    process.argv[4] === "--artifact-iam-update" ? 5 : 4,
     "usage: node verify-plan.cjs private-plan.json reviewed-binding.json",
   );
-  validateBootstrapPlan(
+  (process.argv[4] === "--artifact-iam-update"
+    ? validateArtifactIamBootstrapUpdate
+    : validateBootstrapPlan)(
     JSON.parse(readFileSync(process.argv[2], "utf8")),
     JSON.parse(readFileSync(process.argv[3], "utf8")),
   );
@@ -340,4 +360,4 @@ if (require.main === module) {
     "Bootstrap create-only plan matches reviewed bindings.\n",
   );
 }
-module.exports = { validateBootstrapPlan };
+module.exports = { validateBootstrapPlan, validateArtifactIamBootstrapUpdate };

@@ -139,7 +139,7 @@ output "bucket_policy" {
   value = var.enable_private_evidence_store ? aws_s3_bucket_policy.private_evidence[0].policy : null
 }
 output "terraform_role_policy" {
-  value = var.enable_production_terraform_role ? aws_iam_role_policy.production_terraform[0].policy : null
+  value = var.enable_production_terraform_role ? local.terraform_role_policy : null
 }
 output "terraform_role_trust_policy" {
   value = var.enable_production_terraform_role ? aws_iam_role.production_terraform[0].assume_role_policy : null

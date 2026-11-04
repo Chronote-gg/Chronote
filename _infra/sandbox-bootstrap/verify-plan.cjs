@@ -424,7 +424,12 @@ function validateEnvelope(plan, input, applyable) {
   for (const check of plan.checks ?? [])
     strict.equal(check.status, "pass", "unresolved check");
 }
+const {
+  artifactIamBootstrapBase,
+  withoutArtifactDefaults,
+} = require("../../scripts/deployment/artifact-iam-bootstrap.cjs");
 function validateBootstrapPlan(plan, binding) {
+  ({ plan, binding } = withoutArtifactDefaults(plan, binding));
   validateBinding(binding, false);
   const seen = validatePlan(plan, binding, validateCreate, true, false);
   insist(
@@ -507,6 +512,7 @@ function validateCreate(entry) {
   strict.equal(entry.change.before, null);
 }
 function validateBootstrapSitePermissionsUpdate(plan, binding) {
+  ({ plan, binding } = withoutArtifactDefaults(plan, binding));
   validateBinding(binding, true);
   const target = "aws_iam_role_policy.sandbox_terraform[0]";
   const changed = plan.resource_changes?.some(
@@ -560,7 +566,12 @@ function validateUnchangedOrSitePolicy(entry, binding) {
   } else strict.deepEqual(change.actions, ["no-op"]);
   strict.deepEqual(before, after, "unrelated existing field changed");
 }
+function validateArtifactIamBootstrapUpdate(plan, binding) {
+  const base = artifactIamBootstrapBase(plan, binding, "sandbox");
+  return validateBootstrapSitePermissionsUpdate(base.plan, base.binding);
+}
 module.exports = {
+  validateArtifactIamBootstrapUpdate,
   validateBootstrapPlan,
   validateBootstrapSitePermissionsUpdate,
 };
@@ -568,13 +579,18 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   insist(
     args.length === 2 ||
-      (args.length === 3 && args[2] === "--site-permissions-update"),
+      (args.length === 3 &&
+        ["--site-permissions-update", "--artifact-iam-update"].includes(
+          args[2],
+        )),
     "usage: node verify-plan.cjs PRIVATE_PLAN_JSON REVIEWED_BINDING_JSON [--site-permissions-update]",
   );
   const validate =
     args.length === 2
       ? validateBootstrapPlan
-      : validateBootstrapSitePermissionsUpdate;
+      : args[2] === "--artifact-iam-update"
+        ? validateArtifactIamBootstrapUpdate
+        : validateBootstrapSitePermissionsUpdate;
   validate(
     ...args
       .slice(0, 2)

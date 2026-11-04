@@ -1,0 +1,166 @@
+{
+  "sandbox": [
+    {
+      "Action": [
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListPolicyTags",
+        "iam:ListPolicyVersions",
+        "iam:CreatePolicyVersion"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:iam::123456789012:policy/meeting-notes-sandbox-bot-transcripts-s3-policy",
+      "Sid": "ArtifactPolicyVersions"
+    },
+    {
+      "Action": "iam:PutRolePolicy",
+      "Effect": "Allow",
+      "Resource": "arn:aws:iam::123456789012:role/meeting-notes-sandbox-github-deploy",
+      "Sid": "ArtifactBackendPolicy"
+    },
+    {
+      "Action": [
+        "iam:GetRole",
+        "iam:ListRolePolicies",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Effect": "Allow",
+      "Resource": [
+        "arn:aws:iam::123456789012:role/meeting-notes-sandbox-ecs-task-app-role",
+        "arn:aws:iam::123456789012:role/meeting-notes-sandbox-ecs-task-exec-role",
+        "arn:aws:iam::123456789012:role/meeting-notes-sandbox-github-deploy"
+      ],
+      "Sid": "ArtifactRoleMetadata"
+    },
+    {
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketPolicy",
+        "s3:GetBucketAcl",
+        "s3:GetBucketCORS",
+        "s3:GetBucketWebsite",
+        "s3:GetBucketVersioning",
+        "s3:GetAccelerateConfiguration",
+        "s3:GetBucketRequestPayment",
+        "s3:GetBucketLogging",
+        "s3:GetLifecycleConfiguration",
+        "s3:GetReplicationConfiguration",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetBucketObjectLockConfiguration",
+        "s3:GetBucketTagging"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::meeting-notes-sandbox-transcripts-123456789012",
+      "Sid": "ArtifactTranscriptMetadata"
+    },
+    {
+      "Action": [
+        "kms:DescribeKey",
+        "kms:GetKeyPolicy",
+        "kms:GetKeyRotationStatus",
+        "kms:ListResourceTags"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:kms:us-east-1:123456789012:key/22222222-2222-4222-8222-222222222222",
+      "Sid": "ArtifactApplicationKeyMetadata"
+    },
+    {
+      "Action": ["ecs:DescribeClusters", "ecs:ListTagsForResource"],
+      "Effect": "Allow",
+      "Resource": "arn:aws:ecs:us-east-1:123456789012:cluster/meeting-notes-sandbox-bot-cluster",
+      "Sid": "ArtifactClusterMetadata"
+    },
+    {
+      "Action": ["ecr:DescribeRepositories", "ecr:ListTagsForResource"],
+      "Effect": "Allow",
+      "Resource": "arn:aws:ecr:us-east-1:123456789012:repository/meeting-notes-sandbox-bot-repo",
+      "Sid": "ArtifactRepositoryMetadata"
+    },
+    {
+      "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetResourcePolicy"
+      ],
+      "Effect": "Allow",
+      "Resource": [
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:meeting-notes-sandbox/discord-bot-token-??????",
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:meeting-notes-sandbox/discord-client-secret-??????",
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:meeting-notes-sandbox/langfuse-public-key-??????",
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:meeting-notes-sandbox/langfuse-secret-key-??????",
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:meeting-notes-sandbox/oauth-secret-??????",
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:meeting-notes-sandbox/openai-api-key-??????",
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:meeting-notes-sandbox/stripe-secret-key-??????",
+        "arn:aws:secretsmanager:us-east-1:123456789012:secret:meeting-notes-sandbox/stripe-webhook-secret-??????"
+      ],
+      "Sid": "ArtifactSecretMetadata"
+    }
+  ],
+  "production": [
+    {
+      "Action": [
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListPolicyTags",
+        "iam:ListPolicyVersions",
+        "iam:CreatePolicyVersion"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:iam::123456789012:policy/meeting-notes-prod-bot-transcripts-s3-policy",
+      "Sid": "ArtifactPolicyVersions"
+    },
+    {
+      "Action": "iam:PutRolePolicy",
+      "Effect": "Allow",
+      "Resource": "arn:aws:iam::123456789012:role/meeting-notes-prod-github-deploy",
+      "Sid": "ArtifactBackendPolicy"
+    },
+    {
+      "Action": [
+        "iam:GetRole",
+        "iam:ListRolePolicies",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Effect": "Allow",
+      "Resource": [
+        "arn:aws:iam::123456789012:role/meeting-notes-prod-ecs-task-app-role",
+        "arn:aws:iam::123456789012:role/meeting-notes-prod-ecs-task-exec-role",
+        "arn:aws:iam::123456789012:role/meeting-notes-prod-github-deploy"
+      ],
+      "Sid": "ArtifactRoleMetadata"
+    },
+    {
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketPolicy",
+        "s3:GetBucketAcl",
+        "s3:GetBucketCORS",
+        "s3:GetBucketWebsite",
+        "s3:GetBucketVersioning",
+        "s3:GetAccelerateConfiguration",
+        "s3:GetBucketRequestPayment",
+        "s3:GetBucketLogging",
+        "s3:GetLifecycleConfiguration",
+        "s3:GetReplicationConfiguration",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetBucketObjectLockConfiguration",
+        "s3:GetBucketTagging"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::meeting-notes-prod-transcripts-123456789012",
+      "Sid": "ArtifactTranscriptMetadata"
+    },
+    {
+      "Action": [
+        "kms:DescribeKey",
+        "kms:GetKeyPolicy",
+        "kms:GetKeyRotationStatus",
+        "kms:ListResourceTags"
+      ],
+      "Effect": "Allow",
+      "Resource": "arn:aws:kms:us-east-1:123456789012:key/22222222-2222-4222-8222-222222222222",
+      "Sid": "ArtifactApplicationKeyMetadata"
+    }
+  ]
+}
