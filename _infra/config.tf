@@ -149,8 +149,12 @@ resource "aws_dynamodb_table" "config_overrides_table" {
   }
 }
 
-# Operator announcement sends, written only by scripts/announce.ts
+# Operator announcement sends, written only by scripts/announce.ts.
+# The production and Sandbox bootstrap Terraform roles do not yet allow
+# CreateTable or the KMS encryption context for this table, so keep
+# enable_announcement_delivery_table off until that change is reviewed and applied.
 resource "aws_dynamodb_table" "announcement_delivery_table" {
+  count        = var.enable_announcement_delivery_table ? 1 : 0
   name         = "${local.name_prefix}-AnnouncementDeliveryTable"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "announcementId"

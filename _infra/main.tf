@@ -258,6 +258,12 @@ variable "HOSTED_ZONE_NAME" {
   default     = ""
 }
 
+variable "enable_announcement_delivery_table" {
+  description = "Provision AnnouncementDeliveryTable for operator announcements. Enabling it requires a separately reviewed bootstrap grant (CreateTable and the KMS encryption context) for the Terraform role."
+  type        = bool
+  default     = false
+}
+
 variable "ENABLE_PROCESSING_RETRY_INDEX" {
   description = "Provision the processing retry index; does not enable runtime retries. Disable only when the index is confirmed absent."
   type        = bool
