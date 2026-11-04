@@ -12,6 +12,7 @@ import type { ArtifactSafetyRecord } from "../types/artifactSafety";
 import {
   validateArtifactSafetyWrite,
   artifactProofForWrite,
+  type ArtifactSafetyPurpose,
   type ArtifactSafetyWrite,
 } from "./artifactSafetyRules";
 export type { ArtifactSafetyWrite } from "./artifactSafetyRules";
@@ -138,32 +139,30 @@ export function artifactPreparationControl(
     deployment: { ...control.deployment, phase, updatedAt: now },
   };
 }
-function controlOperation(
-  input: ArtifactSafetyWrite,
+const PREPARATION_PHASES: Partial<
+  Record<ArtifactSafetyPurpose, "warming" | "complete">
+> = { consume: "warming", cancel_ack: "complete" };
+/** Binds Control exactly; a phase also moves `preparing` in the same item. */
+export function artifactControlOperation(
+  control: ControlRecord,
   table: string,
-): TransactWriteItem | undefined {
-  if (input.context.kind === "runtime") return undefined;
+  now: number,
+  options: { leased: boolean; phase?: "warming" | "complete" },
+): TransactWriteItem {
   const condition: ConditionCheck = {
     TableName: table,
     Key: marshall({ pk: "ENV", sk: "CONTROL" }),
-    ...artifactSnapshotCondition(
-      artifactControlAttributes(input.context.control),
-    ),
+    ...artifactSnapshotCondition(artifactControlAttributes(control)),
   };
-  if (input.context.kind !== "activating") {
+  if (options.leased) {
     condition.ConditionExpression += " AND coordinatorExpiresAt > :controlNow";
     condition.ExpressionAttributeValues = {
       ...condition.ExpressionAttributeValues,
-      ...marshall({ ":controlNow": input.now }),
+      ...marshall({ ":controlNow": now }),
     };
   }
-  if (!["consume", "cancel_ack"].includes(input.purpose))
-    return { ConditionCheck: condition };
-  const next = artifactPreparationControl(
-    input.context.control,
-    input.now,
-    input.purpose === "consume" ? "warming" : "complete",
-  );
+  if (!options.phase) return { ConditionCheck: condition };
+  const next = artifactPreparationControl(control, now, options.phase);
   return {
     Update: {
       ...condition,
@@ -179,6 +178,16 @@ function controlOperation(
     },
   };
 }
+function controlOperation(
+  input: ArtifactSafetyWrite,
+  table: string,
+): TransactWriteItem | undefined {
+  if (input.context.kind === "runtime") return undefined;
+  return artifactControlOperation(input.context.control, table, input.now, {
+    leased: input.context.kind !== "activating",
+    phase: PREPARATION_PHASES[input.purpose],
+  });
+}
 export function artifactExpectedAttributes(
   expected: ArtifactSafetyRecord,
 ): Record<string, unknown> {
@@ -191,12 +200,16 @@ export function artifactExpectedAttributes(
     startup: expected.startup,
   };
 }
-function recordPut(
-  input: ArtifactSafetyWrite,
+export function artifactRecordPut(
+  input: Pick<ArtifactSafetyWrite, "expected" | "next">,
   table: string,
+  expectedExtra: Record<string, unknown> = {},
 ): TransactWriteItem {
   const condition = input.expected
-    ? artifactSnapshotCondition(artifactExpectedAttributes(input.expected))
+    ? artifactSnapshotCondition({
+        ...artifactExpectedAttributes(input.expected),
+        ...expectedExtra,
+      })
     : {
         ConditionExpression:
           "attribute_not_exists(pk) AND attribute_not_exists(sk)",
@@ -215,7 +228,7 @@ export function buildArtifactSafetyTransaction(
 ): TransactWriteItemsCommandInput {
   validateArtifactSafetyWrite(input);
   const items = [
-    recordPut(input, tables.deploymentControl),
+    artifactRecordPut(input, tables.deploymentControl),
     runtimeCheck(input, tables.deploymentControl),
   ];
   const control = controlOperation(input, tables.deploymentControl);

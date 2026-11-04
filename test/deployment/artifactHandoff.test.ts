@@ -3,6 +3,7 @@ import * as artifactTypes from "../../src/types/artifactSafety";
 import * as artifactBuilders from "../../src/services/artifactSafetyTransactions";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { artifactSafetyFixture } from "./fixtures/artifactSafetyFixture";
+import { attestation } from "./fixtures/legacyArtifactFixture";
 import { createArtifactHandoff } from "../../scripts/deployment/artifact-handoff.cjs";
 
 function fixture() {
@@ -85,4 +86,79 @@ test("a candidate needs its own fresh sealed startup proof", async () => {
   await expect(f.helper.candidate(f.source.identity)).rejects.toThrow(
     /startup/,
   );
+});
+
+function attestedConsumed(f: ReturnType<typeof fixture>) {
+  return artifactTypes.artifactSafetyRecordSchema.parse({
+    ...f.expected,
+    revision: 3,
+    startup: { kind: "pending" },
+    state: "consumed",
+    consumedAt: 120,
+    attestation: { ...attestation, verifiedAt: 100 },
+  });
+}
+
+test("an attested legacy source reports operator evidence, not a runtime proof", async () => {
+  const f = fixture();
+  f.setRow(attestedConsumed(f));
+  await expect(f.helper.sourceEvidence(f.ctl)).resolves.toBe(
+    "operator_attested_legacy",
+  );
+  f.setRow(f.expected);
+  await f.helper.prepare(f.ctl);
+  await expect(f.helper.sourceEvidence(f.ctl)).resolves.toBe(
+    "verified_at_launch",
+  );
+});
+
+test("retirement accepts an attested legacy source that cannot verify itself", async () => {
+  const f = fixture();
+  const acknowledgment = {
+    request: {
+      identity: f.source.identity,
+      authorizedGeneration: 7,
+      coordinatorToken: "coordinator",
+      coordinatorEpoch: 3,
+    },
+    retiredAt: 130,
+  };
+  f.setRow(attestedConsumed(f));
+  await expect(
+    f.helper.retired(f.source.identity, acknowledgment),
+  ).resolves.toBeUndefined();
+  f.setRow(
+    artifactTypes.artifactSafetyRecordSchema.parse({
+      ...f.expected,
+      revision: 3,
+      state: "consumed",
+      consumedAt: 120,
+    }),
+  );
+  await expect(
+    f.helper.retired(f.source.identity, acknowledgment),
+  ).rejects.toThrow(/verification/);
+});
+
+test("an expired attestation refuses before any request is written", async () => {
+  const f = fixture();
+  const rest = artifactTypes.artifactSafetyBaseSchema.parse(
+    attestedConsumed(f),
+  );
+  f.setRow(
+    artifactTypes.artifactSafetyRecordSchema.parse({
+      ...rest,
+      state: "attested_legacy",
+      attestation: {
+        ...rest.attestation,
+        capturedAt: 0,
+        verifiedAt: 0,
+        expiresAt: 100,
+      },
+    }),
+  );
+  await expect(f.helper.prepare(f.ctl)).rejects.toThrow(/attestation expired/);
+  expect(
+    f.aws.mock.calls.some((call) => call[1] === "transact-write-items"),
+  ).toBe(false);
 });

@@ -52,6 +52,36 @@ Never relaunch legacy, delete rows, force-expire leases or clear receipts. After
 - Environment protection that `verifyRunApproval` accepts: BASIC as the single required reviewer, no admin bypass, `master` as the only deployment branch and no custom protection rules.
 - A Sandbox rehearsal needs Sandbox back in a pre-cutover state (empty Control table, legacy or weighted listener, one steady task), which is a separate approved reset.
 
+## Legacy source preservation attestation
+
+A runtime built before the artifact preservation protocol never writes its `ARTIFACTS#<instance>/STATE` row, so the ordinary `prepare` refuses it with `artifact_preservation_unconfirmed`, quiet override or not, and `cancel-preparation` refuses the same way. When that runtime's local meeting directory has been copied to S3 with a checksummed manifest, an operator can attest the copy. The coordinator then performs the runtime's part of preparation itself.
+
+`node scripts/deployment/coordinator.cjs attest-preservation` takes the usual coordinator environment plus `ATTESTATION_MANIFEST_URI` (`s3://bucket/prefix/inventory.json`), `ATTESTATION_OPERATOR` and `ATTESTATION_REASON`. It targets `deployment.outgoing` while Control is `preparing`, otherwise the sole serving member, and refuses without writing unless all of these hold:
+
+- The source has no artifact row, or only an earlier `attested_legacy` row. A protocol runtime creates its row on its first heartbeat and can only become serving with a sealed startup proof in it, so a serving runtime without a row is a legacy runtime. Any runtime-written row refuses.
+- The manifest is `{source, capturedAt, layout: "files/<path>", files: [{path, bytes, sha256}]}` with relative, unique paths, and every `<prefix>files/<path>` object answers `HeadObject` (with checksum mode) with the listed `ContentLength` and a full-object `ChecksumSHA256` equal to that SHA-256.
+- Staleness guard: the runtime row is `serving`, heartbeated within the last minute and reports `recording` and `pending_admission` as zero, and no `ActiveMeeting` lease with that `ownerInstanceId` has a `createdAt` at or after the manifest's `capturedAt`. Completed leases stay until TTL deletion, so a meeting that started and ended after the copy is still seen.
+
+One transaction then writes an `attested_legacy` row, conditioned on the row being absent (or on its exact revision) and on the runtime counters and the Control snapshot it read. It records the operator, reason, manifest URI and SHA-256 of the manifest body, file count, total bytes, capture and verification times, and expires six hours after verification.
+
+With an unexpired attestation, `prepare` writes `requested`, reruns the staleness guard, writes `sealed` with a proof built from the attestation (manifest digest, file count and bytes, no history authorities) and consumes it together with Control's `preparing` to `warming` change. Each of these transactions again requires the quiet counters and a fresh runtime heartbeat, so the guard cannot go stale between check and write. A row carrying an attestation is coordinator-owned: the runtime protocol refuses to write it.
+
+`cancel-preparation` on an attested source returns the row to `attested_legacy` and Control to `complete` in one transaction, once the service still runs the previous definition and no task runs the candidate definition. A legacy source never sealed admission, so there is nothing for it to reopen. Stopped-source continuation reports the evidence as `operator_attested_legacy`. Retirement accepts an attested source without its own filesystem verification, which a legacy runtime cannot produce.
+
+Limits:
+
+- Only files in the manifest are covered. A legacy source never seals admission, and work already running at the copy (finalization, recovery or personal processing) can keep writing files the copy lacks. The counters and lease check only exclude new recordings.
+- The proof carries no `MeetingHistory` authorities, so promotion does not condition on history checkpoints for this source.
+- The old task loses native protection once the candidate holds it and shuts itself down within about eight minutes. Work it still counts is lost and reported by the stopped-source continuation; recover it from the copy.
+
+Operator sequence for a stuck legacy preparation:
+
+1. Build `dist` (`yarn build`). Read Control and export the stuck run's coordinator environment: `SECRETS_PREFIX`, `ECS_CLUSTER`, `ECS_SERVICE`, `ECS_TASK_FAMILY`, and `DEPLOYMENT_RUN_TOKEN`, `DEPLOYMENT_CANDIDATE_ID` and `CANDIDATE_IMAGE` equal to Control's `deployment` fields, plus `AWS_REGION` and the three `ATTESTATION_*` values.
+2. Run `attest-preservation`.
+3. If Control is stuck in `preparing`, run `cancel-preparation` with the same environment, then let the coordinator lease expire (three minutes).
+4. Dispatch the deploy with `handoff_quiet_override` if the source still counts finalization or voice work.
+5. Before approving `Deploy Backend`, rerun `attest-preservation` with the new run's environment. It re-verifies the objects and the guard and renews the attestation. `prepare` checks the guard again and refuses without launching if it no longer holds.
+
 ## Staged fence-and-drain protocol (blocked)
 
 This procedure covers the one-time transition from the legacy production runtime to the protected handoff protocol. BASIC approved preparation and a brief maintenance window after existing work finishes. Production execution still needs its own exact packet and approvals. Recordings must finish, valid uploads must survive, and unfinished work must remain recoverable.
