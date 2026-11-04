@@ -9,6 +9,7 @@ import {
 import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
 import { sitePlan } from "../fixtures/deployment/sitePlan.js";
 import { processingRetryPlan } from "../fixtures/deployment/processingRetryPlan.js";
+import { artifactPreservationPlan } from "../fixtures/deployment/artifactPreservationPlan.js";
 // Each scope's fixture plan (if it needs one) and its exact -target arguments.
 const scopes: Record<string, { plan?: () => unknown; targets: string[] }> = {
   full: { targets: [] },
@@ -56,6 +57,10 @@ const scopes: Record<string, { plan?: () => unknown; targets: string[] }> = {
       "-target=aws_cloudwatch_log_metric_filter.processing_retry_worker_failed[0]",
       "-target=aws_cloudwatch_metric_alarm.processing_retry_worker_failed[0]",
     ],
+  },
+  "artifact-preservation": {
+    plan: artifactPreservationPlan,
+    targets: ["-target=aws_iam_policy.transcripts_s3_policy"],
   },
 };
 test.each(Object.keys(scopes))(

@@ -319,7 +319,8 @@ See [private Terraform delivery](../docs/terraform-private-delivery.md) for revi
 configuration, supported protection rules and unknown-acknowledgment handling.
 
 `plan_scope` accepts only `full`, `purchase-permission`,
-`deployment-prerequisites`, `deployment-runtime`, `site-delivery` or `processing-retry`. `full` remains untargeted; `purchase-permission`
+`deployment-prerequisites`, `deployment-runtime`, `site-delivery`,
+`processing-retry` or `artifact-preservation`. `full` remains untargeted; `purchase-permission`
 continues to target only `aws_iam_role_policy.initial_purchase_condition`.
 Unsupported scope values fail before the plan command, and no scope accepts
 arbitrary Terraform arguments.
@@ -475,6 +476,22 @@ Production order:
 4. Apply that plan at the same SHA.
 5. Turn on `meetings.processingRetry.enabled` once `ProcessingRetryDueIndex` is
    ACTIVE.
+
+`artifact-preservation` is production only and targets exactly
+`aws_iam_policy.transcripts_s3_policy`, the task roles' transcripts bucket grant,
+so the `s3:GetObjectVersion` that artifact preservation needs can ship through
+this workflow instead of a hand-run local apply.
+`scripts/deployment/validate-artifact-preservation-plan.cjs` checks the Plan and
+the restored Apply plan. It allows one in-place update to one statement that
+keeps the same bucket and grants exactly `s3:PutObject`, `s3:GetObject`,
+`s3:GetObjectVersion`, `s3:AbortMultipartUpload` and `s3:ListBucket`, with no
+condition, no deny and no other managed resource anywhere in the plan. The policy
+builds its bucket ARN from `local.transcripts_bucket_name` rather than from
+`aws_s3_bucket.transcripts`, which is what keeps the bucket out of the targeted
+graph; a refreshed bucket in the plan means that decoupling regressed and the
+validator refuses it. Production order: apply `_infra/production-bootstrap` so the
+executor role's `ManagedPolicies` statement names the transcripts policy, then
+Plan, then Apply.
 
 Standalone policy adoption requires a separate reviewed plan and approval; it is
 outside the four-target Apply. The actual state-backed prerequisite plan must

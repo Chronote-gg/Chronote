@@ -292,3 +292,75 @@ run "processing_retry_policy" {
     error_message = "The managed policy attaches to the production Terraform role."
   }
 }
+run "transcripts_policy_grant_and_inline_default" {
+  command = plan
+  variables {
+    enable_private_evidence_store    = true
+    enable_production_terraform_role = true
+  }
+  assert {
+    condition     = contains([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ManagedPolicies"][0].Resource, "arn:aws:iam::123456789012:policy/meeting-notes-prod-bot-transcripts-s3-policy")
+    error_message = "The executor role must be able to version the bot transcripts S3 policy."
+  }
+  assert {
+    condition     = length(aws_iam_policy.metadata_reads) == 0 && length([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s.Sid if s.Sid == "RegionalMetadata"]) == 1
+    error_message = "With the flag off the dependency metadata reads stay in the inline policy."
+  }
+}
+run "metadata_reads_requires_role" {
+  command = plan
+  variables {
+    enable_private_evidence_store = true
+    enable_metadata_reads_policy  = true
+  }
+  expect_failures = [var.enable_metadata_reads_policy]
+}
+run "metadata_reads_policy" {
+  command = plan
+  variables {
+    enable_private_evidence_store    = true
+    enable_production_terraform_role = true
+    enable_metadata_reads_policy     = true
+  }
+  assert {
+    condition     = jsondecode(aws_iam_policy.metadata_reads[0].policy).Statement == local.dependency_metadata_statements
+    error_message = "The managed policy carries exactly the moved statements."
+  }
+  assert {
+    condition     = length([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s.Sid if contains([for m in local.dependency_metadata_statements : m.Sid], s.Sid)]) == 0
+    error_message = "The inline policy must omit the moved statements once they are attached."
+  }
+  assert {
+    condition     = aws_iam_role_policy_attachment.metadata_reads[0].role == "meeting-notes-prod-github-terraform" && aws_iam_policy.metadata_reads[0].name == "meeting-notes-prod-terraform-metadata-reads"
+    error_message = "The managed policy attaches to the production Terraform role."
+  }
+}
+run "alerting_delivery_requires_role" {
+  command = plan
+  variables {
+    enable_private_evidence_store   = true
+    enable_alerting_delivery_policy = true
+  }
+  expect_failures = [var.enable_alerting_delivery_policy]
+}
+run "alerting_delivery_policy" {
+  command = plan
+  variables {
+    enable_private_evidence_store    = true
+    enable_production_terraform_role = true
+    enable_alerting_delivery_policy  = true
+  }
+  assert {
+    condition = jsondecode(aws_iam_policy.alerting_delivery[0].policy).Statement == [
+      { Sid = "AlertingAlarms", Effect = "Allow", Action = ["cloudwatch:PutMetricAlarm", "cloudwatch:DescribeAlarms", "cloudwatch:TagResource", "cloudwatch:ListTagsForResource"], Resource = [for name in ["alb-elb-5xx-errors", "alb-elb-5xx-sustained", "alb-spare-unhealthy-hosts", "voice-settlement-unresolved", "voice-admission-blocked"] : "arn:aws:cloudwatch:us-east-1:123456789012:alarm:meeting-notes-prod-${name}"] },
+      { Sid = "AlbLogBucketCreate", Effect = "Allow", Action = local.alb_logs_writes, Resource = "arn:aws:s3:::meeting-notes-prod-alb-logs-123456789012" },
+      { Sid = "AlbLogBucketRefresh", Effect = "Allow", Action = local.alb_logs_refresh, Resource = "arn:aws:s3:::meeting-notes-prod-alb-logs-123456789012" },
+      { Sid = "ApiAccessLogging", Effect = "Allow", Action = "elasticloadbalancing:ModifyLoadBalancerAttributes", Resource = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/meeting-notes-prod-api/*" }
+    ]
+    error_message = "Alerting delivery may reach only the four alarms, the one access-log bucket and the API load balancer's attributes."
+  }
+  assert {
+    condition     = aws_iam_role_policy_attachment.alerting_delivery[0].role == "meeting-notes-prod-github-terraform" && aws_iam_policy.alerting_delivery[0].name == "meeting-notes-prod-terraform-alerting-delivery"
+    error_message = "The managed policy attaches to the production Terraform role."
+  }
+}
