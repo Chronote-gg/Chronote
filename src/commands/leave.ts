@@ -44,14 +44,18 @@ export async function handleLeaveCommand(
     return;
   }
 
+  signal?.throwIfAborted();
+  await deferMeetingStopInteraction(work, () =>
+    interaction.deferReply({ ephemeral: true }),
+  );
+  signal?.throwIfAborted();
+
   await hydrateMemberCache(interaction);
   if (!hasLeavePermission(interaction)) {
     signal?.throwIfAborted();
-    await interaction.reply({
-      content:
-        "You do not have permission to make Chronote leave this session.",
-      ephemeral: true,
-    });
+    await interaction.editReply(
+      "You do not have permission to make Chronote leave this session.",
+    );
     return;
   }
 
@@ -59,30 +63,21 @@ export async function handleLeaveCommand(
     signal?.throwIfAborted();
     await endTtsOnlySession(meeting);
     signal?.throwIfAborted();
-    await interaction.reply({
-      content: "Chronote left the TTS-only voice session.",
-      ephemeral: true,
-    });
+    await interaction.editReply("Chronote left the TTS-only voice session.");
     return;
   }
 
   const confirmed = interaction.options.getBoolean("confirm") ?? false;
   if (!confirmed) {
     signal?.throwIfAborted();
-    await interaction.reply({
-      content:
-        "Chronote is recording this meeting. Run `/leave confirm:true` to end the meeting and disconnect Chronote.",
-      ephemeral: true,
-    });
+    await interaction.editReply(
+      "Chronote is recording this meeting. Run `/leave confirm:true` to end the meeting and disconnect Chronote.",
+    );
     return;
   }
 
   meeting.endReason = MEETING_END_REASONS.LEAVE_COMMAND;
   meeting.endTriggeredByUserId = interaction.user.id;
-  signal?.throwIfAborted();
-  await deferMeetingStopInteraction(work, () =>
-    interaction.deferReply({ ephemeral: true }),
-  );
   signal?.throwIfAborted();
   await persistExplicitMeetingStop(meeting, MEETING_END_REASONS.LEAVE_COMMAND);
   signal?.throwIfAborted();
