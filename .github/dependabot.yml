@@ -1,17 +1,17 @@
 version: 2
 
-# One weekly PR across application, desktop, tooling and infrastructure.
+# One monthly PR across application, desktop, tooling and infrastructure.
 multi-ecosystem-groups:
   dependencies:
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"
       time: "09:00"
       timezone: "Etc/UTC"
 
 updates:
   - package-ecosystem: "npm"
     directory: "/"
+    open-pull-requests-limit: 5
     patterns:
       - "*"
     multi-ecosystem-group: "dependencies"
@@ -44,6 +44,7 @@ updates:
 
   - package-ecosystem: "uv"
     directory: "/"
+    open-pull-requests-limit: 5
     # 1.24.2 and 1.24.3 crash parsing current TypeScript; reconsider after an upstream fix.
     ignore:
       - dependency-name: "lizard"
@@ -58,6 +59,7 @@ updates:
 
   - package-ecosystem: "github-actions"
     directory: "/"
+    open-pull-requests-limit: 5
     patterns:
       - "*"
     multi-ecosystem-group: "dependencies"
@@ -68,6 +70,7 @@ updates:
 
   - package-ecosystem: "docker"
     directory: "/"
+    open-pull-requests-limit: 5
     # The application and shared quality tool target Node 24.
     ignore:
       - dependency-name: "node"
@@ -82,6 +85,7 @@ updates:
 
   - package-ecosystem: "docker-compose"
     directory: "/"
+    open-pull-requests-limit: 5
     patterns:
       - "*"
     multi-ecosystem-group: "dependencies"
@@ -92,6 +96,7 @@ updates:
 
   - package-ecosystem: "terraform"
     directory: "/_infra"
+    open-pull-requests-limit: 5
     patterns:
       - "*"
     multi-ecosystem-group: "dependencies"
@@ -102,6 +107,7 @@ updates:
 
   - package-ecosystem: "terraform"
     directory: "/_infra_state_mgmt"
+    open-pull-requests-limit: 5
     patterns:
       - "*"
     multi-ecosystem-group: "dependencies"
@@ -112,6 +118,7 @@ updates:
 
   - package-ecosystem: "npm"
     directory: "/apps/desktop"
+    open-pull-requests-limit: 5
     patterns:
       - "*"
     multi-ecosystem-group: "dependencies"
@@ -125,6 +132,7 @@ updates:
 
   - package-ecosystem: "cargo"
     directory: "/apps/desktop/src-tauri"
+    open-pull-requests-limit: 5
     patterns:
       - "*"
     multi-ecosystem-group: "dependencies"
