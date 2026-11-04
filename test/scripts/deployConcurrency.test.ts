@@ -29,10 +29,15 @@ test("deploy.yml has no workflow-level concurrency group", () => {
   expect(deployment.concurrency).toBeUndefined();
 });
 
-test("only CI is cancellable, and only on a push", () => {
+// One group across both events, so at most one master CI is alive and the
+// newest run wins. Scoping the group by event instead would let a dispatch of
+// an older commit finish CI late and publish over a newer push, rolling the
+// backend, frontend and promoted prompts back, so the group must not vary.
+test("CI is cancellable and shares one group across every event", () => {
   const ci = deployment.jobs[CI_JOB].concurrency;
-  expect(ci?.group).toContain("github.event_name");
-  expect(ci?.["cancel-in-progress"]).toBe("${{ github.event_name == 'push' }}");
+  expect(ci?.group).toBe("chronote-master-ci");
+  expect(ci?.group).not.toContain("github.event_name");
+  expect(ci?.["cancel-in-progress"]).toBe(true);
 });
 
 test("no deploy job can be cancelled once it starts", () => {

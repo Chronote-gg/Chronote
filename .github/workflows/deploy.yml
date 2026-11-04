@@ -25,12 +25,17 @@ jobs:
   ci:
     if: github.ref == 'refs/heads/master'
     name: CI
-    # A newer master push cancels this. Dispatch runs sit in their own group and
-    # are never cancelled, which is what the workflow-level group used to give
-    # them. Only CI is cancellable; every deploy job below sets false.
+    # One group across both events, so at most one master CI is ever alive and
+    # the newest run wins. A merge therefore cancels a manual dispatch's CI as
+    # well as an earlier merge's, which is deliberate: splitting the group by
+    # event let a dispatch of an older commit finish CI late and take the deploy
+    # locks after a newer push had already published, rolling the backend, the
+    # frontend and the promoted prompts back. A cancelled dispatch is visible
+    # and can be re-run; a silent rollback of promoted prompts is neither.
+    # Only CI is cancellable; every deploy job below sets false.
     concurrency:
-      group: chronote-master-ci-${{ github.event_name }}
-      cancel-in-progress: ${{ github.event_name == 'push' }}
+      group: chronote-master-ci
+      cancel-in-progress: true
     uses: ./.github/workflows/ci-core.yml
     secrets: inherit
 
