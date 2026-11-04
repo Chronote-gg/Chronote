@@ -11,9 +11,9 @@ The tool is a pipe, not an author. The operator writes and approves the text. Th
 ## Goals
 
 - The operator can post one approved announcement, as an embed, into each installed server.
-- Target channel per server, in order: the server's community updates channel (Discord's `public_updates_channel_id`, where Discord itself sends admin notices), else the server's configured Chronote notes channel, else the server's system channel.
+- Target channel per server: the server's community updates channel (Discord's `public_updates_channel_id`, where Discord itself sends admin notices). If that channel exists but the bot cannot post there, the server owner gets a DM with the embed and the missing permissions. Only a server with no community updates channel falls back to its configured Chronote notes channel, then its system channel.
 - A server can opt out with a server setting. Opted-out servers are never posted to.
-- A dry run lists every server, its chosen channel or skip reason, and renders the embed, without sending anything.
+- A dry run lists every server, its chosen channel, owner DM, or skip reason, and renders the embed, without sending anything.
 - Sending requires the exact dry-run preview to be confirmed by its digest. There are no automatic or scheduled sends.
 - Every send is recorded durably, and every run ends with one summary line of sent, skipped by reason, and failed.
 - Reusable incident and resolved templates ship with the tool.
@@ -21,7 +21,7 @@ The tool is a pipe, not an author. The operator writes and approves the text. Th
 ## Non-goals
 
 - Writing or approving announcement text. That is the operator's.
-- DMs to users or server owners. Never.
+- DMs to members. Never. The one DM is to a server's owner, and only when that server's community updates channel exists but the bot cannot post there (operator decision, 2026-11-04: "never DM users" means members, not the owner on a delivery failure).
 - Email. The issue 571 email template stays a manual operator task.
 - Scheduling, retries on a timer, or any send without the operator at the keyboard.
 - A web UI or slash command for sending.
@@ -84,11 +84,20 @@ For each installed server (`GET /users/@me/guilds`, paginated; the current `list
 
 1. If the server's opt-out setting is set, skip `opted_out`.
 2. Build candidates in order: community updates channel, configured notes channel (`notes.channelId` at server scope), system channel. Drop missing, deleted, duplicate, and non-text candidates (only guild text and announcement channels qualify).
-3. Take the first candidate where the bot has View Channel, Send Messages, and Embed Links, computed from the guild's roles, the bot member's roles, and the channel's permission overwrites, with the Administrator rule. (Bots cannot own guilds, so there is no owner rule.) Extract the existing overwrite computation in `src/services/discordPermissionsService.ts` into a pure function and reuse it, rather than writing a second permission model.
-4. If no candidate qualifies, skip `no_channel` when there were none, or `missing_permissions` listing each candidate and its missing permissions.
-5. A Discord read failure for a server is a skip with `discord_error` and the status code, never a crash of the whole run.
+3. Permission check: the bot needs View Channel, Send Messages, and Embed Links, computed from the guild's roles, the bot member's roles, and the channel's permission overwrites, with the Administrator rule. (Bots cannot own guilds, so there is no owner rule.) Extract the existing overwrite computation in `src/services/discordPermissionsService.ts` into a pure function and reuse it, rather than writing a second permission model.
+4. If the server has a usable community updates channel (it exists and is a text or announcement channel), it is the only channel candidate. If the bot can post there, target it. If not, the decision is an owner DM (to the guild's `owner_id`) carrying the missing permissions. The chain does not continue to member-visible channels.
+5. If the server has no usable community updates channel, take the first of the notes channel and the system channel where the bot can post. If neither qualifies, skip `no_channel` when there were none, or `missing_permissions` listing each candidate and its missing permissions.
+6. A Discord read failure for a server is a skip with `discord_error` and the status code, never a crash of the whole run.
 
-Decided (operator, 2026-11-04): when the community updates channel exists but the bot cannot post there, resolution falls through to the next candidate rather than skipping the server. The notices are for the people who use Chronote, not only admins. The preview shows the fall-through and why.
+Decided (operator, 2026-11-04, revised twice): when the community updates channel exists but the bot cannot post there, the owner gets a DM instead of a post in a member-visible channel.
+
+### Owner DM
+
+- Open the DM channel with `POST /users/@me/channels` (`recipient_id` = owner id), then post to it.
+- The message is the same embed plus one line of message content: `Chronote could not post this notice in the community updates channel of <server name> because it is missing: <permissions>. Grant these to Chronote in that channel to receive future notices there.` The server name is escaped as Markdown, and `allowed_mentions` is still `{ parse: [] }`.
+- The opt-out applies first: an opted-out server gets neither a post nor a DM.
+- Closed DMs (Discord error code 50007, or a 403 when opening or posting to the DM) are a skip `owner_dms_closed`, recorded as `failed` with that reason.
+- The DM is recorded like any delivery, with `channelSource` `owner_dm` and the DM channel id.
 
 ### Opt-out setting
 
@@ -96,7 +105,7 @@ A new server-scope boolean config key, `announcements.operatorNotices.enabled`, 
 
 ### Send records
 
-A new DynamoDB table, `AnnouncementDeliveryTable`: partition key `announcementId`, sort key `guildId`. Attributes: `channelId`, `channelSource` (`public_updates`, `notes`, `system`), `messageId`, `status` (`pending`, `sent`, `failed`), `reason`, `previewSha256`, `createdAt`, `updatedAt`. Point-in-time recovery and the general KMS key like the other tables. Added under `_infra/` (beside the config tables in `_infra/config.tf` or with the others in `_infra/main.tf`, builder's choice) and to `scripts/init-dynamodb.js`. The bot task does not read it, so no ECS task policy change.
+A new DynamoDB table, `AnnouncementDeliveryTable`: partition key `announcementId`, sort key `guildId`. Attributes: `channelId`, `channelSource` (`public_updates`, `notes`, `system`, `owner_dm`), `messageId`, `status` (`pending`, `sent`, `failed`), `reason`, `previewSha256`, `createdAt`, `updatedAt`. Point-in-time recovery and the general KMS key like the other tables. Added under `_infra/` (beside the config tables in `_infra/config.tf` or with the others in `_infra/main.tf`, builder's choice) and to `scripts/init-dynamodb.js`. The bot task does not read it, so no ECS task policy change.
 
 Write order per server, which is what makes reruns safe:
 
@@ -119,10 +128,10 @@ Strictly sequential: one server at a time, a fixed minimum interval between post
 One line at the end of preview and send, for example:
 
 ```text
-announcement incident-2026-11-04: sent=0 skipped=0 (opted_out=0 no_channel=0 missing_permissions=0 discord_error=0 already_sent=0 pending_unknown=0) failed=0
+announcement incident-2026-11-04: sent=0 owner_dm=0 skipped=0 (opted_out=0 no_channel=0 missing_permissions=0 owner_dms_closed=0 discord_error=0 already_sent=0 pending_unknown=0) failed=0 unknown=0
 ```
 
-Preview prints the same line with `would_send` in place of `sent`. Per-server detail stays in the private output directory, not the terminal.
+`sent` counts every delivery; `owner_dm` is how many of those were owner DMs. Preview prints the same line with `would_send` in place of `sent`. Per-server detail stays in the private output directory, not the terminal.
 
 ### Templates
 
@@ -141,7 +150,8 @@ Each template carries a comment block (stripped before rendering) with the house
 
 All tests use injected Discord and DynamoDB fakes. No test, CI job, or script default touches the real Discord API or AWS.
 
-- Channel resolution: each fallback step, missing and deleted channels, non-text channels, duplicate candidates, opt-out first.
+- Channel resolution: each fallback step for servers with no updates channel, an unpostable updates channel choosing an owner DM and never a member-visible channel, missing and deleted channels, non-text channels, duplicate candidates, opt-out first.
+- Owner DM: DM channel opened for the owner, content line names the server and permissions, closed DMs skip `owner_dms_closed`, opted-out server gets no DM.
 - Permission skipping: missing View, Send, or Embed Links each skip with the right reason; channel overwrite deny over role allow; member overwrite; Administrator bypass. Existing callers of the extracted permission function keep their behaviour.
 - Input validation: placeholders, mentions, snowflake warning, embed limits.
 - Idempotency: existing `sent` and `pending` records skip; conditional-put race skips; a 4xx writes `failed`; a 5xx or timeout leaves `pending`.
