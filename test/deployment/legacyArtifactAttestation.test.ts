@@ -90,6 +90,23 @@ test("a seal must carry exactly the attested inventory", () => {
   ).toThrow(/derived/);
 });
 
+test("a seal whose digest disagrees with the attested manifest hash refuses", () => {
+  const f = fixture();
+  const mismatched = artifactSafetyRecordSchema.parse({
+    ...f.sealed,
+    proof: {
+      ...f.sealed.proof,
+      snapshot: { ...f.sealed.proof.snapshot, inventoryDigest: "0".repeat(64) },
+    },
+  });
+  expect(() =>
+    buildLegacyArtifactTransaction(
+      f.write("seal", f.requested, mismatched),
+      f.tables,
+    ),
+  ).toThrow(/derived/);
+});
+
 test.each([
   ["consume", "warming"],
   ["cancel", "complete"],

@@ -22,7 +22,7 @@ import type {
 import type { TranscriptSegment } from "../types/transcript";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
 import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
-import { classifyTranscription } from "../utils/meetingProcessing";
+import { classifyUploadTranscription } from "../utils/meetingProcessing";
 import {
   PERSONAL_MEDIA_UPLOAD_MAX_PROCESSING_ATTEMPTS,
   PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS,
@@ -918,7 +918,7 @@ const processPersonalRecordingContent = async (
     (sum, source) => sum + source.failedChunks,
     0,
   );
-  const transcription = classifyTranscription({
+  const transcription = classifyUploadTranscription({
     usableSegments: transcriptArtifact.segments.filter((segment) =>
       Boolean(segment.text?.trim()),
     ).length,
@@ -971,7 +971,7 @@ const processPersonalMediaContent = async (
     acceptsPartialTranscription(job),
     processingSignals.get(job),
   );
-  const transcription = classifyTranscription({
+  const transcription = classifyUploadTranscription({
     usableSegments: transcriptionResult.text.trim() ? 1 : 0,
     failedSegments: transcriptionResult.failedChunks,
     captureIncomplete: false,

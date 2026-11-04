@@ -39,7 +39,10 @@ permissions:
 # completion.
 concurrency:
   group: desktop-package-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Pull request runs only. The push to master is the one post-merge check on
+  # the packaged artifact, so two merges landing close together must each get
+  # their own validation rather than the second cancelling the first.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
