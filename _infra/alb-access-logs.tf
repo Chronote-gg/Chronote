@@ -4,7 +4,14 @@
 # alb_elb_5xx_errors alarm now watches can be root-caused after the fact. The
 # alarm says an outage happened; this says which requests it happened to.
 
+variable "ENABLE_ALB_ACCESS_LOGS" {
+  description = "Collect ALB access logs. Off by default: access logs retain client IP addresses, and the privacy policy promises notice before a change like that takes effect, so this stays false until that notice ships."
+  type        = bool
+  default     = false
+}
+
 locals {
+  alb_access_logs_enabled     = var.ENABLE_API_ALB && var.ENABLE_ALB_ACCESS_LOGS
   alb_access_logs_bucket_name = "${local.name_prefix}-alb-logs-${data.aws_caller_identity.current.account_id}"
   alb_access_logs_prefix      = "alb"
 }
@@ -14,7 +21,7 @@ resource "aws_s3_bucket" "alb_access_logs" {
   #checkov:skip=CKV_AWS_144 reason: Cross-region replication not required for logs expiring in 30 days.
   #checkov:skip=CKV2_AWS_62 reason: Event notifications not needed for a log sink nothing consumes live.
   #checkov:skip=CKV_AWS_145 reason: ALB access log delivery supports only SSE-S3, so a CMK is not an option here.
-  count  = var.ENABLE_API_ALB ? 1 : 0
+  count  = local.alb_access_logs_enabled ? 1 : 0
   bucket = local.alb_access_logs_bucket_name
 
   tags = {
@@ -23,7 +30,7 @@ resource "aws_s3_bucket" "alb_access_logs" {
 }
 
 resource "aws_s3_bucket_public_access_block" "alb_access_logs" {
-  count                   = var.ENABLE_API_ALB ? 1 : 0
+  count                   = local.alb_access_logs_enabled ? 1 : 0
   bucket                  = aws_s3_bucket.alb_access_logs[0].id
   block_public_acls       = true
   block_public_policy     = true
@@ -32,7 +39,7 @@ resource "aws_s3_bucket_public_access_block" "alb_access_logs" {
 }
 
 resource "aws_s3_bucket_ownership_controls" "alb_access_logs" {
-  count  = var.ENABLE_API_ALB ? 1 : 0
+  count  = local.alb_access_logs_enabled ? 1 : 0
   bucket = aws_s3_bucket.alb_access_logs[0].id
 
   rule {
@@ -46,7 +53,7 @@ resource "aws_s3_bucket_ownership_controls" "alb_access_logs" {
 # S3-managed keys (SSE-S3)". A CMK here does not fail loudly, it just means
 # logging never starts, so this difference from the other buckets is deliberate.
 resource "aws_s3_bucket_server_side_encryption_configuration" "alb_access_logs" {
-  count  = var.ENABLE_API_ALB ? 1 : 0
+  count  = local.alb_access_logs_enabled ? 1 : 0
   bucket = aws_s3_bucket.alb_access_logs[0].id
 
   rule {
@@ -60,7 +67,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "alb_access_logs" 
 }
 
 resource "aws_s3_bucket_versioning" "alb_access_logs" {
-  count  = var.ENABLE_API_ALB ? 1 : 0
+  count  = local.alb_access_logs_enabled ? 1 : 0
   bucket = aws_s3_bucket.alb_access_logs[0].id
 
   versioning_configuration {
@@ -74,7 +81,7 @@ resource "aws_s3_bucket_versioning" "alb_access_logs" {
 # current version only writes a delete marker and would otherwise keep those IPs
 # indefinitely.
 resource "aws_s3_bucket_lifecycle_configuration" "alb_access_logs" {
-  count  = var.ENABLE_API_ALB ? 1 : 0
+  count  = local.alb_access_logs_enabled ? 1 : 0
   bucket = aws_s3_bucket.alb_access_logs[0].id
 
   rule {
@@ -105,7 +112,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "alb_access_logs" {
 # SourceArn restricts writes to this account's load balancers, and the account id
 # in the object path is AWS's documented requirement rather than a nicety.
 data "aws_iam_policy_document" "alb_access_logs" {
-  count = var.ENABLE_API_ALB ? 1 : 0
+  count = local.alb_access_logs_enabled ? 1 : 0
 
   statement {
     sid    = "AllowELBLogDelivery"
@@ -128,7 +135,7 @@ data "aws_iam_policy_document" "alb_access_logs" {
 }
 
 resource "aws_s3_bucket_policy" "alb_access_logs" {
-  count  = var.ENABLE_API_ALB ? 1 : 0
+  count  = local.alb_access_logs_enabled ? 1 : 0
   bucket = aws_s3_bucket.alb_access_logs[0].id
   policy = data.aws_iam_policy_document.alb_access_logs[0].json
 }

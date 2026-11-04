@@ -103,10 +103,21 @@ resource "aws_lb" "api_alb" {
   drop_invalid_header_fields = true
   enable_deletion_protection = var.ENABLE_API_ALB_DELETION_PROTECTION
 
-  access_logs {
-    bucket  = aws_s3_bucket.alb_access_logs[0].id
-    prefix  = local.alb_access_logs_prefix
-    enabled = true
+  # Iterating the bucket's own count list, like the load_balancer block in
+  # main.tf does, so the block is absent rather than present-and-disabled when
+  # ENABLE_ALB_ACCESS_LOGS is off. A static block would index a bucket that does
+  # not exist, which fails at plan time no matter what enabled is set to.
+  #
+  # Checkov passes CKV_AWS_91 off the presence of this block, so a green scan is
+  # not evidence that access logging is actually on. Whether it is on depends on
+  # ENABLE_ALB_ACCESS_LOGS, which defaults to false.
+  dynamic "access_logs" {
+    for_each = aws_s3_bucket.alb_access_logs
+    content {
+      bucket  = access_logs.value.id
+      prefix  = local.alb_access_logs_prefix
+      enabled = true
+    }
   }
 
   # Elastic Load Balancing writes a test object when logging is turned on, which

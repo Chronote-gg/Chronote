@@ -170,7 +170,19 @@ because one is already worth looking at.
 
 ### ALB access logs
 
-The API load balancer writes access logs to its own bucket,
+**Off by default, behind `ENABLE_ALB_ACCESS_LOGS` (default `false`), and the
+privacy notice has to ship before it is flipped.** Access logs retain client IP
+addresses, which is a new category of personal data in a new place, and
+`apps/docs-site/docs/legal/privacy.md` promises notice on the page and in the
+What's New feed before a material change takes effect. With the flag off, no
+bucket is created and the load balancer has no `access_logs` block at all, so
+merging this does not start collecting anything. Flip it by setting a
+`TFVAR_ENABLE_ALB_ACCESS_LOGS` GitHub Actions **variable** to `true`, not by
+editing the `TERRAFORM_TFVARS_JSON` secret, per the rule earlier in this file:
+the secret is write-only and a flag parked in it cannot be read back or
+reviewed. Then apply.
+
+Once enabled, the API load balancer writes access logs to its own bucket,
 `<project>-<environment>-alb-logs-<account id>`, under the `alb/` prefix. The
 alarms above say that an outage happened; these say which requests it happened
 to, which is what attributing a 4xx or a load-balancer 5xx to a route, a method
