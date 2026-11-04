@@ -208,6 +208,26 @@ buckets or general KMS key. The six-resource site closure, six required passed
 checks and thirteen excluded checks therefore remain exact under the updated
 whole-source pin. Neither artifact permission is allowed by the site scope.
 
+### Announcement delivery table audit (2026-11-04)
+
+The operator-announcement change adds `aws_dynamodb_table.announcement_delivery_table`
+in `config.tf` and the boolean `enable_announcement_delivery_table` in `main.tf`,
+default `false`, with no validation block. The table is counted by that variable
+and has no lifecycle check. It reads `local.name_prefix` and the general KMS key
+ARN. No closure table, DynamoDB access policy, KMS key or KMS key policy reads
+the new table or the variable, and neither appears in `tables` or `excludedChecks`.
+
+With the flag off the table has no instances. The change adds no check identity
+and no planned change, so the meeting closure, the site graph, the excluded
+checks, the typed retry-index gate and the installed-provider requirements are
+unchanged. The source pin is refreshed only for these two declared edits.
+
+Enabling the flag is a separate reviewed change. The production bootstrap
+Terraform role allows `dynamodb:CreateTable` only on the deployment control
+table, and the DynamoDB KMS encryption context only for the control and
+subscription table names. The Sandbox role allows neither. Both roles need a
+grant for this table name first. This audit permits no plan, Apply or deployment.
+
 ### Future source changes
 
 Any top-level Terraform or lock edit requires reviewing and updating the source
