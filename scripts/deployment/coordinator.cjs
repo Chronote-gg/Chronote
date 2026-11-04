@@ -25,7 +25,6 @@ const {
 } = require("./production-capacity.cjs");
 const { runCli } = require("./coordinator-cli.cjs");
 const { serviceConverged } = require("./stopped-outgoing.cjs");
-
 const { configuration } = require("./coordinator-definition.cjs");
 function protocolModules(options) {
   const builders =
@@ -68,6 +67,7 @@ function createCoordinator(options = {}) {
     assertWriter,
     own,
     service,
+    tasks,
     protectedTask: (...args) => protectedTask(...args),
   });
   const { ready, protectedTask } =
@@ -183,7 +183,6 @@ function createCoordinator(options = {}) {
   }
   async function save(previous, next) {
     ({ previous, next } = await publication.enroll(previous, next));
-
     if (production) {
       await assertWriter();
       return production.save(previous, next);
@@ -945,6 +944,7 @@ function createCoordinator(options = {}) {
   return {
     prepare,
     cancelPreparation: artifacts.cancelPreparation,
+    attestPreservation: artifacts.attestPreservation,
     promote,
     retire,
     reconcile,
