@@ -119,7 +119,7 @@ that address.
 | ----------------------------- | ---------------------------------------------- | --------- |
 | ECS no running tasks          | Bot service running task count < 1 for 10 min  | 5 min x 2 |
 | ALB target 5xx errors         | 10+ target HTTP 5xx responses in 10 min        | 5 min x 2 |
-| ALB ELB 5xx errors            | 10+ load-balancer HTTP 5xx responses in 10 min | 5 min x 2 |
+| ALB ELB 5xx errors            | 5+ load-balancer HTTP 5xx responses in 5 min   | 5 min x 1 |
 | ALB unhealthy hosts           | Any unhealthy target in `api-tg` for 10 min    | 5 min x 2 |
 | ALB spare unhealthy hosts     | Any unhealthy target in `api-spare` for 10 min | 5 min x 2 |
 | Grafana token rotation errors | Rotation Lambda error in 24 h                  | 1 day x 1 |
@@ -140,7 +140,11 @@ alarm sits OK until it starts serving, and coverage follows traffic on its own.
 `HTTPCode_ELB_5XX_Count` is separate from the target 5xx alarm on purpose. The
 load balancer answers 502, 503 or 504 itself when it has no healthy target to
 forward to, and target 5xx stays at zero for the whole window, so this is the
-only alarm that sees a swap landing on an empty target group.
+only alarm that sees a swap landing on an empty target group. It is also
+deliberately more sensitive than the target 5xx alarm, at 5 in a single period
+rather than 10 across two, because an ELB 5xx means there was nothing healthy to
+forward to and is rarely benign, whereas target 5xx is an application error rate
+that needs a higher bar; do not harmonise the two.
 
 The two voice alarms match single app log lines, each a thrown error message:
 `Meeting voice or lease release remains unresolved` for a meeting that finished

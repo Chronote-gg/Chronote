@@ -152,9 +152,20 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx_errors" {
 # Distinct from the target 5xx alarm above: the load balancer returns 502, 503
 # or 504 itself when it has no healthy target to forward to, and target 5xx
 # stays at zero throughout. That is the only metric that sees a generation swap
-# landing on an empty target group. Same Sum, period and threshold as the
-# target 5xx alarm, because a real outage answers every request this way and a
-# handful of client-aborted requests should not page.
+# landing on an empty target group.
+#
+# This alarm is deliberately MORE SENSITIVE than the target 5xx alarm above, and
+# the two should not be harmonised. Target 5xx is an application error rate,
+# where a higher bar is right because some failures are always in flight. An ELB
+# 5xx means the load balancer had nothing healthy to forward to, which is rarely
+# benign at any volume. The earlier 10-over-two-periods setting was copied from
+# the target alarm and would not have fired on the outage that motivated this
+# one, where ELB 5xx arrived as a low trickle while target 5xx stayed at zero.
+#
+# Residual gap, so nobody reads this as total coverage: an hour holding only a
+# few occurrences still stays under five in any single period. Catching that
+# needs an hourly period, which costs up to an hour of detection latency on a
+# real outage. Fast detection is the better trade here.
 
 resource "aws_cloudwatch_metric_alarm" "alb_elb_5xx_errors" {
   count               = local.alerts_enabled && var.ENABLE_API_ALB ? 1 : 0
@@ -164,8 +175,8 @@ resource "aws_cloudwatch_metric_alarm" "alb_elb_5xx_errors" {
   metric_name         = "HTTPCode_ELB_5XX_Count"
   statistic           = "Sum"
   period              = 300
-  evaluation_periods  = 2
-  threshold           = 10
+  evaluation_periods  = 1
+  threshold           = 5
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
 
