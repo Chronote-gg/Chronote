@@ -38,7 +38,7 @@ test("attestation inserts the row only where none exists, bound to a quiet runti
 
 test.each([
   ["recording", { ...counts(1) }],
-  ["pending_admission", { ...counts(), pending_admission: 1 }],
+  ["a different pending admission", { ...counts(), pending_admission: 2 }],
   ["no counters", undefined],
 ])("attestation refuses a source reporting %s", (_reason, workCounts) => {
   const f = fixture();
@@ -133,4 +133,69 @@ test("the runtime protocol refuses every write on an attested row", () => {
       f.tables,
     ),
   ).toThrow(/coordinator-owned/);
+});
+
+test("an attested pending admission count is required unchanged and natively", () => {
+  const f = fixture();
+  const pending = artifactSafetyRecordSchema.parse({
+    ...f.attested,
+    attestation: { ...f.attested.attestation, pendingAdmission: 2 },
+  });
+  const input = f.write("attest", undefined, pending);
+  input.runtime = {
+    ...f.source,
+    workCounts: { ...counts(), pending_admission: 2 },
+  };
+  const check = items(input, f.tables)[1].ConditionCheck!;
+  expect(Object.values(unmarshall(check.ExpressionAttributeValues!))).toEqual(
+    expect.arrayContaining([0, 2]),
+  );
+});
+
+test("non-cancel writes require the runtime's published native protection", () => {
+  const f = fixture();
+  const check = items(f.write("attest", undefined, f.attested), f.tables)[1]
+    .ConditionCheck!;
+  expect(check.ConditionExpression).toContain(
+    "protection.#nativeIdentity = :nativeIdentity AND protection.expiresAt > :nativeNow",
+  );
+  const input = f.write("attest", undefined, f.attested);
+  input.runtime = {
+    ...f.source,
+    protection: { ...f.source.protection, expiresAt: 120 },
+  };
+  expect(() => buildLegacyArtifactTransaction(input, f.tables)).toThrow(
+    /protected/,
+  );
+  const cancel = items(
+    f.write(
+      "cancel",
+      f.sealed,
+      artifactSafetyRecordSchema.parse({ ...f.attested, revision: 3 }),
+    ),
+    f.tables,
+  )[1].ConditionCheck!;
+  expect(cancel.ConditionExpression).not.toContain("protection");
+});
+
+test("an unconsumed seal can be renewed within its request", () => {
+  const f = fixture();
+  const renewed = artifactSafetyRecordSchema.parse({
+    ...f.sealed,
+    revision: 3,
+    heartbeatAt: 200,
+    freshUntil: 260,
+    proof: { ...f.sealed.proof, provenAt: 200, expiresAt: 260 },
+  });
+  const input = { ...f.write("seal", f.sealed, renewed), now: 200 };
+  input.control = { ...f.ctl, coordinatorExpiresAt: 400 };
+  input.runtime = {
+    ...f.source,
+    heartbeatAt: 200,
+    protection: { ...f.source.protection, expiresAt: 400 },
+  };
+  expect(() => buildLegacyArtifactTransaction(input, f.tables)).not.toThrow();
+  expect(() =>
+    buildLegacyArtifactTransaction({ ...input, now: 300 }, f.tables),
+  ).toThrow();
 });

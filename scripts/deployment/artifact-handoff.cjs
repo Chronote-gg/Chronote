@@ -84,7 +84,7 @@ function createArtifactHandoff(options) {
       revision: row.revision + 1,
     };
   }
-  async function write(purpose, expected, next, ctl) {
+  async function write(purpose, expected, next, ctl, time = now()) {
     if (production)
       refuse("Private recovery recipe does not support artifact safety writes");
     const source = await runtime(next.identity);
@@ -93,7 +93,7 @@ function createArtifactHandoff(options) {
       expected,
       next,
       context: { kind: "preparing", control: ctl, runtime: source },
-      now: now(),
+      now: time,
     };
     const transaction = next.attestation
       ? legacy.buildLegacyArtifactTransaction(
@@ -200,6 +200,7 @@ function createArtifactHandoff(options) {
       ctl = await renew(ctl);
       await protectedTask(row.identity);
       if (row.state === "sealed") {
+        const time = now();
         await write(
           "consume",
           row,
@@ -207,9 +208,10 @@ function createArtifactHandoff(options) {
             ...row,
             revision: row.revision + 1,
             state: "consumed",
-            consumedAt: now(),
+            consumedAt: time,
           },
           ctl,
+          time,
         );
         const observed = await control();
         if (observed.deployment?.phase !== "warming")
@@ -223,10 +225,14 @@ function createArtifactHandoff(options) {
       binding(row, ctl);
     }
   }
+  /** An unconsumed attested seal is renewed once its short proof lapses. */
+  const needsSeal = (row) =>
+    row.state === "requested" ||
+    (row.state === "sealed" && row.proof.expiresAt <= now());
   /** Stands in for the legacy runtime's seal while the staleness guard still holds. */
   async function sealAttested(ctl, row) {
-    if (row.state !== "requested" || !row.attestation) return row;
-    await attested.guard(row.identity, row.attestation.capturedAt);
+    if (!row.attestation || !needsSeal(row)) return row;
+    await attested.recheck(row);
     const { heartbeatAt, freshUntil } = live();
     const proof = {
       snapshot: legacy.legacyAttestedSnapshot(row.attestation),
@@ -249,6 +255,7 @@ function createArtifactHandoff(options) {
         proof,
       },
       ctl,
+      heartbeatAt,
     );
   }
   async function candidate(identity) {

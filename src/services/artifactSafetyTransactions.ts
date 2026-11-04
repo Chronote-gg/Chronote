@@ -7,7 +7,10 @@ import { marshall } from "@aws-sdk/util-dynamodb";
 import { createHash } from "node:crypto";
 import { stableJson } from "../utils/stableJson";
 import type { ArtifactAuthority } from "../types/artifactCleanup";
-import type { ControlRecord } from "../types/deploymentControl";
+import type {
+  ControlRecord,
+  RuntimeIdentity,
+} from "../types/deploymentControl";
 import type { ArtifactSafetyRecord } from "../types/artifactSafety";
 import {
   validateArtifactSafetyWrite,
@@ -99,22 +102,26 @@ function runtimeCheck(
     }),
     ...artifactSnapshotCondition(artifactRuntimeAttributes(input)),
   };
-  if (!["heartbeat", "block", "cancel"].includes(input.purpose)) {
-    condition.ConditionExpression +=
-      " AND protection.#nativeIdentity = :nativeIdentity AND protection.expiresAt > :nativeNow";
-    condition.ExpressionAttributeNames = {
-      ...condition.ExpressionAttributeNames,
-      "#nativeIdentity": "identity",
-    };
-    condition.ExpressionAttributeValues = {
-      ...condition.ExpressionAttributeValues,
-      ...marshall({
-        ":nativeIdentity": input.next.identity,
-        ":nativeNow": input.now,
-      }),
-    };
-  }
+  if (!["heartbeat", "block", "cancel"].includes(input.purpose))
+    requireRuntimeProtection(condition, input.next.identity, input.now);
   return { ConditionCheck: condition };
+}
+/** Adds the runtime row's own published native protection to a condition. */
+export function requireRuntimeProtection(
+  condition: ConditionCheck,
+  identity: RuntimeIdentity,
+  now: number,
+) {
+  condition.ConditionExpression +=
+    " AND protection.#nativeIdentity = :nativeIdentity AND protection.expiresAt > :nativeNow";
+  condition.ExpressionAttributeNames = {
+    ...condition.ExpressionAttributeNames,
+    "#nativeIdentity": "identity",
+  };
+  condition.ExpressionAttributeValues = {
+    ...condition.ExpressionAttributeValues,
+    ...marshall({ ":nativeIdentity": identity, ":nativeNow": now }),
+  };
 }
 export function artifactControlAttributes(
   control: ControlRecord,

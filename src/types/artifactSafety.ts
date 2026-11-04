@@ -85,6 +85,8 @@ export const legacyAttestationSchema = z
       .regex(/^s3:\/\/[^/]+\/.+$/)
       .max(1024),
     manifestSha256: digest,
+    taskId: operatorText,
+    pendingAdmission: epoch,
     capturedAt: epoch,
     fileCount: z.number().int().nonnegative().max(20_000),
     byteLength: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),

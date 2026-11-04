@@ -43,7 +43,7 @@ export const env = {
   DEPLOYMENT_RUN_TOKEN: "run-2",
   DEPLOYMENT_CANDIDATE_ID: "run-2",
   CANDIDATE_IMAGE: `repo@${candidateIdentity.imageDigest}`,
-  ATTESTATION_MANIFEST_URI: "s3://backup/recovery/inventory.json",
+  ATTESTATION_MANIFEST_URI: "s3://backup/recovery/task-old/inventory.json",
   ATTESTATION_OPERATOR: "operator",
   ATTESTATION_REASON: "first introduction",
 };
@@ -111,6 +111,12 @@ export function fixture() {
     artifacts: new Map<string, artifactTypes.ArtifactSafetyRecord>(),
     artifactAutoSeal: true,
     leases: [] as Array<{ ownerInstanceId: string; createdAt: string }>,
+    meetings: [] as Array<{
+      ownerInstanceId: string;
+      timestamp: string;
+      status?: string;
+      audioS3Key?: string;
+    }>,
     s3: async (name: string, input: unknown): Promise<unknown> => {
       throw new Error(`Unexpected S3 operation: ${name} ${String(input)}`);
     },
@@ -364,11 +370,14 @@ export function fixture() {
     }),
     "transact-write-items": transactWrite,
     scan: (input) => {
-      const owner = unmarshall(input.ExpressionAttributeValues!)[":owner"];
+      const values = unmarshall(input.ExpressionAttributeValues!);
+      const rows = String(input.TableName).endsWith("MeetingHistoryTable")
+        ? state.meetings.filter((row) => row.timestamp >= values[":since"])
+        : state.leases;
       return {
-        Items: state.leases
-          .filter((lease) => lease.ownerInstanceId === owner)
-          .map((lease) => marshall(lease)),
+        Items: rows
+          .filter((row) => row.ownerInstanceId === values[":owner"])
+          .map((row) => marshall(row, { removeUndefinedValues: true })),
       };
     },
   };

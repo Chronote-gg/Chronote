@@ -17,6 +17,8 @@ export const attestation: LegacyAttestation = {
   reason: "first introduction",
   manifestUri: "s3://backup/recovery/inventory.json",
   manifestSha256: "b".repeat(64),
+  taskId: "old",
+  pendingAdmission: 0,
   capturedAt: 90,
   fileCount: 2,
   byteLength: 8,

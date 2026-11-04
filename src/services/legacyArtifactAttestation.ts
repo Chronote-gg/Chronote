@@ -20,18 +20,63 @@ import {
   type ControlRecord,
   type RuntimeRecord,
 } from "../types/deploymentControl";
+import { MAXIMUM_MEETING_DURATION } from "../constants";
+import { MEETING_STATUS } from "../types/meetingLifecycle";
 import {
   artifactControlOperation,
   artifactRecordPut,
   artifactSnapshotCondition,
+  requireRuntimeProtection,
   type ArtifactSafetyTables,
 } from "./artifactSafetyTransactions";
 
+const TERMINAL_STATUSES: string[] = [
+  MEETING_STATUS.COMPLETE,
+  MEETING_STATUS.CANCELLED,
+  MEETING_STATUS.FAILED,
+];
+export type LegacyMeetingRow = {
+  timestamp: string;
+  status?: string;
+  audioS3Key?: string;
+};
+/** Earliest start of a meeting that could still have been live at the copy. */
+export function legacyMeetingWindowStart(capturedAt: number) {
+  return new Date(capturedAt * 1000 - MAXIMUM_MEETING_DURATION).toISOString();
+}
 /**
- * A legacy source never seals admission, so these counters are the only
- * signal that it could still be producing files the attested backup lacks.
+ * Meetings from that window the copy may not cover: any that started at or
+ * after the copy (second floored, so ties count), and any earlier one that
+ * is not yet terminal with its audio key recorded.
  */
-export const LEGACY_QUIET_WORK = ["recording", "pending_admission"] as const;
+export function uncoveredLegacyMeetings(
+  rows: LegacyMeetingRow[],
+  capturedAt: number,
+) {
+  return rows.filter(
+    (row) =>
+      !(Date.parse(row.timestamp) < capturedAt * 1000) ||
+      !TERMINAL_STATUSES.includes(row.status ?? "") ||
+      !row.audioS3Key,
+  );
+}
+/** The ECS task id a manifest must name, from the source's exact identity. */
+export function legacyTaskId(runtime: RuntimeRecord) {
+  if (runtime.identity.kind !== "ecs")
+    throw new Error("Legacy attestation requires an ECS source");
+  return runtime.identity.taskArn.split("/").pop() ?? "";
+}
+/** A manifest belongs to the source by its `task-<id>/` path or by naming the instance. */
+export function legacyManifestBound(
+  manifestKey: string,
+  manifestSource: string,
+  runtime: RuntimeRecord,
+) {
+  return (
+    manifestKey.includes(`task-${legacyTaskId(runtime)}/`) ||
+    manifestSource === runtime.identity.instanceId
+  );
+}
 export type LegacyArtifactPurpose =
   "attest" | "request" | "seal" | "consume" | "cancel";
 export type LegacyArtifactWrite = {
@@ -49,7 +94,7 @@ const transitions: Record<
 > = {
   attest: { from: ["missing", "attested_legacy"], to: "attested_legacy" },
   request: { from: ["attested_legacy"], to: "requested" },
-  seal: { from: ["requested"], to: "sealed" },
+  seal: { from: ["requested", "sealed"], to: "sealed" },
   consume: { from: ["sealed"], to: "consumed" },
   cancel: {
     from: ["attested_legacy", "requested", "sealed"],
@@ -110,7 +155,10 @@ function requireCurrentRow({ expected, next, now }: LegacyArtifactWrite) {
   )
     throw new Error("Legacy artifact row is not current");
 }
-function requireSource(input: LegacyArtifactWrite) {
+function requireSource(
+  input: LegacyArtifactWrite,
+  attestation: LegacyAttestation,
+) {
   const { runtime, control, next, now } = input;
   const member = control.servingMembers[next.identity.instanceId];
   if (
@@ -125,7 +173,17 @@ function requireSource(input: LegacyArtifactWrite) {
     runtime.authorizedGeneration !== control.servingGeneration ||
     runtime.retirementRequest ||
     runtime.heartbeatAt <= now - ARTIFACT_PROOF_SECONDS ||
-    LEGACY_QUIET_WORK.some((kind) => runtime.workCounts?.[kind] !== 0)
+    !sameRuntimeIdentity(runtime.protection.identity, next.identity) ||
+    runtime.protection.expiresAt <= now ||
+    legacyTaskId(runtime) !== attestation.taskId
+  )
+    throw new Error("Legacy source is not a protected serving runtime");
+  requireQuiet(runtime, attestation);
+}
+function requireQuiet(runtime: RuntimeRecord, attestation: LegacyAttestation) {
+  if (
+    runtime.workCounts?.recording !== 0 ||
+    runtime.workCounts.pending_admission !== attestation.pendingAdmission
   )
     throw new Error("Legacy source is not a quiet serving runtime");
 }
@@ -199,7 +257,7 @@ export function validateLegacyArtifactWrite(input: LegacyArtifactWrite) {
   requireTransition(input);
   const attestation = requireAttestation(input);
   requireCurrentRow(input);
-  requireSource(input);
+  requireSource(input, attestation);
   if (input.purpose !== "attest") requirePreparation(input);
   if (input.purpose === "seal") requireSeal(input, attestation);
   if (input.purpose === "consume") requireConsume(input);
@@ -209,6 +267,7 @@ function runtimeCheck(
   table: string,
 ): TransactWriteItem {
   const quiet = input.purpose !== "cancel";
+  const attestation = input.next.attestation;
   const condition: ConditionCheck = {
     TableName: table,
     Key: marshall({
@@ -222,20 +281,19 @@ function runtimeCheck(
             role: "serving",
             authorizedGeneration: input.control.servingGeneration,
             retirementRequest: null,
-            ...Object.fromEntries(
-              LEGACY_QUIET_WORK.map((kind) => ["workCounts." + kind, 0]),
-            ),
+            "workCounts.recording": 0,
+            "workCounts.pending_admission": attestation?.pendingAdmission,
           }
         : {}),
     }),
   };
-  if (quiet) {
-    condition.ConditionExpression += " AND heartbeatAt > :legacyFresh";
-    condition.ExpressionAttributeValues = {
-      ...condition.ExpressionAttributeValues,
-      ...marshall({ ":legacyFresh": input.now - ARTIFACT_PROOF_SECONDS }),
-    };
-  }
+  if (!quiet) return { ConditionCheck: condition };
+  condition.ConditionExpression += " AND heartbeatAt > :legacyFresh";
+  condition.ExpressionAttributeValues = {
+    ...condition.ExpressionAttributeValues,
+    ...marshall({ ":legacyFresh": input.now - ARTIFACT_PROOF_SECONDS }),
+  };
+  requireRuntimeProtection(condition, input.next.identity, input.now);
   return { ConditionCheck: condition };
 }
 /**

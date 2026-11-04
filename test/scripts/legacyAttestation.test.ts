@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { createHash } from "node:crypto";
+import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { createCoordinator } from "../../scripts/deployment/coordinator.cjs";
 import {
   fixture,
@@ -15,13 +16,14 @@ const files = [
 ];
 type Head = { ContentLength: number; ChecksumSHA256: string };
 
-function legacyFixture() {
+const manifestKey = "recovery/task-old/inventory.json";
+function legacyFixture(key = manifestKey, source = "/app/tmp/meetings") {
   const f = fixture();
   f.state.artifacts.delete("old");
   f.state.artifactAutoSeal = false;
   const body = Buffer.from(
     JSON.stringify({
-      source: "/app/tmp/meetings",
+      source,
       capturedAt: new Date(900_000).toISOString(),
       layout: "files/<path>",
       files,
@@ -29,7 +31,7 @@ function legacyFixture() {
   );
   const objects = new Map<string, Head>(
     files.map((file) => [
-      "recovery/files/" + file.path,
+      key.slice(0, key.lastIndexOf("/") + 1) + "files/" + file.path,
       {
         ContentLength: file.bytes,
         ChecksumSHA256: Buffer.from(file.sha256, "hex").toString("base64"),
@@ -38,7 +40,7 @@ function legacyFixture() {
   );
   const s3 = jest.fn(async (name: string, input: unknown) => {
     const { Key } = input as { Key: string };
-    if (name === "GetObject" && Key === "recovery/inventory.json")
+    if (name === "GetObject" && Key === key)
       return { Body: { transformToByteArray: async () => body } };
     const head = objects.get(Key);
     if (name === "HeadObject" && head) return head;
@@ -47,7 +49,12 @@ function legacyFixture() {
   f.state.s3 = s3;
   const writes = () =>
     f.calls.filter((call) => call.operation === "transact-write-items").length;
-  return { ...f, body, objects, s3, writes };
+  const attest = () =>
+    createCoordinator({
+      ...f.options,
+      env: { ...env, ATTESTATION_MANIFEST_URI: "s3://backup/" + key },
+    }).attestPreservation();
+  return { ...f, body, objects, s3, writes, attest };
 }
 async function stuckPreparation(f: ReturnType<typeof legacyFixture>) {
   await expect(f.coordinator.prepare()).rejects.toThrow(/capability/);
@@ -84,7 +91,7 @@ test("attests a verified backup of a legacy source with its provenance", async (
   });
   expect(f.s3).toHaveBeenCalledWith("HeadObject", {
     Bucket: "backup",
-    Key: "recovery/files/m/meeting-a/t/track.pcm",
+    Key: "recovery/task-old/files/m/meeting-a/t/track.pcm",
     ChecksumMode: "ENABLED",
   });
 });
@@ -94,18 +101,27 @@ test.each([
   ["checksum", /differs/],
   ["missing", /missing/],
   ["recording", /recording/],
-  ["pending_admission", /admitting/],
   ["newer lease", /after its backup/],
+  ["meeting after backup", /not settled/],
+  ["unsettled meeting", /not settled/],
   ["modern row", /runtime protocol/],
 ])("attestation refuses %s without writing", async (reason, message) => {
   const f = legacyFixture();
-  const head = f.objects.get("recovery/files/" + files[1].path)!;
+  const meeting = (timestamp: number, status: string) =>
+    f.state.meetings.push({
+      ownerInstanceId: "old",
+      timestamp: new Date(timestamp).toISOString(),
+      status,
+      audioS3Key: "audio",
+    });
+  if (reason === "meeting after backup") meeting(950_000, "complete");
+  if (reason === "unsettled meeting") meeting(850_000, "processing");
+  const head = f.objects.get("recovery/task-old/files/" + files[1].path)!;
   if (reason === "size") head.ContentLength = 6;
   if (reason === "checksum") head.ChecksumSHA256 = "AAAA";
-  if (reason === "missing") f.objects.delete("recovery/files/" + files[0].path);
+  if (reason === "missing")
+    f.objects.delete("recovery/task-old/files/" + files[0].path);
   if (reason === "recording") f.state.rows.old.workCounts = counts(1);
-  if (reason === "pending_admission")
-    f.state.rows.old.workCounts = { ...counts(), pending_admission: 1 };
   if (reason === "newer lease")
     f.state.leases.push({
       ownerInstanceId: "old",
@@ -206,4 +222,92 @@ test("legacy cancellation refuses once a candidate task exists", async () => {
     /candidate task/,
   );
   expect(f.state.ctl.deployment?.phase).toBe("preparing");
+});
+
+test("attestation binds the manifest to the source task path or instance id", async () => {
+  await expect(
+    legacyFixture("recovery/task-other/inventory.json").attest(),
+  ).rejects.toThrow(/not bound/);
+  await expect(
+    legacyFixture("recovery/next/inventory.json", "old").attest(),
+  ).resolves.toMatchObject({ kind: "attested" });
+});
+
+test("settled and pre-window meetings do not block attestation", async () => {
+  const f = legacyFixture();
+  f.state.meetings.push(
+    {
+      ownerInstanceId: "old",
+      timestamp: new Date(850_000).toISOString(),
+      status: "complete",
+      audioS3Key: "audio",
+    },
+    {
+      ownerInstanceId: "old",
+      timestamp: new Date(900_000 - 7_300_000).toISOString(),
+      status: "processing",
+    },
+  );
+  await expect(f.coordinator.attestPreservation()).resolves.toMatchObject({
+    kind: "attested",
+  });
+});
+
+test("an unchanged pending admission count is tolerated through launch", async () => {
+  const f = legacyFixture();
+  f.state.rows.old.workCounts = { ...counts(), pending_admission: 1 };
+  await f.coordinator.attestPreservation();
+  expect(f.state.artifacts.get("old")?.attestation?.pendingAdmission).toBe(1);
+  await expect(f.coordinator.prepare()).resolves.toEqual({ kind: "warming" });
+});
+
+test("attesting a source mid-preparation points at cancel-preparation", async () => {
+  const f = legacyFixture();
+  await f.coordinator.attestPreservation();
+  f.state.leases.push({
+    ownerInstanceId: "old",
+    createdAt: new Date(1_000_000).toISOString(),
+  });
+  await expect(f.coordinator.prepare()).rejects.toThrow(/after its backup/);
+  await expect(f.coordinator.attestPreservation()).rejects.toThrow(
+    /run cancel-preparation first/,
+  );
+});
+
+test("a manifest changed after attestation refuses the seal", async () => {
+  const f = legacyFixture();
+  await f.coordinator.attestPreservation();
+  const original = f.s3.getMockImplementation()!;
+  f.s3.mockImplementation(async (name, input) =>
+    name === "GetObject"
+      ? { Body: { transformToByteArray: async () => Buffer.from("{}") } }
+      : original(name, input),
+  );
+  await expect(f.coordinator.prepare()).rejects.toThrow(/malformed|changed/);
+  expect(f.state.artifacts.get("old")?.state).toBe("requested");
+});
+
+test("a lapsed attested seal is renewed after a lost consume", async () => {
+  const f = legacyFixture();
+  await f.coordinator.attestPreservation();
+  const original = f.aws.getMockImplementation()!;
+  let lose = true;
+  f.aws.mockImplementation(async (service, operation, input) => {
+    const put = (input as { TransactItems?: Array<{ Put?: { Item: never } }> })
+      .TransactItems?.[0]?.Put;
+    if (lose && put && unmarshall(put.Item).state === "consumed") {
+      lose = false;
+      throw new Error("transient failure");
+    }
+    return original(service, operation, input);
+  });
+  await expect(f.coordinator.prepare()).rejects.toThrow(/AWS operation failed/);
+  expect(f.state.artifacts.get("old")?.state).toBe("sealed");
+  f.state.rows.old.heartbeatAt = 1100;
+  const later = createCoordinator({ ...f.options, now: () => 1100 });
+  await expect(later.prepare()).resolves.toEqual({ kind: "warming" });
+  expect(f.state.artifacts.get("old")).toMatchObject({
+    state: "consumed",
+    proof: { provenAt: 1100 },
+  });
 });

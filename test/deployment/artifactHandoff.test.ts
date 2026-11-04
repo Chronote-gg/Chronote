@@ -6,7 +6,7 @@ import { artifactSafetyFixture } from "./fixtures/artifactSafetyFixture";
 import { attestation } from "./fixtures/legacyArtifactFixture";
 import { createArtifactHandoff } from "../../scripts/deployment/artifact-handoff.cjs";
 
-function fixture() {
+function fixture(now = () => 120) {
   const f = artifactSafetyFixture();
   let row: artifactTypes.ArtifactSafetyRecord | undefined = f.expected;
   const aws = jest.fn(async (_service, operation, input) => {
@@ -28,7 +28,7 @@ function fixture() {
     artifactBuilders,
     aws,
     tables: f.tables,
-    now: () => 120,
+    now,
     runtime: async () => f.source,
     control: async () => f.ctl,
     renew: async () => f.ctl,
@@ -64,6 +64,12 @@ test("consumes the exact sealed proof together with warming before launch", asyn
       }),
     ),
   ).resolves.toBeDefined();
+});
+
+test("consumption stays bound to one clock reading across a slow runtime read", async () => {
+  let clock = 120;
+  const f = fixture(() => clock++);
+  expect((await f.helper.prepare(f.ctl)).deployment.phase).toBe("warming");
 });
 
 test("legacy capability refuses, including an emergency quiet override", async () => {
