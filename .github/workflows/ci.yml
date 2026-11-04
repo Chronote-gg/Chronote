@@ -4,6 +4,10 @@ permissions:
 
 on:
   pull_request:
+    # The Windows jobs below are skipped while a PR is a draft, so marking it
+    # ready has to be a trigger or they would never run. Listing types at all
+    # drops the defaults, so the original three stay listed.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -60,13 +64,19 @@ jobs:
       contents: read
     uses: ./.github/workflows/ci-core.yml
     with:
-      run_desktop: ${{ needs.pr-changes.result != 'success' || needs.pr-changes.outputs.desktop == 'true' }}
+      # Desktop Check is the Windows half of Core CI. A draft skips it and gets
+      # it back on ready_for_review; the Linux jobs still run, so a draft keeps
+      # its fast feedback.
+      run_desktop: ${{ github.event.pull_request.draft == false && (needs.pr-changes.result != 'success' || needs.pr-changes.outputs.desktop == 'true') }}
     secrets: inherit
 
   visual-regression:
     name: Visual Regression
     needs: [pr-changes]
-    if: ${{ always() && github.event_name == 'pull_request' && (needs.pr-changes.result != 'success' || needs.pr-changes.outputs.visual == 'true') }}
+    # Single most expensive job in the repository: Windows minutes bill at twice
+    # Linux and this is the longest Windows job, so a draft skips it and picks
+    # it up on ready_for_review.
+    if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.pr-changes.result != 'success' || needs.pr-changes.outputs.visual == 'true') }}
     runs-on: blacksmith-4vcpu-windows-2025
     permissions:
       contents: write

@@ -2,6 +2,16 @@ name: Desktop Package
 
 on:
   pull_request:
+    # ready_for_review is what re-triggers the two Windows jobs that the draft
+    # guard on each job skips. Listing the types at all means the defaults stop
+    # applying, so opened/synchronize/reopened have to stay listed here.
+    #
+    # converted_to_draft is listed purely to cancel work. Both jobs skip on a
+    # draft, so the run it queues costs nothing, but it joins the concurrency
+    # group below and so kills a bundle still running for a PR the author has
+    # just declared not ready. ci.yml deliberately does not do this, because a
+    # run there would re-execute its whole Linux suite.
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
     paths:
       - ".github/workflows/desktop-package.yml"
       - "apps/desktop/**"
@@ -23,12 +33,23 @@ on:
 permissions:
   contents: read
 
+# Both jobs here are Windows, which bills at twice the Linux rate, and a full
+# Tauri bundle is the most expensive thing this repository builds. Without a
+# concurrency group a superseded push left the previous bundle running to
+# completion.
+concurrency:
+  group: desktop-package-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
 
 jobs:
   package:
     name: Build Windows Desktop Artifacts
+    # Drafts skip the bundle. Marking a PR ready fires ready_for_review, which
+    # runs this job against the PR head, so nothing reaches review untested.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: blacksmith-4vcpu-windows-2025
     steps:
       - name: Checkout
@@ -104,6 +125,7 @@ jobs:
 
   packaged-smoke:
     name: Native Desktop Smoke
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: blacksmith-4vcpu-windows-2025
     steps:
       - name: Checkout
