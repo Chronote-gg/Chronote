@@ -12,15 +12,22 @@ import {
   fenceRuntimeWorkAdmission,
   getRuntimeWorkAdmissionCheckpoints,
 } from "../../src/services/runtimeWorkAdmissionService";
+const refuseIndependentWork = (): { settle: () => void } => {
+  throw new Error("Unexpected independent work");
+};
+let independentWork = refuseIndependentWork;
+const noActiveLease = async (): Promise<
+  { leaseExpiresAt: number } | undefined
+> => undefined;
+let activeLease = noActiveLease;
 jest.mock("../../src/services/runtimeLifecycleService", () => ({
   isRuntimeWarm: () => false,
-  beginRuntimeWork: () => {
-    throw new Error("Unexpected independent work");
-  },
+  beginRuntimeWork: () => independentWork(),
 }));
 jest.mock("../../src/db", () => ({
   tryCreateInteractionReceipt: (...args: unknown[]) =>
     mockStopEnvironment.receipt(...args),
+  getActiveMeetingLease: () => activeLease(),
   getDeploymentControlRepository: () => ({
     getMeetingHistory: () => mockStopEnvironment.terminalRead(),
   }),
@@ -191,3 +198,50 @@ describe.each(["button", "leave", "context"] as const)(
     });
   },
 );
+
+test("delivers nothing while another runtime owns the meeting", async () => {
+  jest.clearAllMocks();
+  // No local reservation plus an unexpired durable lease is a foreign owner.
+  mockStopEnvironment.reservations.length = 0;
+  activeLease = async () => ({
+    leaseExpiresAt: Math.floor(Date.now() / 1000) + 60,
+  });
+  independentWork = () => ({ settle: () => {} });
+  const logged = jest.spyOn(console, "log").mockImplementation(() => {});
+  const interaction = {
+    id: "synthetic-foreign-owned",
+    guildId: "synthetic-foreign-guild",
+    user: { id: "synthetic-user" },
+    customId: "end_meeting",
+    isRepliable: () => true,
+    isButton: () => true,
+    isChatInputCommand: () => false,
+    isUserContextMenuCommand: () => false,
+    deferred: false,
+    replied: false,
+    deferUpdate: jest.fn(async () => {}),
+    editReply: jest.fn(async () => {}),
+    followUp: jest.fn(async () => {}),
+    reply: jest.fn(async () => {}),
+  };
+  try {
+    const listener = currentBot().listeners("interactionCreate")[0] as (
+      value: unknown,
+    ) => Promise<void>;
+    await listener(interaction);
+    // Any acknowledgement here makes the owner's defer fail, losing the stop.
+    expect(interaction.reply).not.toHaveBeenCalled();
+    expect(interaction.editReply).not.toHaveBeenCalled();
+    expect(interaction.followUp).not.toHaveBeenCalled();
+    expect(interaction.deferUpdate).not.toHaveBeenCalled();
+    // A silent drop with no trace is what made the original defect invisible.
+    expect(logged).toHaveBeenCalledWith("Skipping foreign-owned interaction", {
+      interactionId: interaction.id,
+      interactionKind: "button:end_meeting",
+    });
+  } finally {
+    logged.mockRestore();
+    activeLease = noActiveLease;
+    independentWork = refuseIndependentWork;
+  }
+});
