@@ -9,7 +9,7 @@ an excluded check. This model does not authorize a plan, Apply or deployment.
 ## Source and installation boundary
 
 `terraform-meeting-model.cjs` pins the filenames and SHA-256 content digests of all
-23 top-level `_infra/*.tf`, `*.tf.json` and `.terraform.lock.hcl` files through
+25 top-level `_infra/*.tf`, `*.tf.json` and `.terraform.lock.hcl` files through
 `bindingHash`. Only this source-model calculation normalizes CRLF to LF. Raw lock,
 saved plan, command capture, policy and bundle bytes retain their existing checks.
 Added or removed files (including overrides), symlinks and changed source refuse.
@@ -207,6 +207,48 @@ and adds no reference. Neither change feeds the site policy, attachment, site
 buckets or general KMS key. The six-resource site closure, six required passed
 checks and thirteen excluded checks therefore remain exact under the updated
 whole-source pin. Neither artifact permission is allowed by the site scope.
+
+### Production alarm coverage audit (2026-11-04)
+
+The alarm coverage change adds `alerts-voice.tf` and `alb-access-logs.tf` and
+edits `api.tf`, `moved.tf` and `notifications.tf`, taking the hashed inventory
+from 23 files to 25. Every added resource is a CloudWatch metric filter, a
+CloudWatch alarm, or part of the `ENABLE_ALB_ACCESS_LOGS` S3 log sink. The two
+voice metric filters and their alarms address the app log group and the
+critical-alerts topic by name through `local.app_log_group_name` and
+`local.critical_alerts_topic_arn`, exactly as the processing-retry filter does,
+so they take no edge on the KMS key policy. The log bucket is deliberately
+SSE-S3 rather than `app_general`, because Elastic Load Balancing refuses CMK
+delivery, so it does not read the key either; it reads only `name_prefix`,
+`aws_region`, caller identity and `ENABLE_API_ALB`. No table, DynamoDB access
+policy or KMS key depends on any of it, and the closure remains the same 32
+addresses.
+
+`ENABLE_ALB_ACCESS_LOGS` declares no `validation` block and none of the added
+resources declares a `lifecycle` pre- or postcondition, so the plan gains no
+check descriptor and the nine resource and ten variable excluded-check
+identities are unchanged. The `moved` block retargets the unhealthy-hosts alarm
+from a count instance to a `for_each` key; both addresses are outside the
+closure. Installed-provider requirements and the typed retry-index gate are
+unchanged. The source pin is refreshed only for these five reviewed files.
+
+### Recomputing the pin
+
+There is no script for this. The pin is `bindingHash` over a map of filename to
+SHA-256 of each file's bytes with CRLF normalized to LF, over exactly the
+`isSource` inventory of the committed `_infra` tree at the checkout's HEAD.
+Reproduce the outgoing value from the parent commit's tree first; a method that
+cannot reproduce the committed pin is wrong, and a pin nobody can derive twice
+is not a guard. `test/scripts/terraformMeetingNative.test.js` is the check that
+matters, because `copyModelSource` runs `verifySource` against the real
+committed `_infra`: it fails on a stale pin and passes on a correct one.
+
+**This pin covers every top-level Terraform source file, so two concurrent
+branches that each add or edit one will each invalidate the other's refresh.**
+Each branch's pin is computed over its own file set, both are individually
+correct, and whichever merges second lands a pin that does not match the merged
+tree. The second merge must recompute; do not try to precompute a value valid
+for both, since neither tree exists yet.
 
 ### Future source changes
 
