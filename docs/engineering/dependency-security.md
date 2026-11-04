@@ -44,6 +44,34 @@ Release references: [Node](https://github.com/nodejs/node/releases/tag/v24.22.2)
 
 The security refresh sets a RE2JS 2.8.7 floor and uses scoped Glob 14.0.2 and Minimatch 11.0.1 floors for modern consumers. Those consumers use named exports; legacy Glob 7 and Minimatch 3 consumers retain their existing APIs. Compare coverage-file discovery through the actual old and new TestExclude and Jest reporter dependencies, and run lint, coverage and Storybook checks when changing these scopes. See the [RE2JS](https://github.com/advisories/GHSA-gg6h-894w-4m9c), [Glob](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4) and [Minimatch](https://github.com/advisories/GHSA-g3hv-75wg-m249) advisories.
 
+## Compatibility decisions on 2026-11-04
+
+Dependabot opened a second group update,
+[#527](https://github.com/Chronote-gg/Chronote/pull/527), a day after this
+branch was cut. Most of it was already present: eighteen entries matched this
+branch exactly and seven were already further ahead here, including the
+coordinated tRPC pin, express-rate-limit, both PostHog packages and Babel.
+
+Only Rollup 4.67.3 and ws 8.22.1 were folded in, both minor upgrades inside
+their current major, in the dependencies and the matching resolutions entries.
+The newer pinned Claude review action was also taken.
+
+The five remaining proposals are the same ones the 2026-11-02 table retains,
+reached independently here before that table was consulted, and they stay
+retained for the same reasons:
+
+| Proposal                    | Check performed on this run                                                                                                                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ONNX Runtime 1.31.1         | The speech runtime smoke check fails with a runtime version mismatch. The engine version is pinned in the detection policy, the worker schema and the smoke script, so moving it needs the acceptance re-validation described above. |
+| Stripe 23.1.0               | `stripeClient` does not typecheck: the SDK's pinned API moves to `2026-10-28.endive` against the explicit `2026-09-30.endive` in the client.                                                                                         |
+| http-proxy-middleware 4.2.1 | Unchanged consumer contract; Webpack Dev Server 5 still invokes the legacy two-argument proxy factory.                                                                                                                               |
+| Webpack Dev Server 6.1.0    | Unchanged consumer contract; Docusaurus 3.10.2 still declares a 5.x range. A local docs build succeeding under the forced override does not establish that the declared range is satisfied, so the hold stands.                      |
+| protobufjs 8.8.1            | Unchanged consumer contract; the gRPC proto loader still declares a 7.x range.                                                                                                                                                       |
+
+Close #527 in favour of this branch. Its unincorporated proposals are the ones
+already tracked above, so it adds no decision that #520 does not already hold
+open.
+
 ## Remaining advisories assessed on 2026-11-02
 
 | Dependency      | Advisory and upstream limit                                                                                                                                  | Current exposure and follow-up                                                                                                                                                                                                                                     |
