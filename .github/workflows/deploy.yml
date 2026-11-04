@@ -301,7 +301,7 @@ jobs:
               echo "## Break-glass deployment"
               echo ""
               if [ -s "$BREAK_GLASS_RECORD_PATH" ]; then
-                echo "Audit record written to DeploymentControl before any service mutation:"
+                echo "Audit record written to DeploymentControl before any service mutation (public fields; the full item stays in DynamoDB):"
                 echo ""
                 echo '```json'
                 cat "$BREAK_GLASS_RECORD_PATH"

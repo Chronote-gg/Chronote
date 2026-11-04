@@ -17,7 +17,13 @@ export const dispatchEnv = {
 export type CheckContext = Record<string, unknown>;
 export function checkRun(
   name: string,
-  { conclusion = "SUCCESS", status = "COMPLETED", databaseId = 1 } = {},
+  {
+    conclusion = "SUCCESS",
+    status = "COMPLETED",
+    databaseId = 1,
+    workflow = "CI",
+    app = "github-actions",
+  } = {},
 ): CheckContext {
   return {
     __typename: "CheckRun",
@@ -26,12 +32,13 @@ export function checkRun(
     conclusion,
     databaseId,
     checkSuite: {
-      app: { slug: "github-actions" },
-      workflowRun: { workflow: { name: "CI" } },
+      app: { slug: app },
+      workflowRun: { workflow: { name: workflow } },
     },
   };
 }
-export const greenChecks = () => REQUIRED_CHECKS.map((name) => checkRun(name));
+export const greenChecks = () =>
+  REQUIRED_CHECKS.map(({ name, workflow }) => checkRun(name, { workflow }));
 /** The `repository.object` of the gate's GraphQL answer for one merged pull request. */
 export function mergedCommit(
   contexts: CheckContext[] = greenChecks(),

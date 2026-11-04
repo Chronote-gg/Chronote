@@ -62,6 +62,19 @@ function breakGlassRecord({ dispatch, attestation, outgoing, runToken, now }) {
     recordedAt: now,
   };
 }
+/** The public run summary omits the bucket path, instance and task the stored item names. */
+const PUBLIC_FIELDS = [
+  "sk",
+  "commitSha",
+  "actor",
+  "triggeringActor",
+  "reason",
+  "manifestSha256",
+  "skippedChecks",
+  "recordedAt",
+];
+const publicRecord = (record) =>
+  Object.fromEntries(PUBLIC_FIELDS.map((field) => [field, record[field]]));
 function withoutTime(record) {
   const copy = { ...record };
   delete copy.recordedAt;
@@ -103,14 +116,22 @@ function createBreakGlass(deps) {
     if (env.BREAK_GLASS_RECORD_PATH)
       writeFileSync(
         env.BREAK_GLASS_RECORD_PATH,
-        JSON.stringify(record, null, 2) + "\n",
+        JSON.stringify(publicRecord(record), null, 2) + "\n",
       );
     console.log(
       `::warning title=Break-glass deployment::Recorded ${record.sk}; skipped ${record.skippedChecks.join(", ")}. Re-run the full deploy path within seven days.`,
     );
   }
+  /**
+   * Runs before Control is taken. A standard deploy only refuses a break-glass
+   * attestation here, so it leaves Control untouched.
+   */
   async function admit(outgoing) {
-    if (!enabled) return undefined;
+    if (!enabled) {
+      const row = await lookup(outgoing);
+      if (row) assertConsumable(row);
+      return undefined;
+    }
     if (deps.production)
       refuse("Break-glass is not available to the private production recipe");
     const dispatch = assertBreakGlassDispatch(env);

@@ -44,6 +44,7 @@ test("a re-run supersedes its cancelled attempt", () => {
     checkRun("Code quality ratchet", {
       conclusion: "CANCELLED",
       databaseId: 1,
+      workflow: "Code quality",
     }),
     ...greenChecks().map((run) => ({ ...run, databaseId: 2 })),
   ];
@@ -73,6 +74,19 @@ test("refuses a missing required check", () => {
   );
   expect(() => evaluateMergedChecks(mergedCommit(contexts), mergeSha)).toThrow(
     /did not pass: Core CI \/ Docker Build/,
+  );
+});
+
+test.each([
+  ["another app", { app: "lookalike-app" }],
+  ["another workflow", { workflow: "Untrusted" }],
+])("a same-named check from %s does not satisfy the gate", (_case, origin) => {
+  const contexts = [
+    ...greenChecks().filter((run) => run.name !== "Code quality ratchet"),
+    checkRun("Code quality ratchet", origin),
+  ];
+  expect(() => evaluateMergedChecks(mergedCommit(contexts), mergeSha)).toThrow(
+    /did not pass: Code quality ratchet/,
   );
 });
 

@@ -90,7 +90,16 @@ test("a legacy break-glass deploy records its audit item before any production m
     ],
     recordedAt: 1000,
   });
-  expect(JSON.parse(readFileSync(recordPath, "utf8"))).toEqual(record);
+  expect(JSON.parse(readFileSync(recordPath, "utf8"))).toEqual({
+    sk: "BREAK_GLASS#run-2",
+    commitSha: dispatchEnv.GITHUB_SHA,
+    actor: "BASIC-BIT",
+    triggeringActor: "BASIC-BIT",
+    reason: "voice leave fix",
+    manifestSha256: manifestHash(f),
+    skippedChecks: record?.skippedChecks,
+    recordedAt: 1000,
+  });
   expect(f.state.artifacts.get("old")?.state).toBe("consumed");
   expect(f.state.launched).toBe(true);
 });
@@ -186,18 +195,16 @@ test("a protocol runtime mid-preparation cannot be replaced", async () => {
   expect(f.writes()).toBe(0);
 });
 
-test("only a break-glass deploy may consume a break-glass attestation", async () => {
+test("a standard deploy refuses a break-glass attestation before taking Control", async () => {
   const f = modernFixture();
   await f.attest({ ATTESTATION_BREAK_GLASS: "1" });
+  const from = f.calls.length;
   await expect(f.coordinator.prepare()).rejects.toThrow(
     /consumed only by a break-glass deployment/,
   );
-  expect(f.state.launched).toBe(false);
-  f.state.ctl.coordinatorExpiresAt = 0;
-  await expect(f.coordinator.cancelPreparation()).resolves.toEqual({
-    kind: "cancelled",
-  });
-  expect(f.state.ctl.deployment?.phase).toBe("complete");
+  expect(writesSince(f, from)).toEqual([]);
+  expect(f.state.ctl.deployment).toBeUndefined();
+  expect(f.state.artifacts.get("old")?.state).toBe("attested_legacy");
 });
 
 test("a preparation stuck on a blocked runtime closes from a break-glass attestation", async () => {
@@ -269,9 +276,11 @@ test("a lost audit write response is accepted only when the stored item matches"
   await expect(persistence({}).admit()).rejects.toThrow("response lost");
 });
 
-test("without break-glass, admission does nothing", async () => {
+test("without break-glass, admission only reads the outgoing row", async () => {
   const aws = jest.fn();
-  const admission = createBreakGlass({ env: {}, aws } as never);
+  const lookup = jest.fn(async () => undefined);
+  const admission = createBreakGlass({ env: {}, aws, lookup } as never);
   await expect(admission.admit(oldIdentity)).resolves.toBeUndefined();
+  expect(lookup).toHaveBeenCalledWith(oldIdentity);
   expect(aws).not.toHaveBeenCalled();
 });

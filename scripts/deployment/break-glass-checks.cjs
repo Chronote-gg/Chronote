@@ -5,12 +5,14 @@ const { CoordinatorFailure } = require("./coordinator-aws.cjs");
  * CI makes the gate refuse rather than pass on a missing check.
  */
 const REQUIRED_CHECKS = [
-  "Core CI / Build",
-  "Core CI / Unit Tests",
-  "Core CI / Deployment Integration",
-  "Core CI / Docker Build",
-  "Code quality ratchet",
+  { workflow: "CI", name: "Core CI / Build" },
+  { workflow: "CI", name: "Core CI / Unit Tests" },
+  { workflow: "CI", name: "Core CI / Deployment Integration" },
+  { workflow: "CI", name: "Core CI / Docker Build" },
+  { workflow: "Code quality", name: "Code quality ratchet" },
 ];
+/** Only GitHub Actions runs count, so another app cannot post a lookalike check. */
+const REQUIRED_APP = "github-actions";
 const GREEN = new Set(["SUCCESS", "SKIPPED", "NEUTRAL"]);
 const MAX_CONTEXTS = 100;
 const QUERY = `query($owner: String!, $name: String!, $sha: GitObjectID!) {
@@ -92,6 +94,11 @@ function contextsOf(pr) {
     refuse("The pull request check list is missing or incomplete");
   return contexts.nodes;
 }
+const satisfies = (run, required) =>
+  run.name === required.name &&
+  run.conclusion === "SUCCESS" &&
+  run.checkSuite?.app?.slug === REQUIRED_APP &&
+  run.checkSuite?.workflowRun?.workflow?.name === required.workflow;
 function assertGreen(runs, statuses) {
   const red = runs.filter(
     (run) => run.status !== "COMPLETED" || !GREEN.has(run.conclusion),
@@ -101,11 +108,12 @@ function assertGreen(runs, statuses) {
       `Pull request checks are not green: ${red.map((run) => run.name).join(", ") || "commit status"}`,
     );
   const missing = REQUIRED_CHECKS.filter(
-    (name) =>
-      !runs.some((run) => run.name === name && run.conclusion === "SUCCESS"),
+    (required) => !runs.some((run) => satisfies(run, required)),
   );
   if (missing.length)
-    refuse(`Required pull request checks did not pass: ${missing.join(", ")}`);
+    refuse(
+      `Required pull request checks did not pass: ${missing.map((c) => c.name).join(", ")}`,
+    );
 }
 /**
  * Pure verdict over one GraphQL response: the commit is the merge of a master

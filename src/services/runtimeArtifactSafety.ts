@@ -95,6 +95,8 @@ export function createRuntimeArtifactSafety(options: {
   let operation: Preparation | undefined;
   let stopped = false;
   let unavailable = false;
+  let attestedHold = false;
+  let storageHeld = false;
   let pendingResume:
     | {
         record: ArtifactSafetyRecord;
@@ -423,11 +425,39 @@ export function createRuntimeArtifactSafety(options: {
         false,
       );
   }
+  /**
+   * A row carrying an operator attestation is coordinator-owned, so this
+   * runtime writes nothing to it. It still stops admitting work for the whole
+   * attested handoff, which the coordinator may consume before this runtime
+   * ever observes the request, and reopens once the row returns to
+   * `attested_legacy` after a cancellation.
+   */
+  async function followAttestation(row: ArtifactSafetyRecord) {
+    if (row.state === "attested_legacy") {
+      if (!attestedHold) return;
+      attestedHold = false;
+      storageHeld = false;
+      options.storage.resume();
+      options.admission.resume();
+      return;
+    }
+    attestedHold = true;
+    if (!options.admission.sealed)
+      void options.admission.seal().catch(() => {});
+    if (storageHeld) return;
+    await options.storage.seal(options.signal);
+    storageHeld = true;
+  }
   async function refresh() {
     if (stopped) return;
     try {
       await resumeAcknowledged();
       const row = await capability();
+      if (row.attestation) {
+        await followAttestation(row);
+        unavailable = false;
+        return;
+      }
       const owner = await runtime();
       if (["requested", "draining"].includes(row.state) && "request" in row)
         beginPreparation(row.request);
