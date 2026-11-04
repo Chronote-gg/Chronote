@@ -8,7 +8,10 @@ test("version-specific artifact readback has the runtime object-version read gra
     .split('resource "aws_iam_policy" "transcripts_s3_policy"')[1]
     .split("\nresource ")[0];
   expect(policy).toContain('"s3:GetObjectVersion"');
-  expect(policy).toContain("${aws_s3_bucket.transcripts.arn}/*");
+  // The bucket ARN is built from the bucket name, not the bucket resource, so
+  // the artifact-preservation plan scope does not refresh the bucket.
+  expect(policy).toContain('"arn:aws:s3:::${local.transcripts_bucket_name}/*"');
+  expect(policy).not.toContain("aws_s3_bucket.transcripts");
 });
 test.each(["production", "sandbox"])(
   "%s deployment may condition-check history without gaining writes",
