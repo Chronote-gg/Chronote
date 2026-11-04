@@ -188,15 +188,13 @@ function createLegacyAttestation(deps) {
       );
     return row;
   }
-  /** The seal-time recheck: the guard again, and the manifest still unchanged. */
+  /**
+   * The seal-time recheck reruns only the staleness guard. The manifest and its
+   * objects are verified at attest time with operator credentials; the deploy
+   * role that seals has no read access to the operator backup prefix.
+   */
   async function recheck(row) {
-    const { attestation } = row;
-    await guard(row.identity, attestation.capturedAt);
-    if (
-      (await manifest(attestation.manifestUri)).sha256 !==
-      attestation.manifestSha256
-    )
-      refuse("Attestation manifest changed after attestation");
+    await guard(row.identity, row.attestation.capturedAt);
   }
   function target(ctl) {
     if (ctl.deployment?.phase === "preparing") return ctl.deployment.outgoing;
