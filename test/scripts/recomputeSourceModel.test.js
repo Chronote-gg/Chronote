@@ -14,17 +14,28 @@ const refreshes = [
   { sha: "3e3d0461e0c1640d3be615a5fcff67e67daf4f14", files: 23 },
 ];
 
+const git = (...args) => execFileSync("git", args, { stdio: "pipe" });
+
+// A shallow CI checkout holds only the tip, so fetch exactly these two commits
+// rather than making every run pay for the whole history. Silent and untouched
+// when they are already present, which is every local run.
+const ensureCommit = (sha) => {
+  try {
+    git("cat-file", "-e", `${sha}^{commit}`);
+  } catch {
+    git("fetch", "--no-tags", "--depth=1", "origin", sha);
+  }
+};
+
 const committedPin = (sha) =>
-  execFileSync("git", [
-    "show",
-    `${sha}:scripts/deployment/terraform-meeting-model.cjs`,
-  ])
+  git("show", `${sha}:scripts/deployment/terraform-meeting-model.cjs`)
     .toString()
     .match(/sourceModel =\s*"([a-f0-9]{64})"/)?.[1];
 
 test.each(refreshes)(
   "reproduces the pin committed at $sha over $files files",
   ({ sha, files }) => {
+    ensureCommit(sha);
     const recomputed = recomputeSourceModel(sha);
     expect(recomputed.files).toHaveLength(files);
     expect(recomputed.sourceModel).toBe(committedPin(sha));
