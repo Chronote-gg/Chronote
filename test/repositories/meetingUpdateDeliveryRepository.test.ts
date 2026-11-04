@@ -2,7 +2,11 @@
 import { getMeetingHistoryRepository } from "../../src/repositories/meetingHistoryRepository";
 import { createMockMeetingUpdateDeliveryRepository } from "../../src/repositories/mockMeetingUpdateDeliveryRepository";
 import type { MeetingHistory } from "../../src/types/db";
-import { deliveryContract } from "./meetingUpdateDeliveryContract";
+import {
+  deliveryContract,
+  type Harness,
+} from "./meetingUpdateDeliveryContract";
+import { regenerationContract } from "./meetingRegenerationContract";
 import { key } from "../types/meetingUpdateDelivery.fixture";
 
 describe("mock meeting update persistence", () => {
@@ -12,7 +16,7 @@ describe("mock meeting update persistence", () => {
     histories = new Map();
     allowed = true;
   });
-  deliveryContract(() => ({
+  const harness = (): Harness => ({
     repository: createMockMeetingUpdateDeliveryRepository(
       histories,
       () => allowed,
@@ -36,7 +40,9 @@ describe("mock meeting update persistence", () => {
     async admit(value) {
       allowed = value;
     },
-  }));
+  });
+  deliveryContract(harness);
+  regenerationContract(harness);
 });
 it("exposes atomic persistence through the existing history repository", () => {
   expect(getMeetingHistoryRepository().getStrong).toEqual(expect.any(Function));

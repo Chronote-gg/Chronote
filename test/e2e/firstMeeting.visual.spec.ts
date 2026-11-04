@@ -169,7 +169,12 @@ test.describe("first-meeting journeys", () => {
           colorScheme,
         );
         await mockFirstMeetingRequests(page, {
-          "meetings.list": () => ({ meetings: [] }),
+          "meetings.myList": () => ({
+            meetings: [],
+            hasMore: false,
+            discoveryComplete: true,
+            nextCursor: null,
+          }),
           "servers.listEligible": () => ({
             guilds: [{ id: serverId, name: "DDM", canManage: false }],
           }),
@@ -178,12 +183,14 @@ test.describe("first-meeting journeys", () => {
         const root = page.getByTestId("first-meeting-empty-state");
         await expect(root).toBeVisible();
         await expect(
-          page.getByRole("heading", { name: "Your first meeting goes here." }),
+          page.getByRole("heading", {
+            name: "Your first meeting in DDM goes here.",
+          }),
         ).toBeVisible();
-        await expect(
-          page.getByRole("button", { name: "View archived meetings" }),
-        ).toBeVisible();
-        await expect(page.getByTestId("library-search")).toHaveCount(0);
+        if (width < 768)
+          await page.getByRole("button", { name: /^Filters/ }).click();
+        await expect(page.getByTestId("library-archive-filter")).toBeVisible();
+        await expect(page.getByTestId("library-search")).toBeVisible();
         const action = page.getByRole("link", {
           name: "Open Discord",
           exact: true,

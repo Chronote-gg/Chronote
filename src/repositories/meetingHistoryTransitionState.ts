@@ -1,3 +1,4 @@
+import { convertToNative, marshall } from "@aws-sdk/util-dynamodb";
 import type { MeetingHistory } from "../types/db";
 import {
   RECORDING_DELIVERY_FIELDS,
@@ -54,7 +55,10 @@ export function publicationHistoryAfterPatch(
   patch: Partial<MeetingHistory>,
 ): MeetingHistory {
   const settled = settledLifecycleDelivery(publicationSnapshot(row), patch);
-  return {
+  patch = Object.fromEntries(
+    Object.entries(patch).filter(([, value]) => value !== undefined),
+  );
+  const next: MeetingHistory = {
     ...row,
     ...patch,
     ...(settled
@@ -69,6 +73,9 @@ export function publicationHistoryAfterPatch(
         }
       : {}),
   };
+  return convertToNative({
+    M: marshall(next, { removeUndefinedValues: true }),
+  });
 }
 export function applyMockOwnedHistoryTransition(
   row: MeetingHistory,

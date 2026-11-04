@@ -13,7 +13,7 @@ export const testIds = {
     open: "server-open",
   },
   nav: {
-    library: "nav-library",
+    library: "nav-meetings",
     ask: "nav-ask",
     billing: "nav-billing",
     settings: "nav-settings",
@@ -26,7 +26,7 @@ export const testIds = {
     feedback: "admin-home-feedback",
   },
   library: {
-    page: "library-page",
+    page: "unified-meetings-page",
     search: "library-search",
     refresh: "library-refresh",
     archiveFilter: "library-archive-filter",

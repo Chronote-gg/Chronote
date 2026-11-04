@@ -1,18 +1,19 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
+import { removeGeneratedMeetingTemp } from "../fixtures/meetingTemp";
 import { startProcessingSnippet } from "../../src/audio";
 import {
   BYTES_PER_SAMPLE,
   CHANNELS,
   RECORD_SAMPLE_RATE,
 } from "../../src/constants";
-import { cleanupMeetingTempDir } from "../../src/services/tempFileService";
 import type { MeetingData } from "../../src/types/meeting-data";
 
 describe("speaker tracks", () => {
   test("inserts silence between snippets for the same speaker", async () => {
     const startTime = new Date(0);
     const meeting = {
-      meetingId: "meeting-speaker-tracks",
+      meetingId: `generated-${randomUUID()}`,
       guildId: "guild-1",
       channelId: "channel-1",
       startTime,
@@ -71,7 +72,7 @@ describe("speaker tracks", () => {
       const expectedBytes = Math.round(bytesPerMs * 1100);
       expect(stats.size).toBe(expectedBytes);
     } finally {
-      await cleanupMeetingTempDir(meeting);
+      await removeGeneratedMeetingTemp(meeting);
     }
   });
 });

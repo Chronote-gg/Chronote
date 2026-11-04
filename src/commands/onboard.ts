@@ -19,7 +19,7 @@ async function replyRetiredOnboarding(
 ): Promise<void> {
   const base = config.frontend.siteUrl.replace(/\/$/, "");
   const portalPath = interaction.guildId
-    ? `/portal/server/${encodeURIComponent(interaction.guildId)}/library`
+    ? `/portal/meetings?scope=guild&serverId=${encodeURIComponent(interaction.guildId)}`
     : "/portal";
   await interaction.reply({
     content: "Setup is now in the portal.",

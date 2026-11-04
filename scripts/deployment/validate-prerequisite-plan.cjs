@@ -1,6 +1,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
+const { hasUnknown } = require("./terraform-meeting-update.cjs");
 
 const targets = new Set([
   "aws_dynamodb_table.deployment_control_table",
@@ -9,9 +10,12 @@ const targets = new Set([
   "aws_iam_policy.deployment_routing[0]",
 ]);
 
-function validatePrerequisitePlan(plan) {
+// Accepts only reads, no-ops and create/update at the scope's own addresses.
+// `check` may inspect a target's change content; `requiredNoOp` names
+// sensitive dependencies that must be present and unchanged.
+function validateScopedPlan(plan, scope) {
   assert.ok(plan && Array.isArray(plan.resource_changes));
-  let keyUnchanged = false;
+  const unchanged = new Set();
   const changes = [];
   for (const resource of plan.resource_changes) {
     assert.ok(
@@ -30,29 +34,54 @@ function validatePrerequisitePlan(plan) {
     }
     assert.equal(resource.mode, "managed");
     if (action === "no-op") {
-      if (resource.address === "aws_kms_key.app_general") keyUnchanged = true;
+      unchanged.add(resource.address);
       continue;
     }
-    assert.ok(
-      targets.has(resource.address) &&
-        (action === "create" || action === "update"),
-    );
+    const allowed = scope.targets.get(resource.address);
+    assert.ok(allowed && allowed.includes(action));
+    scope.check?.(resource);
     changes.push({ address: resource.address, action });
   }
-  assert.ok(keyUnchanged);
-  return { result: "accepted", existingKey: "no-op", changes };
+  for (const address of scope.requiredNoOp) assert.ok(unchanged.has(address));
+  return { result: "accepted", changes };
 }
-module.exports = { validatePrerequisitePlan, targets };
-if (require.main === module)
+
+// An in-place update may change only `changed`; every other field stays known and equal.
+function assertOtherwiseUnchanged({ before, after, unknown }, changed) {
+  const keys = [before, after, unknown].flatMap(Object.keys);
+  for (const key of new Set(keys)) {
+    if (changed.includes(key)) continue;
+    assert.ok(!hasUnknown(unknown[key] ?? false));
+    assert.deepEqual(after[key], before[key]);
+  }
+}
+
+function validatePrerequisitePlan(plan) {
+  const { result, changes } = validateScopedPlan(plan, {
+    targets: new Map([...targets].map((t) => [t, ["create", "update"]])),
+    requiredNoOp: ["aws_kms_key.app_general"],
+  });
+  return { result, existingKey: "no-op", changes };
+}
+function runCli(validate, refusal) {
   try {
     process.stdout.write(
-      JSON.stringify(
-        validatePrerequisitePlan(JSON.parse(readFileSync(0, "utf8"))),
-      ) + "\n",
+      JSON.stringify(validate(JSON.parse(readFileSync(0, "utf8")))) + "\n",
     );
   } catch {
-    process.stderr.write(
-      "Deployment prerequisite plan rejected: invalid action evidence or changes outside the four-target scope.\n",
-    );
+    process.stderr.write(refusal);
     process.exitCode = 1;
   }
+}
+module.exports = {
+  validatePrerequisitePlan,
+  validateScopedPlan,
+  assertOtherwiseUnchanged,
+  runCli,
+  targets,
+};
+if (require.main === module)
+  runCli(
+    validatePrerequisitePlan,
+    "Deployment prerequisite plan rejected: invalid action evidence or changes outside the four-target scope.\n",
+  );

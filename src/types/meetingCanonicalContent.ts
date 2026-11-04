@@ -55,7 +55,7 @@ export function validateCanonicalFieldRevisions(
 export function nextCanonicalFieldRevisions(
   history: MeetingHistory,
   changes: readonly (
-    | Exclude<MeetingUpdateMutation, { kind: "correction" }>
+    | Exclude<MeetingUpdateMutation, { kind: "correction" | "regeneration" }>
     | Extract<MeetingUpdateMutation, { kind: "correction" }>["changes"][number]
   )[],
   nextRevision: number,

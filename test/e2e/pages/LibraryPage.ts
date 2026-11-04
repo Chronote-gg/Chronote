@@ -13,14 +13,23 @@ export class LibraryPage {
   }
 
   refreshButton(): Locator {
-    return this.page.getByTestId(testIds.library.refresh);
+    return this.page.getByRole("button", { name: "Refresh", exact: true });
   }
 
   archiveFilter(): Locator {
     return this.page.getByTestId(testIds.library.archiveFilter);
   }
 
+  async selectAllTime(): Promise<void> {
+    const range = this.page.getByTestId("library-range");
+    if ((await range.inputValue()) === "All time") return;
+    await range.click();
+    await this.page.getByRole("option", { name: "All time" }).click();
+  }
+
   async selectArchiveView(view: "active" | "archived" | "all"): Promise<void> {
+    if (!(await this.archiveFilter().isVisible()))
+      await this.page.getByRole("button", { name: /^Filters/ }).click();
     const label =
       view === "archived" ? "Archived" : view === "all" ? "All" : "Active";
     await this.archiveFilter().click();
@@ -59,7 +68,7 @@ export class LibraryPage {
   }
 
   drawer(): Locator {
-    return this.page.getByTestId(testIds.library.drawer);
+    return this.page.getByTestId(testIds.library.drawer).getByRole("dialog");
   }
 
   drawerContent(): Locator {

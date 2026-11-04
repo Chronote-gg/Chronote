@@ -73,7 +73,7 @@ function expectRetirement(reply: jest.Mock) {
     expect.objectContaining({
       label: "Open portal",
       style: 5,
-      url: "https://chronote.test/portal/server/guild-1/library",
+      url: "https://chronote.test/portal/meetings?scope=guild&serverId=guild-1",
     }),
   ]);
   expect(saveAutoRecordSetting).not.toHaveBeenCalled();

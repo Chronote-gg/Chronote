@@ -11,6 +11,7 @@ const guilds: Guild[] = [
 const meta: Meta<typeof SiteNavbarView> = {
   title: "Components/SiteNavbar",
   component: SiteNavbarView,
+  tags: ["unified-meetings"],
   parameters: {
     layout: "fullscreen",
   },
@@ -24,6 +25,7 @@ const meta: Meta<typeof SiteNavbarView> = {
     guilds,
     selectedGuildId: "guild-design",
     onNavigate: () => {},
+    onSelect: () => {},
   },
 };
 
@@ -39,7 +41,8 @@ export const PersonalWorkspace: Story = {
 
 export const ServerWorkspace: Story = {
   args: {
-    pathname: "/portal/server/guild-design/library",
+    pathname: "/portal/meetings",
+    scope: { kind: "guild", serverId: "guild-design" },
   },
 };
 
@@ -47,6 +50,7 @@ export const ServerWorkspaceMember: Story = {
   args: {
     pathname: "/portal/server/guild-community/ask",
     selectedGuildId: "guild-community",
+    scope: { kind: "guild", serverId: "guild-community" },
   },
 };
 

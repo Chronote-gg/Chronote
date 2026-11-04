@@ -1,3 +1,4 @@
+import type { MeetingRuntimeConfig } from "../config/types";
 import type { MeetingData } from "../types/meeting-data";
 import type { SavedRecordingSettings } from "../types/recordingContent";
 import { getTranscriptionCleanupPrompt } from "./transcriptionPromptService";
@@ -23,21 +24,29 @@ export async function prepareTranscriptionCleanup(
     meeting,
     transcription,
   );
-  const modelChoice = getModelChoice(
-    "transcriptionCleanup",
-    getMeetingModelOverrides(meeting),
-  );
   return {
     transcription,
     prompt: { messages, langfusePrompt },
-    model: {
-      ...modelChoice,
-      params: resolveChatParamsForRole({
-        role: "transcriptionCleanup",
-        model: modelChoice.model,
-        config: meeting.runtimeConfig?.modelParams?.transcriptionCleanup,
-      }),
-    },
+    model: resolveCleanupModel(meeting.runtimeConfig),
+  };
+}
+export function resolveCleanupModel(
+  runtimeConfig: Pick<
+    MeetingRuntimeConfig,
+    "modelChoices" | "modelParams"
+  > = {},
+): PreparedTranscriptionCleanup["model"] {
+  const modelChoice = getModelChoice(
+    "transcriptionCleanup",
+    getMeetingModelOverrides({ runtimeConfig }),
+  );
+  return {
+    ...modelChoice,
+    params: resolveChatParamsForRole({
+      role: "transcriptionCleanup",
+      model: modelChoice.model,
+      config: runtimeConfig.modelParams?.transcriptionCleanup,
+    }),
   };
 }
 export async function cleanupContentTranscription(

@@ -16,7 +16,9 @@ const {
   initialControl,
 } = require("./bootstrap-core.cjs");
 function createBootstrap(options) {
-  const m = parseManifest(options.manifest, options.expectedSha256);
+  // A caller-built binding (the production cold cutover) skips the Sandbox manifest schema.
+  const m =
+    options.binding ?? parseManifest(options.manifest, options.expectedSha256);
   const aws = options.aws ?? awsCaller(m.region);
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   const builders =
@@ -313,8 +315,11 @@ function createBootstrap(options) {
       return { kind: "initialized", stage: prior.stage };
     }
     await assertLegacyRuntimeStopped("Legacy runtime is not stopped");
-    assertMaintenanceProof();
-    await assertSettledLeases();
+    if (options.attestSettled) await options.attestSettled();
+    else {
+      assertMaintenanceProof();
+      await assertSettledLeases();
+    }
     const introduction = await introductionReceipt();
     await topology(true);
     const ctl = types.controlRecordSchema.parse(
@@ -326,6 +331,7 @@ function createBootstrap(options) {
       operationId: m.operationId,
       manifestSha256: options.expectedSha256,
       stage: "initialized",
+      ...options.receiptFields,
     };
     await write(
       [
@@ -555,7 +561,11 @@ function createBootstrap(options) {
     transaction.TransactItems.push(
       receiptUpdate("launched", "complete", { candidate: row.identity }),
     );
-    if (now() >= notAfter) fail("Candidate warmup deadline expired");
+    if (now() >= notAfter) {
+      const error = new Error("Candidate warmup deadline expired");
+      error.code = "warmup_expired";
+      throw error;
+    }
     await write(transaction.TransactItems, async () => {
       const [ctl, receipt] = await state(),
         current = await read(row.sk);

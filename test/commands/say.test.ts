@@ -16,6 +16,7 @@ import { buildUpgradePrompt } from "../../src/utils/upgradePrompt";
 import { config } from "../../src/services/configService";
 
 jest.mock("../../src/meetings", () => ({
+  getPendingMeetingInitializations: () => [],
   getMeeting: jest.fn(),
 }));
 jest.mock("../../src/ttsQueue", () => ({

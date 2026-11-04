@@ -6,8 +6,12 @@ import {
 } from "../services/meetingCompletionPolicyService";
 import { captureMeetingCompleted } from "../observability/meetingCompletionAnalytics";
 import { getMeetingProcessingSignal } from "../services/meetingProcessingLifetime";
+import { getMeetingArtifactProducer } from "../services/meetingArtifactProducer";
 import type { RuntimeWorkClaim } from "../services/runtimeWorkAdmissionService";
-import { initiatingStopInterruption } from "../services/meetingStopInterruption";
+import {
+  deferMeetingStopInteraction,
+  initiatingStopInterruption,
+} from "../services/meetingStopInterruption";
 import { acknowledgeRecordingDeliveryHistory } from "../services/recordingDeliveryService";
 import { interruptOwnedMeeting } from "../services/ownedMeetingInterruption";
 import {
@@ -28,7 +32,6 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   buildMixedAudio,
-  cleanupSpeakerTracks,
   closeOutputFile,
   closeFailedInitializationOutput,
   startProcessingSnippet,
@@ -40,7 +43,6 @@ import {
   updateMeetingSummaryMessage,
   updateMeetingMessage,
 } from "../embed";
-import { deleteIfExists } from "../util";
 import { MeetingData } from "../types/meeting-data";
 import { saveMeetingHistoryToDatabase } from "./saveMeetingHistory";
 import { transitionOwnedMeetingHistoryService } from "../services/meetingHistoryService";
@@ -221,10 +223,7 @@ export async function handleEndMeetingButton(
     }
 
     if (!interaction.deferred && !interaction.replied) {
-      if (work) {
-        await work.trackEffect(() => interaction.deferUpdate());
-        work.acknowledgeInteractionDefer();
-      } else await interaction.deferUpdate();
+      await deferMeetingStopInteraction(work, () => interaction.deferUpdate());
     }
     work?.signal.throwIfAborted();
     await persistExplicitMeetingStop(meeting, MEETING_END_REASONS.BUTTON);
@@ -261,14 +260,17 @@ export async function handleEndMeetingOther(
   client: Client,
   meeting: MeetingData,
   signal?: AbortSignal,
+  work?: RuntimeWorkClaim,
 ) {
+  signal?.throwIfAborted();
+  const original = meeting.reservation ? { ...meeting.reservation } : undefined;
   try {
-    signal?.throwIfAborted();
     await withMeetingEndTrace(meeting, async () => {
       await runEndMeetingFlow({ client, meeting });
     });
   } catch (error) {
-    if (signal) throw error;
+    if (signal)
+      throw work ? initiatingStopInterruption(meeting, original, error) : error;
     console.error("Error during meeting end:", error);
   }
 }
@@ -378,6 +380,26 @@ async function executeOwnedFinalization(
   }
 }
 
+function persistMeetingChatLog(meeting: MeetingData, filename: string) {
+  const write = getMeetingArtifactProducer(meeting)?.beginWrite(filename, {
+    kind: "stored_input",
+  });
+  try {
+    writeFileSync(
+      filename,
+      meeting.chatLog
+        .map((entry) =>
+          renderChatEntryLine(entry, { includeAttachmentUrls: true }),
+        )
+        .join("\n"),
+    );
+    write?.settle("known");
+  } catch (error) {
+    write?.settle("uncertain");
+    throw error;
+  }
+}
+
 async function finalizeRecording(
   options: EndMeetingFlowOptions,
 ): Promise<void> {
@@ -410,12 +432,7 @@ async function finalizeRecording(
   const meetingTempDir = await ensureMeetingTempDir(meeting);
   {
     const chatLogFilePath = path.join(meetingTempDir, "chat.txt");
-    writeFileSync(
-      chatLogFilePath,
-      meeting.chatLog
-        .map((e) => renderChatEntryLine(e, { includeAttachmentUrls: true }))
-        .join("\n"),
-    );
+    persistMeetingChatLog(meeting, chatLogFilePath);
 
     // checking if the current snippet exists should only matter when there was no audio recorded at all
     meeting.audioData.currentSnippets.forEach((snippet) => {
@@ -457,9 +474,6 @@ async function finalizeRecording(
       await runMeetingEndStep(meeting, "auto-record-cancel-flow", () =>
         handleAutoRecordCancellation(client, meeting, chatLogFilePath),
       );
-      await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
-        cleanupSpeakerTracks(meeting),
-      );
       return;
     }
 
@@ -483,9 +497,6 @@ async function finalizeRecording(
             chatLogFilePath,
             cancellationDecision,
           ),
-        );
-        await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
-          cleanupSpeakerTracks(meeting),
         );
         return;
       }
@@ -664,16 +675,6 @@ async function finalizeRecording(
       meeting.finalization.historyDisposition = "complete";
     }
 
-    deleteIfExists(chatLogFilePath);
-    deleteIfExists(outputAudioFile);
-    if (outputAudioFile !== combinedAudioFile) {
-      // Only delete the combined file when a separate mixed file was used.
-      deleteIfExists(combinedAudioFile);
-    }
-    await runMeetingEndStep(meeting, "cleanup-speaker-tracks", () =>
-      cleanupSpeakerTracks(meeting),
-    );
-
     // Ancillary delivery stays in the same counted finalization until it settles.
     await runMeetingEndStep(meeting, "minutes-limit-notice", () =>
       maybeSendMinutesLimitNotice(meeting),
@@ -783,10 +784,6 @@ async function handleAutoRecordCancellation(
   if (meeting.finalization) {
     meeting.finalization.disposition = "durable";
     meeting.finalization.historyDisposition = "cancelled";
-  }
-  deleteIfExists(chatLogFilePath);
-  if (meeting.audioData.outputFileName) {
-    deleteIfExists(meeting.audioData.outputFileName);
   }
 }
 

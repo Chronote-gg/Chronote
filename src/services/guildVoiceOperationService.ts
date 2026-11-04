@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import {
   joinVoiceChannel,
   VoiceConnectionStatus,
@@ -6,9 +7,13 @@ import {
 } from "@discordjs/voice";
 import { z } from "zod";
 import {
+  DiscordAPIError,
+  GatewayOpcodes,
+  RESTJSONErrorCodes,
   SimpleShardingStrategy,
   type Client,
   type GatewaySendPayload,
+  type Guild,
 } from "discord.js";
 import type { MeetingInitOptions } from "../meetings";
 import type { DeploymentControlRepository } from "../repositories/deploymentControlRepository";
@@ -27,35 +32,39 @@ export type VoiceSettlementOptions = {
   signal?: AbortSignal;
 };
 const SETTLEMENT_TIMEOUT_MS = 5_000;
+/** Part of the settlement window held back for the REST check when no gateway confirmation arrives. */
+const REST_PROOF_RESERVE_MS = 1_500;
+const REST_UNAVAILABLE = Symbol("rest_unavailable");
 const voiceDispatch = z.object({
   t: z.literal("VOICE_STATE_UPDATE"),
-  s: z.number().int(),
   d: z.object({
     guild_id: z.string(),
     user_id: z.string(),
-    session_id: z.string().min(1),
     channel_id: z.string().nullable(),
   }),
 });
+type LeaveProof = "gateway_leave" | "rest_not_in_voice";
 type Operation = {
   reservation: SessionReservation;
   state: VoiceRecord["state"];
   closed: boolean;
   attempted: boolean;
   ambiguous: boolean;
-  session?: string;
-  sequence?: number;
-  closeSequence?: number;
   acknowledged: boolean;
+  proof?: LeaveProof;
   leaveIssued: boolean;
   connection?: VoiceConnection;
+  guild?: Guild;
+  leave?(): void;
   cleanup(): void;
   acknowledge(): void;
   acknowledgment: Promise<void>;
+  resolveSettled(): void;
   writes: Promise<void>;
   pending: Set<Promise<void>>;
   joinStarted: boolean;
   settlement?: Promise<"settled" | "uncertain">;
+  settlementWork?: Promise<"settled" | "uncertain">;
 };
 type VoiceTransport = (
   shardId: number,
@@ -92,11 +101,13 @@ function record(
 
 /** Serializes local attempts and seals the actual SDK adapter, including SDK reconnect callbacks. */
 export function createGuildVoiceOperationService(
-  repository: Pick<DeploymentControlRepository, "writeVoice">,
+  repository: Pick<DeploymentControlRepository, "writeVoice" | "getRecord">,
   transportForClient = (client: Client) => transports.get(client),
 ) {
   const operations = new Map<string, Operation>();
   const settledReservations = new WeakSet<SessionReservation>();
+  const settlementProofs = new WeakMap<SessionReservation, Promise<void>>();
+  const unproved = new Promise<void>(() => {});
   function prepareOwnedVoiceSession(
     reservation: SessionReservation,
   ): Operation {
@@ -106,6 +117,11 @@ export function createGuildVoiceOperationService(
     const acknowledgment = new Promise<void>((resolve) => {
       acknowledge = resolve;
     });
+    let resolveSettled = () => {};
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
+    settlementProofs.set(reservation, settled);
     const operation: Operation = {
       reservation,
       state: "joining",
@@ -117,6 +133,7 @@ export function createGuildVoiceOperationService(
       cleanup: () => {},
       acknowledge,
       acknowledgment,
+      resolveSettled,
       writes: Promise.resolve(),
       pending: new Set(),
       joinStarted: false,
@@ -126,22 +143,59 @@ export function createGuildVoiceOperationService(
   }
   function persist(operation: Operation, state: VoiceRecord["state"]) {
     const next = operation.writes.then(async () => {
+      if (state === "settled" && operation.ambiguous)
+        throw new Error("Voice settlement proof invalidated");
       const expected = record(operation.reservation, operation.state);
-      const result = await repository.writeVoice(
-        record(operation.reservation, state),
-        {
+      const requested = record(operation.reservation, state);
+      let result;
+      try {
+        result = await repository.writeVoice(requested, {
           attemptId: expected.attemptId,
           state: expected.state,
           ownerInstanceId: expected.ownerInstanceId,
           meetingId: expected.meetingId,
-        },
-      );
-      if (result !== "applied")
+        });
+      } catch {
+        // Never replay an unknown write: only its exact strong readback is proof.
+        const observed = await repository
+          .getRecord(requested.pk, requested.sk)
+          .catch(() => undefined);
+        if (!isDeepStrictEqual(observed, requested)) {
+          invalidate(operation, "persistence_uncertain");
+          throw new Error("Voice persistence unproved");
+        }
+        result = "applied";
+      }
+      if (result !== "applied") {
+        invalidate(operation, "ownership_changed");
         throw new Error("Voice operation ownership changed");
+      }
       operation.state = state;
     });
-    operation.writes = next;
+    operation.writes = next.catch(() => {});
     return next;
+  }
+  function completeSettlement(operation: Operation): boolean {
+    if (operation.ambiguous) return false;
+    settledReservations.add(operation.reservation);
+    operation.cleanup();
+    operations.delete(operation.reservation.guildId);
+    operation.resolveSettled();
+    return true;
+  }
+  async function settleAfterLateAcknowledgment(operation: Operation) {
+    await operation.acknowledgment;
+    if (operation.ambiguous || operation.pending.size) return;
+    try {
+      await persist(operation, "settled");
+      if (completeSettlement(operation))
+        console.info("Owned voice settlement", {
+          phase: "settled",
+          reason: `late_${operation.proof}`,
+        });
+    } catch {
+      operation.cleanup();
+    }
   }
   async function joinOwnedVoiceSession(
     reservation: SessionReservation,
@@ -158,44 +212,28 @@ export function createGuildVoiceOperationService(
     )
       throw new Error("Voice operation is closed or already owned");
     operation.joinStarted = true;
+    operation.guild = options.guild;
     const client = options.guild.client;
-    const invalidate = (shardId: number) => {
-      if (shardId === options.guild.shardId) operation.ambiguous = true;
-    };
-    const disconnect = (_event: unknown, shardId: number) =>
-      invalidate(shardId);
+    // The leave is the only payload after sealing, so any later report of the bot outside voice proves it.
     const onPacket = (packet: unknown, shardId: number) => {
-      if (shardId !== options.guild.shardId) return;
+      if (shardId !== options.guild.shardId || !operation.leaveIssued) return;
       const parsed = voiceDispatch.safeParse(packet);
       if (!parsed.success) return;
-      const { d, s } = parsed.data;
-      if (d.guild_id !== reservation.guildId || d.user_id !== client.user?.id)
-        return;
-      if (!operation.attempted) return;
-      if (operation.sequence !== undefined && s <= operation.sequence) {
-        operation.ambiguous = true;
-        return;
-      }
-      operation.sequence = s;
-      if (!operation.closed && d.channel_id === options.voiceChannel.id) {
-        observeJoin(operation, d.session_id);
-      } else observeLeave(operation, parsed.data);
+      const { d } = parsed.data;
+      if (
+        d.guild_id === reservation.guildId &&
+        d.user_id === client.user?.id &&
+        d.channel_id === null
+      )
+        acknowledge(operation, "gateway_leave");
     };
     client.on("raw", onPacket);
-    client.on("shardDisconnect", disconnect);
-    client.on("shardReconnecting", invalidate);
-    client.on("shardResume", invalidate);
-    client.on("shardReady", invalidate);
     const abort = () => {
       void settleOwnedVoiceSession(reservation);
     };
     options.signal.addEventListener("abort", abort, { once: true });
     operation.cleanup = () => {
       client.off("raw", onPacket);
-      client.off("shardDisconnect", disconnect);
-      client.off("shardReconnecting", invalidate);
-      client.off("shardResume", invalidate);
-      client.off("shardReady", invalidate);
       options.signal.removeEventListener("abort", abort);
     };
     // discord.js deliberately marks its adapter type internal; the public SDK owns this boundary.
@@ -206,7 +244,21 @@ export function createGuildVoiceOperationService(
       operation.cleanup();
       throw new Error("Tracked voice transport is not installed");
     }
-    let leavePermitted = false;
+    operation.leave = () => {
+      operation.leaveIssued = true;
+      submit(operation, () =>
+        transport(options.guild.shardId, {
+          op: GatewayOpcodes.VoiceStateUpdate,
+          d: {
+            guild_id: reservation.guildId,
+            channel_id: null,
+            self_mute: false,
+            self_deaf: false,
+          },
+        }),
+      );
+      destroyWithoutLeave(operation);
+    };
     const adapterCreator: DiscordGatewayAdapterCreator = (methods) => {
       const adapter = guildAdapter({
         onVoiceStateUpdate: (data) => {
@@ -216,22 +268,12 @@ export function createGuildVoiceOperationService(
           if (!operation.closed) methods.onVoiceServerUpdate(data);
         },
         destroy: () => {
-          operation.ambiguous = true;
           if (!operation.closed) methods.destroy();
         },
       });
       return {
         sendPayload(payload) {
-          if (
-            operation.closed &&
-            !(leavePermitted && payload.d.channel_id === null)
-          )
-            return false;
-          if (operation.closed) {
-            leavePermitted = false;
-            operation.leaveIssued = true;
-            operation.closeSequence = operation.sequence;
-          }
+          if (operation.closed) return false;
           return submit(operation, () =>
             transport(options.guild.shardId, payload),
           );
@@ -247,18 +289,10 @@ export function createGuildVoiceOperationService(
         selfDeaf: !options.captureAudio,
         selfMute: false,
       });
-      // This is the sole permitted leave after sealing, consumed synchronously by destroy().
       const connection = operation.connection;
       connection.on("daveResetSummary", (summary) => {
         console.info("DAVE reset readiness summary:", JSON.stringify(summary));
       });
-      const close = () => {
-        leavePermitted = true;
-        if (connection.state.status !== VoiceConnectionStatus.Destroyed)
-          connection.destroy();
-        leavePermitted = false;
-      };
-      closeOperations.set(operation, close);
       if (options.signal.aborted || operation.closed) {
         await settleOwnedVoiceSession(reservation);
         throw new Error("Voice operation closed during join");
@@ -271,98 +305,86 @@ export function createGuildVoiceOperationService(
       throw error;
     }
   }
-  const closeOperations = new WeakMap<Operation, () => void>();
+  async function closeOwnedVoiceTransport(
+    operation: Operation,
+    deadline: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const sendsFinished = await drainTransportBeforeDeadline(
+      operation,
+      deadline,
+      signal,
+    );
+    if (!sendsFinished) {
+      destroyWithoutLeave(operation);
+      return;
+    }
+    // No delayed continuation may issue this leave after the deadline.
+    if (Date.now() >= deadline || signal?.aborted) {
+      invalidate(operation, signal?.aborted ? "cancelled" : "leave_deadline");
+      destroyWithoutLeave(operation);
+      return;
+    }
+    if (operation.attempted) operation.leave?.();
+    else destroyWithoutLeave(operation);
+    if (await drainTransportBeforeDeadline(operation, deadline, signal))
+      await waitForLeaveProof(operation, deadline, signal);
+  }
+  async function settleVoiceOperation(
+    operation: Operation,
+    deadline: number,
+    signal?: AbortSignal,
+  ): Promise<"settled" | "uncertain"> {
+    await closeOwnedVoiceTransport(operation, deadline, signal);
+    const closed =
+      !operation.connection ||
+      operation.connection.state.status === VoiceConnectionStatus.Destroyed;
+    const outcome =
+      closed &&
+      !operation.ambiguous &&
+      (!operation.attempted || operation.acknowledged)
+        ? "settled"
+        : "uncertain";
+    try {
+      await persist(operation, outcome);
+    } catch {
+      operation.cleanup();
+      return "uncertain";
+    }
+    if (outcome === "settled") {
+      if (!completeSettlement(operation)) return "uncertain";
+      console.info("Owned voice settlement", {
+        phase: "settled",
+        reason: operation.proof ?? "no_voice_attempt",
+      });
+      return "settled";
+    }
+    if (!operation.ambiguous && operation.leaveIssued)
+      void settleAfterLateAcknowledgment(operation);
+    else operation.cleanup();
+    return "uncertain";
+  }
   async function settleOwnedVoiceSession(
     reservation: SessionReservation,
     options: VoiceSettlementOptions = {},
   ): Promise<"settled" | "uncertain"> {
     if (settledReservations.has(reservation)) return "settled";
     const operation = operations.get(reservation.guildId);
-    if (
-      !operation ||
-      operation.reservation.voiceOperationAttemptId !==
-        reservation.voiceOperationAttemptId
-    ) {
-      const expected = record(reservation, "joining");
-      await repository
-        .writeVoice(record(reservation, "uncertain"), {
-          attemptId: expected.attemptId,
-          state: expected.state,
-          ownerInstanceId: expected.ownerInstanceId,
-          meetingId: expected.meetingId,
-        })
-        .catch(() => {});
+    if (!operation || operation.reservation !== reservation) {
+      console.info("Owned voice settlement", {
+        phase: "refused",
+        reason: operation ? "foreign_operation" : "missing_operation",
+      });
       return "uncertain";
     }
+    const deadline = options.deadline ?? Date.now() + SETTLEMENT_TIMEOUT_MS;
     if (operation.settlement) return operation.settlement;
     operation.closed = true;
-    operation.closeSequence = operation.sequence;
-    operation.settlement = (async () => {
-      const deadline = options.deadline ?? Date.now() + SETTLEMENT_TIMEOUT_MS;
-      const sendsFinished = await beforeDeadline(
-        Promise.all([...operation.pending]),
-        deadline,
-        options.signal,
-      );
-      if (!sendsFinished || operation.ambiguous) {
-        operation.ambiguous = true;
-        if (
-          operation.connection?.state.status !== VoiceConnectionStatus.Destroyed
-        )
-          operation.connection?.destroy(false);
-      } else {
-        // No delayed continuation may issue this leave after the deadline.
-        if (Date.now() < deadline && !options.signal?.aborted)
-          closeOperations.get(operation)?.();
-        else {
-          operation.ambiguous = true;
-          if (
-            operation.connection?.state.status !==
-            VoiceConnectionStatus.Destroyed
-          )
-            operation.connection?.destroy(false);
-        }
-        if (
-          !(await beforeDeadline(
-            Promise.all([...operation.pending]),
-            deadline,
-            options.signal,
-          ))
-        )
-          operation.ambiguous = true;
-        if (
-          operation.attempted &&
-          !operation.ambiguous &&
-          !(await beforeDeadline(
-            operation.acknowledgment,
-            deadline,
-            options.signal,
-          ))
-        )
-          operation.ambiguous = true;
-      }
-      const closed =
-        !operation.connection ||
-        operation.connection.state.status === VoiceConnectionStatus.Destroyed;
-      const outcome =
-        closed &&
-        !operation.ambiguous &&
-        (!operation.attempted || operation.acknowledged)
-          ? "settled"
-          : "uncertain";
-      try {
-        await persist(operation, outcome);
-      } catch {
-        operation.cleanup();
-        return "uncertain";
-      }
-      operation.cleanup();
-      if (outcome === "settled") {
-        settledReservations.add(reservation);
-        operations.delete(reservation.guildId);
-      }
-      return outcome;
-    })();
+    const work = settleVoiceOperation(operation, deadline, options.signal);
+    operation.settlementWork = work;
+    operation.settlement = beforeDeadline(work, deadline, options.signal).then(
+      (finished) => (finished ? work : "uncertain"),
+    );
     return operation.settlement;
   }
   async function waitOwnedVoiceEffects(
@@ -372,41 +394,99 @@ export function createGuildVoiceOperationService(
     if (!operation || operation.reservation !== reservation) return;
     if (!operation.closed)
       throw new Error("Voice operation must be sealed before draining effects");
-    await operation.settlement;
+    await operation.settlementWork;
     while (operation.pending.size)
       await Promise.allSettled([...operation.pending]);
     await Promise.allSettled([operation.writes]);
   }
+  function whenOwnedVoiceSettled(
+    reservation: SessionReservation,
+  ): Promise<void> {
+    return settlementProofs.get(reservation) ?? unproved;
+  }
   return {
+    whenOwnedVoiceSettled,
     prepareOwnedVoiceSession,
     joinOwnedVoiceSession,
     settleOwnedVoiceSession,
     waitOwnedVoiceEffects,
   };
 }
-function observeJoin(operation: Operation, sessionId: string): void {
-  if (operation.session && operation.session !== sessionId)
-    operation.ambiguous = true;
-  operation.session = sessionId;
+function destroyWithoutLeave(operation: Operation): void {
+  if (operation.connection?.state.status !== VoiceConnectionStatus.Destroyed)
+    operation.connection?.destroy(false);
 }
-function observeLeave(
+async function drainTransportBeforeDeadline(
   operation: Operation,
-  packet: z.infer<typeof voiceDispatch>,
-): void {
-  if (
-    !operation.closed ||
-    !operation.leaveIssued ||
-    packet.d.channel_id !== null ||
-    operation.session !== packet.d.session_id ||
-    operation.closeSequence === undefined ||
-    packet.s <= operation.closeSequence ||
-    operation.ambiguous
-  ) {
-    operation.ambiguous = true;
+  deadline: number,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const finished = await beforeDeadline(
+    Promise.all([...operation.pending]),
+    deadline,
+    signal,
+  );
+  if (!finished)
+    invalidate(operation, signal?.aborted ? "cancelled" : "transport_timeout");
+  return finished;
+}
+/** Waits for Discord to report the bot outside voice: the gateway first, then one fresh REST read. */
+async function waitForLeaveProof(
+  operation: Operation,
+  deadline: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  const { guild } = operation;
+  if (!operation.leaveIssued || operation.ambiguous || !guild) return;
+  const gatewayDeadline = deadline - REST_PROOF_RESERVE_MS;
+  if (await beforeDeadline(operation.acknowledgment, gatewayDeadline, signal))
     return;
+  // Cancelling a proof-only wait cannot reopen the already drained, sealed transport.
+  if (signal?.aborted) return logWaiting("acknowledgment_wait_cancelled");
+  const restCheck = readVoiceChannelByRest(guild).then((channel) => {
+    if (channel === null) acknowledge(operation, "rest_not_in_voice");
+    return channel;
+  });
+  if (!(await beforeDeadline(restCheck, deadline, signal)))
+    return logWaiting("rest_check_timeout");
+  const channel = await restCheck;
+  if (channel === REST_UNAVAILABLE) logWaiting("rest_unavailable");
+  else if (channel !== null) logWaiting("rest_in_voice");
+}
+/** A fresh read of the bot's voice channel in this guild; null means Discord reports it outside voice. */
+async function readVoiceChannelByRest(
+  guild: Guild,
+): Promise<string | null | typeof REST_UNAVAILABLE> {
+  try {
+    const state = await guild.voiceStates.fetch("@me", {
+      force: true,
+      cache: false,
+    });
+    return state.channelId;
+  } catch (error) {
+    return error instanceof DiscordAPIError &&
+      error.code === RESTJSONErrorCodes.UnknownVoiceState
+      ? null
+      : REST_UNAVAILABLE;
   }
+}
+function logWaiting(reason: string): void {
+  console.info("Owned voice settlement", { phase: "waiting", reason });
+}
+function acknowledge(operation: Operation, proof: LeaveProof): void {
+  if (operation.acknowledged) return;
   operation.acknowledged = true;
+  operation.proof = proof;
   operation.acknowledge();
+}
+function invalidate(operation: Operation, reason: string): void {
+  if (!operation.ambiguous)
+    console.info("Owned voice settlement", {
+      phase: operation.closed ? "sealed" : "joining",
+      reason,
+    });
+  operation.ambiguous = true;
+  if (operation.closed) operation.cleanup();
 }
 function submit(operation: Operation, send: () => Promise<void>): boolean {
   let finish = () => {};
@@ -418,7 +498,7 @@ function submit(operation: Operation, send: () => Promise<void>): boolean {
   try {
     void send()
       .catch(() => {
-        operation.ambiguous = true;
+        invalidate(operation, "transport_rejected");
       })
       .finally(() => {
         operation.pending.delete(pending);
@@ -426,7 +506,7 @@ function submit(operation: Operation, send: () => Promise<void>): boolean {
       });
     return true;
   } catch {
-    operation.ambiguous = true;
+    invalidate(operation, "transport_rejected");
     operation.pending.delete(pending);
     finish();
     return false;
@@ -455,6 +535,7 @@ async function beforeDeadline(
   }
 }
 const service = createGuildVoiceOperationService({
+  getRecord: (pk, sk) => getDeploymentControlRepository().getRecord(pk, sk),
   writeVoice: (record, expected) =>
     getDeploymentControlRepository().writeVoice(record, expected),
 });
@@ -463,3 +544,5 @@ export const settleOwnedVoiceSession = service.settleOwnedVoiceSession;
 export const prepareOwnedVoiceSession = service.prepareOwnedVoiceSession;
 
 export const waitOwnedVoiceEffects = service.waitOwnedVoiceEffects;
+
+export const whenOwnedVoiceSettled = service.whenOwnedVoiceSettled;

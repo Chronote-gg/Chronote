@@ -12,6 +12,8 @@ import { isDeepStrictEqual } from "node:util";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import * as builders from "../../../src/services/deploymentControlTransactions";
 import * as types from "../../../src/types/deploymentControl";
+import * as artifactTypes from "../../../src/types/artifactSafety";
+import * as artifactBuilders from "../../../src/services/artifactSafetyTransactions";
 import { createCoordinator } from "../../../scripts/deployment/coordinator.cjs";
 export const oldIdentity: Extract<types.RuntimeIdentity, { kind: "ecs" }> = {
   kind: "ecs",
@@ -87,7 +89,7 @@ export function fixture() {
       expiresAt: time + 30,
     },
     protection: { identity, provenAt: time, expiresAt: time + 600 },
-    workCounts: counts(role === "serving" ? 1 : 0),
+    workCounts: counts(),
   });
   const state = {
     ctl,
@@ -100,8 +102,39 @@ export function fixture() {
     losePromotionResponse: false,
     loseUpdateResponse: false,
     retirementAcknowledged: false,
+    outgoingTask: "running" as "running" | "stopping" | "stopped" | "missing",
     onSleep: () => undefined,
+    artifacts: new Map<string, artifactTypes.ArtifactSafetyRecord>(),
+    artifactAutoSeal: true,
   };
+  const snapshot = {
+    inventoryDigest: "a".repeat(64),
+    fileCount: 0,
+    byteLength: 0,
+    pendingDirectories: 0,
+    authorities: [],
+  };
+  for (const identity of [oldIdentity, candidateIdentity])
+    state.artifacts.set(
+      identity.instanceId,
+      artifactTypes.artifactSafetyRecordSchema.parse({
+        ...artifactTypes.artifactSafetyKey(identity),
+        recordType: "artifact_safety",
+        schemaVersion: 1,
+        identity,
+        revision: 0,
+        heartbeatAt: time,
+        freshUntil: time + 60,
+        state: "idle",
+        startup:
+          identity === oldIdentity
+            ? { kind: "active", activatedAt: time }
+            : {
+                kind: "sealed",
+                proof: { snapshot, provenAt: time, expiresAt: time + 60 },
+              },
+      }),
+    );
   const definition = {
     taskDefinitionArn: "definition:old",
     family: "family",
@@ -137,8 +170,27 @@ export function fixture() {
     deployments: [{ rolloutState: "COMPLETED" }],
   };
   const calls: Array<{ operation: string; input: unknown }> = [];
+  function refreshArtifactProofs(at = time) {
+    for (const artifact of state.artifacts.values()) {
+      artifact.heartbeatAt = at;
+      artifact.freshUntil = at + 60;
+      if (
+        artifact.state === "idle" &&
+        state.rows[artifact.identity.instanceId]?.role === "serving"
+      )
+        artifact.startup = { kind: "active", activatedAt: at };
+      else if (artifact.startup.kind === "sealed")
+        artifact.startup.proof = {
+          snapshot,
+          provenAt: at,
+          expiresAt: at + 60,
+        };
+    }
+  }
   function refreshProofs() {
+    refreshArtifactProofs();
     for (const runtime of Object.values(state.rows)) {
+      runtime.heartbeatAt = time;
       runtime.readiness.observedEpoch = state.ctl.coordinatorEpoch;
       runtime.readiness.observedGeneration = state.ctl.servingGeneration;
       runtime.readiness.expiresAt = time + 30;
@@ -175,59 +227,135 @@ export function fixture() {
       throw new Error("response lost after commit");
     }
   }
-  function dynamo(operation: string, raw: unknown) {
-    const input = raw as GetItemCommandInput &
-      UpdateItemCommandInput &
-      TransactWriteItemsCommandInput;
-    switch (operation) {
-      case "get-item": {
-        const sk = unmarshall(input.Key!).sk;
-        const item = sk === "CONTROL" ? state.ctl : state.rows[sk.substring(8)];
-        return { Item: item ? marshall(item) : undefined };
-      }
-      case "update-item": {
-        const values = unmarshall(input.ExpressionAttributeValues!);
-        if (
-          values[":token"] !== state.ctl.coordinatorToken ||
-          values[":epoch"] !== state.ctl.coordinatorEpoch ||
-          values[":generation"] !== state.ctl.servingGeneration
-        )
-          throw new Error("conditional conflict");
-        for (const [name, field] of Object.entries(
-          input.ExpressionAttributeNames!,
-        )) {
-          Object.assign(state.ctl, {
-            [field as string]: values[`:next${name.replace("#field", "")}`],
-          });
-        }
-        return { Attributes: marshall(state.ctl) };
-      }
-      case "query":
-        return {
-          Items: Object.values(state.rows).map((runtime) => marshall(runtime)),
-        };
-      case "transact-write-items": {
-        if (input.TransactItems![0].Update) promotion(input);
-        else {
-          const values = unmarshall(
-            input.TransactItems![1].Update!.ExpressionAttributeValues!,
-          );
-          const runtime = state.rows[values[":identity"].instanceId];
-          runtime.retirementRequest = values[":request"];
-          if (state.retirementAcknowledged) {
-            runtime.role = "retired";
-            runtime.workCounts = counts();
-            runtime.retirementAcknowledgment = {
-              request: values[":request"],
-              retiredAt: time,
-            };
-          }
-        }
-        return {};
-      }
-      default:
-        throw new Error(`Unexpected AWS operation: ${operation}`);
+  function continuation(input: TransactWriteItemsCommandInput) {
+    const values = unmarshall(
+      input.TransactItems![0].Update!.ExpressionAttributeValues!,
+    );
+    const item = unmarshall(input.TransactItems![1].Put!.Item!);
+    const stored = state.rows[item.identity.instanceId];
+    const expected = {
+      ...stored,
+      role: item.role,
+      retirementContinuation: item.retirementContinuation,
+    };
+    if (
+      values[":token"] !== state.ctl.coordinatorToken ||
+      values[":epoch"] !== state.ctl.coordinatorEpoch ||
+      values[":expiry"] !== state.ctl.coordinatorExpiresAt ||
+      !isDeepStrictEqual(values[":deployment"], state.ctl.deployment) ||
+      !isDeepStrictEqual(expected, item)
+    )
+      throw new Error("conditional conflict");
+    state.ctl.deployment = values[":complete"];
+    state.rows[item.identity.instanceId] = item as types.RuntimeRecord;
+  }
+  type DynamoInput = GetItemCommandInput &
+    UpdateItemCommandInput &
+    TransactWriteItemsCommandInput;
+  function getItem(input: DynamoInput) {
+    const sk = unmarshall(input.Key!).sk;
+    const id = sk.substring(10).replace(/\/STATE$/, "");
+    let artifact = state.artifacts.get(id);
+    if (artifact?.state === "requested" && state.artifactAutoSeal) {
+      artifact = artifactTypes.artifactSafetyRecordSchema.parse({
+        ...artifact,
+        state: "sealed",
+        revision: artifact.revision + 1,
+        proof: {
+          snapshot,
+          provenAt: artifact.heartbeatAt,
+          expiresAt: Math.min(
+            artifact.heartbeatAt + 60,
+            artifact.request.expiresAt,
+          ),
+        },
+      });
+      state.artifacts.set(id, artifact);
     }
+    const item =
+      sk === "CONTROL"
+        ? state.ctl
+        : sk.startsWith("ARTIFACTS#")
+          ? state.artifacts.get(id)
+          : state.rows[sk.substring(8)];
+    return { Item: item ? marshall(item) : undefined };
+  }
+  function updateItem(input: DynamoInput) {
+    const values = unmarshall(input.ExpressionAttributeValues!);
+    if (
+      values[":token"] !== state.ctl.coordinatorToken ||
+      values[":epoch"] !== state.ctl.coordinatorEpoch ||
+      values[":generation"] !== state.ctl.servingGeneration
+    )
+      throw new Error("conditional conflict");
+    for (const [name, field] of Object.entries(
+      input.ExpressionAttributeNames!,
+    )) {
+      Object.assign(state.ctl, {
+        [field as string]: values[`:next${name.replace("#field", "")}`],
+      });
+    }
+    return { Attributes: marshall(state.ctl) };
+  }
+  function retirementRequest(input: DynamoInput) {
+    const values = unmarshall(
+      input.TransactItems![1].Update!.ExpressionAttributeValues!,
+    );
+    const runtime = state.rows[values[":identity"].instanceId];
+    runtime.retirementRequest = values[":request"];
+    if (!state.retirementAcknowledged) return;
+    runtime.role = "retired";
+    runtime.workCounts = counts();
+    runtime.retirementAcknowledgment = {
+      request: values[":request"],
+      retiredAt: runtime.heartbeatAt,
+    };
+    const artifact = state.artifacts.get(runtime.identity.instanceId);
+    if (artifact)
+      state.artifacts.set(
+        runtime.identity.instanceId,
+        artifactTypes.artifactSafetyRecordSchema.parse({
+          ...artifact,
+          retirementVerification: {
+            request: values[":request"],
+            proof: {
+              snapshot,
+              provenAt: runtime.heartbeatAt,
+              expiresAt: runtime.heartbeatAt + 60,
+            },
+          },
+        }),
+      );
+  }
+  function transactWrite(input: DynamoInput) {
+    if (input.TransactItems![0].Put) {
+      const next = artifactTypes.artifactSafetyRecordSchema.parse(
+        unmarshall(input.TransactItems![0].Put.Item),
+      );
+      state.artifacts.set(next.identity.instanceId, next);
+      if (next.state === "consumed")
+        state.ctl = artifactBuilders.artifactPreparationControl(
+          state.ctl,
+          next.consumedAt,
+          "warming",
+        );
+    } else if (input.TransactItems![1]?.Put) continuation(input);
+    else if (input.TransactItems![0].Update) promotion(input);
+    else retirementRequest(input);
+    return {};
+  }
+  const dynamoOperations: Record<string, (input: DynamoInput) => unknown> = {
+    "get-item": getItem,
+    "update-item": updateItem,
+    query: () => ({
+      Items: Object.values(state.rows).map((runtime) => marshall(runtime)),
+    }),
+    "transact-write-items": transactWrite,
+  };
+  function dynamo(operation: string, raw: unknown) {
+    const handler = dynamoOperations[operation];
+    if (!handler) throw new Error(`Unexpected AWS operation: ${operation}`);
+    return handler(raw as DynamoInput);
   }
   function ecs(operation: string, raw: unknown) {
     const input = raw as DescribeTasksCommandInput &
@@ -248,32 +376,54 @@ export function fixture() {
         };
       case "list-tasks":
         return {
-          taskArns: state.launched
-            ? [
-                "arn:aws:ecs:us-east-1:123456789012:task/fixture/old",
-                "arn:aws:ecs:us-east-1:123456789012:task/fixture/new",
-              ]
-            : ["arn:aws:ecs:us-east-1:123456789012:task/fixture/old"],
+          taskArns: [
+            ...(state.outgoingTask === "running"
+              ? ["arn:aws:ecs:us-east-1:123456789012:task/fixture/old"]
+              : []),
+            ...(state.launched
+              ? ["arn:aws:ecs:us-east-1:123456789012:task/fixture/new"]
+              : []),
+          ],
         };
-      case "describe-tasks":
+      case "describe-tasks": {
+        const missing = (arn: string) =>
+          arn === "arn:aws:ecs:us-east-1:123456789012:task/fixture/old" &&
+          state.outgoingTask === "missing";
         return {
-          tasks: input.tasks!.map((arn: string) => ({
-            taskArn: arn,
-            taskDefinitionArn:
-              arn === "arn:aws:ecs:us-east-1:123456789012:task/fixture/old"
-                ? "definition:old"
-                : "definition:new",
-            lastStatus: "RUNNING",
-            containers: [
-              {
-                imageDigest:
-                  arn === "arn:aws:ecs:us-east-1:123456789012:task/fixture/old"
-                    ? oldIdentity.imageDigest
-                    : candidateIdentity.imageDigest,
-              },
-            ],
-          })),
+          failures: input
+            .tasks!.filter(missing)
+            .map((arn: string) => ({ arn, reason: "MISSING" })),
+          tasks: input
+            .tasks!.filter((arn) => !missing(arn))
+            .map((arn: string) => ({
+              taskArn: arn,
+              taskDefinitionArn:
+                arn === "arn:aws:ecs:us-east-1:123456789012:task/fixture/old"
+                  ? "definition:old"
+                  : "definition:new",
+              ...(arn ===
+                "arn:aws:ecs:us-east-1:123456789012:task/fixture/old" &&
+              state.outgoingTask !== "running"
+                ? state.outgoingTask === "stopped"
+                  ? {
+                      lastStatus: "STOPPED",
+                      stoppedAt: "2026-10-29T12:00:00.000000+00:00",
+                      stoppedReason: "Task failed ELB health checks",
+                    }
+                  : { lastStatus: "DEACTIVATING" }
+                : { lastStatus: "RUNNING" }),
+              containers: [
+                {
+                  imageDigest:
+                    arn ===
+                    "arn:aws:ecs:us-east-1:123456789012:task/fixture/old"
+                      ? oldIdentity.imageDigest
+                      : candidateIdentity.imageDigest,
+                },
+              ],
+            })),
         };
+      }
       case "get-task-protection":
         return {
           protectedTasks: input.tasks!.map((taskArn: string) => ({
@@ -313,6 +463,8 @@ export function fixture() {
     aws,
     builders,
     types,
+    artifactTypes,
+    artifactBuilders,
     now: () => time,
     sleep: async () => {
       time += 1000;
@@ -328,6 +480,7 @@ export function fixture() {
     coordinator,
     definition,
     refreshProofs,
+    refreshArtifactProofs,
     options,
     svc,
   };

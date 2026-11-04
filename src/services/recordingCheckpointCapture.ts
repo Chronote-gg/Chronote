@@ -27,6 +27,9 @@ export function reserveCheckpointPcm(bytes: number): boolean {
 export function releaseCheckpointPcm(bytes: number): void {
   reservedBytes -= bytes * COPIES;
 }
+function crossedPressureThreshold(previousReservedBytes: number): boolean {
+  return previousReservedBytes < PRESSURE && reservedBytes >= PRESSURE;
+}
 
 type Piece = {
   sourceId: string;
@@ -44,6 +47,7 @@ type Closed = {
   receivedAt: number;
   file: string;
   attempts: number;
+  supersededFiles?: string[];
 };
 type Input = {
   directory: string;
@@ -54,6 +58,12 @@ type Input = {
     signal: AbortSignal,
   ): Promise<boolean>;
   stopCapture(reason: "storage_preservation" | "ownership_lost"): void;
+  beginWrite?(
+    filename: string,
+    artifact: CheckpointArtifactInput,
+  ): {
+    settle(result: "known" | "uncertain"): void;
+  };
 };
 
 /** One bounded publisher per recording. Failed PCM remains owned until explicit settled handoff. */
@@ -71,6 +81,20 @@ export function createRecordingCheckpointCapture(input: Input) {
   let retryAt = Infinity;
   const controller = new AbortController();
   const signal = AbortSignal.any([input.signal, controller.signal]);
+
+  function writeArtifact(file: string, artifact: CheckpointArtifactInput) {
+    let write: ReturnType<NonNullable<Input["beginWrite"]>> | undefined;
+    try {
+      write = input.beginWrite?.(file, artifact);
+      writeFileSync(file, artifact.bytes, { flag: "wx" });
+      write?.settle("known");
+      return true;
+    } catch {
+      write?.settle("uncertain");
+      interrupt();
+      return false;
+    }
+  }
 
   function close(sourceId: string) {
     const piece = open.get(sourceId);
@@ -102,11 +126,7 @@ export function createRecordingCheckpointCapture(input: Input) {
       },
     };
     closed.push({ artifact, receivedAt: piece.receivedAt, file, attempts: 0 });
-    try {
-      writeFileSync(file, bytes, { flag: "wx" });
-    } catch {
-      interrupt();
-    }
+    writeArtifact(file, artifact);
   }
   function closeAll() {
     for (const id of open.keys()) close(id);
@@ -173,11 +193,13 @@ export function createRecordingCheckpointCapture(input: Input) {
         queuedBytes -= next.artifact.bytes.byteLength;
       if (next.artifact.kind === "audio")
         releaseCheckpointPcm(next.artifact.bytes.byteLength);
-      try {
-        unlinkSync(next.file);
-      } catch {
-        /* A confirmed leftover file is safe to retain. */
-      }
+      [next.file, ...(next.supersededFiles ?? [])].forEach((file) => {
+        try {
+          unlinkSync(file);
+        } catch {
+          /* A confirmed leftover file is safe to retain. */
+        }
+      });
     }
   }
   function startWorker() {
@@ -209,6 +231,7 @@ export function createRecordingCheckpointCapture(input: Input) {
         .filter((item) => item.artifact.sourceId === sourceId)
         .reduce((total, item) => total + item.artifact.bytes.byteLength, 0);
     if (chunk.length === 0) return true;
+    const previousReservedBytes = reservedBytes;
     if (
       chunk.length % 4 ||
       chunk.length > RATE * 30 ||
@@ -262,7 +285,12 @@ export function createRecordingCheckpointCapture(input: Input) {
     else piece.intervals.push({ sourceId, startOffsetMs, durationMs });
     sampleEnds.set(sourceId, sampleAt + durationMs);
     queuedBytes += chunk.length;
-    if (piece.bytes >= RATE * 30 || reservedBytes >= PRESSURE) closeAll();
+    // Flush on crossing the threshold, not on every frame while uploads remain queued.
+    if (
+      piece.bytes >= RATE * 30 ||
+      crossedPressureThreshold(previousReservedBytes)
+    )
+      closeAll();
     startWorker();
     arm();
     if (stopped) return false;
@@ -309,19 +337,29 @@ export function createRecordingCheckpointCapture(input: Input) {
       input.directory,
       `${artifact.kind}-${artifact.sequence}.json`,
     );
-    try {
-      writeFileSync(file, artifact.bytes, { flag: "wx" });
-    } catch {
-      interrupt();
-      return false;
-    }
+    if (!writeArtifact(file, artifact)) return false;
     // Completed-text snapshots are cumulative; retain only the newest unstarted snapshot in memory.
     const previous = closed.findIndex(
       (item, index) =>
         item.artifact.kind === artifact.kind && (!worker || index > 0),
     );
-    if (previous >= 0) closed.splice(previous, 1);
-    closed.push({ artifact, receivedAt: Date.now(), file, attempts: 0 });
+    const superseded =
+      previous >= 0 ? closed.splice(previous, 1)[0] : undefined;
+    closed.push({
+      artifact,
+      receivedAt: Date.now(),
+      file,
+      attempts: 0,
+      ...(superseded
+        ? {
+            // Keep earlier snapshots until their cumulative replacement is durable.
+            supersededFiles: [
+              superseded.file,
+              ...(superseded.supersededFiles ?? []),
+            ],
+          }
+        : {}),
+    });
     startWorker();
     arm();
     return true;

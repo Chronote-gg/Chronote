@@ -5,7 +5,7 @@ import { fixtureGrantIdentity } from "../fixtures/productionIntroduction";
 import { createHash } from "node:crypto";
 import { config } from "../../src/services/configService";
 import { uploadMeetingArtifacts } from "../../src/services/uploadService";
-import { uploadObjectToS3 } from "../../src/services/storageService";
+import { uploadVerifiedObjectToS3 } from "../../src/services/storageService";
 import { saveMeetingHistoryToDatabase } from "../../src/commands/saveMeetingHistory";
 import { saveOwnedMeetingHistoryService } from "../../src/services/meetingHistoryService";
 import { EventEmitter } from "node:events";
@@ -83,7 +83,7 @@ jest.mock("../../src/services/unifiedConfigService", () => ({
   resolveConfigSnapshot: jest.fn(),
 }));
 jest.mock("../../src/services/storageService", () => ({
-  uploadObjectToS3: jest.fn(),
+  uploadVerifiedObjectToS3: jest.fn(),
 }));
 jest.mock("../../src/services/notionAutomationService", () => ({
   maybeAutoExportCompletedMeeting: jest.fn(),
@@ -503,20 +503,29 @@ test.each(["acknowledged", "lost", "wrong-key"])(
       "synthetic-bucket",
     );
     jest
-      .mocked(uploadObjectToS3)
+      .mocked(uploadVerifiedObjectToS3)
       .mockImplementation(async (key, _body, _type, options) => {
         if (outcome !== "lost")
           options?.onAcknowledged?.({
             key: outcome === "wrong-key" ? "other" : key,
             versionId: "direct-version",
           });
-        return key;
+        return outcome === "acknowledged"
+          ? {
+              key,
+              versionId: "direct-version",
+              byteLength: Buffer.byteLength(_body),
+              checksumSha256: createHash("sha256").update(_body).digest("hex"),
+            }
+          : undefined;
       });
     try {
       await uploadMeetingArtifacts(meeting, {
         transcriptText: "Synthetic speech",
       });
-      const [key, body] = jest.mocked(uploadObjectToS3).mock.calls.at(-1)!;
+      const [key, body] = jest
+        .mocked(uploadVerifiedObjectToS3)
+        .mock.calls.at(-1)!;
       const receipt = fixtureOutputSnapshot(meeting).fixtureTranscript;
       expect(receipt).toMatchObject({
         key,

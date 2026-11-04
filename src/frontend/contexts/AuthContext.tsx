@@ -4,16 +4,19 @@ import React, {
   useEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { buildApiUrl } from "../services/apiClient";
 import { trpc } from "../services/trpc";
 import { identifyUser, resetAnalyticsIdentity } from "../services/analytics";
+import { resetMeetingSessionQueries } from "../queryClient";
 
 type AuthState = "unknown" | "authenticated" | "unauthenticated";
 
 type AuthContextValue = {
   state: AuthState;
   loading: boolean;
+  protectedQueriesReady: boolean;
   loginUrl: string;
   logoutUrl: string;
   refresh: () => Promise<void>;
@@ -78,6 +81,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logoutUrl = buildLogoutUrl(getBrowserLocation());
 
   const userId = authQuery.data?.id;
+  const actor = state === "unknown" ? undefined : (userId ?? null);
+  const transition = useRef({ actor, generation: 0 });
+  if (transition.current.actor !== actor) {
+    transition.current = {
+      actor,
+      generation: transition.current.generation + 1,
+    };
+  }
+  const generation = transition.current.generation;
+  const [readyGeneration, setReadyGeneration] = useState<number>();
+  const protectedQueriesReady =
+    actor !== undefined && readyGeneration === generation;
+  useEffect(() => {
+    if (actor === undefined) return;
+    let current = true;
+    void resetMeetingSessionQueries().then(() => {
+      if (current) setReadyGeneration(generation);
+    });
+    return () => {
+      current = false;
+    };
+  }, [actor, generation]);
   const wasAuthenticated = useRef(false);
   useEffect(() => {
     // "unknown" means the query is still in flight, so neither branch applies
@@ -102,6 +127,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () => ({
       state,
       loading,
+      protectedQueriesReady,
       loginUrl,
       logoutUrl,
       user: authQuery.data ?? null,
@@ -109,7 +135,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await refetch();
       },
     }),
-    [state, loading, loginUrl, logoutUrl, refetch, authQuery.data],
+    [
+      state,
+      loading,
+      protectedQueriesReady,
+      loginUrl,
+      logoutUrl,
+      refetch,
+      authQuery.data,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

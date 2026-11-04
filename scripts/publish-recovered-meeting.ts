@@ -106,7 +106,7 @@ export function parseRecoveryDiscordPublicationArgs(args: string[]): Command {
   throw new InvalidInput();
 }
 
-async function privateDirectory(path: string) {
+export async function privateDirectory(path: string) {
   const directory = resolve(path);
   await mkdir(directory, { mode: 0o700 });
   if (process.platform === "win32") {
@@ -138,7 +138,11 @@ if (-not $check.AreAccessRulesProtected -or $check.Access.Count -ne 1 -or $check
   }
   return directory;
 }
-async function privateFile(directory: string, name: string, content: string) {
+export async function privateFile(
+  directory: string,
+  name: string,
+  content: string,
+) {
   const file = await open(join(directory, name), "wx", 0o600);
   try {
     await file.writeFile(content, "utf8");
@@ -272,6 +276,11 @@ export async function runRecoveryDiscordPublication(
 }
 
 async function main() {
+  if (process.argv[2] === "first-publication") {
+    const { firstPublicationMain } = await import("./first-publication-cli");
+    process.exitCode = await firstPublicationMain(process.argv.slice(3));
+    return;
+  }
   const token = process.env.DISCORD_BOT_TOKEN;
   const clients: Array<DynamoDBClient | S3Client | STSClient> = [];
   try {

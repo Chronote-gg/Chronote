@@ -23,6 +23,10 @@ import { routingFixture } from "./fixtures/routingFixture";
 import { createCoordinator } from "../../scripts/deployment/coordinator.cjs";
 import { startRuntimeHealthServer } from "../../src/services/runtimeHealthServer";
 import { createRuntimeProtectionService } from "../../src/services/runtimeProtectionService";
+import { createDynamoArtifactSafetyRepository } from "../../src/repositories/artifactSafetyRepository";
+import { createDynamoDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
+import { createRuntimeArtifactSafety } from "../../src/services/runtimeArtifactSafety";
+import { createArtifactAdmissionGate } from "../../src/services/artifactAdmissionGate";
 
 const client = new DynamoDBClient({
   endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
@@ -30,10 +34,32 @@ const client = new DynamoDBClient({
   credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
 });
 afterAll(() => client.destroy());
-test("real requests stay on old application through initial healthy candidate, held protection and failed boot, then move before old recording ends", async () => {
+test("real requests stay on the old application while its producers are sealed, then move only after candidate boot", async () => {
   const f = routingFixture();
   const prefix = `routing-${randomUUID()}-`;
   const table = `${prefix}DeploymentControlTable`;
+  const tables = {
+    deploymentControl: table,
+    meetingHistory: prefix + "MeetingHistoryTable",
+  };
+  const targetArtifacts = f.state.artifacts.get("new");
+  if (targetArtifacts?.startup.kind !== "sealed")
+    throw new Error("Candidate fixture missing");
+  const snapshot = targetArtifacts.startup.proof.snapshot;
+  const admission = createArtifactAdmissionGate();
+  const artifactSafety = createRuntimeArtifactSafety({
+    identity: f.state.rows.old.identity,
+    repository: createDynamoArtifactSafetyRepository(client, tables),
+    control: createDynamoDeploymentControlRepository(client, tables),
+    admission,
+    now: f.options.now,
+    isProtected: () => true,
+    storage: {
+      seal: async () => snapshot,
+      recheck: async () => snapshot,
+      resume: () => undefined,
+    },
+  });
   const old = await startRuntimeHealthServer(0);
   const candidate = await startRuntimeHealthServer(0);
   const origin = (
@@ -76,6 +102,7 @@ test("real requests stay on old application through initial healthy candidate, h
   const syncProofs = async () => {
     f.state.ctl = (await read()) as typeof f.state.ctl;
     f.refreshProofs();
+    await put(f.state.artifacts.get("new")!);
     for (const row of Object.values(f.state.rows)) {
       const updated = await client.send(
         new UpdateItemCommand({
@@ -114,13 +141,28 @@ test("real requests stay on old application through initial healthy candidate, h
     await put(f.state.ctl);
     await put(f.state.rows.old);
     await put(f.state.rows.new);
+    for (const artifact of f.state.artifacts.values()) await put(artifact);
     f.definition.containerDefinitions[0].environment[0].value = prefix;
     const original = f.aws.getMockImplementation()!;
     f.aws.mockImplementation(async (service, operation, input) => {
       if (service !== "dynamodb") return original(service, operation, input);
       switch (operation) {
-        case "get-item":
-          return client.send(new GetItemCommand(input as GetItemCommandInput));
+        case "get-item": {
+          const command = new GetItemCommand(input as GetItemCommandInput);
+          let result = await client.send(command);
+          if (
+            result.Item?.sk.S === "ARTIFACTS#old/STATE" &&
+            result.Item.state.S === "requested"
+          ) {
+            await artifactSafety.refresh();
+            for (let poll = 0; poll < 30; poll++) {
+              result = await client.send(command);
+              if (result.Item?.state.S === "sealed") break;
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+          }
+          return result;
+        }
         case "update-item":
           return client.send(
             new UpdateItemCommand(input as UpdateItemCommandInput),
@@ -142,6 +184,7 @@ test("real requests stay on old application through initial healthy candidate, h
       env: { ...f.options.env, SECRETS_PREFIX: prefix.slice(0, -1) },
     });
     await coordinator.prepare();
+    expect(() => admission.begin()).toThrow("sealed");
     await syncProofs();
     expect((await fetch(`${origin(candidate)}/health`)).status).toBe(200);
     expect((await fetch(`${origin(candidate)}/auth/discord`)).status).toBe(503);
@@ -191,7 +234,7 @@ test("real requests stay on old application through initial healthy candidate, h
     expect(await (await request()).text()).toBe(
       "candidate available application",
     );
-    expect(f.state.rows.old.workCounts!.recording).toBe(1);
+    expect(f.state.rows.old.workCounts!.recording).toBe(0);
     expect(f.state.rows.old.retirementRequest).toBeUndefined();
     expect((await fetch(`${origin(old)}/auth/discord`)).status).toBe(200);
     await syncProofs();
@@ -204,7 +247,12 @@ test("real requests stay on old application through initial healthy candidate, h
       candidatePreserved: true,
     });
     expect(await (await request()).text()).toBe("old available application");
+    await syncProofs();
+    await artifactSafety.refresh();
+    await artifactSafety.refresh();
+    expect(admission.sealed).toBe(false);
   } finally {
+    artifactSafety.stop();
     protection?.stop();
     await old.close();
     await candidate.close();

@@ -239,12 +239,64 @@ function strictFixture(
       taskTemplate,
       production: createProductionCoordinator(productionOptions),
     });
-  return { ...f, rows, coordinator, productionOptions, env };
+  // Exercise archived recipe receipts directly; the current coordinator refuses their missing preservation action.
+  async function historicalPrepare(alreadyPrepared = false) {
+    if (!alreadyPrepared)
+      await expect(coordinator().prepare()).rejects.toThrow(/artifact safety/);
+    const api = createProductionCoordinator(productionOptions);
+    await api.guard(f.state.ctl, configuration(env));
+    await api.save(f.state.ctl, {
+      ...f.state.ctl,
+      deployment: {
+        ...f.state.ctl.deployment,
+        phase: "warming",
+        updatedAt: f.options.now(),
+      },
+    });
+    await api.launch(f.state.ctl, f.svc);
+  }
+  async function historicalPromote() {
+    const api = createProductionCoordinator(productionOptions);
+    await api.guard(f.state.ctl, configuration(env));
+    await api.save(f.state.ctl, {
+      ...f.state.ctl,
+      coordinatorExpiresAt: f.options.now() + 120,
+    });
+    await api.save(f.state.ctl, {
+      ...f.state.ctl,
+      deployment: {
+        ...f.state.ctl.deployment,
+        phase: "promoting",
+        updatedAt: f.options.now(),
+      },
+    });
+    const ctl = f.state.ctl;
+    await api.promote(ctl, {
+      coordinatorToken: ctl.coordinatorToken,
+      coordinatorEpoch: ctl.coordinatorEpoch,
+      expectedServingGeneration: 1,
+      expectedServingMembers: [oldIdentity],
+      candidate: candidateIdentity,
+      candidateRuntimeMode: "all",
+      retainedMembers: [],
+      proposedGeneration: 2,
+      now: f.options.now(),
+    });
+  }
+  return {
+    ...f,
+    rows,
+    coordinator,
+    productionOptions,
+    env,
+    historicalPrepare,
+    historicalPromote,
+  };
 }
 test("strict real coordinator retains lost UpdateService acknowledgment despite matching service read and refuses restart/promote", async () => {
   const f = strictFixture();
   f.state.loseUpdateResponse = true;
-  await expect(f.coordinator().prepare()).rejects.toThrow();
+  await expect(f.historicalPrepare()).rejects.toThrow();
   expect(f.state.launched).toBe(true);
   expect(f.rows.get("ACTION#c3")).toMatchObject({ phase: "submitted" });
   const before = f.calls.length;
@@ -260,9 +312,9 @@ test("strict real coordinator retains lost UpdateService acknowledgment despite 
 });
 test("strict real coordinator retains a lost conditional promotion acknowledgment across restart", async () => {
   const f = strictFixture();
-  await f.coordinator().prepare();
+  await f.historicalPrepare();
   f.state.losePromotionResponse = true;
-  await expect(f.coordinator().promote()).rejects.toThrow();
+  await expect(f.historicalPromote()).rejects.toThrow();
   expect(f.state.ctl.servingGeneration).toBe(2);
   expect(f.rows.get("ACTION#c6")).toMatchObject({ phase: "submitted" });
   await expect(f.coordinator().promote()).rejects.toThrow();
@@ -284,7 +336,7 @@ test("unused optional earlier slot does not block exact next phase, but exhauste
       (a: { sequence: number }, index: number) => (a.sequence = index),
     );
   });
-  await f.coordinator().prepare();
+  await f.historicalPrepare();
   expect(f.rows.has("ACTION#optional")).toBe(false);
   const api = createProductionCoordinator(f.productionOptions),
     config = configuration(f.env);
@@ -297,7 +349,7 @@ test("unused optional earlier slot does not block exact next phase, but exhauste
 });
 test("reserved exact action can resume, but prevents a different later action and wrong phase/epoch/generation", async () => {
   const f = strictFixture();
-  await f.coordinator().prepare();
+  await f.historicalPrepare();
   const api = createProductionCoordinator(f.productionOptions),
     config = configuration(f.env);
   await api.guard(f.state.ctl, config);
@@ -329,7 +381,7 @@ test("reserved exact action can resume, but prevents a different later action an
 
 test("missing earlier mandatory receipt refuses later phase despite matching current Control", async () => {
   const f = strictFixture();
-  await f.coordinator().prepare();
+  await f.historicalPrepare();
   f.rows.delete("ACTION#c1");
   const api = createProductionCoordinator(f.productionOptions);
   await api.guard(f.state.ctl, configuration(f.env));
@@ -348,8 +400,9 @@ test("A manifest pins ignore an unrelated Sandbox task template and retain struc
     arn: "foreign-template",
     preparedSha256: "f".repeat(64),
   });
-  await expect(coordinator.prepare()).resolves.toEqual({ kind: "warming" });
-  await coordinator.promote();
+  await expect(coordinator.prepare()).rejects.toThrow(/artifact safety/);
+  await f.historicalPrepare(true);
+  await f.historicalPromote();
   expect(
     f.aws.mock.calls.some(
       ([, operation, input]) =>

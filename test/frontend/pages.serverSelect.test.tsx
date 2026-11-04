@@ -42,8 +42,8 @@ describe("ServerSelect page", () => {
     expect(guildState.setSelectedGuildId).toHaveBeenCalledWith("g1");
     expect(usePortalStore.getState().lastServerId).toBe("g1");
     expect(navigateSpy).toHaveBeenCalledWith({
-      to: "/portal/server/$serverId/library",
-      params: { serverId: "g1" },
+      to: "/portal/meetings",
+      search: expect.objectContaining({ scope: "guild", serverId: "g1" }),
     });
   });
 
@@ -58,8 +58,8 @@ describe("ServerSelect page", () => {
     fireEvent.click(screen.getByTestId("server-open"));
 
     expect(navigateSpy).toHaveBeenCalledWith({
-      to: "/portal/server/$serverId/ask",
-      params: { serverId: "g2" },
+      to: "/portal/meetings",
+      search: expect.objectContaining({ scope: "guild", serverId: "g2" }),
     });
   });
 

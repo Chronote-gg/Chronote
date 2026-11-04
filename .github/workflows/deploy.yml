@@ -4,6 +4,11 @@ run-name: Meeting Notes Bot Deploy ${{ github.actor }}
 
 on:
   workflow_dispatch:
+    inputs:
+      handoff_quiet_override:
+        description: Launch even if the serving runtime reports recording, finalization or voice work (use only for a leaked counter, see docs/deployment-handoff.md)
+        type: boolean
+        default: false
   push:
     branches:
       - master
@@ -179,13 +184,29 @@ jobs:
           echo "DEPLOYMENT_RUN_TOKEN=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
           echo "DEPLOYMENT_CANDIDATE_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
 
+      - name: Package supported publication release metadata
+        run: node scripts/operator/build-publication-release.cjs
+
+      - name: Save operator release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-publication-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: scripts/operator/recovery-publication-releases.json
+          retention-days: 90
+
       - name: Protect serving runtime and warm candidate
         id: prepare
+        env:
+          HANDOFF_QUIET_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.handoff_quiet_override && '1' || '' }}
         run: node scripts/deployment/coordinator.cjs prepare
 
       - name: Promote exact ready candidate
         id: promote
         run: node scripts/deployment/coordinator.cjs promote
+
+      - name: Request guarded cancellation of failed preparation
+        if: failure() && steps.hold-guard.outcome == 'success' && steps.prepare.outcome == 'failure'
+        run: node scripts/deployment/coordinator.cjs cancel-preparation
 
       - name: Wait for runtime-owned retirement acknowledgment
         id: retire

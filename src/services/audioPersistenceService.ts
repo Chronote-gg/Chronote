@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import * as fs from "node:fs";
 import path from "node:path";
 import ffmpeg from "fluent-ffmpeg";
+import { ChildProcess } from "node:child_process";
 import {
   getMeetingProcessingSignal,
   runMeetingProcessingEffect,
@@ -16,6 +17,7 @@ import {
   getMeetingTempDir,
 } from "./tempFileService";
 import { renderMixedPcmTracks } from "./mixedPcmService";
+import { getMeetingArtifactProducer } from "./meetingArtifactProducer";
 
 function generateSilentBuffer(
   durationMs: number,
@@ -107,6 +109,13 @@ export async function persistSnippetSpeakerTrack(
 
   const offsetMs = Math.max(0, snippet.timestamp - meeting.startTime.getTime());
   const track = getOrCreateSpeakerTrack(meeting, snippet.userId);
+  const write = getMeetingArtifactProducer(meeting)?.beginWrite(
+    track.filePath,
+    {
+      kind: "captured_audio",
+      producer: "speaker_track",
+    },
+  );
   const writeTask = async () => {
     await fs.promises.mkdir(getSpeakerTrackDir(meeting), { recursive: true });
     const outputStream = fs.createWriteStream(track.filePath, { flags: "a" });
@@ -150,8 +159,16 @@ export async function persistSnippetSpeakerTrack(
       return undefined;
     })
     .then(writeTask);
-  track.writePromise = chained;
-  await chained;
+  track.writePromise = chained.then(
+    () => {
+      write?.settle(track.writeFailed ? "uncertain" : "known");
+    },
+    (error: unknown) => {
+      write?.settle("uncertain");
+      throw error;
+    },
+  );
+  await track.writePromise;
 }
 
 type OutputCompletion = { kind: "closed" } | { kind: "failed"; error: Error };
@@ -163,12 +180,32 @@ export function openOutputFile(meeting: MeetingData) {
   meeting.audioData.outputFileName = outputFileName;
 
   meeting.audioData.audioPassThrough = new PassThrough();
+  const write = getMeetingArtifactProducer(meeting)?.beginWrite(
+    outputFileName,
+    {
+      kind: "captured_audio",
+      producer: "live_encode",
+    },
+  );
 
   let complete: (result: OutputCompletion) => void = () => {};
+  let started = false;
+  let childClosed = false;
+  let terminal: OutputCompletion | undefined;
+  let resolveCompletion: (result: OutputCompletion) => void = () => {};
+  function finishClosedOutput() {
+    if (!terminal || (started && !childClosed)) return;
+    write?.settle(terminal.kind === "closed" ? "known" : "uncertain");
+    resolveCompletion(terminal);
+  }
   outputCompletions.set(
     meeting,
     new Promise((resolve) => {
-      complete = resolve;
+      resolveCompletion = resolve;
+      complete = (result) => {
+        terminal ??= result;
+        finishClosedOutput();
+      };
     }),
   );
   try {
@@ -185,6 +222,19 @@ export function openOutputFile(meeting: MeetingData) {
         `-ar ${RECORD_SAMPLE_RATE}`, // Ensure output sample rate
       ])
       .toFormat("mp3") // Output format as MP3
+      .on("start", () => {
+        started = true;
+        // Command errors can precede child death; only the pinned encoder's actual child closes output I/O.
+        const child = Reflect.get(
+          meeting.audioData.ffmpegProcess!,
+          "ffmpegProc",
+        );
+        if (child instanceof ChildProcess)
+          child.once("close", () => {
+            childClosed = true;
+            finishClosedOutput();
+          });
+      })
       .on("error", (err) => {
         complete({ kind: "failed", error: err });
         console.error("ffmpeg error:", err);
@@ -276,11 +326,19 @@ async function buildOwnedMixedAudio(
   });
   if (usable.length === 0) return undefined;
 
-  return renderMixedPcmTracks(
-    usable,
-    path.join(getMeetingTempDir(meeting), "recording_mixed.mp3"),
-    signal,
-  );
+  const filename = path.join(getMeetingTempDir(meeting), "recording_mixed.mp3");
+  const write = getMeetingArtifactProducer(meeting)?.beginWrite(filename, {
+    kind: "captured_audio",
+    producer: "mixed_encode",
+  });
+  try {
+    const output = await renderMixedPcmTracks(usable, filename, signal);
+    write?.settle("known");
+    return output;
+  } catch (error) {
+    write?.settle("uncertain");
+    throw error;
+  }
 }
 
 export async function cleanupSpeakerTracks(

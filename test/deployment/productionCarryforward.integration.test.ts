@@ -283,7 +283,7 @@ test.each(["pending_upload", "queued"] as const)(
     const before = await readBytes(job.uploadId);
     await processJob(job);
     expect(admission).toHaveBeenCalledTimes(1);
-    expect(admission).toHaveBeenCalledWith("pending_admission");
+    expect(admission).toHaveBeenCalledWith("pending_admission", true);
     expect(admission.mock.results[0].type).toBe("throw");
     expect(admission.mock.results[0].value).toBeInstanceOf(
       RuntimeAdmissionUnavailable,

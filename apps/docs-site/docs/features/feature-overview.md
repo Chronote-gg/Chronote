@@ -89,7 +89,7 @@ Starts a recorded meeting in the voice channel you are currently in. You can als
 | `context` | No       | Describe the meeting topic (max 500 chars) |
 | `tags`    | No       | Comma-separated tags (max 500 chars)       |
 
-**Requirements**: You must be in a voice channel. The bot needs Connect and Speak permissions in that voice channel, and View Channel, Send Messages, and Read Message History in the text channel. No other meeting can be active in the server.
+**Requirements**: You must be in a voice channel. The bot needs Connect and Speak permissions in that voice channel, and View Channel, Send Messages, Read Message History, and Embed Links in the text channel. No other meeting can be active in the server.
 
 **Output**: A "Meeting Started" embed with End Meeting and Edit Tags buttons, plus a Live transcript button when the Chronote portal is configured and the server allows transcript access.
 
@@ -356,7 +356,7 @@ Use **Upload Media** in the web portal to turn an existing audio or video file i
 
 When processing completes, the meeting appears in **My Meetings** under your personal workspace. Uploaded personal meetings are owned by your Chronote account, not by a Discord server.
 
-Chronote detects the spoken language of uploads and Chronote Desktop recordings, so a meeting held in a language other than English is transcribed in that language rather than forced into English.
+Chronote detects the spoken language of uploads and Chronote Desktop recordings, so a meeting held in a language other than English is transcribed in that language rather than forced into English. Discord voice meetings use the server's transcription language setting instead, described in [Discord meeting notes](/discord-meeting-notes/#transcription-language).
 
 ## Chronote Desktop recordings
 

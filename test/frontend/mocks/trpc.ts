@@ -1,3 +1,4 @@
+import { emptyMeetingBrowse } from "./emptyMeetingBrowse";
 import type { QueryState, MutationState } from "./trpcState";
 import {
   buildQueryState,
@@ -144,7 +145,6 @@ type PricingPlansData = {
   annualIntroOffer?: BasicIntroOffer;
 };
 type BillingDataQuery = BillingData;
-type MeetingsListData = { meetings: MeetingSummaryRow[] };
 type MeetingsDetailData = { meeting: MeetingDetail | null };
 type ChannelsData = {
   voiceChannels: ChannelSummary[];
@@ -176,6 +176,22 @@ type MeetingShareStateData = {
     sharedByUserId?: string;
     sharedByTag?: string;
   };
+};
+const serverShareState: MeetingShareStateData = {
+  meetingSharingPolicy: "server",
+  state: {
+    visibility: "server",
+    shareId: "share-1",
+    rotated: false,
+  },
+};
+const rotatedShareState: MeetingShareStateData = {
+  meetingSharingPolicy: "server",
+  state: {
+    visibility: "server",
+    shareId: "share-2",
+    rotated: true,
+  },
 };
 type PersonalShareStateData = {
   accessGrants: MeetingAccessGrant[];
@@ -309,9 +325,6 @@ export const billingRenewalMutation = buildMutationState<
   RenewalResult
 >({ kind: "changed" });
 export const billingQuery = buildQueryState<BillingDataQuery | null>(null);
-export const meetingsListQuery = buildQueryState<MeetingsListData>({
-  meetings: [],
-});
 export const meetingsDetailQuery = buildQueryState<MeetingsDetailData>({
   meeting: null,
 });
@@ -442,6 +455,10 @@ export const meetingsImportNotesMutation = buildMutationState<
   [unknown],
   MeetingResults["importNotes"]
 >(savedNotesResult);
+export const meetingsRetryProcessingMutation = buildMutationState<
+  [unknown],
+  MeetingResults["retryProcessing"] | undefined
+>(undefined);
 export const meetingsSuggestNotesCorrectionMutation = buildMutationState<
   [unknown],
   { token: string; diff: string; changed: boolean }
@@ -457,25 +474,11 @@ export const meetingsApplyNotesCorrectionMutation = buildMutationState<
 export const meetingsShareSetVisibilityMutation = buildMutationState<
   [unknown],
   MeetingShareStateData
->({
-  meetingSharingPolicy: "server",
-  state: {
-    visibility: "server",
-    shareId: "share-1",
-    rotated: false,
-  },
-});
+>(serverShareState);
 export const meetingsShareRotateMutation = buildMutationState<
   [unknown],
   MeetingShareStateData
->({
-  meetingSharingPolicy: "server",
-  state: {
-    visibility: "server",
-    shareId: "share-2",
-    rotated: true,
-  },
-});
+>(rotatedShareState);
 export const meetingsSetPersonalShareGrantsMutation = buildMutationState<
   [unknown],
   PersonalShareStateData
@@ -712,7 +715,6 @@ export const resetTrpcMocks = () => {
     lifecycleAnalyticsEnabled: false,
   });
   resetMutationState(billingRenewalMutation, { kind: "changed" });
-  resetQueryState(meetingsListQuery, { meetings: [] });
   resetQueryState(meetingsDetailQuery, { meeting: null });
   resetQueryState(serversChannelsQuery, {
     voiceChannels: [],
@@ -796,6 +798,7 @@ export const resetTrpcMocks = () => {
   resetMutationState(meetingsRenameMutation, savedRenameResult);
   resetMutationState(meetingsUpdateNotesMutation, savedNotesResult);
   resetMutationState(meetingsImportNotesMutation, savedNotesResult);
+  resetMutationState(meetingsRetryProcessingMutation, undefined);
   resetMutationState(meetingsSuggestNotesCorrectionMutation, {
     token: "mock-notes-correction-token",
     diff: "+ mock diff",
@@ -805,22 +808,8 @@ export const resetTrpcMocks = () => {
     meetingsApplyNotesCorrectionMutation,
     savedCorrectionResult,
   );
-  resetMutationState(meetingsShareSetVisibilityMutation, {
-    meetingSharingPolicy: "server",
-    state: {
-      visibility: "server",
-      shareId: "share-1",
-      rotated: false,
-    },
-  });
-  resetMutationState(meetingsShareRotateMutation, {
-    meetingSharingPolicy: "server",
-    state: {
-      visibility: "server",
-      shareId: "share-2",
-      rotated: true,
-    },
-  });
+  resetMutationState(meetingsShareSetVisibilityMutation, serverShareState);
+  resetMutationState(meetingsShareRotateMutation, rotatedShareState);
   resetMutationState(meetingsSetPersonalShareGrantsMutation, {
     accessGrants: [],
   });
@@ -910,12 +899,6 @@ export const setBillingQuery = (
   next: Partial<QueryState<BillingDataQuery | null>>,
 ) => {
   Object.assign(billingQuery, next);
-};
-
-export const setMeetingsListQuery = (
-  next: Partial<QueryState<MeetingsListData>>,
-) => {
-  Object.assign(meetingsListQuery, next);
 };
 
 export const setMeetingsDetailQuery = (
@@ -1092,12 +1075,13 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
       setArchived: { useMutation: () => askArchiveMutation },
     },
     meetings: {
-      list: { useQuery: () => meetingsListQuery },
+      myList: { useInfiniteQuery: emptyMeetingBrowse },
       detail: { useQuery: () => meetingsDetailQuery },
       setArchived: { useMutation: () => meetingsArchiveMutation },
       rename: { useMutation: () => meetingsRenameMutation },
       updateNotes: { useMutation: () => meetingsUpdateNotesMutation },
       importNotes: { useMutation: () => meetingsImportNotesMutation },
+      retryProcessing: { useMutation: () => meetingsRetryProcessingMutation },
       suggestNotesCorrection: {
         useMutation: () => meetingsSuggestNotesCorrectionMutation,
       },

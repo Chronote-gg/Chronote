@@ -17,6 +17,7 @@ variable "alert_discord_channel_id" {
 locals {
   alerts_enabled         = var.alert_email != "" || var.alert_discord_channel_id != ""
   discord_alerts_enabled = local.alerts_enabled && var.alert_discord_channel_id != ""
+  critical_alerts_topic  = "${local.name_prefix}-critical-alerts"
 }
 
 # --- SNS topic ---
@@ -24,7 +25,7 @@ locals {
 resource "aws_sns_topic" "critical_alerts" {
   depends_on        = [aws_kms_key_policy.app_general]
   count             = local.alerts_enabled ? 1 : 0
-  name              = "${local.name_prefix}-critical-alerts"
+  name              = local.critical_alerts_topic
   kms_master_key_id = aws_kms_key.app_general.arn
 
   tags = {

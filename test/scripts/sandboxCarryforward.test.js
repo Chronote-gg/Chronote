@@ -179,6 +179,15 @@ test.each(["before_read", "during_protection_read"])(
           request: f.state.rows.old.retirementRequest,
           retiredAt: f.options.now(),
         };
+        const capability = f.state.artifacts.get("old");
+        capability.retirementVerification = {
+          request: f.state.rows.old.retirementRequest,
+          proof: {
+            snapshot: capability.proof.snapshot,
+            provenAt: f.options.now(),
+            expiresAt: f.options.now() + 60,
+          },
+        };
       };
       if (acknowledgment === "before_read") acknowledge();
       else {

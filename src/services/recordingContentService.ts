@@ -1,3 +1,9 @@
+import {
+  speechRejectionSchema,
+  type SpeechRejection,
+} from "../types/speechRejection";
+import type { AudioSnippet } from "../types/audio";
+import type { SpeechCoverage, SpeechPhase } from "./speechDetectionTypes";
 import { recordingPromptLabels } from "./recordingMetadataService";
 import {
   isFixture,
@@ -52,6 +58,8 @@ type Frozen = Pick<
   GenerationContextCheckpoint,
   "capture" | "settings" | "context" | "prompts" | "recentMeetingNames"
 > & {
+  rejections: Map<string, SpeechRejection>;
+  rejectionEvidenceIncomplete: boolean;
   sequence: number;
   phase: "capturing" | "finalizing" | "finalized";
   prePass?: {
@@ -209,7 +217,7 @@ function enqueue(
   payload: unknown,
 ) {
   const bytes = Buffer.from(JSON.stringify(payload));
-  meeting.recordingCapture?.queueContent({
+  const accepted = meeting.recordingCapture?.queueContent({
     kind,
     sourceId: kind,
     sequence: frozen.sequence++,
@@ -218,6 +226,10 @@ function enqueue(
     bytes,
     checksumSha256: createHash("sha256").update(bytes).digest("hex"),
   });
+  if (accepted === false && frozen.rejections.size) {
+    frozen.rejectionEvidenceIncomplete = true;
+    console.error("Speech rejection review checkpoint was not accepted.");
+  }
 }
 export function checkpointRecordingContext(meeting: MeetingData): void {
   const frozen = snapshots.get(meeting);
@@ -348,6 +360,59 @@ function markSupplementalTranscriptEntries(
   if (supplemental && frozen.processing)
     frozen.processing.supplementalEntries = true;
 }
+/** Preserve actual admission decisions, never inferred empty transcript results. */
+export function recordSpeechRejection(
+  meeting: MeetingData,
+  snippet: Pick<AudioSnippet, "userId" | "timestamp" | "pcmSpans">,
+  coverage: SpeechCoverage,
+  phase: SpeechPhase,
+): void {
+  const frozen = snapshots.get(meeting);
+  try {
+    if (!frozen || !meeting.recordingCapture)
+      throw Error("checkpoint_unavailable");
+    if (meeting.runtimeConfig?.transcription.speechDetectionMode !== "enforce")
+      throw Error("mode_unavailable");
+    const id = createHash("sha256")
+      .update(
+        JSON.stringify([
+          frozen.capture.meetingId,
+          snippet.userId,
+          snippet.timestamp,
+          phase,
+          coverage.pcmSha256,
+          coverage.policyFingerprint,
+          snippet.pcmSpans,
+        ]),
+      )
+      .digest("hex");
+    if (!frozen.rejections.has(id)) {
+      const receipt = speechRejectionSchema.parse({
+        id,
+        mode: "enforce",
+        decision: "non_speech",
+        phase,
+        decidedAt: new Date().toISOString(),
+        userId: snippet.userId,
+        snippetTimestamp: snippet.timestamp,
+        ...coverage,
+        spans: snippet.pcmSpans,
+        outcome: "request_skipped",
+      });
+      frozen.rejections.set(id, receipt);
+    }
+    checkpointCompletedTranscription(meeting);
+  } catch {
+    if (frozen) frozen.rejectionEvidenceIncomplete = true;
+    console.error("Speech rejection review evidence unavailable.");
+    try {
+      checkpointCompletedTranscription(meeting);
+    } catch {
+      /* Recording must continue. */
+    }
+  }
+}
+
 export function checkpointCompletedTranscription(
   meeting: MeetingData,
   processing?: CompletedTranscriptionCheckpoint["processing"],
@@ -377,10 +442,32 @@ export function checkpointCompletedTranscription(
     ({ selected, entries, omitted } = guarded);
   }
   markSupplementalTranscriptEntries(frozen, selected);
-  if (!entries.length && !omitted && !frozen.processing) return;
+  if (
+    !entries.length &&
+    !omitted &&
+    !frozen.processing &&
+    !frozen.rejections.size &&
+    !frozen.rejectionEvidenceIncomplete
+  )
+    return;
+  const speechRejections = Array.from(frozen.rejections.values(), (receipt) => {
+    const file = meeting.audioData.audioFiles.find(
+      (f) =>
+        f.userId === receipt.userId && f.timestamp === receipt.snippetTimestamp,
+    );
+    const outcome =
+      file?.finalSpeechRejection?.pcmSha256 === receipt.pcmSha256
+        ? "final_omission"
+        : file && resolveAudioFileTranscript(file).text?.trim()
+          ? "transcript_present"
+          : "request_skipped";
+    return { ...receipt, outcome };
+  });
   const payload = completedTranscriptionSchema.parse({
     schemaVersion: 1,
     kind: "completed_transcription",
+    speechRejections,
+    speechRejectionEvidenceIncomplete: frozen.rejectionEvidenceIncomplete,
     processing: frozen.processing,
     capture: frozen.capture,
     capturedAt: completedAt,
@@ -478,6 +565,8 @@ export function startRecordingContentCheckpoint(meeting: MeetingData): void {
     return;
   const frozen: Frozen = {
     capture: provenance(meeting),
+    rejections: new Map(),
+    rejectionEvidenceIncomplete: false,
     sequence: 0,
     phase: "capturing",
     settings: { availability: "unavailable" },

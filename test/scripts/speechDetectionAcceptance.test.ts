@@ -8,7 +8,10 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { prepareTranscriptionAcceptanceFixture } from "../helpers/compiledTranscriptionFixture";
+import {
+  prepareTranscriptionAcceptanceFixture,
+  TRANSCRIPTION_FIXTURE_SETUP_TIMEOUT_MS,
+} from "../helpers/compiledTranscriptionFixture";
 import { removeOwnedFixture } from "../helpers/compiledSpeechDetectionFixture";
 import { runTranscriptionQualityCase } from "../../src/evals/transcriptionQualityCase";
 const root = path.resolve(__dirname, "../..");
@@ -35,7 +38,7 @@ beforeAll(async () => {
   expect(probe.stderr).toBe("");
   expect(probe.status).toBe(0);
   expect(probe.stdout.trim()).toBe("compiled");
-}, 60000);
+}, TRANSCRIPTION_FIXTURE_SETUP_TIMEOUT_MS);
 afterAll(() => {
   if (compiled) removeOwnedFixture(compiled, "vad-build-contract-");
 });
@@ -919,25 +922,29 @@ test("candidate rejection of already-empty verified speech fails both pipeline p
   ).toBe(2);
 });
 
-test("positive acceptance works from an owned source-only checkout without dist", async () => {
-  const checkout = mkdtempSync(
-    path.join(os.tmpdir(), "vad-build-contract-acceptance-source-"),
-  );
-  try {
-    copyTranscriptionSourceCheckout(root, checkout);
-    expect(existsSync(path.join(checkout, "dist"))).toBe(false);
-    const owned = await prepareTranscriptionAcceptanceFixture(checkout, root);
-    let result: ReturnType<typeof run>;
+test(
+  "positive acceptance works from an owned source-only checkout without dist",
+  async () => {
+    const checkout = mkdtempSync(
+      path.join(os.tmpdir(), "vad-build-contract-acceptance-source-"),
+    );
     try {
-      result = run(fixture(), false, owned);
+      copyTranscriptionSourceCheckout(root, checkout);
+      expect(existsSync(path.join(checkout, "dist"))).toBe(false);
+      const owned = await prepareTranscriptionAcceptanceFixture(checkout, root);
+      let result: ReturnType<typeof run>;
+      try {
+        result = run(fixture(), false, owned);
+      } finally {
+        removeOwnedFixture(owned, "vad-build-contract-");
+      }
+      expect(result.report.missing).toEqual([]);
+      expect(result.status).toBe(0);
+      expect(result.report.status).toBe("pass");
+      expect(existsSync(path.join(checkout, "dist"))).toBe(false);
     } finally {
-      removeOwnedFixture(owned, "vad-build-contract-");
+      removeOwnedFixture(checkout, "vad-build-contract-");
     }
-    expect(result.report.missing).toEqual([]);
-    expect(result.status).toBe(0);
-    expect(result.report.status).toBe("pass");
-    expect(existsSync(path.join(checkout, "dist"))).toBe(false);
-  } finally {
-    removeOwnedFixture(checkout, "vad-build-contract-");
-  }
-}, 60000);
+  },
+  TRANSCRIPTION_FIXTURE_SETUP_TIMEOUT_MS + 60000,
+);

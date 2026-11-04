@@ -65,3 +65,35 @@ describe("portalLinks", () => {
     );
   });
 });
+
+test("parses unified drawer links with encoded composite IDs", () => {
+  expect(
+    parsePortalMeetingLink(
+      "/portal/meetings?scope=all&meetingServerId=personal%3Au&meetingId=voice%23date&eventId=e&fullScreen=1",
+      "https://chronote.test",
+    ),
+  ).toEqual({
+    serverId: "personal:u",
+    meetingId: "voice#date",
+    eventId: "e",
+    fullScreen: true,
+  });
+  expect(
+    parsePortalMeetingLink(
+      "/portal/meetings?meetingId=m",
+      "https://chronote.test",
+    ),
+  ).toBeNull();
+});
+test("adds the drawer server without replacing the source", () => {
+  expect(
+    buildMeetingLinkForLocation({
+      pathname: "/portal/meetings",
+      search: "?scope=personal",
+      meetingServerId: "personal:u",
+      meetingId: "voice#date",
+    }),
+  ).toBe(
+    "/portal/meetings?scope=personal&meetingId=voice%23date&meetingServerId=personal%3Au",
+  );
+});

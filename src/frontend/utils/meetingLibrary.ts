@@ -7,6 +7,7 @@ import {
 import type { MeetingEvent } from "../../types/meetingTimeline";
 import type { MeetingStatus } from "../../types/meetingLifecycle";
 import type { MeetingProcessingOutcome } from "../../types/meetingProcessing";
+import type { ProcessingRetryView } from "../../types/meetingProcessingRetry";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const MS_PER_HOUR = 1000 * 60 * 60;
@@ -38,6 +39,7 @@ export type MeetingDetails = MeetingCapturePresentation & {
   events: MeetingEvent[];
   status?: MeetingStatus;
   processing?: MeetingProcessingOutcome;
+  processingRetry?: ProcessingRetryView;
   updateDelivery?: MeetingUpdatePublicDelivery;
 };
 
@@ -70,6 +72,7 @@ export type MeetingDetailInput = MeetingCapturePresentation & {
   events?: MeetingEvent[];
   status?: MeetingStatus;
   processing?: MeetingProcessingOutcome;
+  processingRetry?: ProcessingRetryView;
   updateDelivery?: MeetingUpdatePublicDelivery;
 };
 
@@ -338,6 +341,26 @@ export const buildMeetingDetails = (
     recovery: detail.recovery,
     recoveryNotice: detail.recoveryNotice,
     processing: detail.processing,
+    processingRetry: detail.processingRetry,
     updateDelivery: detail.updateDelivery,
   };
 };
+
+export const processingPanelProps = (
+  meeting: MeetingDetails,
+): Pick<
+  MeetingCapturePresentation,
+  | "processing"
+  | "capture"
+  | "captureCoverage"
+  | "captureNotice"
+  | "recovery"
+  | "recoveryNotice"
+> => ({
+  processing: meeting.processing,
+  capture: meeting.capture,
+  captureCoverage: meeting.captureCoverage,
+  captureNotice: meeting.captureNotice,
+  recovery: meeting.recovery,
+  recoveryNotice: meeting.recoveryNotice,
+});

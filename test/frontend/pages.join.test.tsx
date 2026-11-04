@@ -118,7 +118,7 @@ describe("Join page", () => {
     );
     expect(screen.getByRole("link", { name: "Open portal" })).toHaveAttribute(
       "href",
-      `/portal/server/${serverId}/library`,
+      `/portal/meetings?scope=guild&serverId=${serverId}`,
     );
   });
 
@@ -145,7 +145,7 @@ describe("Join page", () => {
     expect(screen.queryByRole("link", { name: "View recording" })).toBeNull();
     expect(screen.getByRole("link", { name: "Open portal" })).toHaveAttribute(
       "href",
-      `/portal/server/${otherServerId}/library`,
+      `/portal/meetings?scope=guild&serverId=${otherServerId}`,
     );
   });
 

@@ -1,6 +1,6 @@
+import { resolveAttendeeAccessEnabled } from "../../services/attendeeAccessSetting";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { CONFIG_KEYS } from "../../config/keys";
 import { config } from "../../services/configService";
 import {
   ensureManageGuildWithUserToken,
@@ -14,10 +14,6 @@ import {
 import { authedProcedure, router } from "../trpc";
 import { getMeetingHistoryService } from "../../services/meetingHistoryService";
 import { retryNotionAutomationExport } from "../../services/notionAutomationService";
-import {
-  getSnapshotBoolean,
-  resolveConfigSnapshot,
-} from "../../services/unifiedConfigService";
 import {
   exportMeetingToNotion,
   getEffectiveMeetingNotionExportStatus,
@@ -144,22 +140,6 @@ const ensureAutomationStatusScope = async (params: {
     return;
   }
   await ensureGuildMemberScope(params);
-};
-
-const resolveAttendeeAccessEnabled = async (guildId: string) => {
-  try {
-    const snapshot = await resolveConfigSnapshot({ guildId });
-    return getSnapshotBoolean(
-      snapshot,
-      CONFIG_KEYS.meetings.attendeeAccessEnabled,
-    );
-  } catch (error) {
-    console.warn("Failed to resolve attendee access setting", {
-      guildId,
-      error,
-    });
-    return true;
-  }
 };
 
 const toTrpcNotionError = (err: unknown): TRPCError => {

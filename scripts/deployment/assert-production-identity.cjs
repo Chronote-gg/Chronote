@@ -1,19 +1,29 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
+// Each production role pairs with exactly one session naming scheme.
+const pairings = [
+  {
+    role: "-github-deploy",
+    session: /^chronote-production-[1-9]\d*-[1-9]\d*$/,
+  },
+  { role: "-prompt-guard", session: /^prompt-[1-9]\d*-[1-9]\d*$/ },
+];
 function assertProductionIdentity(actor, env = process.env) {
   const account = env.EXPECTED_ACCOUNT_ID;
   const role = env.EXPECTED_ROLE_ARN;
   const session = env.EXPECTED_SESSION_NAME;
   assert.match(account, /^\d{12}$/);
+  const pairing = pairings.find((p) => role.endsWith(p.role));
+  assert.ok(pairing);
   assert.match(
     role,
     new RegExp(
-      `^arn:aws:iam::${account}:role/[A-Za-z0-9_+=,.@/-]+-github-deploy$`,
+      `^arn:aws:iam::${account}:role/[A-Za-z0-9_+=,.@/-]+${pairing.role}$`,
     ),
   );
   assert.ok(!/sandbox|rehearsal/i.test(role));
-  assert.match(session, /^chronote-production-[1-9]\d*-[1-9]\d*$/);
+  assert.match(session, pairing.session);
   assert.equal(actor.Account, account);
   assert.equal(
     actor.Arn,

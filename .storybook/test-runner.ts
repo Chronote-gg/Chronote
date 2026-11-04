@@ -23,6 +23,30 @@ const config: TestRunnerConfig = {
     await page.waitForTimeout(150);
     if (
       [
+        "meetings-unified--mobile",
+        "meetings-unified--tablet",
+        "meetings-unified--long-sources",
+      ].includes(context.id)
+    ) {
+      const content = page.getByTestId("meeting-browse-scroll");
+      await page.getByTestId("library-meeting-row").first().waitFor();
+      const metrics = await content.evaluate((element) => {
+        element.scrollTop = 100;
+        const result = {
+          height: element.scrollHeight,
+          client: element.clientHeight,
+          top: element.scrollTop,
+        };
+        element.scrollTop = 0;
+        return result;
+      });
+      assert.ok(
+        metrics.height > metrics.client && metrics.top > 0,
+        "The production Meetings content must scroll",
+      );
+    }
+    if (
+      [
         "pages-upgradeplans--billing-plan-change-mobile",
         "pages-upgradeplans--renewal-grace-scheduled-mobile",
       ].includes(context.id)

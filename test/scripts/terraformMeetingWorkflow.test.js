@@ -9,12 +9,54 @@ import {
   invocation,
 } from "../fixtures/deployment/terraformWorkflow.js";
 import { meetingUpdatePlan } from "../fixtures/deployment/terraformMeetingUpdate.js";
+import {
+  nativeMeetingPlan,
+  installationRecords,
+  copyModelSource,
+} from "../fixtures/deployment/terraformMeetingNative.js";
+import {
+  quietSandboxPlan,
+  tableAddress,
+} from "../fixtures/deployment/processingRetryPlan.js";
 const sandbox = {
   ...invocation,
   environment: "sandbox",
   workspace: "sandbox",
   scope: "meeting-update-delivery",
 };
+// Clears the plan workspace like a fresh runner, then applies the reviewed bundle.
+async function applySandbox(f, planOptions, plan, beforeApply) {
+  const reference = JSON.parse(
+    readFileSync(
+      join(planOptions.privateDirectory, "bundle-reference.json"),
+      "utf8",
+    ),
+  );
+  for (const name of readdirSync(join(f.directory, "_infra")))
+    if (
+      ![".terraform.lock.hcl", "terraform.auto.tfvars.json"].includes(name) &&
+      !/\.tf(?:\.json)?$/.test(name)
+    )
+      rmSync(join(f.directory, "_infra", name));
+  beforeApply();
+  const { scope } = planOptions.invocation;
+  f.controls.applyTitle = `Terraform Apply sandbox/sandbox/${scope} plan=10 plan-sha=${plan.planSha256} bundle-sha=${plan.bundleSha256}`;
+  return runTerraform({
+    ...f.options({
+      ...sandbox,
+      sourceSha: planOptions.invocation.sourceSha,
+      scope,
+      workflowPath: ".github/workflows/terraform-apply.yml",
+      runId: "20",
+    }),
+    producerRunId: "10",
+    command: planOptions.command,
+    artifactName: "terraform-plan-sandbox-sandbox-10",
+    reference,
+    planSha256: plan.planSha256,
+    bundleSha256: plan.bundleSha256,
+  });
+}
 test.each([
   "none",
   "plan-delta",
@@ -22,6 +64,8 @@ test.each([
   "missing-workspace",
   "plan-data-source",
   "apply-data-source",
+  "plan-known-warm",
+  "apply-known-warm",
 ])(
   "delivery boundary %s uses a private rendering of the exact saved plan",
   async (fault) => {
@@ -47,12 +91,28 @@ test.each([
         },
       });
     if (fault === "plan-data-source") injectData();
+    const injectKnownWarm = () => {
+      for (const phase of ["before", "after"])
+        f.controls.planJson.resource_changes[0].change[
+          phase
+        ].global_secondary_index.find(
+          (index) => index.name === "GuildTimestampIndex",
+        ).warm_throughput = [
+          { read_units_per_second: 1, write_units_per_second: 1 },
+        ];
+    };
+    if (fault === "plan-known-warm") injectKnownWarm();
     const planRejected = [
       "plan-delta",
       "plan-data-source",
       "missing-workspace",
+      "plan-known-warm",
     ].includes(fault);
-    const applyRejected = ["apply-delta", "apply-data-source"].includes(fault);
+    const applyRejected = [
+      "apply-delta",
+      "apply-data-source",
+      "apply-known-warm",
+    ].includes(fault);
     try {
       const planOptions = f.options(sandbox);
       const plan = await runTerraform(planOptions);
@@ -79,34 +139,13 @@ test.each([
       expect(JSON.stringify(plan)).not.toMatch(
         /MeetingHistory|123456789012|bucket|versionId/,
       );
-      const reference = JSON.parse(
-        readFileSync(
-          join(planOptions.privateDirectory, "bundle-reference.json"),
-          "utf8",
-        ),
-      );
-      for (const name of readdirSync(join(f.directory, "_infra")))
-        if (
-          ![".terraform.lock.hcl", "terraform.auto.tfvars.json"].includes(name)
-        )
-          rmSync(join(f.directory, "_infra", name));
-      if (fault === "apply-delta")
-        f.controls.planJson.resource_changes[1].change.after.tags = {
-          unreviewed: "true",
-        };
-      if (fault === "apply-data-source") injectData();
-      f.controls.applyTitle = `Terraform Apply sandbox/sandbox/meeting-update-delivery plan=10 plan-sha=${plan.planSha256} bundle-sha=${plan.bundleSha256}`;
-      const result = await runTerraform({
-        ...f.options({
-          ...sandbox,
-          workflowPath: ".github/workflows/terraform-apply.yml",
-          runId: "20",
-        }),
-        producerRunId: "10",
-        artifactName: "terraform-plan-sandbox-sandbox-10",
-        reference,
-        planSha256: plan.planSha256,
-        bundleSha256: plan.bundleSha256,
+      const result = await applySandbox(f, planOptions, plan, () => {
+        if (fault === "apply-delta")
+          f.controls.planJson.resource_changes[1].change.after.tags = {
+            unreviewed: "true",
+          };
+        if (fault === "apply-data-source") injectData();
+        if (fault === "apply-known-warm") injectKnownWarm();
       });
       expect(result.status).toBe(applyRejected ? "refused" : "applied");
       expect(
@@ -128,9 +167,14 @@ test.each([
 
 test.each(
   ["plan", "apply"].flatMap((mode) =>
-    ["full", "purchase-permission", "deployment-prerequisites", undefined].map(
-      (scope) => [mode, scope],
-    ),
+    [
+      "full",
+      "purchase-permission",
+      "deployment-prerequisites",
+      "deployment-runtime",
+      "site-delivery",
+      undefined,
+    ].map((scope) => [mode, scope]),
   ),
 )(
   "direct Sandbox %s refuses scope %s before storage, native metadata or commands",
@@ -172,4 +216,90 @@ test.each(
       rmSync(f.directory, { recursive: true, force: true });
     }
   },
+);
+
+test.each([
+  ["applies", false],
+  ["refuses a restored plan with a second new index", true],
+])("Sandbox processing retry %s", async (_name, drift) => {
+  const f = fixture();
+  f.controls.environment = "sandbox";
+  f.controls.planJson = quietSandboxPlan();
+  const retry = { ...sandbox, scope: "processing-retry" };
+  try {
+    const planOptions = f.options(retry);
+    const plan = await runTerraform(planOptions);
+    expect(plan.status).toBe("planned-changes");
+    const result = await applySandbox(f, planOptions, plan, () => {
+      if (!drift) return;
+      const indexes = f.controls.planJson.resource_changes.find(
+        (r) => r.address === tableAddress,
+      ).change.after.global_secondary_index;
+      indexes.push({ ...indexes.at(-1), name: "UnreviewedIndex" });
+    });
+    expect(result.status).toBe(drift ? "refused" : "applied");
+    expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
+      drift ? 0 : 1,
+    );
+  } finally {
+    rmSync(f.directory, { recursive: true, force: true });
+  }
+});
+
+// Real Git source checks run for both Plan and restored Apply.
+test.each([
+  "none",
+  "omit-installation",
+  "wrong-provider",
+  "missing-source",
+  "wrong-run-source",
+])(
+  "native delivery workflow %s",
+  async (fault) => {
+    const f = fixture();
+    f.controls.environment = "sandbox";
+    f.controls.planJson = nativeMeetingPlan();
+    const sourceSha = copyModelSource(f.directory);
+    f.controls.producerSha = sourceSha;
+    f.controls.applySha = sourceSha;
+    if (fault === "missing-source") rmSync(join(f.directory, "_infra/main.tf"));
+    try {
+      const options = f.options({ ...sandbox, sourceSha });
+      const command = options.command;
+      options.command = async (...args) => {
+        const record = await command(...args);
+        if (record.command === "terraform" && record.args[1] === "version") {
+          const data = JSON.parse(
+            Buffer.from(installationRecords()[1].stdout, "base64").toString(),
+          );
+          if (fault === "omit-installation") delete data.provider_selections;
+          if (fault === "wrong-provider")
+            data.provider_selections["registry.terraform.io/hashicorp/aws"] =
+              "6.69.1";
+          record.stdout = Buffer.from(JSON.stringify(data)).toString("base64");
+        }
+        return record;
+      };
+      if (fault === "wrong-run-source") f.controls.producerSha = "0".repeat(40);
+      const result = await runTerraform(options);
+      if (fault === "none" && result.status !== "planned-changes")
+        throw new Error(
+          readFileSync(join(options.privateDirectory, "failure.txt"), "utf8"),
+        );
+      expect(result.status).toBe(
+        fault === "none" ? "planned-changes" : "failed",
+      );
+      expect(
+        readdirSync(options.privateDirectory).includes("bundle-reference.json"),
+      ).toBe(fault === "none");
+      expect(f.commands.some((c) => c.args[1] === "apply")).toBe(false);
+      if (fault === "none") {
+        const applied = await applySandbox(f, options, result, () => {});
+        expect(applied.status).toBe("applied");
+      }
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+  30000,
 );

@@ -152,3 +152,33 @@ test("personal terminal fields omit canonical generation when a newer action alr
   expect(fields).not.toHaveProperty("notesVersion");
   expect(fields).not.toHaveProperty("updateDelivery");
 });
+
+test("canonical edits begun after publication acquisition are rejected without changing notes", async () => {
+  const row = {
+    ...history(),
+    status: "interrupted" as const,
+    notesVersion: 1,
+    publicationRepair: {
+      kind: "running" as const,
+      purpose: "first_publication" as const,
+      runId: "first-publication",
+      previewDigest: "a".repeat(64),
+      receiptKey: "authority",
+      snapshot: "b".repeat(64),
+    },
+  };
+  getMockStore().meetingHistoryByGuild.set(key.guildId, [row]);
+  const before = JSON.stringify(row);
+  expect(
+    await updateMeetingNotesService({
+      ...key,
+      notes: "Racing edit",
+      notesVersion: 2,
+      editedBy: "synthetic",
+      expectedPreviousVersion: 1,
+    }),
+  ).toBe(false);
+  expect(
+    JSON.stringify(getMockStore().meetingHistoryByGuild.get(key.guildId)?.[0]),
+  ).toBe(before);
+});
