@@ -12,6 +12,12 @@ export type RollingUsageWindow = {
   meetings: MeetingHistory[];
 };
 
+// Metered time has to correspond to something recorded. A missing outcome is
+// unknown rather than empty, so it still counts.
+function isMeteredMeeting(meeting: MeetingHistory): boolean {
+  return meeting.processing?.transcription !== "empty";
+}
+
 export function sumMeetingSecondsInWindow(
   meetings: MeetingHistory[],
   windowStartMs: number,
@@ -22,6 +28,7 @@ export function sumMeetingSecondsInWindow(
     const ts = Date.parse(meeting.timestamp);
     if (Number.isNaN(ts)) return total;
     if (ts < windowStartMs || ts > windowEndMs) return total;
+    if (!isMeteredMeeting(meeting)) return total;
     return total + (meeting.duration ?? 0);
   }, 0);
 }
@@ -41,6 +48,7 @@ export function getNextAvailableAt(
     }))
     .filter((meeting) => !Number.isNaN(meeting.timestampMs))
     .filter((meeting) => meeting.timestampMs >= windowStartMs)
+    .filter(isMeteredMeeting)
     .sort((a, b) => a.timestampMs - b.timestampMs);
 
   const totalSeconds = windowMeetings.reduce(

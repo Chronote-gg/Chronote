@@ -28,7 +28,10 @@ test("attestation inserts the row only where none exists, bound to a quiet runti
   );
   const check = runtime.ConditionCheck!;
   expect(Object.values(check.ExpressionAttributeNames!)).toEqual(
-    expect.arrayContaining(["workCounts", "recording", "pending_admission"]),
+    expect.arrayContaining(["workCounts", "recording"]),
+  );
+  expect(Object.values(check.ExpressionAttributeNames!)).not.toContain(
+    "pending_admission",
   );
   expect(check.ConditionExpression).toContain("heartbeatAt > :legacyFresh");
   expect(control.ConditionCheck!.ConditionExpression).not.toContain(
@@ -38,7 +41,6 @@ test("attestation inserts the row only where none exists, bound to a quiet runti
 
 test.each([
   ["recording", { ...counts(1) }],
-  ["a different pending admission", { ...counts(), pending_admission: 2 }],
   ["no counters", undefined],
 ])("attestation refuses a source reporting %s", (_reason, workCounts) => {
   const f = fixture();
@@ -135,21 +137,15 @@ test("the runtime protocol refuses every write on an attested row", () => {
   ).toThrow(/coordinator-owned/);
 });
 
-test("an attested pending admission count is required unchanged and natively", () => {
+test("a pending admission count different from the attested one does not refuse", () => {
   const f = fixture();
   const pending = artifactSafetyRecordSchema.parse({
     ...f.attested,
     attestation: { ...f.attested.attestation, pendingAdmission: 2 },
   });
   const input = f.write("attest", undefined, pending);
-  input.runtime = {
-    ...f.source,
-    workCounts: { ...counts(), pending_admission: 2 },
-  };
-  const check = items(input, f.tables)[1].ConditionCheck!;
-  expect(Object.values(unmarshall(check.ExpressionAttributeValues!))).toEqual(
-    expect.arrayContaining([0, 2]),
-  );
+  input.runtime = { ...f.source, workCounts: counts() };
+  expect(() => items(input, f.tables)).not.toThrow();
 });
 
 test("non-cancel writes require the runtime's published native protection", () => {
