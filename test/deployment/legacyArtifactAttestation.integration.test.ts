@@ -89,14 +89,14 @@ test("attest, request, seal and consume commit natively and advance warming", as
   expect((await get("CONTROL"))?.deployment.phase).toBe("warming");
 });
 
-test.each([
-  ["recording", counts(1)],
-  ["changed pending_admission", { ...counts(), pending_admission: 1 }],
-])("a stored %s count refuses attestation natively", async (_kind, stored) => {
-  const f = await setup(stored);
-  await expect(transact(attestation(f))).rejects.toThrow();
-  expect(await get(f.attested.sk)).toBeUndefined();
-});
+test.each([["recording", counts(1)]])(
+  "a stored %s count refuses attestation natively",
+  async (_kind, stored) => {
+    const f = await setup(stored);
+    await expect(transact(attestation(f))).rejects.toThrow();
+    expect(await get(f.attested.sk)).toBeUndefined();
+  },
+);
 
 test("a lapsed published native protection refuses attestation natively", async () => {
   const f = await setup();

@@ -159,28 +159,27 @@ function createLegacyAttestation(deps) {
     });
     return legacy.uncoveredLegacyMeetings(meetings, capturedAt).length;
   }
-  function assertQuiet(row, pendingAdmission) {
+  function assertQuiet(row) {
     const counts = row.workCounts;
     if (
       row.role !== "serving" ||
       row.heartbeatAt <= now() - types.ARTIFACT_PROOF_SECONDS ||
       counts?.recording !== 0 ||
-      !Number.isSafeInteger(counts.pending_admission) ||
-      (pendingAdmission !== undefined &&
-        counts.pending_admission !== pendingAdmission)
+      !Number.isSafeInteger(counts.pending_admission)
     )
       refuse(
         "Legacy source is recording, admitting new work or not heartbeating",
       );
   }
   /**
-   * Refuses unless the source is still serving, records nothing, holds the
-   * attested pending admission count (once attested) and ran no meeting the
-   * copy could miss.
+   * Refuses unless the source is still serving, records nothing and ran no
+   * meeting the copy could miss. Pending admission is not compared: it counts
+   * short non-session work claims, and any admitted meeting is caught by the
+   * lease and history checks.
    */
-  async function guard(identity, capturedAt, pendingAdmission) {
+  async function guard(identity, capturedAt) {
     const row = await runtime(identity);
-    assertQuiet(row, pendingAdmission);
+    assertQuiet(row);
     if (await newerLeases(identity, capturedAt))
       refuse("A meeting started on the legacy source after its backup");
     if (await uncoveredMeetings(identity, capturedAt))
@@ -192,11 +191,7 @@ function createLegacyAttestation(deps) {
   /** The seal-time recheck: the guard again, and the manifest still unchanged. */
   async function recheck(row) {
     const { attestation } = row;
-    await guard(
-      row.identity,
-      attestation.capturedAt,
-      attestation.pendingAdmission,
-    );
+    await guard(row.identity, attestation.capturedAt);
     if (
       (await manifest(attestation.manifestUri)).sha256 !==
       attestation.manifestSha256

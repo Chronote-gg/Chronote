@@ -188,30 +188,36 @@ test("legacy prepare seals the attested inventory and consumes it with warming",
   expect(f.writes()).toBe(4);
 });
 
-test.each([
-  ["pending_admission", /quiet serving runtime/, "attested_legacy"],
-  ["lease", /after its backup/, "requested"],
-])(
-  "legacy prepare refuses when %s changed after attestation",
-  async (change, message, state) => {
-    const f = legacyFixture();
-    await f.coordinator.attestPreservation();
-    if (change === "lease")
-      f.state.leases.push({
-        ownerInstanceId: "old",
-        createdAt: new Date(1_000_000).toISOString(),
-      });
-    else f.state.rows.old.workCounts = { ...counts(), pending_admission: 1 };
-    await expect(f.coordinator.prepare()).rejects.toThrow(message);
-    expect(f.state.launched).toBe(false);
-    expect(f.state.artifacts.get("old")?.state).toBe(state);
-    await expect(f.coordinator.cancelPreparation()).resolves.toEqual({
-      kind: "cancelled",
-    });
-    expect(f.state.artifacts.get("old")?.state).toBe("attested_legacy");
-    expect(f.state.ctl.deployment?.phase).toBe("complete");
-  },
-);
+/** Attests, then records a meeting lease newer than the backup and expects prepare to refuse. */
+async function attestThenRefuseNewerLease(f: ReturnType<typeof legacyFixture>) {
+  await f.coordinator.attestPreservation();
+  f.state.leases.push({
+    ownerInstanceId: "old",
+    createdAt: new Date(1_000_000).toISOString(),
+  });
+  await expect(f.coordinator.prepare()).rejects.toThrow(/after its backup/);
+}
+
+test("legacy prepare refuses when a lease appeared after attestation", async () => {
+  const f = legacyFixture();
+  await attestThenRefuseNewerLease(f);
+  expect(f.state.launched).toBe(false);
+  expect(f.state.artifacts.get("old")?.state).toBe("requested");
+  await expect(f.coordinator.cancelPreparation()).resolves.toEqual({
+    kind: "cancelled",
+  });
+  expect(f.state.artifacts.get("old")?.state).toBe("attested_legacy");
+  expect(f.state.ctl.deployment?.phase).toBe("complete");
+});
+
+test("legacy prepare refuses a source that started recording after attestation", async () => {
+  const f = legacyFixture();
+  await f.coordinator.attestPreservation();
+  f.state.rows.old.workCounts = counts(1);
+  await expect(f.coordinator.prepare()).rejects.toThrow(/quiet/);
+  expect(f.state.launched).toBe(false);
+  expect(f.state.artifacts.get("old")?.state).toBe("attested_legacy");
+});
 
 test("legacy cancellation refuses once a candidate task exists", async () => {
   const f = legacyFixture();
@@ -253,22 +259,18 @@ test("settled and pre-window meetings do not block attestation", async () => {
   });
 });
 
-test("an unchanged pending admission count is tolerated through launch", async () => {
+test("a fluctuating pending admission count is tolerated through launch", async () => {
   const f = legacyFixture();
   f.state.rows.old.workCounts = { ...counts(), pending_admission: 1 };
   await f.coordinator.attestPreservation();
   expect(f.state.artifacts.get("old")?.attestation?.pendingAdmission).toBe(1);
+  f.state.rows.old.workCounts = { ...counts(), pending_admission: 0 };
   await expect(f.coordinator.prepare()).resolves.toEqual({ kind: "warming" });
 });
 
 test("attesting a source mid-preparation points at cancel-preparation", async () => {
   const f = legacyFixture();
-  await f.coordinator.attestPreservation();
-  f.state.leases.push({
-    ownerInstanceId: "old",
-    createdAt: new Date(1_000_000).toISOString(),
-  });
-  await expect(f.coordinator.prepare()).rejects.toThrow(/after its backup/);
+  await attestThenRefuseNewerLease(f);
   await expect(f.coordinator.attestPreservation()).rejects.toThrow(
     /run cancel-preparation first/,
   );
@@ -287,20 +289,41 @@ test("a manifest changed after attestation refuses the seal", async () => {
   expect(f.state.artifacts.get("old")?.state).toBe("requested");
 });
 
-test("a lapsed attested seal is renewed after a lost consume", async () => {
-  const f = legacyFixture();
-  await f.coordinator.attestPreservation();
+/** Fails the first consume write once and counts every consume attempt. */
+function loseFirstConsume(f: ReturnType<typeof legacyFixture>) {
   const original = f.aws.getMockImplementation()!;
-  let lose = true;
+  const attempts = { consume: 0 };
   f.aws.mockImplementation(async (service, operation, input) => {
     const put = (input as { TransactItems?: Array<{ Put?: { Item: never } }> })
       .TransactItems?.[0]?.Put;
-    if (lose && put && unmarshall(put.Item).state === "consumed") {
-      lose = false;
-      throw new Error("transient failure");
+    if (put && unmarshall(put.Item).state === "consumed") {
+      attempts.consume++;
+      if (attempts.consume === 1) throw new Error("transient failure");
     }
     return original(service, operation, input);
   });
+  return attempts;
+}
+
+test("a resumed unexpired attested seal rechecks the guard before consuming", async () => {
+  const f = legacyFixture();
+  await f.coordinator.attestPreservation();
+  const attempts = loseFirstConsume(f);
+  await expect(f.coordinator.prepare()).rejects.toThrow(/AWS operation failed/);
+  expect(f.state.artifacts.get("old")?.state).toBe("sealed");
+  f.state.leases.push({
+    ownerInstanceId: "old",
+    createdAt: new Date(1_000_000).toISOString(),
+  });
+  await expect(f.coordinator.prepare()).rejects.toThrow(/after its backup/);
+  expect(f.state.artifacts.get("old")?.state).toBe("sealed");
+  expect(attempts.consume).toBe(1);
+});
+
+test("a lapsed attested seal is renewed after a lost consume", async () => {
+  const f = legacyFixture();
+  await f.coordinator.attestPreservation();
+  loseFirstConsume(f);
   await expect(f.coordinator.prepare()).rejects.toThrow(/AWS operation failed/);
   expect(f.state.artifacts.get("old")?.state).toBe("sealed");
   f.state.rows.old.heartbeatAt = 1100;
