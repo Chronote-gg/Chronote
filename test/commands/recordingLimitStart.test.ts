@@ -22,8 +22,12 @@ import {
   encounterRecordingLimit,
   notifyRecordingLimit,
 } from "../../src/services/recordingLimitService";
-import { getGuildLimits } from "../../src/services/subscriptionService";
+import {
+  getGuildLimits,
+  getLimitsForTier,
+} from "../../src/services/subscriptionService";
 import { initializeMeeting } from "../../src/meetings";
+import { MAXIMUM_MEETING_DURATION } from "../../src/constants";
 import type {
   Client,
   Guild,
@@ -39,6 +43,7 @@ const guild = {
 const textChannel = { send: jest.fn() } as unknown as TextChannel;
 const voiceChannel = { id: "voice-1", guild } as VoiceBasedChannel;
 const client = { user: { id: "bot-1" } } as Client;
+const ROLLING_CAP_ABOVE_RECORDED_USAGE_MINUTES = 10_000;
 const creator = { id: "actor-1" } as User;
 beforeEach(() => {
   jest.clearAllMocks();
@@ -137,4 +142,36 @@ test("auto refusal passes a real trigger to the shared delivery policy", async (
     textChannel,
   );
   expect(initializeMeeting).not.toHaveBeenCalled();
+});
+
+test("an auto start enforces the tier per-meeting cap instead of the global maximum", async () => {
+  const freeLimits = getLimitsForTier("free");
+  mockFreeGuildLimits(ROLLING_CAP_ABOVE_RECORDED_USAGE_MINUTES);
+  jest.mocked(initializeMeeting).mockResolvedValue({
+    guildId: guild.id,
+    meetingId: "auto-1",
+    voiceChannel,
+    textChannel,
+    startTime: new Date("2026-10-16T00:00:00Z"),
+  } as never);
+  jest
+    .mocked(textChannel.send)
+    .mockResolvedValue({ id: "start-message" } as never);
+
+  await expect(
+    handleAutoStartMeeting(client, voiceChannel, textChannel, {
+      startTriggeredByUserId: creator.id,
+    }),
+  ).resolves.toBe(true);
+
+  expect(freeLimits.maxMeetingDurationMs).toBeLessThan(
+    MAXIMUM_MEETING_DURATION,
+  );
+  expect(initializeMeeting).toHaveBeenCalledWith(
+    expect.objectContaining({
+      isAutoRecording: true,
+      maxMeetingDurationMs: freeLimits.maxMeetingDurationMs,
+      maxMeetingDurationPretty: freeLimits.maxMeetingDurationPretty,
+    }),
+  );
 });
