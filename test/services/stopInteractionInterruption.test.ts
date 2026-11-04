@@ -161,9 +161,16 @@ describe.each(["button", "leave", "context"] as const)(
         // A stop that cannot settle must still tell the user something.
         expect(
           interaction.reply.mock.calls.length +
-            interaction.editReply.mock.calls.length,
+            interaction.editReply.mock.calls.length +
+            interaction.followUp.mock.calls.length,
         ).toBe(outcome === "duplicate" ? 0 : 1);
-        expect(interaction.followUp).not.toHaveBeenCalled();
+        // A deferred update's editReply would overwrite the control message
+        // the whole channel sees, so that notice has to follow up instead.
+        const deferredUpdate =
+          route === "button" && deferred && outcome !== "already_deferred";
+        expect(interaction.followUp.mock.calls.length).toBe(
+          deferredUpdate ? 1 : 0,
+        );
         expect(mockStopEnvironment.reconcile).not.toHaveBeenCalled();
         cleanup.release();
         const interruption = getMeetingInterruptionCheckpoints().find(
