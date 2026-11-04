@@ -16,6 +16,7 @@ import {
   invocation,
 } from "../fixtures/deployment/terraformWorkflow.js";
 import { dispatchTerraform } from "../fixtures/deployment/terraformDispatch.js";
+import { artifactIamFixture } from "../fixtures/deployment/artifactIamPlan.js";
 import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
 import { meetingUpdatePlan } from "../fixtures/deployment/terraformMeetingUpdate.js";
 import { sitePlan } from "../fixtures/deployment/sitePlan.js";
@@ -703,6 +704,66 @@ test.each(["missing-type", "before-apply", "after-apply"])(
         fault === "after-apply" ? 1 : 0,
       );
       expect(bundleReads).toHaveLength(fault === "missing-type" ? 0 : 1);
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["sandbox", "production"])(
+  "artifact IAM %s saved plan revalidates and checks capacity before apply",
+  async (environment) => {
+    const f = fixture(),
+      a = artifactIamFixture(environment);
+    const current = {
+      ...invocation,
+      environment,
+      workspace: a.invocation.workspace,
+    };
+    f.controls.environment = environment;
+    f.controls.planJson = a.plan;
+    const original = f.options;
+    let capacityReads = 0;
+    f.options = (i) => {
+      const o = original(i);
+      o.env.GITHUB_VARS_JSON = JSON.stringify(a.variables);
+      o.env.TERRAFORM_TFVARS_JSON = JSON.stringify({
+        ...JSON.parse(o.env.TERRAFORM_TFVARS_JSON),
+        ...a.tfvars,
+      });
+      o.aws = async (service, operation, input) => {
+        expect(service).toBe("iam");
+        expect(operation).toBe("list-policy-versions");
+        expect(input.PolicyArn).toContain(a.variables.AWS_ACCOUNT_ID);
+        expect(f.commands.some((c) => c.args[1] === "apply")).toBe(false);
+        capacityReads++;
+        return { Versions: [{ VersionId: "v1", IsDefaultVersion: true }] };
+      };
+      return o;
+    };
+    try {
+      const { apply } = await planAndApply(
+        f,
+        {},
+        "artifact-preservation-iam",
+        runTerraform,
+        current,
+      );
+      expect(apply.status).toBe("applied");
+      expectRevalidated(f);
+      expect(capacityReads).toBe(1);
+      const args = f.commands.find((c) => c.args[1] === "plan").args;
+      expect(args).toContain("-target=aws_iam_policy.transcripts_s3_policy");
+      expect(args).toContain(
+        `-target=aws_iam_role_policy.${environment === "sandbox" ? "sandbox" : "production"}_deploy[0]`,
+      );
+      expect(
+        args.some(
+          (t) =>
+            t.includes("aws_ecs_service") ||
+            t.includes("aws_ecs_task_definition"),
+        ),
+      ).toBe(false);
     } finally {
       rmSync(f.directory, { recursive: true, force: true });
     }

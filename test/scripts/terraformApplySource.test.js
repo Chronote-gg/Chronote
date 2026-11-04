@@ -48,6 +48,9 @@ test("accepts a descendant whose changes leave Terraform inputs alone", async ()
 
 test.each([
   "_infra/main.tf",
+  "scripts/deployment/artifact-iam-session.cjs",
+  "scripts/deployment/validate-artifact-iam-plan.cjs",
+  "scripts/deployment/artifact-iam-model.cjs",
   "_infra/functions/frontend-route-rewrite.js",
   "scripts/deployment/terraform-workflow.cjs",
   "patches/@discordjs+voice+0.19.0.patch",

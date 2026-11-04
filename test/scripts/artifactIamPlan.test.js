@@ -70,7 +70,7 @@ test.each(["bound", "source_changed", "relevant_unknown", "catalog_missing"])(
         "var.ENABLE_API_ALB",
       ].includes(address.to_display);
       return {
-        address: structuredClone(address),
+        address: JSON.parse(JSON.stringify(address)),
         status: passed ? "pass" : "unknown",
         ...(passed
           ? {
@@ -312,4 +312,10 @@ test("policy JSON ordering does not add permission", () => {
     r.change.after.policy = JSON.stringify(p, null, 2);
   }
   expect(validate(f).result).toBe("accepted");
+});
+
+test("missing relevant checks cannot bypass the artifact scope", () => {
+  const f = artifactIamFixture();
+  f.plan.checks = [];
+  expect(() => validate(f)).toThrow(/Missing required artifact IAM check/);
 });

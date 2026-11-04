@@ -30,6 +30,7 @@ on:
           - deployment-prerequisites
           - deployment-runtime
           - site-delivery
+          - artifact-preservation-iam
           - sandbox-site-permissions
           - processing-retry
 
@@ -70,7 +71,7 @@ jobs:
         if: ${{ inputs.github_environment == 'production' }}
         env:
           PLAN_SCOPE: ${{ inputs.plan_scope }}
-        run: test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery || test "$PLAN_SCOPE" = processing-retry
+        run: test "$PLAN_SCOPE" = artifact-preservation-iam || test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery || test "$PLAN_SCOPE" = processing-retry
       - name: Mask production Plan identity
         id: plan-identity
         if: ${{ inputs.github_environment == 'production' }}
@@ -88,8 +89,28 @@ jobs:
           TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
           GITHUB_VARS_JSON: ${{ toJSON(vars) }}
         run: node scripts/deployment/terraform-plan-identity.cjs --validate
+      - name: Prepare artifact IAM session
+        id: artifact-iam-session
+        if: ${{ inputs.plan_scope == 'artifact-preservation-iam' }}
+        env:
+          TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
+          TERRAFORM_TFVARS_JSON: ${{ secrets.TERRAFORM_TFVARS_JSON }}
+          GITHUB_VARS_JSON: ${{ toJSON(vars) }}
+        run: node scripts/deployment/artifact-iam-session.cjs
+      - name: Configure artifact IAM credentials
+        if: ${{ inputs.plan_scope == 'artifact-preservation-iam' }}
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.TERRAFORM_AWS_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: artifact-IAM-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 3600
+          unset-current-credentials: true
+          mask-aws-account-id: true
+          inline-session-policy: ${{ steps.artifact-iam-session.outputs.policy }}
       - name: Configure production AWS credentials
-        if: ${{ inputs.github_environment == 'production' }}
+        if: ${{ (inputs.github_environment == 'production') && inputs.plan_scope != 'artifact-preservation-iam' }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.TERRAFORM_AWS_ROLE_ARN }}
@@ -101,7 +122,7 @@ jobs:
           mask-aws-account-id: true
           inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["dynamodb:Describe*","dynamodb:ListTagsOfResource","dynamodb:GetItem","iam:Get*","iam:List*","kms:Describe*","kms:Get*","kms:List*","s3:ListBucket","s3:GetBucket*","s3:GetEncryptionConfiguration","s3:GetLifecycleConfiguration","ec2:Describe*","elasticloadbalancing:Describe*","ecs:Describe*","ecs:ListTagsForResource","acm:Describe*","acm:ListTagsForCertificate","route53:Get*","route53:List*","s3:GetAccelerateConfiguration","s3:GetReplicationConfiguration","secretsmanager:DescribeSecret","secretsmanager:GetResourcePolicy","cloudfront:GetDistribution","cloudfront:DescribeFunction","cloudfront:GetFunction","cloudfront:GetOriginAccessControl","cloudfront:GetResponseHeadersPolicy","cloudfront:ListTagsForResource","logs:DescribeLogGroups","logs:DescribeMetricFilters","logs:ListTagsForResource","cloudwatch:DescribeAlarms","cloudwatch:ListTagsForResource","sns:GetTopicAttributes","sns:ListTagsForResource"],"Resource":"*"},{"Effect":"Allow","Action":["s3:GetObject"],"Resource":"arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/state"},{"Effect":"Allow","Action":["dynamodb:PutItem","dynamodb:DeleteItem"],"Resource":"arn:aws:dynamodb:us-east-1:${{ vars.AWS_ACCOUNT_ID }}:table/meeting-notes-terraform-state-locks"},{"Effect":"Allow","Action":["s3:PutObject","s3:GetObjectVersion"],"Resource":"arn:aws:s3:::meeting-notes-prod-private-evidence-${{ vars.AWS_ACCOUNT_ID }}/terraform/production/*"},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"],"Resource":"arn:aws:kms:us-east-1:${{ vars.AWS_ACCOUNT_ID }}:key/*"}]}'
       - name: Configure Sandbox AWS credentials
-        if: ${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' }}
+        if: ${{ (inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions') && inputs.plan_scope != 'artifact-preservation-iam' }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.TERRAFORM_AWS_ROLE_ARN }}
@@ -112,7 +133,7 @@ jobs:
           unset-current-credentials: true
           inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["dynamodb:Describe*","dynamodb:ListTagsOfResource","iam:Get*","iam:List*","kms:Describe*","kms:Get*","kms:List*","s3:ListBucket","s3:GetBucket*","s3:GetEncryptionConfiguration","s3:GetLifecycleConfiguration"],"Resource":"*"},{"Effect":"Allow","Action":["s3:GetObject"],"Resource":"arn:aws:s3:::*/meeting-notes-terraform/sandbox/meeting-notes-terraform/state"},{"Effect":"Allow","Action":["dynamodb:GetItem","dynamodb:PutItem","dynamodb:DeleteItem"],"Resource":"arn:aws:dynamodb:us-east-1:*:table/*"},{"Effect":"Allow","Action":["s3:PutObject","s3:GetObjectVersion"],"Resource":"arn:aws:s3:::*/terraform/sandbox/*"},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"],"Resource":"arn:aws:kms:us-east-1:*:key/*"}]}'
       - name: Configure Sandbox site-permissions Plan credentials
-        if: ${{ inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions' }}
+        if: ${{ (inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions') && inputs.plan_scope != 'artifact-preservation-iam' }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.TERRAFORM_AWS_ROLE_ARN }}

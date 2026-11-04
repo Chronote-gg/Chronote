@@ -160,13 +160,15 @@ test.each(["plan", "apply"])(
       ...(mode === "apply"
         ? [
             "node scripts/deployment/validate-sandbox-site-permissions-plan.cjs --session",
+            "node scripts/deployment/artifact-iam-session.cjs",
             "node scripts/deployment/production-writer-guard.cjs --inspect",
           ]
         : [
-            'test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery || test "$PLAN_SCOPE" = processing-retry',
+            'test "$PLAN_SCOPE" = artifact-preservation-iam || test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery || test "$PLAN_SCOPE" = processing-retry',
             "node scripts/deployment/terraform-plan-identity.cjs",
             'test "$IDENTITY_MATCHES" = true',
             "node scripts/deployment/terraform-plan-identity.cjs --validate",
+            "node scripts/deployment/artifact-iam-session.cjs",
           ]),
       "set +x\nnode scripts/deployment/terraform-dispatch.cjs\n",
     ]);
@@ -451,7 +453,8 @@ test("production Plan uses the reviewed OIDC read, lock and capture session", ()
   const job = workflow.jobs.plan;
   const production = job.steps.find(
     (step) =>
-      step.if === "${{ inputs.github_environment == 'production' }}" &&
+      step.if ===
+        "${{ (inputs.github_environment == 'production') && inputs.plan_scope != 'artifact-preservation-iam' }}" &&
       step.with?.["role-to-assume"],
   );
   expect(production.with).toMatchObject({
@@ -526,12 +529,14 @@ test.each(["plan", "apply"])(
           s.with?.["role-to-assume"] ===
           "${{ vars.PRODUCTION_APPLY_ROLE_ARN }}",
       );
-      expect(production.if).toBe("inputs.github_environment == 'production'");
+      expect(production.if).toBe(
+        "${{ (inputs.github_environment == 'production') && inputs.plan_scope != 'artifact-preservation-iam' }}",
+      );
     }
     const condition =
       mode === "plan"
-        ? "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' }}"
-        : "${{ inputs.github_environment == 'sandbox' }}";
+        ? "${{ (inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions') && inputs.plan_scope != 'artifact-preservation-iam' }}"
+        : "${{ (inputs.github_environment == 'sandbox') && inputs.plan_scope != 'artifact-preservation-iam' }}";
     const oidc = steps.find(
       (s) =>
         s.with?.["role-to-assume"] === "${{ vars.TERRAFORM_AWS_ROLE_ARN }}" &&
@@ -625,10 +630,10 @@ test("Plan selects site-only extra bucket reads while legacy scopes retain exact
     (s) => s.name === "Configure Sandbox site-permissions Plan credentials",
   );
   expect(legacy.if).toBe(
-    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' }}",
+    "${{ (inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions') && inputs.plan_scope != 'artifact-preservation-iam' }}",
   );
   expect(site.if).toBe(
-    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions' }}",
+    "${{ (inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions') && inputs.plan_scope != 'artifact-preservation-iam' }}",
   );
   expect(
     createHash("sha256")
@@ -660,4 +665,67 @@ test("Plan selects site-only extra bucket reads while legacy scopes retain exact
   expect(
     Buffer.byteLength(site.with["inline-session-policy"]),
   ).toBeLessThanOrEqual(2048);
+});
+
+test.each([
+  ["sandbox", "sandbox"],
+  ["production", "default"],
+])("artifact IAM dispatch accepts %s/%s", (environment, workspace) => {
+  expect(
+    parseDispatch(env, {
+      ...event,
+      inputs: {
+        github_environment: environment,
+        terraform_workspace: workspace,
+        plan_scope: "artifact-preservation-iam",
+      },
+    }).invocation.scope,
+  ).toBe("artifact-preservation-iam");
+});
+
+test.each(["plan", "apply"])(
+  "%s artifact IAM credentials use pre-auth restricted session",
+  (phase) => {
+    const steps = parse(
+      readFileSync(`.github/workflows/terraform-${phase}.yml`, "utf8"),
+    ).jobs[phase].steps;
+    const prepare = steps.findIndex((s) => s.id === "artifact-iam-session");
+    expect(prepare).toBeGreaterThanOrEqual(0);
+    expect(steps[prepare].run).toBe(
+      "node scripts/deployment/artifact-iam-session.cjs",
+    );
+    const credentials = steps.findIndex(
+      (s) => s.name === "Configure artifact IAM credentials",
+    );
+    expect(credentials).toBeGreaterThan(prepare);
+    expect(steps[credentials].with["inline-session-policy"]).toBe(
+      "${{ steps.artifact-iam-session.outputs.policy }}",
+    );
+    for (const step of steps.filter(
+      (s) =>
+        s.uses?.startsWith("aws-actions/configure-aws-credentials@") &&
+        s.name !== "Configure artifact IAM credentials",
+    ))
+      expect(step.if).toContain(
+        "inputs.plan_scope != 'artifact-preservation-iam'",
+      );
+  },
+);
+test("production artifact dispatch refuses a feature branch before authentication", () => {
+  expect(() =>
+    parseDispatch(
+      {
+        ...env,
+        GITHUB_REF: "refs/heads/feature",
+        GITHUB_WORKFLOW_REF: env.GITHUB_WORKFLOW_REF.replace(
+          "refs/heads/master",
+          "refs/heads/feature",
+        ),
+      },
+      {
+        ...event,
+        inputs: { ...event.inputs, plan_scope: "artifact-preservation-iam" },
+      },
+    ),
+  ).toThrow();
 });

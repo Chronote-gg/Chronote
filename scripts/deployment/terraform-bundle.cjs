@@ -30,6 +30,7 @@ const invocationSchema = z
       "deployment-runtime",
       "site-delivery",
       "sandbox-site-permissions",
+      "artifact-preservation-iam",
       "processing-retry",
       "meeting-update-delivery",
     ]),
@@ -72,6 +73,7 @@ function parseInvocation(value) {
         "meeting-update-delivery",
         "processing-retry",
         "sandbox-site-permissions",
+        "artifact-preservation-iam",
       ].includes(parsed.scope),
       "Unsupported Sandbox scope",
     );

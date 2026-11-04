@@ -68,6 +68,11 @@ function artifactIamModelEvidence(plan, { directory, sourceSha, environment }) {
     assert.ok(declared, "Undeclared artifact IAM check");
     assert.deepEqual(check.address, declared);
   }
+  for (const name of requiredPass)
+    assert.ok(
+      checks.some((c) => c.address?.to_display === name && c.status === "pass"),
+      "Missing required artifact IAM check",
+    );
   let proof;
   if (checks.some((c) => c.status === "unknown")) {
     assert.ok(directory, "Source evidence required for unknown checks");

@@ -37,7 +37,17 @@ const {
   processingRetryTargets,
   validateProcessingRetryPlan,
 } = require("./validate-processing-retry-plan.cjs");
+const {
+  artifactIamBinding,
+  artifactIamTargets,
+  validateArtifactIamPlan,
+} = require("./validate-artifact-iam-plan.cjs");
+const { artifactIamObservationTargets } = require("./artifact-iam-model.cjs");
+const {
+  assertArtifactIamVersionCapacity,
+} = require("./artifact-iam-session.cjs");
 const scopedValidators = {
+  "artifact-preservation-iam": validateArtifactIamPlan,
   "deployment-prerequisites": validatePrerequisitePlan,
   "deployment-runtime": validateRuntimePlan,
   "site-delivery": validateSitePlan,
@@ -46,6 +56,7 @@ const scopedValidators = {
 };
 // Bound scopes revalidate their restored plan before Apply.
 const appliedScopes = new Set([
+  "artifact-preservation-iam",
   "deployment-runtime",
   "site-delivery",
   "sandbox-site-permissions",
@@ -59,15 +70,22 @@ const scopedTargets = {
 };
 // Resource names differ by environment while sandbox and production share an account.
 const scopeBinding = (options, invocation) =>
-  invocation.scope === "sandbox-site-permissions"
-    ? sandboxSitePermissionsBinding(
-        options.binding,
-        JSON.parse(options.env.GITHUB_VARS_JSON),
-      )
-    : {
-        ...options.binding,
-        environment: invocation.environment,
-      };
+  invocation.scope === "artifact-preservation-iam"
+    ? artifactIamBinding({
+        invocation,
+        storage: options.binding,
+        variables: JSON.parse(options.env.GITHUB_VARS_JSON),
+        tfvars: JSON.parse(options.env.TERRAFORM_TFVARS_JSON),
+      })
+    : invocation.scope === "sandbox-site-permissions"
+      ? sandboxSitePermissionsBinding(
+          options.binding,
+          JSON.parse(options.env.GITHUB_VARS_JSON),
+        )
+      : {
+          ...options.binding,
+          environment: invocation.environment,
+        };
 const prerequisites = new WeakMap();
 function privatePrerequisiteVerified(token, config) {
   const binding = prerequisites.get(token);
@@ -239,6 +257,13 @@ async function plan(options, invocation, e) {
     );
   if (invocation.scope === "deployment-prerequisites")
     args.push(...[...targets].map((target) => `-target=${target}`));
+  if (invocation.scope === "artifact-preservation-iam")
+    args.push(
+      ...[
+        ...artifactIamTargets(invocation.environment).keys(),
+        ...artifactIamObservationTargets(invocation.environment),
+      ].map((t) => `-target=${t}`),
+    );
   if (scopedTargets[invocation.scope])
     args.push(
       ...[...scopedTargets[invocation.scope].keys()].map(
@@ -356,13 +381,16 @@ async function apply(options, invocation, e, startApply) {
       readFileSync(join(options.directory, "_infra", name)),
       bytes,
     );
+  let artifactChanges;
   if (appliedScopes.has(invocation.scope)) {
     const shown = await e.terraform(["show", "-json", "tfplan"]);
-    scopedValidators[invocation.scope](
+    const checked = scopedValidators[invocation.scope](
       JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
       scopeBinding(options, invocation),
       { directory: options.directory, sourceSha: invocation.sourceSha },
     );
+    if (invocation.scope === "artifact-preservation-iam")
+      artifactChanges = checked.changes;
   }
   let prerequisite;
   if (invocation.environment === "production") {
@@ -392,6 +420,14 @@ async function apply(options, invocation, e, startApply) {
   );
   if (invocation.environment === "production")
     await assertProductionIdle(options.get, invocation.repository);
+  if (invocation.scope === "artifact-preservation-iam") {
+    const capacity = await assertArtifactIamVersionCapacity({
+      aws: options.aws ?? require("./coordinator-aws.cjs").awsCli,
+      binding: scopeBinding(options, invocation),
+      changes: artifactChanges,
+    });
+    await e.retain(capacity);
+  }
   options.signal.throwIfAborted();
   startApply();
   await e.terraform(["apply", "-no-color", "-input=false", "tfplan"]);

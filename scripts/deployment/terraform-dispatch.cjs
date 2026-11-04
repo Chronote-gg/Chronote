@@ -32,6 +32,7 @@ function parseDispatch(env, event) {
       "deployment-runtime",
       "site-delivery",
       "sandbox-site-permissions",
+      "artifact-preservation-iam",
       "processing-retry",
     ]),
   };
@@ -66,6 +67,8 @@ function parseDispatch(env, event) {
     workspace: input.terraform_workspace,
     scope: input.plan_scope,
   });
+  if (invocation.environment === "production")
+    assert.equal(env.GITHUB_REF, "refs/heads/master");
   return {
     invocation,
     producerRunId: input.plan_run_id,

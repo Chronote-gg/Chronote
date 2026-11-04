@@ -1,3 +1,4 @@
+import { excludedChecks } from "../../../scripts/deployment/terraform-meeting-model.cjs";
 import { privateCaptureFixture } from "./privateCapture.js";
 
 export function artifactIamFixture(environment = "sandbox") {
@@ -92,7 +93,24 @@ export function artifactIamFixture(environment = "sandbox") {
     terraform_version: "1.17.1",
     errored: false,
     resource_drift: [],
-    checks: [],
+    checks: [
+      `aws_iam_role.${environment === "sandbox" ? "sandbox" : "production"}_deploy`,
+      "var.ENABLE_API_ALB",
+    ].map((name) => ({
+      address: JSON.parse(
+        JSON.stringify(excludedChecks.find((c) => c.to_display === name)),
+      ),
+      status: "pass",
+      instances: [
+        {
+          address: {
+            to_display: name.startsWith("var.") ? name : `${name}[0]`,
+            ...(name.startsWith("var.") ? {} : { instance_key: 0 }),
+          },
+          status: "pass",
+        },
+      ],
+    })),
     variables: Object.fromEntries(
       Object.entries({ ...tfvars, TRANSCRIPTS_BUCKET: "" }).map(
         ([key, value]) => [key, { value }],

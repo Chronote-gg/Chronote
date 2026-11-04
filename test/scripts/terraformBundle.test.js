@@ -230,3 +230,22 @@ test.each(
     }
   },
 );
+
+test.each(["sandbox", "production"])(
+  "artifact bundle invocation binds %s to its exact workspace",
+  (environment) => {
+    const current = {
+      ...invocation,
+      environment,
+      workspace: environment === "sandbox" ? "sandbox" : "default",
+      scope: "artifact-preservation-iam",
+    };
+    expect(parseInvocation(current)).toEqual(current);
+    expect(() =>
+      parseInvocation({
+        ...current,
+        workspace: environment === "sandbox" ? "default" : "sandbox",
+      }),
+    ).toThrow();
+  },
+);
