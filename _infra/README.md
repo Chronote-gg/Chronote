@@ -118,6 +118,8 @@ that address.
 | Alarm                         | Condition                                      | Period    |
 | ----------------------------- | ---------------------------------------------- | --------- |
 | ECS no running tasks          | Bot service running task count < 1 for 10 min  | 5 min x 2 |
+| ECS disk leak                 | Bot task disk minimum above 16 GB for 3 h      | 1 h x 3   |
+| ECS disk critical             | Bot task disk at or above 20.4 of 21.47 GB     | 5 min x 1 |
 | ALB target 5xx errors         | 10+ target HTTP 5xx responses in 10 min        | 5 min x 2 |
 | ALB ELB 5xx errors            | 5+ load-balancer HTTP 5xx responses in 5 min   | 5 min x 1 |
 | ALB ELB 5xx sustained         | 5+ load-balancer HTTP 5xx responses in 1 h     | 1 h x 1   |
@@ -167,6 +169,35 @@ because a previous runtime's voice state is still uncertain. Neither moves an
 ECS, ALB or OpenAI metric, so without these filters the only symptom is one
 meeting that never finishes or never starts. Both fire on a single occurrence,
 because one is already worth looking at.
+
+**The two ephemeral storage alarms exist because a task with a full disk is
+still running.** It passes its health check and keeps answering the load
+balancer, so running task count, target health and both 5xx metrics stay clean
+while recording, transcription and notes fail on write. That is the shape of the
+incident that motivated them: the serving task reached 21 GB used and 0 free
+with every alarm in the account reading OK.
+
+**The leak alarm uses `Minimum`, not `Average` or `Maximum`, and that is the
+whole point.** Healthy operation peaks to 19.4 and 19.5 GB in a busy hour and
+falls back to a 13.3 GB floor, so a static threshold on Average or Maximum fires
+on a healthy busy hour and gets muted as noise. Only a leak raises the floor: the
+measured leak took the hourly minimum from 13.3 to 18.1 overnight and then to the
+21.5 ceiling, and 13.3 against 18.1 separates cleanly. **The pair is deliberate
+and neither half is redundant.** They share a metric and dimensions and differ in
+statistic and time base, so the hourly `Minimum` catches a slow leak over three
+hours and the five-minute `Maximum` catches an imminent ceiling at once. Deleting
+either reopens half the gap.
+
+**Both thresholds are fractions (about 75 and 95 percent) of 21.47 GB, which is
+the decimal-GB reading of the 20 GiB Fargate default.**
+`ephemeralStorageSizeInGiB` is not declared on the task definition, so the
+default applies and `EphemeralStorageReserved` sits flat at 21.47. If ephemeral
+storage is ever declared or raised, both thresholds must move with it, or the
+leak alarm becomes a routine-usage alarm and the critical alarm stops meaning
+"nearly full". Raising it is also not a one-step change: it is a Terraform change
+plus a backend deploy, because `aws_ecs_service` carries
+`ignore_changes = [task_definition]`, so an apply registers a new task definition
+revision while the service keeps running the old one until a deploy repoints it.
 
 ### ALB access logs
 

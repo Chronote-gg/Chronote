@@ -120,6 +120,89 @@ resource "aws_cloudwatch_metric_alarm" "ecs_no_running_tasks" {
   }
 }
 
+# --- ECS: the task's disk filling up ---
+# A task with a full disk keeps running, keeps passing its health check and
+# keeps answering the load balancer, so every other alarm in this file reads OK
+# while recording, transcription and notes all fail on write. That is how the
+# serving task reached 21 GB used and 0 free with every alarm in the account
+# green.
+#
+# Both thresholds are fractions of 21.47 GB, which is the decimal-GB reading of
+# the 20 GiB Fargate DEFAULT. `ephemeralStorageSizeInGiB` is not declared on
+# aws_ecs_task_definition.app_task, so that default is what the task gets and
+# `EphemeralStorageReserved` sits flat at 21.47. IF EPHEMERAL STORAGE IS EVER
+# DECLARED OR RAISED, BOTH THRESHOLDS BELOW MUST MOVE WITH IT, or the leak alarm
+# becomes a routine-usage alarm and the ceiling alarm stops meaning "nearly
+# full".
+#
+# The two are a deliberate pair and neither is redundant: they share a metric
+# and dimensions and differ in statistic and time base, so one catches a slow
+# leak over hours and the other an imminent ceiling within five minutes.
+# Deleting either reopens half the gap.
+
+# The statistic is the whole point of this alarm. Healthy operation peaks to
+# 19.4 and 19.5 GB during a busy hour and falls back to a 13.3 GB floor, so a
+# static threshold on Average or Maximum fires on healthy traffic and gets muted
+# as noise. Only a leak raises the FLOOR: the measured leak took the hourly
+# minimum from 13.3 to 18.1 overnight and then to the 21.5 ceiling. Minimum over
+# an hour separates 13.3 from 18.1 cleanly and ignores the 19.4 peak entirely.
+resource "aws_cloudwatch_metric_alarm" "ecs_ephemeral_storage_leak" {
+  count               = local.alerts_enabled ? 1 : 0
+  alarm_name          = "${local.name_prefix}-ecs-ephemeral-storage-leak"
+  alarm_description   = "The bot task's disk usage never drops below 16 GB of its 21.47 GB, so something is accumulating rather than being cleaned up. Check for leftover meeting audio and transcript files in the task's working directories."
+  namespace           = "ECS/ContainerInsights"
+  metric_name         = "EphemeralStorageUtilized"
+  statistic           = "Minimum"
+  period              = 3600
+  evaluation_periods  = 3
+  threshold           = 16
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.main.name
+    ServiceName = aws_ecs_service.app_service.name
+  }
+
+  alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
+  ok_actions    = [aws_sns_topic.critical_alerts[0].arn]
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
+# The fast half of the pair: Maximum over five minutes, because once the disk is
+# this close to full the peak is what matters and there is no room left to wait
+# three hours for a floor to confirm.
+resource "aws_cloudwatch_metric_alarm" "ecs_ephemeral_storage_critical" {
+  count               = local.alerts_enabled ? 1 : 0
+  alarm_name          = "${local.name_prefix}-ecs-ephemeral-storage-critical"
+  alarm_description   = "The bot task's disk is within 5 percent of full (20.4 of 21.47 GB). Recording, transcription and notes writes are about to start failing while the task stays healthy."
+  namespace           = "ECS/ContainerInsights"
+  metric_name         = "EphemeralStorageUtilized"
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 20.4
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.main.name
+    ServiceName = aws_ecs_service.app_service.name
+  }
+
+  alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
+  ok_actions    = [aws_sns_topic.critical_alerts[0].arn]
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
 # --- ALB: HTTP 5xx spike ---
 
 resource "aws_cloudwatch_metric_alarm" "alb_5xx_errors" {
