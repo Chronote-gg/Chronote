@@ -5,10 +5,12 @@ const { canonical, hasUnknown } = require("./terraform-meeting-update.cjs");
 const {
   assertOtherwiseUnchanged,
   validateScopedPlan,
+  assertPlanEnvelope,
 } = require("./validate-prerequisite-plan.cjs");
 const {
   artifactIamModelEvidence,
   artifactIamObservationTargets,
+  artifactIamDependencyIdentities,
 } = require("./artifact-iam-model.cjs");
 const transcriptPolicy = "aws_iam_policy.transcripts_s3_policy";
 const profile = (environment) => {
@@ -52,6 +54,22 @@ function artifactIamBinding({ invocation, storage, variables, tfvars }) {
     applicationKey,
     new RegExp(`^arn:aws:kms:${s.region}:${s.accountId}:key/[a-f0-9-]{36}$`),
   );
+  const githubOwner = configured(
+    tfvars,
+    variables,
+    "github_owner",
+    "Chronote-gg",
+  );
+  const githubRepository = configured(
+    tfvars,
+    variables,
+    "github_repository",
+    "Chronote",
+  );
+  assert.equal(
+    `${githubOwner}/${githubRepository}`.toLowerCase(),
+    (invocation.repository ?? "Chronote-gg/Chronote").toLowerCase(),
+  );
   const env = invocation.environment === "sandbox" ? "sandbox" : "prod";
   assert.equal(configured(tfvars, variables, "environment", env), env);
   assert.equal(
@@ -86,6 +104,10 @@ function artifactIamBinding({ invocation, storage, variables, tfvars }) {
   return {
     environment: invocation.environment,
     projectName: project,
+    githubOwner,
+    githubRepository,
+    controlTableName: `${prefix}-DeploymentControlTable`,
+    controlTableArn: `arn:aws:dynamodb:${s.region}:${s.accountId}:table/${prefix}-DeploymentControlTable`,
     accountId: s.accountId,
     region: s.region,
     prefix,
@@ -242,22 +264,117 @@ function checkDependencies(resources, b) {
   assert.equal(versioning.bucket, b.transcriptsBucket);
   assert.equal(versioning.versioning_configuration[0].status, "Enabled");
 }
+function checkDependencyIdentity(r, b, identities) {
+  const expected = identities.get(r.address),
+    after = r.change.after;
+  if (expected) {
+    const { arnPrefix, ...fields } = expected;
+    for (const [field, value] of Object.entries(fields))
+      assert.equal(
+        after[field],
+        value,
+        "Foreign artifact IAM dependency identity",
+      );
+    if (arnPrefix) {
+      assert.equal(typeof after.arn, "string");
+      assert.ok(
+        after.arn.startsWith(arnPrefix) &&
+          /^[A-Za-z0-9]{6}$/.test(after.arn.slice(arnPrefix.length)),
+        "Foreign artifact IAM secret identity",
+      );
+    }
+  } else
+    assert.ok(
+      artifactIamObservationTargets(b.environment).includes(r.address),
+      "Unmodelled artifact IAM identity",
+    );
+  if (after.region != null)
+    assert.equal(
+      after.region,
+      b.region,
+      "Foreign artifact IAM dependency region",
+    );
+  if (
+    r.address === "aws_ecr_repository.app_ecr_repo" &&
+    after.registry_id != null
+  )
+    assert.equal(after.registry_id, b.accountId);
+}
+function checkMetadata(resource, b) {
+  const deploy =
+    b.environment === "sandbox" ? "github_deploy" : "github_production_deploy";
+  const organization =
+    b.environment === "sandbox"
+      ? "deployment_owner"
+      : "production_deployment_owner";
+  assert.ok(
+    [
+      "data.aws_caller_identity.current",
+      `data.aws_iam_openid_connect_provider.${deploy}[0]`,
+      "data.github_repository.repo",
+      `data.github_organization.${organization}[0]`,
+    ].includes(resource.address),
+    "Outside artifact IAM metadata closure",
+  );
+  const c = resource.change;
+  assert.ok(c.actions.length === 1 && ["read", "no-op"].includes(c.actions[0]));
+  assert.ok(
+    c.after && !hasUnknown(c.after_unknown ?? {}),
+    "Unknown artifact IAM metadata",
+  );
+  if (resource.address === "data.aws_caller_identity.current") {
+    assert.equal(c.after.account_id, b.accountId);
+    assert.match(
+      c.after.arn,
+      new RegExp(`^arn:aws:(iam|sts)::${b.accountId}:`),
+    );
+  }
+  if (
+    resource.address === `data.aws_iam_openid_connect_provider.${deploy}[0]`
+  ) {
+    assert.equal(
+      c.after.arn,
+      `arn:aws:iam::${b.accountId}:oidc-provider/token.actions.githubusercontent.com`,
+    );
+    assert.ok(
+      [
+        "token.actions.githubusercontent.com",
+        "https://token.actions.githubusercontent.com",
+      ].includes(c.after.url),
+      "Foreign artifact IAM OIDC issuer",
+    );
+    assert.ok(
+      Array.isArray(c.after.client_id_list) &&
+        c.after.client_id_list.includes("sts.amazonaws.com"),
+      "Foreign artifact IAM OIDC audience",
+    );
+  }
+  if (resource.address === "data.github_repository.repo") {
+    assert.equal(
+      c.after.full_name.toLowerCase(),
+      `${b.githubOwner}/${b.githubRepository}`.toLowerCase(),
+      "Foreign artifact IAM repository",
+    );
+    assert.equal(c.after.name.toLowerCase(), b.githubRepository.toLowerCase());
+  }
+  if (resource.address === `data.github_organization.${organization}[0]`)
+    assert.equal(
+      c.after.name.toLowerCase(),
+      b.githubOwner.toLowerCase(),
+      "Foreign artifact IAM organization",
+    );
+}
 function validateArtifactIamPlan(plan, b, options = {}) {
-  assert.equal(plan.format_version, "1.2");
+  assertPlanEnvelope(plan);
   assert.equal(plan.terraform_version, "1.17.1");
-  assert.notEqual(plan.errored, true);
-  for (const name of [
-    "resource_drift",
-    "deferred_changes",
-    "action_invocations",
-  ])
-    assert.deepEqual(plan[name] ?? [], []);
   for (const [name, value] of Object.entries({
     environment: b.environment === "sandbox" ? "sandbox" : "prod",
     project_name: b.projectName,
     aws_region: b.region,
     github_environment: b.environment,
     ENABLE_API_ALB: true,
+    github_owner: b.githubOwner,
+    github_repository: b.githubRepository,
   }))
     assert.deepEqual(plan.variables[name], { value });
   assert.ok(Array.isArray(plan.resource_changes));
@@ -267,6 +384,7 @@ function validateArtifactIamPlan(plan, b, options = {}) {
     ...options,
     environment: b.environment,
   });
+  const identities = artifactIamDependencyIdentities(b);
   for (const r of plan.resource_changes) {
     assert.ok(!resources.has(r.address), "Duplicate artifact IAM address");
     resources.set(r.address, r);
@@ -277,7 +395,13 @@ function validateArtifactIamPlan(plan, b, options = {}) {
         targets.has(r.address) || closure.has(r.address),
         "Outside artifact IAM dependency closure",
       );
-      if (!targets.has(r.address)) unchanged(r.change);
+      if (!targets.has(r.address)) {
+        unchanged(r.change);
+        checkDependencyIdentity(r, b, identities);
+      }
+    } else {
+      assert.equal(r.mode, "data");
+      checkMetadata(r, b);
     }
   }
   checkDependencies(resources, b);

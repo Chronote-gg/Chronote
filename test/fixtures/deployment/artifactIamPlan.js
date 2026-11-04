@@ -1,3 +1,5 @@
+import dependencyNames from "./artifactIamDependencyNames.json";
+import { artifactIamClosure } from "../../../scripts/deployment/artifact-iam-model.cjs";
 import { excludedChecks } from "../../../scripts/deployment/terraform-meeting-model.cjs";
 import { privateCaptureFixture } from "./privateCapture.js";
 
@@ -12,6 +14,7 @@ export function artifactIamFixture(environment = "sandbox") {
   const deployAddress = `aws_iam_role_policy.${environment === "sandbox" ? "sandbox" : "production"}_deploy[0]`;
   const policyArn = `arn:aws:iam::${accountId}:policy/${prefix}-bot-transcripts-s3-policy`;
   const invocation = {
+    repository: "Chronote-gg/Chronote",
     environment,
     workspace: environment === "sandbox" ? "sandbox" : "default",
   };
@@ -27,6 +30,8 @@ export function artifactIamFixture(environment = "sandbox") {
     aws_region: region,
     github_environment: environment,
     ENABLE_API_ALB: true,
+    github_owner: "Chronote-gg",
+    github_repository: "Chronote",
   };
   const resource = (address, after, action = "no-op", before = after) => ({
     address,
@@ -192,4 +197,96 @@ export function artifactIamFixture(environment = "sandbox") {
     deployAddress,
     resource,
   };
+}
+
+export function completeArtifactIamFixture(environment = "sandbox") {
+  const f = artifactIamFixture(environment),
+    account = "123456789012",
+    region = "us-east-1";
+  const prefix = `meeting-notes-${environment === "sandbox" ? "sandbox" : "prod"}`;
+  const known = new Set(f.plan.resource_changes.map((r) => r.address));
+  for (const address of artifactIamClosure(environment)) {
+    if (known.has(address)) continue;
+    let after;
+    if (address.startsWith("aws_dynamodb_table.")) {
+      const name = `${prefix}-${dependencyNames[address.split(".")[1]]}`;
+      after = {
+        name,
+        arn: `arn:aws:dynamodb:${region}:${account}:table/${name}`,
+        region,
+      };
+    } else if (address.startsWith("aws_secretsmanager_secret.")) {
+      const name = `${prefix}/${address.split(".")[1].replaceAll("_", "-")}`;
+      after = {
+        name,
+        arn: `arn:aws:secretsmanager:${region}:${account}:secret:${name}-aB12cD`,
+        region,
+      };
+    } else if (address === "aws_ecs_cluster.main") {
+      after = {
+        name: `${prefix}-bot-cluster`,
+        arn: `arn:aws:ecs:${region}:${account}:cluster/${prefix}-bot-cluster`,
+        region,
+      };
+    } else if (address === "aws_ecr_repository.app_ecr_repo") {
+      after = {
+        name: `${prefix}-bot-repo`,
+        arn: `arn:aws:ecr:${region}:${account}:repository/${prefix}-bot-repo`,
+        registry_id: account,
+        region,
+      };
+    } else if (address === "aws_iam_policy.dynamodb_access_policy") {
+      after = {
+        name: `${prefix}-bot-dynamodb-policy`,
+        arn: `arn:aws:iam::${account}:policy/${prefix}-bot-dynamodb-policy`,
+      };
+    } else throw new Error(`Missing fixture identity: ${address}`);
+    f.plan.resource_changes.push({
+      address,
+      mode: "managed",
+      change: {
+        actions: ["no-op"],
+        before: structuredClone(after),
+        after: structuredClone(after),
+        after_unknown: {},
+      },
+    });
+  }
+  const deploy =
+    environment === "sandbox" ? "github_deploy" : "github_production_deploy";
+  const org =
+    environment === "sandbox"
+      ? "deployment_owner"
+      : "production_deployment_owner";
+  for (const [address, after] of [
+    [
+      "data.aws_caller_identity.current",
+      {
+        account_id: account,
+        arn: `arn:aws:sts::${account}:assumed-role/${prefix}-github-terraform/run`,
+      },
+    ],
+    [
+      `data.aws_iam_openid_connect_provider.${deploy}[0]`,
+      {
+        arn: `arn:aws:iam::${account}:oidc-provider/token.actions.githubusercontent.com`,
+        url: "token.actions.githubusercontent.com",
+        client_id_list: ["sts.amazonaws.com"],
+      },
+    ],
+    [
+      "data.github_repository.repo",
+      { full_name: "Chronote-gg/Chronote", name: "Chronote", repo_id: 123456 },
+    ],
+    [
+      `data.github_organization.${org}[0]`,
+      { name: "Chronote-gg", id: "654321" },
+    ],
+  ])
+    f.plan.resource_changes.push({
+      address,
+      mode: "data",
+      change: { actions: ["read"], before: null, after, after_unknown: {} },
+    });
+  return f;
 }

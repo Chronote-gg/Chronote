@@ -160,3 +160,26 @@ For native application target-graph verification, capture `terraform -chdir=_inf
 These are synthetic mocked-provider checks. The integration test combines the actual mock changes with a fixed reviewed synthetic envelope and policy hashes. It does not create an applyable saved binary or prove native installation.
 
 Actual installation, OIDC claim acceptance, capture/readback, individual approval, scoped Plan/Apply, deployment and hosted acceptance remain separate native checks. Use the existing authenticated workstation route and protected files. Do not bridge credentials into a cloud sandbox.
+
+## Artifact IAM permission update
+
+The optional `artifact_app_kms_key_arn` and `artifact_transcripts_bucket` inputs
+prepare only the executor's artifact IAM grants. Both default empty. Review an
+exact existing-resource plan with `node verify-plan.cjs PRIVATE_PLAN_JSON
+REVIEWED_BINDING_JSON --artifact-iam-update`. The binding includes the existing
+policy's exact `previousRolePolicySha256` and the proposed policy hash. The
+unchanged refreshed role must expose its complete known inline-policy list for
+aggregate quota verification. Missing or stale metadata refuses.
+
+The guard permits only the exact executor inline-policy delta. Capture controls,
+trust, other grants and every other managed resource stay unchanged. New metadata
+reads retain exact service-compatible resource selectors. No transcript bytes,
+history writes, worker replacement, version pruning or new attachment is granted.
+The provider's capture and site contracts remain independently checked.
+
+The mocked Sandbox proposal is 10,184 nonwhitespace characters, leaving only 56
+when this is the role's sole inline policy. Different selectors or existing extra
+inline policies can force HOLD. Review and install this bootstrap plan through
+the existing protected owner route before producing a separately approved
+`artifact-preservation-iam` application plan. Source tests grant no installation
+or application authority. See [private delivery](../../docs/terraform-private-delivery.md#artifact-preservation-iam-source-scope).

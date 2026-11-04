@@ -54,6 +54,45 @@ function artifactIamClosure(environment) {
       : meetingClosure),
   ]);
 }
+function artifactIamDependencyIdentities(b) {
+  const result = new Map();
+  for (const address of artifactIamClosure(b.environment)) {
+    if (!address.startsWith("aws_dynamodb_table.")) continue;
+    const alias = address.split(".")[1].replace(/_table$/, "");
+    const suffix =
+      alias
+        .split("_")
+        .map((p) => (p === "oauth" ? "OAuth" : p[0].toUpperCase() + p.slice(1)))
+        .join("") + "Table";
+    const name = `${b.prefix}-${suffix}`;
+    result.set(address, {
+      name,
+      arn: `arn:aws:dynamodb:${b.region}:${b.accountId}:table/${name}`,
+    });
+  }
+  for (const alias of secrets) {
+    const name = `${b.prefix}/${alias.replaceAll("_", "-")}`;
+    result.set(`aws_secretsmanager_secret.${alias}`, {
+      name,
+      arnPrefix: `arn:aws:secretsmanager:${b.region}:${b.accountId}:secret:${name}-`,
+    });
+  }
+  result.set("aws_ecs_cluster.main", {
+    name: `${b.prefix}-bot-cluster`,
+    arn: `arn:aws:ecs:${b.region}:${b.accountId}:cluster/${b.prefix}-bot-cluster`,
+  });
+  if (b.environment === "sandbox")
+    result.set("aws_ecr_repository.app_ecr_repo", {
+      name: `${b.prefix}-bot-repo`,
+      arn: `arn:aws:ecr:${b.region}:${b.accountId}:repository/${b.prefix}-bot-repo`,
+    });
+  else
+    result.set("aws_iam_policy.dynamodb_access_policy", {
+      name: `${b.prefix}-bot-dynamodb-policy`,
+      arn: `arn:aws:iam::${b.accountId}:policy/${b.prefix}-bot-dynamodb-policy`,
+    });
+  return result;
+}
 function artifactIamModelEvidence(plan, { directory, sourceSha, environment }) {
   const requiredPass = [
     `aws_iam_role.${environment === "sandbox" ? "sandbox" : "production"}_deploy`,
@@ -114,5 +153,6 @@ function artifactIamModelEvidence(plan, { directory, sourceSha, environment }) {
 module.exports = {
   artifactIamObservationTargets,
   artifactIamClosure,
+  artifactIamDependencyIdentities,
   artifactIamModelEvidence,
 };

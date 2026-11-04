@@ -12,6 +12,7 @@ const {
 const { digest } = require("./collector-payload.cjs");
 const {
   validateScopedPlan,
+  assertPlanEnvelope,
   assertOtherwiseUnchanged,
 } = require("./validate-prerequisite-plan.cjs");
 const { hasUnknown, without } = require("./terraform-meeting-update.cjs");
@@ -307,14 +308,7 @@ function verifySiteChecks(plan, directory, sourceSha) {
   }
 }
 function assertPlanContext(plan, b) {
-  assert.equal(plan.format_version, "1.2");
-  assert.notEqual(plan.errored, true);
-  for (const name of [
-    "resource_drift",
-    "deferred_changes",
-    "action_invocations",
-  ])
-    assert.deepEqual(plan[name] ?? [], []);
+  assertPlanEnvelope(plan);
   for (const [name, value] of Object.entries({
     environment: "sandbox",
     project_name: "meeting-notes",

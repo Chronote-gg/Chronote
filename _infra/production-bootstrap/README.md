@@ -120,3 +120,25 @@ To check already-approved local renderings offline: `node _infra/production-boot
 - [Pinned AWS provider 6.68.0 services](https://github.com/hashicorp/terraform-provider-aws/tree/v6.68.0/internal/service): dynamodb/table.go and tags_gen.go; elbv2/target_group.go, listener.go, load_balancer.go and tags_gen.go; iam/role.go, role_policy.go and policy.go; kms/key.go; ec2/vpc_.go, vpc_subnet.go and vpc_security_group.go; ecs/cluster.go; acm/certificate.go; route53/zone_data_source.go and record.go.
 - [Terraform 1.16 backend workspace discovery](https://github.com/hashicorp/terraform/blob/v1.16.0/internal/backend/remote-state/s3/backend_state.go) and [exact state/lock/checksum keys](https://github.com/hashicorp/terraform/blob/v1.16.0/internal/backend/remote-state/s3/client.go).
 - [AWS conditional-write enforcement](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html), [OIDC claims](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_iam-condition-keys.html#condition-keys-wif), [DynamoDB key authorization and grant request shape](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/encryption.usagenotes.html), [KMS condition support](https://docs.aws.amazon.com/kms/latest/developerguide/conditions-kms.html) and [ELB action/resource support](https://docs.aws.amazon.com/service-authorization/latest/reference/list_elbv2.html).
+
+## Artifact IAM update remains blocked for Production
+
+The artifact permission opt-in uses `artifact_app_kms_key_arn` and
+`artifact_transcripts_bucket`, both empty by default. The dedicated
+`--artifact-iam-update` guard binds the existing executor policy's exact prior
+hash and permits only the declared artifact grant delta. It checks the complete
+known refreshed inline-policy list and aggregate size. Trust, capture controls and
+unrelated grants remain unchanged.
+
+The existing mocked policy uses 10,040 characters before this addition. The
+artifact proposal exceeds IAM's 10,240-character aggregate role allowance. A
+Terraform precondition blocks the IAM write. The guard also refuses over-quota,
+missing or stale aggregate readback. This source change adds no managed policy or
+attachment and does not rewrite old grants to make room.
+
+The declared Terraform role is separate from the selected Production Apply
+identity. That identity's ownership and installed permissions are unverified here.
+Quota resolution, reviewed identity/grant evidence, protected bootstrap
+installation and a fresh private application saved plan are separate prerequisites
+for hosted use. This implementation does not establish Production readiness.
+See [private delivery](../../docs/terraform-private-delivery.md#artifact-preservation-iam-source-scope).

@@ -30,6 +30,9 @@ function prepareArtifactIamSession({
     principalArn,
     new RegExp(`^arn:aws:iam::${b.accountId}:role/[A-Za-z0-9+=,.@_/-]+$`),
   );
+  const guard = phase === "apply" && b.environment === "production";
+  if (guard)
+    assert.equal(variables.DEPLOYMENT_CONTROL_TABLE, b.controlTableName);
   const stateBucket = "meeting-notes-terraform-state-bucket";
   const stateKey = `meeting-notes-terraform/${b.environment === "sandbox" ? "sandbox/meeting-notes-terraform/" : ""}state`;
   const capture = `arn:aws:s3:::${s.bucket}/terraform/${b.environment}/*`;
@@ -37,7 +40,7 @@ function prepareArtifactIamSession({
   const policy = JSON.stringify({
     Version: "2012-10-17",
     Statement: [
-      // Installed executor grants bind metadata reads to the audited dependency graph.
+      // Configuration patterns permit no object reads; installed grants bind metadata to the audited resources.
       {
         Effect: "Allow",
         Action: [
@@ -49,14 +52,12 @@ function prepareArtifactIamSession({
           "kms:GetKey*",
           "kms:ListResourceTags",
           "s3:GetBucket*",
-          "s3:GetEncryptionConfiguration",
-          "s3:GetLifecycleConfiguration",
-          "s3:GetAccelerateConfiguration",
-          "s3:GetReplicationConfiguration",
+          "s3:Get*Configuration",
           "ecs:DescribeClusters",
           "ecs:ListTagsForResource",
-          "ecr:DescribeRepositories",
-          "ecr:ListTagsForResource",
+          ...(b.environment === "sandbox"
+            ? ["ecr:DescribeRepositories", "ecr:ListTagsForResource"]
+            : []),
           "secretsmanager:DescribeSecret",
           "secretsmanager:GetResourcePolicy",
         ],
@@ -72,7 +73,6 @@ function prepareArtifactIamSession({
         Action: "s3:ListBucket",
         Resource: [
           `arn:aws:s3:::${stateBucket}`,
-          `arn:aws:s3:::${s.bucket}`,
           `arn:aws:s3:::${b.transcriptsBucket}`,
         ],
       },
@@ -91,6 +91,32 @@ function prepareArtifactIamSession({
         Action: ["kms:GenerateDataKey", "kms:Decrypt"],
         Resource: s.kmsKeyArn,
       },
+      ...(guard
+        ? [
+            {
+              Effect: "Allow",
+              Action: "dynamodb:GetItem",
+              Resource: b.controlTableArn,
+              Condition: {
+                "ForAllValues:StringEquals": {
+                  "dynamodb:LeadingKeys": ["ENV"],
+                },
+              },
+            },
+            {
+              Effect: "Allow",
+              Action: "kms:Decrypt",
+              Resource: b.kmsKeyArn,
+              Condition: {
+                StringEquals: {
+                  "kms:ViaService": `dynamodb.${b.region}.amazonaws.com`,
+                  "kms:EncryptionContext:aws:dynamodb:tableName":
+                    b.controlTableName,
+                },
+              },
+            },
+          ]
+        : []),
       ...(phase === "apply"
         ? [
             {

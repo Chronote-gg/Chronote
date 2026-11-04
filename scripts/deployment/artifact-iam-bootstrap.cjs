@@ -173,6 +173,25 @@ function withoutArtifactDefaults(plan, binding) {
   }
   return { plan: p, binding: b };
 }
+function executorInlinePolicies(plan, environment) {
+  const role = plan.resource_changes.find(
+    (r) => r.address === `aws_iam_role.${environment}_terraform[0]`,
+  );
+  const refreshed = role?.change?.after?.inline_policy;
+  assert.ok(
+    Array.isArray(refreshed) &&
+      refreshed.length > 0 &&
+      !hasUnknown(role.change.after_unknown?.inline_policy ?? {}),
+    "HOLD: aggregate inline policy readback unavailable",
+  );
+  assert.equal(new Set(refreshed.map((x) => x.name)).size, refreshed.length);
+  for (const x of refreshed) {
+    assert.deepEqual(Object.keys(x).sort(), ["name", "policy"]);
+    assert.equal(typeof x.name, "string");
+    inlinePolicySize(x.policy);
+  }
+  return refreshed;
+}
 function artifactIamBootstrapBase(plan, binding, environment) {
   assert.equal(plan.applyable, true);
   assert.equal(plan.complete, true);
@@ -203,22 +222,7 @@ function artifactIamBootstrapBase(plan, binding, environment) {
   );
   const p = structuredClone(plan),
     b = structuredClone(binding);
-  const role = p.resource_changes.find(
-    (r) => r.address === `aws_iam_role.${environment}_terraform[0]`,
-  );
-  const refreshed = role?.change?.after?.inline_policy;
-  assert.ok(
-    Array.isArray(refreshed) &&
-      refreshed.length > 0 &&
-      !hasUnknown(role.change.after_unknown?.inline_policy ?? {}),
-    "HOLD: aggregate inline policy readback unavailable",
-  );
-  assert.equal(new Set(refreshed.map((x) => x.name)).size, refreshed.length);
-  for (const x of refreshed) {
-    assert.deepEqual(Object.keys(x).sort(), ["name", "policy"]);
-    assert.equal(typeof x.name, "string");
-    inlinePolicySize(x.policy);
-  }
+  const refreshed = executorInlinePolicies(p, environment);
   let found = false;
   for (const r of p.resource_changes) {
     if (r.mode !== "managed") continue;

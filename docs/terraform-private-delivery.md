@@ -162,3 +162,94 @@ remain separate receipts. This source change does not authorize those operations
 The docs and frontend jobs use the existing production backend deployment role with separate site-only STS sessions. Each session can publish its own bucket and invalidate its own CloudFront distribution, plus read the production hold and use the existing key through the corresponding S3 and DynamoDB contexts. No static AWS credentials, new deployment role or IAM policy are introduced by this workflow source change. The normal hold guard runs before publication; a missing control table or unreleased hold refuses. Docs still publish before backend rollout, and frontend still waits for that backend. Existing native production approval and noncanceling deployment concurrency remain.
 
 The merged site publishing policy and its attachment must actually be installed, along with the normal deployment identity/control prerequisites, before this route can run. Source tests and a merged policy definition do not prove effective S3, KMS, CloudFront or deployment acceptance. No plan/apply or live publication is authorized by this source proposal.
+
+## Artifact preservation IAM source scope
+
+`artifact-preservation-iam` supports only `sandbox/sandbox` and
+`production/default`. Production dispatch still requires `master`. This scope
+updates two existing application policies:
+
+- `aws_iam_policy.transcripts_s3_policy`: add `s3:GetObjectVersion` to its existing
+  transcript bucket/object scope, preserving both existing role attachments.
+- The selected environment's `aws_iam_role_policy.*_deploy[0]`: add only
+  `dynamodb:ConditionCheckItem` for its bound MeetingHistory table.
+
+The extra targets observe existing identities, attachments, encryption,
+versioning and table metadata. They must remain unchanged. The scope cannot
+create missing policies, change trust, modify meeting data, replace a worker or
+introduce a legacy runtime. Unknown targeted checks require the audited source
+and complete check catalog; the relevant role and API configuration checks must
+pass.
+
+The artifact Plan and Apply jobs select Terraform 1.17.1, matching the audited
+model; other scopes keep their existing version selection.
+
+Before credentials, the dedicated session validates the private storage binding,
+effective Terraform selectors and selected role. Set noncredential
+`ARTIFACT_APP_KMS_KEY_ARN` to the independently reviewed application key. It is
+separate from the capture key. Existing `TFVAR_` handling still applies. The
+backend deployment-role selector must match the selected environment's configured
+project. Missing or conflicting selectors refuse. Bootstrap sources currently
+name the existing `meeting-notes` project, so another project requires its own
+reviewed executor permission binding.
+
+Every present dependency is checked against its bound name and ARN, including
+cluster, repository, secrets, policies and all observed tables. GitHub metadata
+must match the configured repository/organization, and OIDC metadata must retain
+the exact issuer and an exact STS audience member.
+
+Plan and restored Apply both validate the complete plan. Apply does not replan.
+It still requires the exact immutable private reference, whole-bundle and plan
+digests, successful producer, permitted source relationship and unchanged native
+protection. Approval remains the individual BASIC-BIT reviewer, with self-review
+allowed and administrator bypass disabled. Unknown execution or capture
+acknowledgment is HOLD without replay.
+
+Immediately before Apply, the route reads the bound transcript managed policy's
+version metadata and privately retains the result. A required update with five
+versions, incomplete metadata or pagination is HOLD. An installed no-op needs no
+new version. The session grants no `DeletePolicyVersion`, including during a
+version-capacity race. Do not prune versions to proceed.
+
+### Executor installation is separate
+
+The application route cannot grant its executor missing permissions. First review
+an exact bootstrap saved plan with `--artifact-iam-update`, install it through its
+existing protected owner route, and verify readback. Only then produce a fresh
+application saved plan for separate approval. The bootstrap guard binds the exact
+previous policy bytes and preserves every unrelated statement, trust and capture
+control. IAM scopes `PutRolePolicy` to a role, not an inline-policy name or body;
+the plan validator supplies that narrower document boundary.
+
+The bootstrap opt-in requires `artifact_app_kms_key_arn` and
+`artifact_transcripts_bucket`; both default empty. It adds only metadata reads,
+transcript-policy version creation and the backend inline-policy update. New
+metadata statements share service-compatible exact ARN sets to reduce JSON size.
+Tests compare every service-supported action/resource pair against the original
+uncompacted grants. Existing statements and conditions remain unchanged.
+
+The guard requires the refreshed unchanged executor role's complete known inline
+policy list. It matches the target's prior bytes and counts the proposed target
+plus all remaining inline policies. Missing or stale readback is HOLD. The
+Sandbox guard also retains its existing restriction on unexpected embedded inline
+policies. A successful local rendering is not live quota acceptance.
+
+The mocked Sandbox policy uses 10,184 nonwhitespace characters, leaving 56 of the
+role's aggregate allowance when it is the only inline policy. A longer reviewed
+bucket or another inline policy may exhaust it. The current Production proposal
+exceeds the allowance and its Terraform precondition blocks the IAM write. No new
+policy/attachment or rewrite of old grants is included to bypass the limit.
+[AWS documents the aggregate 10,240-character role limit and whitespace rule](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html).
+
+Production Apply's session also permits the mandatory writer guard to read only
+the Control table's `ENV` partition. IAM cannot constrain its sort key; the
+reviewed guard fixes the full `ENV/INTRODUCTION` key. Decryption is limited to the
+bound application key, through DynamoDB, with that Control table's encryption
+context. It adds no Control writes. Metadata configuration patterns permit no
+object-content reads; unused capture listing and Production ECR reads are omitted
+to keep the session within STS's 2,048-character limit.
+
+Production's separately selected Apply identity and installed permissions remain
+unverified. Source support does not establish a usable hosted Production route.
+Quota resolution and identity evidence require their own reviewed changes before
+Production use.

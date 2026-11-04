@@ -130,6 +130,7 @@ test("actual reviewed Apply source accounts for its Sandbox and production role-
     step.uses?.startsWith("aws-actions/configure-aws-credentials@"),
   );
   expect(credentials.map((step) => step.with["role-to-assume"])).toEqual([
+    "${{ inputs.github_environment == 'production' && vars.PRODUCTION_APPLY_ROLE_ARN || vars.TERRAFORM_AWS_ROLE_ARN }}",
     "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
     "${{ vars.PRODUCTION_APPLY_ROLE_ARN }}",
   ]);

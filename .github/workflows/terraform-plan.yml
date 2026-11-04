@@ -146,6 +146,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:
+          terraform_version: ${{ inputs.plan_scope == 'artifact-preservation-iam' && '1.17.1' || 'latest' }}
           terraform_wrapper: false
       - name: Run private Terraform Plan
         env:

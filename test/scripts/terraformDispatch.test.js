@@ -729,3 +729,46 @@ test("production artifact dispatch refuses a feature branch before authenticatio
     ),
   ).toThrow();
 });
+
+test("CI runs the pinned artifact model and both independent bootstrap render proofs", () => {
+  const steps = parse(readFileSync(".github/workflows/ci-core.yml", "utf8"))
+    .jobs.checkov.steps;
+  const root = steps.findIndex(
+    (s) =>
+      s.name === "Test Sandbox deployment permissions with mocked providers",
+  );
+  const bootstrap = steps.findIndex(
+    (s) => s.name === "Set up pinned bootstrap Terraform",
+  );
+  expect(
+    steps
+      .slice(0, root)
+      .filter((s) => s.uses?.startsWith("hashicorp/setup-terraform@"))
+      .at(-1).with.terraform_version,
+  ).toBe("1.17.1");
+  expect(bootstrap).toBeGreaterThan(root);
+  expect(steps[bootstrap].with.terraform_version).toBe("1.16.0");
+  for (const environment of ["production", "Sandbox"]) {
+    const test = steps.find(
+      (s) => s.name === `Test ${environment} bootstrap with mocked providers`,
+    );
+    expect(test.run).toContain("ARTIFACT_BOOTSTRAP_MOCK_JSONL=");
+    expect(test.run).toContain(
+      `node --test _infra/${environment.toLowerCase()}-bootstrap/verify-artifact-iam-update.test.cjs`,
+    );
+  }
+});
+
+test.each(["plan", "apply"])(
+  "%s artifact workflow selects the audited executable",
+  (phase) => {
+    const setup = parse(
+      readFileSync(`.github/workflows/terraform-${phase}.yml`, "utf8"),
+    ).jobs[phase].steps.find((s) =>
+      s.uses?.startsWith("hashicorp/setup-terraform@"),
+    );
+    expect(setup.with.terraform_version).toBe(
+      "${{ inputs.plan_scope == 'artifact-preservation-iam' && '1.17.1' || 'latest' }}",
+    );
+  },
+);

@@ -56,6 +56,17 @@ function assertOtherwiseUnchanged({ before, after, unknown }, changed) {
   }
 }
 
+function assertPlanEnvelope(plan) {
+  assert.equal(plan.format_version, "1.2");
+  assert.notEqual(plan.errored, true);
+  for (const name of [
+    "resource_drift",
+    "deferred_changes",
+    "action_invocations",
+  ])
+    assert.deepEqual(plan[name] ?? [], []);
+}
+
 function validatePrerequisitePlan(plan) {
   const { result, changes } = validateScopedPlan(plan, {
     targets: new Map([...targets].map((t) => [t, ["create", "update"]])),
@@ -76,6 +87,7 @@ function runCli(validate, refusal) {
 module.exports = {
   validatePrerequisitePlan,
   validateScopedPlan,
+  assertPlanEnvelope,
   assertOtherwiseUnchanged,
   runCli,
   targets,

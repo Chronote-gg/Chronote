@@ -6,7 +6,10 @@ import {
   artifactIamTargets,
   validateArtifactIamPlan,
 } from "../../scripts/deployment/validate-artifact-iam-plan.cjs";
-import { artifactIamFixture } from "../fixtures/deployment/artifactIamPlan.js";
+import {
+  completeArtifactIamFixture,
+  artifactIamFixture,
+} from "../fixtures/deployment/artifactIamPlan.js";
 import { excludedChecks } from "../../scripts/deployment/terraform-meeting-model.cjs";
 import { copyModelSource } from "../fixtures/deployment/terraformMeetingNative.js";
 import {
@@ -20,6 +23,34 @@ import { join, dirname, resolve, basename } from "node:path";
 import { tmpdir } from "node:os";
 
 const validate = (f) => validateArtifactIamPlan(f.plan, artifactIamBinding(f));
+function addSourceChecks(f) {
+  f.plan.checks = excludedChecks.map((address) => {
+    const passed = [
+      `aws_iam_role.${f.invocation.environment === "sandbox" ? "sandbox" : "production"}_deploy`,
+      "var.ENABLE_API_ALB",
+    ].includes(address.to_display);
+    return {
+      address: JSON.parse(JSON.stringify(address)),
+      status: passed ? "pass" : "unknown",
+      ...(passed
+        ? {
+            instances: [
+              {
+                address: {
+                  to_display:
+                    address.kind === "var"
+                      ? address.to_display
+                      : `${address.to_display}[0]`,
+                  ...(address.kind === "var" ? {} : { instance_key: 0 }),
+                },
+                status: "pass",
+              },
+            ],
+          }
+        : {}),
+    };
+  });
+}
 test("TFVAR string overrides use the existing literal trimmed semantics", () => {
   const f = artifactIamFixture();
   f.variables.TFVAR_TRANSCRIPTS_BUCKET = "  approved-artifact-bucket  ";
@@ -64,32 +95,7 @@ test.each(["bound", "source_changed", "relevant_unknown", "catalog_missing"])(
   "targeted check evidence: %s",
   (kind) => {
     const f = artifactIamFixture();
-    f.plan.checks = excludedChecks.map((address) => {
-      const passed = [
-        "aws_iam_role.sandbox_deploy",
-        "var.ENABLE_API_ALB",
-      ].includes(address.to_display);
-      return {
-        address: JSON.parse(JSON.stringify(address)),
-        status: passed ? "pass" : "unknown",
-        ...(passed
-          ? {
-              instances: [
-                {
-                  address: {
-                    to_display:
-                      address.kind === "var"
-                        ? address.to_display
-                        : `${address.to_display}[0]`,
-                    ...(address.kind === "var" ? {} : { instance_key: 0 }),
-                  },
-                  status: "pass",
-                },
-              ],
-            }
-          : {}),
-      };
-    });
+    addSourceChecks(f);
     const directory = mkdtempSync(join(tmpdir(), "artifact-iam-source-"));
     mkdirSync(join(directory, "_infra"));
     try {
@@ -318,4 +324,148 @@ test("missing relevant checks cannot bypass the artifact scope", () => {
   const f = artifactIamFixture();
   f.plan.checks = [];
   expect(() => validate(f)).toThrow(/Missing required artifact IAM check/);
+});
+
+test.each(["foreign-read", "foreign-identity", "foreign-oidc"])(
+  "artifact scope refuses %s data dependency",
+  (fault) => {
+    const f = artifactIamFixture();
+    const address =
+      fault === "foreign-read"
+        ? "data.aws_secretsmanager_secret_version.foreign"
+        : fault === "foreign-identity"
+          ? "data.aws_caller_identity.current"
+          : "data.aws_iam_openid_connect_provider.github_deploy[0]";
+    f.plan.resource_changes.push({
+      address,
+      mode: "data",
+      change: {
+        actions: ["read"],
+        before: null,
+        after: {
+          account_id: "000000000000",
+          arn: "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com",
+        },
+        after_unknown: {},
+      },
+    });
+    expect(() => validate(f)).toThrow();
+  },
+);
+test("artifact scope accepts only bound known metadata reads", () => {
+  const f = artifactIamFixture();
+  f.plan.resource_changes.push({
+    address: "data.aws_caller_identity.current",
+    mode: "data",
+    change: {
+      actions: ["read"],
+      before: null,
+      after: {
+        account_id: f.variables.AWS_ACCOUNT_ID,
+        arn: `arn:aws:sts::${f.variables.AWS_ACCOUNT_ID}:assumed-role/fixture/run`,
+      },
+      after_unknown: {},
+    },
+  });
+  expect(validate(f).result).toBe("accepted");
+});
+
+test.each(["sandbox", "production"])(
+  "complete source-bound %s dependencies have known identities",
+  (environment) => {
+    const f = completeArtifactIamFixture(environment);
+    addSourceChecks(f);
+    return withReviewedSource((options) =>
+      expect(
+        validateArtifactIamPlan(f.plan, artifactIamBinding(f), options).result,
+      ).toBe("accepted"),
+    );
+  },
+);
+function withReviewedSource(run) {
+  const directory = mkdtempSync(join(tmpdir(), "artifact-dependency-source-"));
+  mkdirSync(join(directory, "_infra"));
+  try {
+    return run({ directory, sourceSha: copyModelSource(directory) });
+  } finally {
+    assert.equal(dirname(directory), resolve(tmpdir()));
+    assert.match(basename(directory), /^artifact-dependency-source-/);
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+test.each([
+  ["sandbox", "cluster"],
+  ["sandbox", "secret"],
+  ["production", "table"],
+  ["production", "policy"],
+  ["sandbox", "repository"],
+  ["sandbox", "github-repo"],
+  ["production", "github-org"],
+  ["sandbox", "issuer"],
+  ["production", "audience"],
+])(
+  "source-bound %s graph refuses foreign %s identity",
+  (environment, fault) => {
+    const f = completeArtifactIamFixture(environment);
+    addSourceChecks(f);
+    const address = {
+      cluster: "aws_ecs_cluster.main",
+      secret: "aws_secretsmanager_secret.openai_api_key",
+      table: "aws_dynamodb_table.access_logs_table",
+      policy: "aws_iam_policy.dynamodb_access_policy",
+      repository: "aws_ecr_repository.app_ecr_repo",
+      "github-repo": "data.github_repository.repo",
+      "github-org": "data.github_organization.production_deployment_owner[0]",
+      issuer: "data.aws_iam_openid_connect_provider.github_deploy[0]",
+      audience:
+        "data.aws_iam_openid_connect_provider.github_production_deploy[0]",
+    }[fault];
+    const r = f.plan.resource_changes.find((r) => r.address === address);
+    for (const value of [r.change.before, r.change.after].filter(Boolean)) {
+      if (
+        ["cluster", "secret", "table", "policy", "repository"].includes(fault)
+      )
+        value.arn = value.arn.replace("123456789012", "000000000000");
+      if (fault === "github-repo") value.full_name = "foreign/repository";
+      if (fault === "github-org") value.name = "foreign";
+      if (fault === "issuer") value.url = "https://foreign.invalid";
+      if (fault === "audience")
+        value.client_id_list = ["prefix-sts.amazonaws.com"];
+    }
+    return withReviewedSource((options) =>
+      expect(() =>
+        validateArtifactIamPlan(f.plan, artifactIamBinding(f), options),
+      ).toThrow(),
+    );
+  },
+);
+
+test.each(["region", "name", "suffix"])(
+  "known no-op identity refuses a foreign %s",
+  (field) => {
+    const f = completeArtifactIamFixture();
+    const r = f.plan.resource_changes.find(
+      (r) =>
+        r.address ===
+        (field === "suffix"
+          ? "aws_secretsmanager_secret.openai_api_key"
+          : "aws_ecs_cluster.main"),
+    );
+    for (const value of [r.change.before, r.change.after]) {
+      if (field === "region") value.region = "us-west-2";
+      if (field === "name") value.name = "foreign";
+      if (field === "suffix") value.arn += "-other";
+    }
+    expect(() => validate(f)).toThrow();
+  },
+);
+test("bound shared OIDC metadata accepts the provider's HTTPS spelling and an exact STS member", () => {
+  const f = completeArtifactIamFixture();
+  const r = f.plan.resource_changes.find(
+    (r) =>
+      r.address === "data.aws_iam_openid_connect_provider.github_deploy[0]",
+  );
+  r.change.after.url = "https://token.actions.githubusercontent.com";
+  r.change.after.client_id_list = ["other-client", "sts.amazonaws.com"];
+  expect(validate(f).result).toBe("accepted");
 });

@@ -772,7 +772,7 @@ test("selected site-permissions Plan session retains the completed dependency-re
     ),
   ).toEqual([]);
   expect(credentials.if).toBe(
-    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions' }}",
+    "${{ (inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions') && inputs.plan_scope != 'artifact-preservation-iam' }}",
   );
   expect(
     Buffer.byteLength(credentials.with["inline-session-policy"]),
