@@ -1,5 +1,6 @@
 import type {
   GetItemCommandInput,
+  PutItemCommandInput,
   UpdateItemCommandInput,
   TransactWriteItemsCommandInput,
 } from "@aws-sdk/client-dynamodb";
@@ -110,6 +111,7 @@ export function fixture() {
     onSleep: () => undefined,
     artifacts: new Map<string, artifactTypes.ArtifactSafetyRecord>(),
     artifactAutoSeal: true,
+    audits: new Map<string, Record<string, unknown>>(),
     leases: [] as Array<{ ownerInstanceId: string; createdAt: string }>,
     meetings: [] as Array<{
       ownerInstanceId: string;
@@ -264,6 +266,7 @@ export function fixture() {
     state.rows[item.identity.instanceId] = item as types.RuntimeRecord;
   }
   type DynamoInput = GetItemCommandInput &
+    PutItemCommandInput &
     UpdateItemCommandInput &
     TransactWriteItemsCommandInput;
   function getItem(input: DynamoInput) {
@@ -291,7 +294,9 @@ export function fixture() {
         ? state.ctl
         : sk.startsWith("ARTIFACTS#")
           ? state.artifacts.get(id)
-          : state.rows[sk.substring(8)];
+          : sk.startsWith("BREAK_GLASS#")
+            ? state.audits.get(sk)
+            : state.rows[sk.substring(8)];
     return { Item: item ? marshall(item) : undefined };
   }
   function updateItem(input: DynamoInput) {
@@ -364,6 +369,12 @@ export function fixture() {
   }
   const dynamoOperations: Record<string, (input: DynamoInput) => unknown> = {
     "get-item": getItem,
+    "put-item": (input) => {
+      const item = unmarshall(input.Item!);
+      if (state.audits.has(item.sk)) throw new Error("conditional conflict");
+      state.audits.set(item.sk, item);
+      return {};
+    },
     "update-item": updateItem,
     query: () => ({
       Items: Object.values(state.rows).map((runtime) => marshall(runtime)),

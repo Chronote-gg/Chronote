@@ -21,7 +21,9 @@ const step = sync?.steps.find(
 
 test("production connection sync requires a successful backend and the event revision", () => {
   expect(sync.needs).toEqual(["deploybackend"]);
-  expect(sync.if).toBeUndefined();
+  expect(sync.if).toBe(
+    "${{ !cancelled() && needs.deploybackend.result == 'success' }}",
+  );
   expect(sync.environment).toBe("production");
   expect(workflow.on).not.toHaveProperty("pull_request");
   const checkout = sync.steps.find((item: { uses?: string }) =>

@@ -58,6 +58,17 @@ function createArtifactHandoff(options) {
     control,
     lookup,
   });
+  const breakGlass = require("./break-glass.cjs").createBreakGlass({
+    env: options.env ?? process.env,
+    aws,
+    tables,
+    now,
+    types,
+    legacy,
+    runtime,
+    lookup,
+    production,
+  });
   /** Liveness the coordinator vouches for after checking the legacy runtime row. */
   function live() {
     const heartbeatAt = now();
@@ -142,9 +153,7 @@ function createArtifactHandoff(options) {
   async function sourceEvidence(ctl) {
     try {
       const row = await committed(ctl);
-      return row.attestation
-        ? "operator_attested_legacy"
-        : "verified_at_launch";
+      return row.attestation ? row.attestation.kind : "verified_at_launch";
     } catch {
       return "UNKNOWN";
     }
@@ -188,6 +197,7 @@ function createArtifactHandoff(options) {
       return ctl;
     }
     let row = await read(ctl.deployment.outgoing);
+    breakGlass.assertConsumable(row);
     if (["idle", "cancelled", "attested_legacy"].includes(row.state))
       row = await request(ctl, row);
     binding(row, ctl);
@@ -407,6 +417,7 @@ function createArtifactHandoff(options) {
     retired,
     sourceEvidence,
     attestPreservation: attested.attest,
+    admitBreakGlass: breakGlass.admit,
   };
 }
 module.exports = { createArtifactHandoff };

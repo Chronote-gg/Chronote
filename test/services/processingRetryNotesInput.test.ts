@@ -215,7 +215,9 @@ describe("cleanupWithCurrentSettings", () => {
       serverName: "Server X",
       voiceChannelName: "Channel Y",
       roles: expect.stringContaining("Design"),
-      formattedContext: expect.stringContaining("Server rules"),
+      // Cleanup shapes a transcript, so it must not receive the guild's
+      // notes-authoring context, which the notes path above still gets.
+      formattedContext: expect.not.stringContaining("Server rules"),
     });
     const [meeting, , model] = jest.mocked(cleanupContentTranscription).mock
       .calls[0];

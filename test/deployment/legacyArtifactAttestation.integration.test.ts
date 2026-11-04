@@ -10,7 +10,11 @@ import {
   buildLegacyArtifactTransaction,
   type LegacyArtifactWrite,
 } from "../../src/services/legacyArtifactAttestation";
-import { artifactSafetyRecordSchema } from "../../src/types/artifactSafety";
+import {
+  BREAK_GLASS_ATTESTATION_KIND,
+  artifactSafetyBaseSchema,
+  artifactSafetyRecordSchema,
+} from "../../src/types/artifactSafety";
 import { counts } from "./fixtures/coordinatorFixture";
 import { legacyArtifactFixture } from "./fixtures/legacyArtifactFixture";
 import {
@@ -124,4 +128,35 @@ test("cancellation closes preparing natively even while the source records", asy
   });
   expect((await get(f.attested.sk))?.state).toBe("attested_legacy");
   expect((await get("CONTROL"))?.deployment.phase).toBe("complete");
+});
+
+test("break-glass replaces a settled runtime row only at its exact revision", async () => {
+  const f = await setup();
+  const idle = artifactSafetyRecordSchema.parse({
+    ...artifactSafetyBaseSchema.parse(f.expected),
+    state: "idle",
+  });
+  await put(idle);
+  const replace = (expected: typeof idle) =>
+    f.write(
+      "attest",
+      expected,
+      artifactSafetyRecordSchema.parse({
+        ...f.attested,
+        revision: expected.revision + 1,
+        attestation: {
+          ...f.attested.attestation,
+          kind: BREAK_GLASS_ATTESTATION_KIND,
+        },
+      }),
+    );
+  await expect(
+    transact(replace({ ...idle, revision: idle.revision - 1 })),
+  ).rejects.toThrow();
+  expect((await get(idle.sk))?.state).toBe("idle");
+  await transact(replace(idle));
+  expect(await get(idle.sk)).toMatchObject({
+    state: "attested_legacy",
+    attestation: { kind: BREAK_GLASS_ATTESTATION_KIND },
+  });
 });

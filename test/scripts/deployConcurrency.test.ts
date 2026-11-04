@@ -18,8 +18,11 @@ const deployment = parse(
 ) as { concurrency?: unknown; jobs: Record<string, Job> };
 
 const CI_JOB = "ci";
+// The break-glass gate is CI's alternative, not a deploy job: it holds no
+// production credentials and is pinned by deployBreakGlass.test.ts.
+const GATE_JOBS = [CI_JOB, "break-glass"];
 const deployJobs = Object.entries(deployment.jobs).filter(
-  ([id]) => id !== CI_JOB,
+  ([id]) => !GATE_JOBS.includes(id),
 );
 
 // A workflow-level group holds a newer run entirely pending, so its CI never

@@ -8,6 +8,9 @@ import { createHash } from "node:crypto";
 import { stableJson } from "../utils/stableJson";
 import {
   ARTIFACT_PROOF_SECONDS,
+  BREAK_GLASS_ATTESTATION_KIND,
+  BREAK_GLASS_REPLACEABLE_STATES,
+  LEGACY_ATTESTATION_KIND,
   artifactSafetyRecordSchema,
   type ArtifactSafetyRecord,
   type ArtifactStorageSnapshot,
@@ -121,21 +124,48 @@ const same = (left: unknown, right: unknown) =>
 const requestOf = (row: ArtifactSafetyRecord | undefined) =>
   row && "request" in row ? row.request : undefined;
 
-function requireTransition({ purpose, expected, next }: LegacyArtifactWrite) {
+/**
+ * Break-glass only: an attestation may replace a protocol runtime's own row
+ * when that runtime holds no preparation of its own.
+ */
+function replacesRuntimeRow({ purpose, expected, next }: LegacyArtifactWrite) {
+  return (
+    purpose === "attest" &&
+    expected !== undefined &&
+    !expected.attestation &&
+    next.attestation?.kind === BREAK_GLASS_ATTESTATION_KIND &&
+    BREAK_GLASS_REPLACEABLE_STATES.some((state) => state === expected.state)
+  );
+}
+function requireTransition(input: LegacyArtifactWrite) {
+  const { purpose, expected, next } = input;
   const rule = transitions[purpose];
   if (
     !rule ||
-    !rule.from.includes(expected?.state ?? "missing") ||
+    !(
+      rule.from.includes(expected?.state ?? "missing") ||
+      replacesRuntimeRow(input)
+    ) ||
     next.state !== rule.to ||
     next.revision !== (expected ? expected.revision + 1 : 0)
   )
     throw new Error("Legacy artifact transition is not authorized");
 }
+/** A row keeps its attestation kind; only a replaced runtime row is break-glass. */
+function expectedKind({ expected }: LegacyArtifactWrite) {
+  if (!expected) return LEGACY_ATTESTATION_KIND;
+  return expected.attestation?.kind ?? BREAK_GLASS_ATTESTATION_KIND;
+}
 function requireAttestation(input: LegacyArtifactWrite): LegacyAttestation {
   const { expected, next, purpose, now } = input;
   const attestation = next.attestation;
-  if (!attestation || (expected && !expected.attestation))
+  if (
+    !attestation ||
+    (expected && !expected.attestation && !replacesRuntimeRow(input))
+  )
     throw new Error("Runtime-written artifact rows use the runtime protocol");
+  if (attestation.kind !== expectedKind(input))
+    throw new Error("Attestation kind does not match its source");
   if (
     purpose === "attest"
       ? attestation.verifiedAt !== now

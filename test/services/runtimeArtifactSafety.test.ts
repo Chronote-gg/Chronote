@@ -5,9 +5,12 @@ import { createMockArtifactSafetyRepository } from "../../src/repositories/artif
 import { createMockDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
 import { artifactSafetyFixture } from "../deployment/fixtures/artifactSafetyFixture";
 import {
+  BREAK_GLASS_ATTESTATION_KIND,
   artifactSafetyBaseSchema,
   artifactSafetyRecordSchema,
+  type ArtifactSafetyRecord,
 } from "../../src/types/artifactSafety";
+import { legacyArtifactFixture } from "../deployment/fixtures/legacyArtifactFixture";
 import type { DeploymentControlRecord } from "../../src/types/deploymentControl";
 
 beforeEach(() => jest.useFakeTimers({ now: 120_000 }));
@@ -362,4 +365,71 @@ test("a guarded rollback rechecks the preserved inventory before reopening the o
   } finally {
     f.safety.stop();
   }
+});
+
+/** The coordinator-owned rows of a break-glass replacement, by state. */
+function attestedRows() {
+  const l = legacyArtifactFixture();
+  const attestation = {
+    ...l.attested.attestation!,
+    kind: BREAK_GLASS_ATTESTATION_KIND,
+  };
+  const attested = (row: object) =>
+    artifactSafetyRecordSchema.parse({ ...row, attestation });
+  return {
+    attested_legacy: attested(l.attested),
+    requested: attested(l.requested),
+    sealed: attested(l.sealed),
+    consumed: attested({
+      ...l.sealed,
+      revision: 3,
+      state: "consumed",
+      consumedAt: 120,
+    }),
+  };
+}
+type AttestedState = keyof ReturnType<typeof attestedRows>;
+/** Refreshes the runtime once per observed coordinator-owned row state. */
+async function observeAttested(...states: AttestedState[]) {
+  const f = fixture();
+  const rows = attestedRows();
+  try {
+    for (const state of states) {
+      f.artifacts.set(rows[state].sk, rows[state]);
+      await f.safety.refresh();
+    }
+    return { f, row: await f.repository.read(f.source.identity) };
+  } finally {
+    f.safety.stop();
+  }
+}
+
+test.each(["requested", "sealed", "consumed"] as const)(
+  "an attested %s row seals admission and storage without a runtime write",
+  async (state) => {
+    const { f, row } = await observeAttested(state, state);
+    expect(f.admission.sealed).toBe(true);
+    expect(() => f.admission.begin()).toThrow("sealed");
+    expect(f.storage.seal).toHaveBeenCalledTimes(1);
+    expect(f.storage.resume).not.toHaveBeenCalled();
+    expect(row).toEqual(attestedRows()[state] as ArtifactSafetyRecord);
+  },
+);
+
+test("a cancelled attested handoff reopens admission and storage", async () => {
+  const { f } = await observeAttested(
+    "attested_legacy",
+    "requested",
+    "attested_legacy",
+  );
+  expect(f.admission.sealed).toBe(false);
+  expect(() => f.admission.begin().settle()).not.toThrow();
+  expect(f.storage.resume).toHaveBeenCalledTimes(1);
+});
+
+test("an attestation that was never requested leaves admission alone", async () => {
+  const { f } = await observeAttested("attested_legacy", "attested_legacy");
+  expect(f.admission.sealed).toBe(false);
+  expect(f.storage.seal).not.toHaveBeenCalled();
+  expect(f.storage.resume).not.toHaveBeenCalled();
 });

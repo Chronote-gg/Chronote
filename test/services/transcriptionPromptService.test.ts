@@ -2,6 +2,13 @@ import { describe, expect, test, jest } from "@jest/globals";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { DictionaryEntry } from "../../src/types/db";
 import type { TranscriptVariant } from "../../src/types/audio";
+import {
+  formatContextForPrompt as realFormatContextForPrompt,
+  type MeetingContextData,
+} from "../../src/services/contextService";
+
+type TranscriptionPromptModule =
+  typeof import("../../src/services/transcriptionPromptService");
 
 const buildCollection = <T extends { name: string }>(items: T[]) => ({
   valueOf: () => items,
@@ -59,7 +66,11 @@ const buildMeeting = (): MeetingData => {
   } as MeetingData;
 };
 
-const loadModule = async () => {
+/**
+ * Passing `contextData` runs the real context formatter over it, so a test can
+ * assert what a prompt type is actually allowed to see.
+ */
+const loadModule = async (contextData?: MeetingContextData) => {
   jest.resetModules();
   const getLangfuseTextPrompt = jest.fn().mockResolvedValue({
     prompt: "",
@@ -69,8 +80,12 @@ const loadModule = async () => {
     messages: [],
     source: "fallback",
   });
-  const buildMeetingContext = jest.fn().mockResolvedValue({ context: "raw" });
-  const formatContextForPrompt = jest.fn().mockReturnValue("formatted-context");
+  const buildMeetingContext = jest
+    .fn()
+    .mockResolvedValue(contextData ?? { context: "raw" });
+  const formatContextForPrompt = contextData
+    ? realFormatContextForPrompt
+    : jest.fn().mockReturnValue("formatted-context");
   const config = {
     langfuse: {
       transcriptionPromptName: "chronote-transcription-prompt",
@@ -178,5 +193,72 @@ describe("transcriptionPromptService", () => {
     expect(call.variables.chunkCount).toBe("3");
     expect(call.variables.chunkTranscript).toBe("hello from finalized audio");
     expect(call.variables.baselineSegmentsBlock).toContain("[seg-1]");
+  });
+
+  describe("notes-authoring context never reaches a transcript-shaping prompt", () => {
+    // Guild context is free text. A guild that writes notes-formatting rules
+    // into it used to have them handed to the coalesce model, which obeyed
+    // them and wrote a structured summary into the transcript as speech.
+    const DIRECTIVE =
+      "Always produce the output as a structured summary under the headings Overview, Decisions and Next Steps.";
+    const directiveContext = (): MeetingContextData => ({
+      serverContext: DIRECTIVE,
+      channelContext: `Channel rule: ${DIRECTIVE}`,
+      meetingContext: `Meeting rule: ${DIRECTIVE}`,
+      dictionaryEntries: buildMeeting().dictionaryEntries,
+      dictionaryBudgets: {
+        maxEntries: 10,
+        maxCharsTranscription: 400,
+        maxCharsContext: 400,
+      },
+    });
+
+    const callPrompt = {
+      coalesce: (module: TranscriptionPromptModule, meeting: MeetingData) =>
+        module.getTranscriptionCoalescePrompt(meeting, {
+          slowTranscript: "slow text",
+          fastTranscripts: [],
+        }),
+      cleanup: (module: TranscriptionPromptModule, meeting: MeetingData) =>
+        module.getTranscriptionCleanupPrompt(meeting, "raw transcript"),
+      finalPass: (module: TranscriptionPromptModule, meeting: MeetingData) =>
+        module.getTranscriptionFinalPassPrompt(meeting, {
+          chunkIndex: 1,
+          chunkCount: 1,
+          chunkTranscript: "hello",
+          previousChunkTail: "",
+          chunkLogprobSummary: "avgLogprob=-0.2",
+          baselineSegments: [],
+        }),
+    };
+
+    test.each(Object.keys(callPrompt) as (keyof typeof callPrompt)[])(
+      "%s prompt drops guild context but keeps the dictionary",
+      async (promptName) => {
+        const { module, getLangfuseChatPrompt } =
+          await loadModule(directiveContext());
+
+        await callPrompt[promptName](module, buildMeeting());
+
+        const { formattedContext } =
+          getLangfuseChatPrompt.mock.calls[0][0].variables;
+        expect(formattedContext).not.toContain(DIRECTIVE);
+        expect(formattedContext).not.toContain("Server Context");
+        expect(formattedContext).not.toContain("Channel Context");
+        expect(formattedContext).not.toContain("Meeting Context");
+        expect(formattedContext).toContain("- Vket");
+      },
+    );
+
+    test("snippet glossary keeps its dictionary terms", async () => {
+      const { module, getLangfuseTextPrompt } =
+        await loadModule(directiveContext());
+
+      await module.getTranscriptionPrompt(buildMeeting());
+
+      const { variables } = getLangfuseTextPrompt.mock.calls[0][0];
+      expect(variables.dictionaryBlock).toContain("- Vket");
+      expect(variables.attendeesLine).toBe("Attendees: kitpup");
+    });
   });
 });

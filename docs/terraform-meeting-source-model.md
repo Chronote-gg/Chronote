@@ -336,13 +336,22 @@ covers it; production's `TableMetadata` already covers every
 
 ### Recomputing the pin
 
-There is no script for this. The pin is `bindingHash` over a map of filename to
-SHA-256 of each file's bytes with CRLF normalized to LF, over exactly the
-`isSource` inventory of the committed `_infra` tree at the checkout's HEAD.
-Reproduce the outgoing value from the parent commit's tree first; a method that
-cannot reproduce the committed pin is wrong, and a pin nobody can derive twice
-is not a guard. `test/scripts/terraformMeetingNative.test.js` is the check that
-matters, because `copyModelSource` runs `verifySource` against the real
+`node scripts/deployment/recompute-source-model.cjs [ref]` prints the pin for a
+committed tree, defaulting to `HEAD`, along with the hashed file count and the
+inventory itself. It is `bindingHash` over a map of filename to SHA-256 of each
+file's bytes with CRLF normalized to LF, over exactly the `isSource` inventory of
+the committed `_infra` tree, and it imports that predicate and that digest from
+`terraform-meeting-model.cjs` so it cannot drift from `verifySource`. Check the
+printed count as well as the digest: a wrong inventory still produces a
+plausible-looking hash.
+
+Because it takes any ref, point it at the parent commit and reproduce the
+outgoing value before trusting a new one; a method that cannot reproduce the
+committed pin is wrong, and a pin nobody can derive twice is not a guard.
+`test/scripts/recomputeSourceModel.test.js` holds the script to that property
+against two fixed historical refreshes at different file counts.
+`test/scripts/terraformMeetingNative.test.js` remains the check that matters for
+the pin itself, because `copyModelSource` runs `verifySource` against the real
 committed `_infra`: it fails on a stale pin and passes on a correct one.
 
 **This pin covers every top-level Terraform source file, so two concurrent

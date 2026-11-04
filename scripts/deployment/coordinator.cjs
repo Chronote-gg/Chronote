@@ -506,6 +506,7 @@ function createCoordinator(options = {}) {
     } else {
       let previous;
       ({ ctl, previous } = await handoff.acquirable(ctl, svc));
+      await artifacts.admitBreakGlass(previous.outgoing);
       const traffic = await routing.prepare(svc, previous.outgoing);
       ctl = await save(ctl, {
         ...ctl,
@@ -940,7 +941,6 @@ function createCoordinator(options = {}) {
     );
     return completeRollback(ctl);
   }
-
   return {
     prepare,
     cancelPreparation: artifacts.cancelPreparation,
