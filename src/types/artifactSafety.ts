@@ -11,6 +11,19 @@ export const MAX_ARTIFACT_AUTHORITIES = 90;
 export const ARTIFACT_PROOF_SECONDS = 60;
 export const ARTIFACT_PREPARATION_SECONDS = 300;
 export const LEGACY_ATTESTATION_SECONDS = 6 * 60 * 60;
+export const LEGACY_ATTESTATION_KIND = "operator_attested_legacy";
+/**
+ * An operator attestation written over a protocol runtime's own row, so a
+ * break-glass deployment can stand in for a seal that cannot complete. Only a
+ * break-glass deployment may consume it.
+ */
+export const BREAK_GLASS_ATTESTATION_KIND = "operator_attested_break_glass";
+/** Runtime row states with no preparation the runtime still owns. */
+export const BREAK_GLASS_REPLACEABLE_STATES = [
+  "idle",
+  "cancelled",
+  "blocked",
+] as const;
 const epoch = z.number().int().nonnegative();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const operatorText = z.string().trim().min(1).max(1024);
@@ -71,13 +84,14 @@ const startupSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("active"), activatedAt: epoch }).strict(),
 ]);
 /**
- * Operator evidence for a source runtime built before this protocol. Such a
- * runtime never writes its own row, so the coordinator stands in for it and
- * every row carrying this field is coordinator-owned.
+ * Operator evidence for a source runtime built before this protocol, or for a
+ * protocol runtime under break-glass. A legacy runtime never writes its own
+ * row, and a protocol runtime cannot write an attested one, so the coordinator
+ * stands in for it and every row carrying this field is coordinator-owned.
  */
 export const legacyAttestationSchema = z
   .object({
-    kind: z.literal("operator_attested_legacy"),
+    kind: z.enum([LEGACY_ATTESTATION_KIND, BREAK_GLASS_ATTESTATION_KIND]),
     operator: operatorText,
     reason: operatorText,
     manifestUri: z

@@ -6,8 +6,11 @@ import {
   type LegacyArtifactWrite,
 } from "../../src/services/legacyArtifactAttestation";
 import {
+  BREAK_GLASS_ATTESTATION_KIND,
+  LEGACY_ATTESTATION_KIND,
   artifactSafetyBaseSchema,
   artifactSafetyRecordSchema,
+  type LegacyAttestation,
 } from "../../src/types/artifactSafety";
 import { counts } from "./fixtures/coordinatorFixture";
 import { legacyArtifactFixture as fixture } from "./fixtures/legacyArtifactFixture";
@@ -211,4 +214,56 @@ test("an unconsumed seal can be renewed within its request", () => {
   expect(() =>
     buildLegacyArtifactTransaction({ ...input, now: 300 }, f.tables),
   ).toThrow();
+});
+
+/** A break-glass attestation over the runtime's own row, in `state`, with `kind`. */
+function replacement(
+  state: "idle" | "sealed",
+  kind: LegacyAttestation["kind"],
+) {
+  const f = fixture();
+  const expected =
+    state === "sealed"
+      ? f.expected
+      : artifactSafetyRecordSchema.parse({
+          ...artifactSafetyBaseSchema.parse(f.expected),
+          state,
+        });
+  const next = artifactSafetyRecordSchema.parse({
+    ...f.attested,
+    revision: expected.revision + 1,
+    attestation: { ...f.attested.attestation, kind },
+  });
+  return { f, input: f.write("attest", expected, next) };
+}
+
+test("break-glass may replace a settled runtime row, conditioned on it exactly", () => {
+  const { f, input } = replacement("idle", BREAK_GLASS_ATTESTATION_KIND);
+  const [put] = items(input, f.tables);
+  expect(put.Put!.ConditionExpression).toContain("attribute_not_exists(");
+  expect(
+    Object.values(unmarshall(put.Put!.ExpressionAttributeValues!)),
+  ).toEqual(expect.arrayContaining([2, "idle"]));
+});
+
+test.each([
+  ["a legacy kind over a settled runtime row", "idle", LEGACY_ATTESTATION_KIND],
+  ["a runtime row mid-preparation", "sealed", BREAK_GLASS_ATTESTATION_KIND],
+] as const)("an attestation cannot replace %s", (_case, state, kind) => {
+  const { f, input } = replacement(state, kind);
+  expect(() => items(input, f.tables)).toThrow();
+});
+
+test("a source with no row takes only a legacy attestation", () => {
+  const f = fixture();
+  const next = artifactSafetyRecordSchema.parse({
+    ...f.attested,
+    attestation: {
+      ...f.attested.attestation,
+      kind: BREAK_GLASS_ATTESTATION_KIND,
+    },
+  });
+  expect(() => items(f.write("attest", undefined, next), f.tables)).toThrow(
+    /kind/,
+  );
 });

@@ -9,6 +9,18 @@ on:
         description: Launch even if the serving runtime reports recording, finalization or voice work (use only for a leaked counter, see docs/deployment-handoff.md)
         type: boolean
         default: false
+      break_glass:
+        description: Break-glass deploy (BASIC only, see docs/deployment-handoff.md). Skips CI, Docs, the quiet wait and the runtime seal; needs a reason and the attested backup manifest hash
+        type: boolean
+        default: false
+      break_glass_reason:
+        description: Why the standard path cannot be used (public in the run summary; no user data)
+        type: string
+        default: ""
+      backup_manifest_sha256:
+        description: SHA-256 of the attested backup manifest for the outgoing task (from attest-preservation)
+        type: string
+        default: ""
   push:
     branches:
       - master
@@ -23,7 +35,8 @@ permissions:
 
 jobs:
   ci:
-    if: github.ref == 'refs/heads/master'
+    # A break-glass dispatch relies on the merged pull request's CI instead.
+    if: github.ref == 'refs/heads/master' && !(github.event_name == 'workflow_dispatch' && inputs.break_glass)
     name: CI
     # One group across both events, so at most one master CI is ever alive and
     # the newest run wins. A merge therefore cancels a manual dispatch's CI as
@@ -39,6 +52,34 @@ jobs:
     uses: ./.github/workflows/ci-core.yml
     secrets: inherit
 
+  # Admits a break-glass dispatch before any production job starts: only
+  # BASIC-BIT may dispatch it, and the commit must be the merge of a master pull
+  # request whose CI is green. It holds no AWS credentials.
+  break-glass:
+    name: Break-glass Gate
+    if: github.event_name == 'workflow_dispatch' && inputs.break_glass
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Verify dispatcher and merged pull request checks
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BREAK_GLASS_REASON: ${{ inputs.break_glass_reason }}
+          BREAK_GLASS_MANIFEST_SHA256: ${{ inputs.backup_manifest_sha256 }}
+        run: node scripts/deployment/break-glass-guard.cjs
+
   deploybackend:
     name: Deploy Backend
     # Keeps the original shared group. This is the job that swaps the serving
@@ -51,13 +92,22 @@ jobs:
       cancel-in-progress: false
     timeout-minutes: 180
     # Publish privacy/What's New notices before expanded capture goes live.
-    needs: [ci, deploy-docs]
+    # A break-glass run replaces CI and Docs with the break-glass gate.
+    needs: [ci, deploy-docs, break-glass]
+    if: >-
+      ${{ !cancelled() && (
+        (needs.ci.result == 'success' && needs.deploy-docs.result == 'success' && needs.break-glass.result == 'skipped')
+        || (needs.break-glass.result == 'success' && needs.ci.result == 'skipped' && needs.deploy-docs.result == 'skipped')
+      ) }}
     runs-on: ubuntu-latest
     environment: production
     permissions:
       contents: read
       id-token: write
     env:
+      BREAK_GLASS: ${{ needs.break-glass.result == 'success' && '1' || '' }}
+      BREAK_GLASS_REASON: ${{ inputs.break_glass_reason }}
+      BREAK_GLASS_MANIFEST_SHA256: ${{ inputs.backup_manifest_sha256 }}
       DEPLOYMENT_ENVIRONMENT: production
       DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
@@ -217,7 +267,8 @@ jobs:
       - name: Protect serving runtime and warm candidate
         id: prepare
         env:
-          HANDOFF_QUIET_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.handoff_quiet_override && '1' || '' }}
+          HANDOFF_QUIET_OVERRIDE: ${{ ((github.event_name == 'workflow_dispatch' && inputs.handoff_quiet_override) || env.BREAK_GLASS == '1') && '1' || '' }}
+          BREAK_GLASS_RECORD_PATH: ${{ runner.temp }}/break-glass-record.json
         run: node scripts/deployment/coordinator.cjs prepare
 
       - name: Promote exact ready candidate
@@ -243,7 +294,26 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           REF_NAME: ${{ github.ref_name }}
           ACTOR: ${{ github.actor }}
+          BREAK_GLASS_RECORD_PATH: ${{ runner.temp }}/break-glass-record.json
         run: |
+          if [ "$BREAK_GLASS" = "1" ]; then
+            {
+              echo "## Break-glass deployment"
+              echo ""
+              if [ -s "$BREAK_GLASS_RECORD_PATH" ]; then
+                echo "Audit record written to DeploymentControl before any service mutation:"
+                echo ""
+                echo '```json'
+                cat "$BREAK_GLASS_RECORD_PATH"
+                echo '```'
+                echo ""
+                echo "Follow-up: re-run the full deploy path within seven days and open an \`operations\` issue to track it. This run could not email the critical-alerts topic or open the issue itself."
+              else
+                echo "Requested, but no audit record was written, so the coordinator neither took Control nor changed the service."
+              fi
+              echo ""
+            } >> $GITHUB_STEP_SUMMARY
+          fi
           if [ "$JOB_STATUS" == "success" ]; then
             echo "## ✅ Deployment Successful!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -268,6 +338,8 @@ jobs:
       group: chronote-deploy-production-frontend
       cancel-in-progress: false
     needs: [ci, deploy-docs, deploybackend]
+    # The backend job already required CI and Docs, or the break-glass gate.
+    if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 45
@@ -549,6 +621,8 @@ jobs:
       group: chronote-deploy-production-promote-prompts
       cancel-in-progress: false
     needs: [deploybackend]
+    # Explicit, because a break-glass run skips CI upstream of the backend.
+    if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -620,6 +694,8 @@ jobs:
       group: chronote-deploy-production-sync-openai
       cancel-in-progress: false
     needs: [deploybackend]
+    # Explicit, because a break-glass run skips CI upstream of the backend.
+    if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 15
