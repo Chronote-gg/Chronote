@@ -2,6 +2,7 @@ import type { MeetingData } from "../../src/types/meeting-data";
 import {
   assertMeetingProcessingSucceeded,
   classifyTranscription,
+  classifyUploadTranscription,
   getMeetingProcessingNotice,
   EMPTY_RECORDING_NOTICE,
   PARTIAL_TRANSCRIPT_NOTICE,
@@ -124,4 +125,16 @@ test("imported notes suppress an obsolete empty notice", () => {
       true,
     ),
   ).toBeUndefined();
+});
+
+test("an upload's few long chunks demote on a single failure", () => {
+  // 300 second chunks, not per-turn snippets: one lost chunk is a real gap, and the
+  // Discord floor would call a two chunk upload with one failure "ready".
+  const facts = {
+    usableSegments: 1,
+    failedSegments: 1,
+    captureIncomplete: false,
+  };
+  expect(classifyUploadTranscription(facts)).toBe("partial");
+  expect(classifyTranscription(facts)).toBe("ready");
 });
