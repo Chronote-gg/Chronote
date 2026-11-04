@@ -194,6 +194,9 @@ function createLegacyAttestation(deps) {
    * role that seals has no read access to the operator backup prefix.
    */
   async function recheck(row) {
+    console.info(
+      "Legacy attestation seal: S3 manifest re-check skipped; the deploy role cannot read operator-recovery",
+    );
     await guard(row.identity, row.attestation.capturedAt);
   }
   function target(ctl) {
