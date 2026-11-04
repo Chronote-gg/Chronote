@@ -7,9 +7,13 @@ import {
 } from "@discordjs/voice";
 import { z } from "zod";
 import {
+  DiscordAPIError,
+  GatewayOpcodes,
+  RESTJSONErrorCodes,
   SimpleShardingStrategy,
   type Client,
   type GatewaySendPayload,
+  type Guild,
 } from "discord.js";
 import type { MeetingInitOptions } from "../meetings";
 import type { DeploymentControlRepository } from "../repositories/deploymentControlRepository";
@@ -28,28 +32,30 @@ export type VoiceSettlementOptions = {
   signal?: AbortSignal;
 };
 const SETTLEMENT_TIMEOUT_MS = 5_000;
+/** Part of the settlement window held back for the REST check when no gateway confirmation arrives. */
+const REST_PROOF_RESERVE_MS = 1_500;
+const REST_UNAVAILABLE = Symbol("rest_unavailable");
 const voiceDispatch = z.object({
   t: z.literal("VOICE_STATE_UPDATE"),
-  s: z.number().int(),
   d: z.object({
     guild_id: z.string(),
     user_id: z.string(),
-    session_id: z.string().min(1),
     channel_id: z.string().nullable(),
   }),
 });
+type LeaveProof = "gateway_leave" | "rest_not_in_voice";
 type Operation = {
   reservation: SessionReservation;
   state: VoiceRecord["state"];
   closed: boolean;
   attempted: boolean;
   ambiguous: boolean;
-  session?: string;
-  sequence?: number;
-  closeSequence?: number;
   acknowledged: boolean;
+  proof?: LeaveProof;
   leaveIssued: boolean;
   connection?: VoiceConnection;
+  guild?: Guild;
+  leave?(): void;
   cleanup(): void;
   acknowledge(): void;
   acknowledgment: Promise<void>;
@@ -185,7 +191,7 @@ export function createGuildVoiceOperationService(
       if (completeSettlement(operation))
         console.info("Owned voice settlement", {
           phase: "settled",
-          reason: "late_acknowledgment",
+          reason: `late_${operation.proof}`,
         });
     } catch {
       operation.cleanup();
@@ -206,48 +212,28 @@ export function createGuildVoiceOperationService(
     )
       throw new Error("Voice operation is closed or already owned");
     operation.joinStarted = true;
+    operation.guild = options.guild;
     const client = options.guild.client;
-    const invalidateShard = (shardId: number) => {
-      if (shardId === options.guild.shardId)
-        invalidate(operation, "shard_discontinuity");
-    };
-    const disconnect = (_event: unknown, shardId: number) =>
-      invalidateShard(shardId);
+    // The leave is the only payload after sealing, so any later report of the bot outside voice proves it.
     const onPacket = (packet: unknown, shardId: number) => {
-      if (shardId !== options.guild.shardId) return;
+      if (shardId !== options.guild.shardId || !operation.leaveIssued) return;
       const parsed = voiceDispatch.safeParse(packet);
       if (!parsed.success) return;
-      const { d, s } = parsed.data;
-      if (d.guild_id !== reservation.guildId || d.user_id !== client.user?.id)
-        return;
-      if (!operation.attempted) return;
-      if (operation.sequence !== undefined && s <= operation.sequence) {
-        invalidate(operation, "stale_sequence");
-        return;
-      }
-      operation.sequence = s;
+      const { d } = parsed.data;
       if (
-        d.channel_id === options.voiceChannel.id &&
-        (!operation.closed || operation.session === d.session_id)
-      ) {
-        observeJoin(operation, d.session_id);
-      } else observeLeave(operation, parsed.data);
+        d.guild_id === reservation.guildId &&
+        d.user_id === client.user?.id &&
+        d.channel_id === null
+      )
+        acknowledge(operation, "gateway_leave");
     };
     client.on("raw", onPacket);
-    client.on("shardDisconnect", disconnect);
-    client.on("shardReconnecting", invalidateShard);
-    client.on("shardResume", invalidateShard);
-    client.on("shardReady", invalidateShard);
     const abort = () => {
       void settleOwnedVoiceSession(reservation);
     };
     options.signal.addEventListener("abort", abort, { once: true });
     operation.cleanup = () => {
       client.off("raw", onPacket);
-      client.off("shardDisconnect", disconnect);
-      client.off("shardReconnecting", invalidateShard);
-      client.off("shardResume", invalidateShard);
-      client.off("shardReady", invalidateShard);
       options.signal.removeEventListener("abort", abort);
     };
     // discord.js deliberately marks its adapter type internal; the public SDK owns this boundary.
@@ -258,7 +244,21 @@ export function createGuildVoiceOperationService(
       operation.cleanup();
       throw new Error("Tracked voice transport is not installed");
     }
-    let leavePermitted = false;
+    operation.leave = () => {
+      operation.leaveIssued = true;
+      submit(operation, () =>
+        transport(options.guild.shardId, {
+          op: GatewayOpcodes.VoiceStateUpdate,
+          d: {
+            guild_id: reservation.guildId,
+            channel_id: null,
+            self_mute: false,
+            self_deaf: false,
+          },
+        }),
+      );
+      destroyWithoutLeave(operation);
+    };
     const adapterCreator: DiscordGatewayAdapterCreator = (methods) => {
       const adapter = guildAdapter({
         onVoiceStateUpdate: (data) => {
@@ -268,22 +268,12 @@ export function createGuildVoiceOperationService(
           if (!operation.closed) methods.onVoiceServerUpdate(data);
         },
         destroy: () => {
-          invalidate(operation, "adapter_destroyed");
           if (!operation.closed) methods.destroy();
         },
       });
       return {
         sendPayload(payload) {
-          if (
-            operation.closed &&
-            !(leavePermitted && payload.d.channel_id === null)
-          )
-            return false;
-          if (operation.closed) {
-            leavePermitted = false;
-            operation.leaveIssued = true;
-            operation.closeSequence = operation.sequence;
-          }
+          if (operation.closed) return false;
           return submit(operation, () =>
             transport(options.guild.shardId, payload),
           );
@@ -299,18 +289,10 @@ export function createGuildVoiceOperationService(
         selfDeaf: !options.captureAudio,
         selfMute: false,
       });
-      // This is the sole permitted leave after sealing, consumed synchronously by destroy().
       const connection = operation.connection;
       connection.on("daveResetSummary", (summary) => {
         console.info("DAVE reset readiness summary:", JSON.stringify(summary));
       });
-      const close = () => {
-        leavePermitted = true;
-        if (connection.state.status !== VoiceConnectionStatus.Destroyed)
-          connection.destroy();
-        leavePermitted = false;
-      };
-      closeOperations.set(operation, close);
       if (options.signal.aborted || operation.closed) {
         await settleOwnedVoiceSession(reservation);
         throw new Error("Voice operation closed during join");
@@ -323,7 +305,6 @@ export function createGuildVoiceOperationService(
       throw error;
     }
   }
-  const closeOperations = new WeakMap<Operation, () => void>();
   async function closeOwnedVoiceTransport(
     operation: Operation,
     deadline: number,
@@ -334,19 +315,20 @@ export function createGuildVoiceOperationService(
       deadline,
       signal,
     );
-    if (!sendsFinished || operation.ambiguous) {
+    if (!sendsFinished) {
       destroyWithoutLeave(operation);
       return;
     }
     // No delayed continuation may issue this leave after the deadline.
-    if (Date.now() < deadline && !signal?.aborted)
-      closeOperations.get(operation)?.();
-    else {
+    if (Date.now() >= deadline || signal?.aborted) {
       invalidate(operation, signal?.aborted ? "cancelled" : "leave_deadline");
       destroyWithoutLeave(operation);
+      return;
     }
-    await drainTransportBeforeDeadline(operation, deadline, signal);
-    await waitForAcknowledgment(operation, deadline, signal);
+    if (operation.attempted) operation.leave?.();
+    else destroyWithoutLeave(operation);
+    if (await drainTransportBeforeDeadline(operation, deadline, signal))
+      await waitForLeaveProof(operation, deadline, signal);
   }
   async function settleVoiceOperation(
     operation: Operation,
@@ -369,8 +351,14 @@ export function createGuildVoiceOperationService(
       operation.cleanup();
       return "uncertain";
     }
-    if (outcome === "settled")
-      return completeSettlement(operation) ? "settled" : "uncertain";
+    if (outcome === "settled") {
+      if (!completeSettlement(operation)) return "uncertain";
+      console.info("Owned voice settlement", {
+        phase: "settled",
+        reason: operation.proof ?? "no_voice_attempt",
+      });
+      return "settled";
+    }
     if (!operation.ambiguous && operation.leaveIssued)
       void settleAfterLateAcknowledgment(operation);
     else operation.cleanup();
@@ -442,24 +430,54 @@ async function drainTransportBeforeDeadline(
     invalidate(operation, signal?.aborted ? "cancelled" : "transport_timeout");
   return finished;
 }
-async function waitForAcknowledgment(
+/** Waits for Discord to report the bot outside voice: the gateway first, then one fresh REST read. */
+async function waitForLeaveProof(
   operation: Operation,
   deadline: number,
   signal?: AbortSignal,
 ): Promise<void> {
-  if (
-    operation.attempted &&
-    !operation.ambiguous &&
-    !(await beforeDeadline(operation.acknowledgment, deadline, signal))
-  ) {
-    // Cancelling an ACK-only wait cannot reopen the already drained, sealed transport.
-    console.info("Owned voice settlement", {
-      phase: "waiting",
-      reason: signal?.aborted
-        ? "acknowledgment_wait_cancelled"
-        : "acknowledgment_timeout",
+  const { guild } = operation;
+  if (!operation.leaveIssued || operation.ambiguous || !guild) return;
+  const gatewayDeadline = deadline - REST_PROOF_RESERVE_MS;
+  if (await beforeDeadline(operation.acknowledgment, gatewayDeadline, signal))
+    return;
+  // Cancelling a proof-only wait cannot reopen the already drained, sealed transport.
+  if (signal?.aborted) return logWaiting("acknowledgment_wait_cancelled");
+  const restCheck = readVoiceChannelByRest(guild).then((channel) => {
+    if (channel === null) acknowledge(operation, "rest_not_in_voice");
+    return channel;
+  });
+  if (!(await beforeDeadline(restCheck, deadline, signal)))
+    return logWaiting("rest_check_timeout");
+  const channel = await restCheck;
+  if (channel === REST_UNAVAILABLE) logWaiting("rest_unavailable");
+  else if (channel !== null) logWaiting("rest_in_voice");
+}
+/** A fresh read of the bot's voice channel in this guild; null means Discord reports it outside voice. */
+async function readVoiceChannelByRest(
+  guild: Guild,
+): Promise<string | null | typeof REST_UNAVAILABLE> {
+  try {
+    const state = await guild.voiceStates.fetch("@me", {
+      force: true,
+      cache: false,
     });
+    return state.channelId;
+  } catch (error) {
+    return error instanceof DiscordAPIError &&
+      error.code === RESTJSONErrorCodes.UnknownVoiceState
+      ? null
+      : REST_UNAVAILABLE;
   }
+}
+function logWaiting(reason: string): void {
+  console.info("Owned voice settlement", { phase: "waiting", reason });
+}
+function acknowledge(operation: Operation, proof: LeaveProof): void {
+  if (operation.acknowledged) return;
+  operation.acknowledged = true;
+  operation.proof = proof;
+  operation.acknowledge();
 }
 function invalidate(operation: Operation, reason: string): void {
   if (!operation.ambiguous)
@@ -469,33 +487,6 @@ function invalidate(operation: Operation, reason: string): void {
     });
   operation.ambiguous = true;
   if (operation.closed) operation.cleanup();
-}
-function observeJoin(operation: Operation, sessionId: string): void {
-  if (operation.session && operation.session !== sessionId)
-    invalidate(operation, "session_changed");
-  operation.session = sessionId;
-}
-function observeLeave(
-  operation: Operation,
-  packet: z.infer<typeof voiceDispatch>,
-): void {
-  if (operation.ambiguous) return;
-  if (!operation.closed || !operation.leaveIssued)
-    invalidate(operation, "leave_not_issued");
-  else if (!operation.session) invalidate(operation, "session_unknown");
-  else if (operation.session !== packet.d.session_id)
-    invalidate(operation, "session_changed");
-  else if (packet.d.channel_id !== null)
-    invalidate(operation, "channel_changed");
-  else if (
-    operation.closeSequence === undefined ||
-    packet.s <= operation.closeSequence
-  )
-    invalidate(operation, "stale_sequence");
-  else {
-    operation.acknowledged = true;
-    operation.acknowledge();
-  }
 }
 function submit(operation: Operation, send: () => Promise<void>): boolean {
   let finish = () => {};
