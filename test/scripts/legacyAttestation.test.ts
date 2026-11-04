@@ -292,9 +292,11 @@ test("a resumed unexpired attested seal rechecks the guard before consuming", as
   await f.coordinator.attestPreservation();
   const original = f.aws.getMockImplementation()!;
   let lose = true;
+  let consumeAttempts = 0;
   f.aws.mockImplementation(async (service, operation, input) => {
     const put = (input as { TransactItems?: Array<{ Put?: { Item: never } }> })
       .TransactItems?.[0]?.Put;
+    if (put && unmarshall(put.Item).state === "consumed") consumeAttempts++;
     if (lose && put && unmarshall(put.Item).state === "consumed") {
       lose = false;
       throw new Error("transient failure");
@@ -309,6 +311,7 @@ test("a resumed unexpired attested seal rechecks the guard before consuming", as
   });
   await expect(f.coordinator.prepare()).rejects.toThrow(/after its backup/);
   expect(f.state.artifacts.get("old")?.state).toBe("sealed");
+  expect(consumeAttempts).toBe(1);
 });
 
 test("a lapsed attested seal is renewed after a lost consume", async () => {
