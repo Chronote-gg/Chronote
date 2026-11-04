@@ -315,6 +315,7 @@ function verifyMeetingUpdatePlan(plan, identity, evidence) {
   );
 }
 module.exports = {
+  canonical,
   verifyMeetingUpdatePlan,
   hasUnknown,
   named,

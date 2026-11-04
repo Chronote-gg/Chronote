@@ -187,6 +187,24 @@ or deployment acceptance. It does not permit replaying a failed producer.
 
 ### Artifact-preservation permission audit (2026-11-03)
 
+The later artifact-IAM source route removes Sandbox deployment policy references
+to the serving ECS service and task definition. It constructs the same service
+ARN and family wildcard from the authoritative configured region, account,
+cluster name and name prefix already used by those resources. The partition
+remains `aws`; configured project names remain honored. No IAM action, condition,
+resource identity or revision wildcard changes because of that dependency edit.
+The three expressions are downstream of the meeting-delivery closure, so its
+32 resources and allowed effects are unchanged, as is the 19-check catalog.
+
+Pinned Terraform 1.17.1 with AWS 6.70.0 mocked-provider tests first refused the
+old service-dependent identity, then passed all five Sandbox test runs after the
+edit. The generated IAM-only plan no longer includes `aws_ecs_service` or
+`aws_ecs_task_definition`. The source hash is refreshed to
+`cf44b441f7b922036dcbf754ab1e2d3a6877dd5fd00962ab4fd6894e81ef1df3`.
+This is source/local evidence only; any unrelated planned runtime effect still
+refuses, and existing saved plans/operator packets require their own source
+relation checks rather than inheriting this audit as provider acceptance.
+
 The production and Sandbox deployment policies add only `ConditionCheckItem` on
 MeetingHistory. These policies consume the existing table ARN; no table, DynamoDB
 access policy or KMS key depends on either deployment policy. The runtime's

@@ -31,6 +31,24 @@ mock_provider "aws" {
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::123456789012:role/test-role" }
   }
+  mock_resource "aws_dynamodb_table" {
+    defaults = { arn = "arn:aws:dynamodb:us-east-1:123456789012:table/mock" }
+  }
+  mock_resource "aws_ecr_repository" {
+    defaults = { arn = "arn:aws:ecr:us-east-1:123456789012:repository/mock" }
+  }
+  mock_resource "aws_ecs_cluster" {
+    defaults = { arn = "arn:aws:ecs:us-east-1:123456789012:cluster/mock" }
+  }
+  mock_resource "aws_s3_bucket" {
+    defaults = { arn = "arn:aws:s3:::mock" }
+  }
+  mock_resource "aws_iam_policy" {
+    defaults = { arn = "arn:aws:iam::123456789012:policy/mock" }
+  }
+  mock_resource "aws_secretsmanager_secret" {
+    defaults = { arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:mock" }
+  }
   mock_resource "aws_kms_key" {
     defaults = { arn = "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-1111-1111-111111111111", policy = "{}" }
   }
@@ -199,6 +217,69 @@ run "deployment_prerequisites_are_scoped_without_service_changes" {
       }
     ]))
     error_message = "Routing must preserve exact listener scope and read actions, using service ARNs independent of the ECS service and its task definition."
+  }
+}
+
+run "artifact_iam_does_not_follow_serving_runtime_metadata" {
+  command = plan
+  plan_options {
+    target = [
+      aws_iam_role_policy.sandbox_deploy, aws_iam_policy.transcripts_s3_policy,
+      aws_iam_role.ecs_task_app_role, aws_iam_role.ecs_task_execution_role,
+      aws_iam_role_policy_attachment.ecs_task_transcripts_policy,
+      aws_iam_role_policy_attachment.ecs_task_exec_transcripts_policy,
+      aws_s3_bucket_server_side_encryption_configuration.transcripts,
+      aws_s3_bucket_versioning.transcripts, aws_dynamodb_table.meeting_history_table,
+    ]
+  }
+  variables {
+    environment        = "sandbox"
+    github_environment = "sandbox"
+    project_name       = "artifact-fixture"
+  }
+  override_resource {
+    target          = aws_ecs_service.app_service
+    override_during = plan
+    values          = { id = "arn:aws:ecs:us-east-1:123456789012:service/foreign/foreign" }
+  }
+  override_resource {
+    target          = aws_ecs_task_definition.app_task
+    override_during = plan
+    values          = { family = "foreign-family" }
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.sandbox_deploy[0].policy).Statement : s.Resource if s.Sid == "SandboxService"][0] == "arn:aws:ecs:us-east-1:123456789012:service/artifact-fixture-sandbox-bot-cluster/artifact-fixture-sandbox-bot-service"
+    error_message = "IAM planning must bind the configured service without following a serving service dependency."
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.sandbox_deploy[0].policy).Statement : s.Resource if s.Sid == "SandboxTaskDefinitionRegistration"][0] == "arn:aws:ecs:us-east-1:123456789012:task-definition/artifact-fixture-sandbox-bot-task:*"
+    error_message = "IAM planning must preserve configured task family and revision wildcard without a task-definition dependency."
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.sandbox_deploy[0].policy).Statement : s.Condition.ArnLikeIfExists["ecs:task-definition"] if s.Sid == "SandboxService"][0] == "arn:aws:ecs:us-east-1:123456789012:task-definition/artifact-fixture-sandbox-bot-task:*"
+    error_message = "The service update condition must bind the same configured family."
+  }
+}
+
+run "artifact_production_iam_observation_graph_is_scoped" {
+  command = plan
+  plan_options {
+    target = [
+      aws_iam_role_policy.production_deploy, aws_iam_policy.transcripts_s3_policy,
+      aws_iam_role.ecs_task_app_role, aws_iam_role.ecs_task_execution_role,
+      aws_iam_role_policy_attachment.ecs_task_transcripts_policy,
+      aws_iam_role_policy_attachment.ecs_task_exec_transcripts_policy,
+      aws_s3_bucket_server_side_encryption_configuration.transcripts,
+      aws_s3_bucket_versioning.transcripts, aws_dynamodb_table.meeting_history_table,
+    ]
+  }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Action if s.Sid == "ArtifactAuthorityChecks"][0] == ["dynamodb:ConditionCheckItem"]
+    error_message = "The artifact authority grant must remain condition-check only."
   }
 }
 

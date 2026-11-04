@@ -62,10 +62,10 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
           "ecs:DescribeServices",
           "ecs:UpdateService"
         ],
-        Resource = aws_ecs_service.app_service.id,
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${aws_ecs_cluster.main.name}/${local.name_prefix}-bot-service",
         Condition = {
           ArnLikeIfExists = {
-            "ecs:task-definition" = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${aws_ecs_task_definition.app_task.family}:*"
+            "ecs:task-definition" = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${local.name_prefix}-bot-task:*"
           }
         }
       },
@@ -98,7 +98,7 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
           "ecs:RegisterTaskDefinition",
           "ecs:TagResource"
         ],
-        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${aws_ecs_task_definition.app_task.family}:*"
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/${local.name_prefix}-bot-task:*"
       },
       {
         Sid    = "DefinitionDiscoveryInRegion",
