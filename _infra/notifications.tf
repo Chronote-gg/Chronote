@@ -120,6 +120,89 @@ resource "aws_cloudwatch_metric_alarm" "ecs_no_running_tasks" {
   }
 }
 
+# --- ECS: the task's disk filling up ---
+# A task with a full disk keeps running, keeps passing its health check and
+# keeps answering the load balancer, so every other alarm in this file reads OK
+# while recording, transcription and notes all fail on write. That is how the
+# serving task reached 21 GB used and 0 free with every alarm in the account
+# green.
+#
+# Both thresholds are fractions of 21.47 GB, which is the decimal-GB reading of
+# the 20 GiB Fargate DEFAULT. `ephemeralStorageSizeInGiB` is not declared on
+# aws_ecs_task_definition.app_task, so that default is what the task gets and
+# `EphemeralStorageReserved` sits flat at 21.47. IF EPHEMERAL STORAGE IS EVER
+# DECLARED OR RAISED, BOTH THRESHOLDS BELOW MUST MOVE WITH IT, or the leak alarm
+# becomes a routine-usage alarm and the ceiling alarm stops meaning "nearly
+# full".
+#
+# The two are a deliberate pair and neither is redundant: they share a metric
+# and dimensions and differ in statistic and time base, so one catches a slow
+# leak over hours and the other an imminent ceiling within five minutes.
+# Deleting either reopens half the gap.
+
+# The statistic is the whole point of this alarm. Healthy operation peaks to
+# 19.4 and 19.5 GB during a busy hour and falls back to a 13.3 GB floor, so a
+# static threshold on Average or Maximum fires on healthy traffic and gets muted
+# as noise. Only a leak raises the FLOOR: the measured leak took the hourly
+# minimum from 13.3 to 18.1 overnight and then to the 21.5 ceiling. Minimum over
+# an hour separates 13.3 from 18.1 cleanly and ignores the 19.4 peak entirely.
+resource "aws_cloudwatch_metric_alarm" "ecs_ephemeral_storage_leak" {
+  count               = local.alerts_enabled ? 1 : 0
+  alarm_name          = "${local.name_prefix}-ecs-ephemeral-storage-leak"
+  alarm_description   = "The bot task's disk usage never drops below 16 GB of its 21.47 GB, so something is accumulating rather than being cleaned up. Check for leftover meeting audio and transcript files in the task's working directories."
+  namespace           = "ECS/ContainerInsights"
+  metric_name         = "EphemeralStorageUtilized"
+  statistic           = "Minimum"
+  period              = 3600
+  evaluation_periods  = 3
+  threshold           = 16
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.main.name
+    ServiceName = aws_ecs_service.app_service.name
+  }
+
+  alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
+  ok_actions    = [aws_sns_topic.critical_alerts[0].arn]
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
+# The fast half of the pair: Maximum over five minutes, because once the disk is
+# this close to full the peak is what matters and there is no room left to wait
+# three hours for a floor to confirm.
+resource "aws_cloudwatch_metric_alarm" "ecs_ephemeral_storage_critical" {
+  count               = local.alerts_enabled ? 1 : 0
+  alarm_name          = "${local.name_prefix}-ecs-ephemeral-storage-critical"
+  alarm_description   = "The bot task's disk is within 5 percent of full (20.4 of 21.47 GB). Recording, transcription and notes writes are about to start failing while the task stays healthy."
+  namespace           = "ECS/ContainerInsights"
+  metric_name         = "EphemeralStorageUtilized"
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 20.4
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    ClusterName = aws_ecs_cluster.main.name
+    ServiceName = aws_ecs_service.app_service.name
+  }
+
+  alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
+  ok_actions    = [aws_sns_topic.critical_alerts[0].arn]
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
 # --- ALB: HTTP 5xx spike ---
 
 resource "aws_cloudwatch_metric_alarm" "alb_5xx_errors" {
@@ -148,12 +231,125 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx_errors" {
   }
 }
 
-# --- ALB: unhealthy hosts ---
+# --- ALB: load balancer answering its own 5xx ---
+# Distinct from the target 5xx alarm above: the load balancer returns 502, 503
+# or 504 itself when it has no healthy target to forward to, and target 5xx
+# stays at zero throughout. That is the only metric that sees a generation swap
+# landing on an empty target group.
+#
+# This alarm is deliberately MORE SENSITIVE than the target 5xx alarm above, and
+# the two should not be harmonised. Target 5xx is an application error rate,
+# where a higher bar is right because some failures are always in flight. An ELB
+# 5xx means the load balancer had nothing healthy to forward to, which is rarely
+# benign at any volume. The earlier 10-over-two-periods setting was copied from
+# the target alarm and would not have fired on the outage that motivated this
+# one, where ELB 5xx arrived as a low trickle while target 5xx stayed at zero.
+#
+# This is the FAST half of a deliberate pair with alb_elb_5xx_sustained below.
+# It catches a concentrated burst within five minutes. On its own it misses a
+# trickle that never reaches five in any single period, which is why the slow
+# half exists. Read that comment before changing either.
+
+resource "aws_cloudwatch_metric_alarm" "alb_elb_5xx_errors" {
+  count               = local.alerts_enabled && var.ENABLE_API_ALB ? 1 : 0
+  alarm_name          = "${local.name_prefix}-alb-elb-5xx-errors"
+  alarm_description   = "The ALB itself is returning 5xx, which means it has no healthy target to forward to"
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HTTPCode_ELB_5XX_Count"
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 5
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    LoadBalancer = aws_lb.api_alb[0].arn_suffix
+  }
+
+  alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
+  ok_actions    = [aws_sns_topic.critical_alerts[0].arn]
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
+# --- ALB: load balancer 5xx sustained over an hour ---
+# The SLOW half of the pair with alb_elb_5xx_errors above. Same metric and
+# dimension, different time base, and NEITHER IS REDUNDANT: two alarms on one
+# metric look like duplication, so this is the note that explains why deleting
+# one would reopen the gap both exist to close.
+#
+# The fast alarm needs five occurrences inside a single five-minute period, so it
+# sees a concentrated burst quickly and misses a trickle entirely. This one sums
+# over an hour, so it sees a trickle that never reaches five in any one period,
+# at the cost of up to an hour of latency. Neither time base covers both shapes.
+#
+# This is sized against the 2026-11-02 outage, which produced 4, 14 and 2 ELB
+# 5xx across three consecutive hourly buckets while target 5xx stayed at zero.
+# The 14 crosses this threshold, so the incident would have paged. To be exact
+# rather than reassuring: the 4 and the 2 are still under five even hourly, so
+# the pair catches that incident, not every individual hour of it.
+#
+# Accepted cost: a burst large enough to trip the fast alarm will usually trip
+# this one too, so one event can notify twice. Two notifications for a real
+# outage is cheaper than the missed detection this closes.
+#
+# Period 3600 is not a novel shape here; the checkout-lock alarm already uses it.
+
+resource "aws_cloudwatch_metric_alarm" "alb_elb_5xx_sustained" {
+  count               = local.alerts_enabled && var.ENABLE_API_ALB ? 1 : 0
+  alarm_name          = "${local.name_prefix}-alb-elb-5xx-sustained"
+  alarm_description   = "The ALB has returned 5xx repeatedly over an hour without ever spiking. Low-rate loss of healthy targets; check target group health across the window."
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HTTPCode_ELB_5XX_Count"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 5
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    LoadBalancer = aws_lb.api_alb[0].arn_suffix
+  }
+
+  alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
+  ok_actions    = [aws_sns_topic.critical_alerts[0].arn]
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
+# --- ALB: unhealthy hosts, one alarm per half of the blue/green pair ---
+# A single hardcoded target group dimension is wrong again after the next
+# generation swap, which is how this alarm came to be pinned OK on a group with
+# no registered targets. Covering both groups makes coverage follow traffic: the
+# idle group publishes no UnHealthyHostCount datapoints, and with notBreaching
+# its alarm sits OK until it starts serving.
+
+locals {
+  alb_unhealthy_host_alarms = local.alerts_enabled && var.ENABLE_API_ALB ? {
+    # api_tg keeps the original alarm name so the live alarm is not replaced.
+    api_tg = {
+      alarm_name   = "${local.name_prefix}-alb-unhealthy-hosts"
+      target_group = aws_lb_target_group.api_tg[0].arn_suffix
+    }
+    api_spare = {
+      alarm_name   = "${local.name_prefix}-alb-spare-unhealthy-hosts"
+      target_group = aws_lb_target_group.api_spare_tg[0].arn_suffix
+    }
+  } : {}
+}
 
 resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
-  count               = local.alerts_enabled && var.ENABLE_API_ALB ? 1 : 0
-  alarm_name          = "${local.name_prefix}-alb-unhealthy-hosts"
-  alarm_description   = "ALB target group has unhealthy hosts"
+  for_each            = local.alb_unhealthy_host_alarms
+  alarm_name          = each.value.alarm_name
+  alarm_description   = "ALB target group ${each.key} has unhealthy hosts"
   namespace           = "AWS/ApplicationELB"
   metric_name         = "UnHealthyHostCount"
   statistic           = "Maximum"
@@ -165,7 +361,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
 
   dimensions = {
     LoadBalancer = aws_lb.api_alb[0].arn_suffix
-    TargetGroup  = aws_lb_target_group.api_tg[0].arn_suffix
+    TargetGroup  = each.value.target_group
   }
 
   alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
