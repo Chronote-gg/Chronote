@@ -2,34 +2,43 @@ const { spawnSync } = require("node:child_process");
 
 // The desktop Rust tests only run on a Windows host, so a non-Windows run has
 // to choose between two very different things. Locally, skipping is a
-// convenience for a working copy that cannot run them. In CI it is a silent
-// loss of the only desktop test coverage there is: the job still reports green
-// while testing nothing, which is the defect the `cargo test` change below was
+// convenience for a working copy that cannot run them. In a CI job it is a
+// silent loss of the only desktop test coverage there is: the job still reports
+// green while testing nothing, which is the defect the `cargo test` below was
 // made to fix. Refuse in that case instead of exiting 0.
+//
+// Keyed on GITHUB_ACTIONS rather than CI on purpose. CI is set by devcontainers
+// and agent sandboxes that legitimately run `yarn check:ci` on Linux, and those
+// should keep skipping; GITHUB_ACTIONS marks the runner where a skip would
+// actually hide a missing gate.
 function decideDesktopCheck(platform, env) {
   if (platform === "win32") {
     return "run";
   }
-  return env.CI ? "refuse" : "skip";
+  return env.GITHUB_ACTIONS ? "refuse" : "skip";
 }
 
-module.exports = { decideDesktopCheck };
+function exitCodeForDecision(decision) {
+  return decision === "refuse" ? 1 : 0;
+}
+
+module.exports = { decideDesktopCheck, exitCodeForDecision };
 
 if (require.main === module) {
   const decision = decideDesktopCheck(process.platform, process.env);
 
-  if (decision === "refuse") {
-    console.error(
-      `Desktop Rust tests cannot run on ${process.platform}. This job needs a Windows runner; skipping here would report success without testing the desktop app.`,
-    );
-    process.exit(1);
-  }
-
-  if (decision === "skip") {
-    console.log(
-      "Skipping desktop Rust tests outside Windows; CI validates them on a Windows runner.",
-    );
-    process.exit(0);
+  if (decision !== "run") {
+    const message =
+      decision === "refuse"
+        ? `Desktop Rust tests cannot run on ${process.platform}. This job needs a Windows runner; skipping here would report success without testing the desktop app.`
+        : "Skipping desktop Rust tests outside Windows; CI validates them on a Windows runner.";
+    const code = exitCodeForDecision(decision);
+    if (code === 0) {
+      console.log(message);
+    } else {
+      console.error(message);
+    }
+    process.exit(code);
   }
 
   // `cargo test` rather than `cargo check`: it covers everything the check did and
