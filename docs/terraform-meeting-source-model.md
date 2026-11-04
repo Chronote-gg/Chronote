@@ -208,6 +208,18 @@ buckets or general KMS key. The six-resource site closure, six required passed
 checks and thirteen excluded checks therefore remain exact under the updated
 whole-source pin. Neither artifact permission is allowed by the site scope.
 
+### Ephemeral storage alarm audit (2026-11-04)
+
+Two CloudWatch alarms were added to `_infra/notifications.tf` on
+`ECS/ContainerInsights` `EphemeralStorageUtilized`, scoped by cluster and service
+name. The inventory stays at 25 files, because an existing file was edited rather
+than a new one added, so only the content hash moved. Neither alarm is read by the
+delivery closure: both take their dimensions from the ECS cluster and service and
+their action from the existing critical-alerts topic, which the no-running-tasks
+alarm already references in the same way. Neither declares a `validation` block or
+a `lifecycle` precondition, so the plan gains no new check descriptor and
+`excludedCheck` has nothing new to refuse.
+
 ### Production alarm coverage audit (2026-11-04)
 
 The alarm coverage change adds `alerts-voice.tf` and `alb-access-logs.tf` and
