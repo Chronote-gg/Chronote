@@ -489,9 +489,13 @@ condition, no deny and no other managed resource anywhere in the plan. The polic
 builds its bucket ARN from `local.transcripts_bucket_name` rather than from
 `aws_s3_bucket.transcripts`, which is what keeps the bucket out of the targeted
 graph; a refreshed bucket in the plan means that decoupling regressed and the
-validator refuses it. Production order: apply `_infra/production-bootstrap` so the
-executor role's `ManagedPolicies` statement names the transcripts policy, then
-Plan, then Apply.
+validator refuses it.
+
+Production order: apply `_infra/production-bootstrap` with
+`enable_artifact_preservation_policy = true`, which both grants the executor role
+the transcripts policy and moves the dependency metadata reads out of the inline
+policy to make room; then Plan; then Apply. Without that flag the Plan is denied
+rather than silently narrowed.
 
 Standalone policy adoption requires a separate reviewed plan and approval; it is
 outside the four-target Apply. The actual state-backed prerequisite plan must

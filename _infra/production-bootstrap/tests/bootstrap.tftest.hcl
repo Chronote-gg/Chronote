@@ -292,46 +292,54 @@ run "processing_retry_policy" {
     error_message = "The managed policy attaches to the production Terraform role."
   }
 }
-run "transcripts_policy_grant_and_inline_default" {
+run "artifact_preservation_default_changes_nothing" {
   command = plan
   variables {
     enable_private_evidence_store    = true
     enable_production_terraform_role = true
   }
   assert {
-    condition     = contains([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ManagedPolicies"][0].Resource, "arn:aws:iam::123456789012:policy/meeting-notes-prod-bot-transcripts-s3-policy")
-    error_message = "The executor role must be able to version the bot transcripts S3 policy."
+    condition     = length(aws_iam_policy.artifact_preservation) == 0 && length(aws_iam_role_policy_attachment.artifact_preservation) == 0
+    error_message = "The initial bootstrap creates no artifact preservation policy."
   }
   assert {
-    condition     = length(aws_iam_policy.metadata_reads) == 0 && length([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s.Sid if s.Sid == "RegionalMetadata"]) == 1
-    error_message = "With the flag off the dependency metadata reads stay in the inline policy."
+    condition     = !contains([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "ManagedPolicies"][0].Resource, local.transcripts_policy_arn)
+    error_message = "The transcripts grant arrives only with the opt-in policy."
+  }
+  # The inline statements keep their installed order, so the default rendering
+  # is byte for byte the installed one.
+  assert {
+    condition     = [for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s.Sid] == ["ApplicationState", "DefaultWorkspaceDiscovery", "StateLockMetadata", "ProductionStateLocks", "ControlTable", "ControlGuard", "TableMetadata", "RenewalIndex", "KeyMetadata", "ControlEncryption", "ControlServiceGrant", "SpareTargetGroup", "ApiDrainDelay", "RuntimeInlinePolicy", "ManagedPolicies", "TaskPolicyVersionPrune", "RuntimeRoles", "DeployRoleAttachments", "GitHubProviderMetadata", "SecretMetadata", "SiteBucketMetadata", "SiteCertificateMetadata", "SiteCdnMetadata", "ClusterMetadata", "CertificateMetadata", "ZoneMetadata", "ZoneDiscovery", "RegionalMetadata", "EvidenceControlReadback", "EvidenceConditionalCreate", "EvidenceVersionReadback", "EvidenceEncryption"]
+    error_message = "With the flag off the inline policy must render its installed statements in their installed order."
   }
 }
-run "metadata_reads_requires_role" {
+run "artifact_preservation_requires_role" {
   command = plan
   variables {
-    enable_private_evidence_store = true
-    enable_metadata_reads_policy  = true
+    enable_private_evidence_store       = true
+    enable_artifact_preservation_policy = true
   }
-  expect_failures = [var.enable_metadata_reads_policy]
+  expect_failures = [var.enable_artifact_preservation_policy]
 }
-run "metadata_reads_policy" {
+run "artifact_preservation_policy" {
   command = plan
   variables {
-    enable_private_evidence_store    = true
-    enable_production_terraform_role = true
-    enable_metadata_reads_policy     = true
+    enable_private_evidence_store       = true
+    enable_production_terraform_role    = true
+    enable_artifact_preservation_policy = true
   }
   assert {
-    condition     = jsondecode(aws_iam_policy.metadata_reads[0].policy).Statement == local.dependency_metadata_statements
-    error_message = "The managed policy carries exactly the moved statements."
+    condition = jsondecode(aws_iam_policy.artifact_preservation[0].policy).Statement == concat([
+      { Sid = "TranscriptsPolicy", Effect = "Allow", Action = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions", "iam:ListPolicyTags", "iam:CreatePolicyVersion"], Resource = "arn:aws:iam::123456789012:policy/meeting-notes-prod-bot-transcripts-s3-policy" }
+    ], local.dependency_metadata_statements)
+    error_message = "The managed policy carries the transcripts grant and exactly the moved statements."
   }
   assert {
     condition     = length([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s.Sid if contains([for m in local.dependency_metadata_statements : m.Sid], s.Sid)]) == 0
     error_message = "The inline policy must omit the moved statements once they are attached."
   }
   assert {
-    condition     = aws_iam_role_policy_attachment.metadata_reads[0].role == "meeting-notes-prod-github-terraform" && aws_iam_policy.metadata_reads[0].name == "meeting-notes-prod-terraform-metadata-reads"
+    condition     = aws_iam_role_policy_attachment.artifact_preservation[0].role == "meeting-notes-prod-github-terraform" && aws_iam_policy.artifact_preservation[0].name == "meeting-notes-prod-terraform-artifact-preservation"
     error_message = "The managed policy attaches to the production Terraform role."
   }
 }
