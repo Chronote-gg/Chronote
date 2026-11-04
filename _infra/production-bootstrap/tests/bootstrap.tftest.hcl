@@ -360,7 +360,7 @@ run "alerting_delivery_policy" {
   }
   assert {
     condition = jsondecode(aws_iam_policy.alerting_delivery[0].policy).Statement == [
-      { Sid = "AlertingAlarms", Effect = "Allow", Action = ["cloudwatch:PutMetricAlarm", "cloudwatch:DescribeAlarms", "cloudwatch:TagResource", "cloudwatch:ListTagsForResource"], Resource = [for name in ["alb-elb-5xx-errors", "alb-elb-5xx-sustained", "alb-spare-unhealthy-hosts", "voice-settlement-unresolved", "voice-admission-blocked"] : "arn:aws:cloudwatch:us-east-1:123456789012:alarm:meeting-notes-prod-${name}"] },
+      { Sid = "AlertingAlarms", Effect = "Allow", Action = ["cloudwatch:PutMetricAlarm", "cloudwatch:DescribeAlarms", "cloudwatch:TagResource", "cloudwatch:ListTagsForResource"], Resource = [for name in ["alb-elb-5xx-errors", "alb-elb-5xx-sustained", "alb-unhealthy-hosts", "alb-spare-unhealthy-hosts", "voice-settlement-unresolved", "voice-admission-blocked"] : "arn:aws:cloudwatch:us-east-1:123456789012:alarm:meeting-notes-prod-${name}"] },
       { Sid = "AlbLogBucketCreate", Effect = "Allow", Action = local.alb_logs_writes, Resource = "arn:aws:s3:::meeting-notes-prod-alb-logs-123456789012" },
       { Sid = "AlbLogBucketRefresh", Effect = "Allow", Action = local.alb_logs_refresh, Resource = "arn:aws:s3:::meeting-notes-prod-alb-logs-123456789012" },
       { Sid = "ApiAccessLogging", Effect = "Allow", Action = "elasticloadbalancing:ModifyLoadBalancerAttributes", Resource = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/meeting-notes-prod-api/*" }
