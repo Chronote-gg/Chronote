@@ -296,7 +296,7 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 ### Coverage guidance
 
 - Prefer adding tests over coverage ignores.
-- If a coverage ignore is unavoidable, use c8 ignore directives with a short justification comment.
+- If a coverage ignore is unavoidable, use `istanbul ignore` directives with a short justification comment. Coverage runs through the istanbul provider, so a `c8 ignore` comment is accepted by the compiler and then counts for nothing.
 - After coverage improvements or coverage scope changes, round each threshold down to the nearest 10 and keep it in sync with `jest.config.ts`. Do not lower a threshold below its pre-PR value unless the coverage scope meaningfully expands, in which case reset to the new rounded baseline and call it out in the PR.
 
 ## Agent Skills
