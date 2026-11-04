@@ -229,10 +229,16 @@ function createArtifactHandoff(options) {
   const needsSeal = (row) =>
     row.state === "requested" ||
     (row.state === "sealed" && row.proof.expiresAt <= now());
-  /** Stands in for the legacy runtime's seal while the staleness guard still holds. */
+  /**
+   * Stands in for the legacy runtime's seal while the staleness guard still holds.
+   * A legacy source never seals admission, so every resumed preparation rechecks
+   * the guard, even when an unexpired seal can be reused.
+   */
   async function sealAttested(ctl, row) {
-    if (!row.attestation || !needsSeal(row)) return row;
+    if (!row.attestation || !["requested", "sealed"].includes(row.state))
+      return row;
     await attested.recheck(row);
+    if (!needsSeal(row)) return row;
     const { heartbeatAt, freshUntil } = live();
     const proof = {
       snapshot: legacy.legacyAttestedSnapshot(row.attestation),
