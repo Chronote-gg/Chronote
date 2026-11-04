@@ -17,6 +17,7 @@ import { formatHunkDiff } from "../utils/diff";
 import { v4 as uuidv4 } from "uuid";
 import { getMeetingHistoryService } from "../services/meetingHistoryService";
 import { stripCodeFences } from "../utils/text";
+import { deferInteractionUpdate } from "../services/interactionResponseService";
 import {
   collectMentionIds,
   mergeAllowedMentions,
@@ -637,7 +638,7 @@ export async function handleNotesCorrectionAccept(
   }
 
   signal?.throwIfAborted();
-  await interaction.deferUpdate();
+  await deferInteractionUpdate(interaction);
   signal?.throwIfAborted();
   await interaction.editReply({
     content: "Applying correction...",
