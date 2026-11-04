@@ -66,4 +66,20 @@ describe("meetingUsageService", () => {
 
     expect(sumMeetingSecondsInWindow(meetings, windowStart, now)).toBe(600);
   });
+
+  it("does not let an unmetered meeting delay the next available time", () => {
+    const windowStart = Date.parse("2025-01-01T00:00:00Z");
+    const windowMs = 7 * 24 * 60 * 60 * 1000;
+    const meetings: MeetingHistory[] = [
+      buildMeeting("2025-01-04T00:00:00Z", 2000),
+      {
+        ...buildMeeting("2025-01-09T00:00:00Z", 7200),
+        processing: { transcription: "empty" },
+      },
+    ];
+
+    expect(getNextAvailableAt(meetings, windowStart, windowMs, 1800)).toBe(
+      "2025-01-11T00:00:00.000Z",
+    );
+  });
 });
