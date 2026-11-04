@@ -22,6 +22,9 @@ export function sumMeetingSecondsInWindow(
     const ts = Date.parse(meeting.timestamp);
     if (Number.isNaN(ts)) return total;
     if (ts < windowStartMs || ts > windowEndMs) return total;
+    // Metered time has to correspond to something recorded. A missing outcome is
+    // unknown rather than empty, so it still counts.
+    if (meeting.processing?.transcription === "empty") return total;
     return total + (meeting.duration ?? 0);
   }, 0);
 }

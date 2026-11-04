@@ -52,4 +52,18 @@ describe("meetingUsageService", () => {
 
     expect(nextAvailableAt).toBe("2025-01-12T00:00:00.000Z");
   });
+
+  it("skips a meeting with no transcript but still counts an unknown outcome", () => {
+    const now = Date.parse("2025-01-10T00:00:00Z");
+    const windowStart = Date.parse("2025-01-03T00:00:00Z");
+    const meetings: MeetingHistory[] = [
+      {
+        ...buildMeeting("2025-01-05T12:00:00Z", 7200),
+        processing: { transcription: "empty" },
+      },
+      buildMeeting("2025-01-06T12:00:00Z", 600),
+    ];
+
+    expect(sumMeetingSecondsInWindow(meetings, windowStart, now)).toBe(600);
+  });
 });
