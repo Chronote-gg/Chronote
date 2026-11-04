@@ -162,10 +162,10 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx_errors" {
 # the target alarm and would not have fired on the outage that motivated this
 # one, where ELB 5xx arrived as a low trickle while target 5xx stayed at zero.
 #
-# Residual gap, so nobody reads this as total coverage: an hour holding only a
-# few occurrences still stays under five in any single period. Catching that
-# needs an hourly period, which costs up to an hour of detection latency on a
-# real outage. Fast detection is the better trade here.
+# This is the FAST half of a deliberate pair with alb_elb_5xx_sustained below.
+# It catches a concentrated burst within five minutes. On its own it misses a
+# trickle that never reaches five in any single period, which is why the slow
+# half exists. Read that comment before changing either.
 
 resource "aws_cloudwatch_metric_alarm" "alb_elb_5xx_errors" {
   count               = local.alerts_enabled && var.ENABLE_API_ALB ? 1 : 0
@@ -175,6 +175,55 @@ resource "aws_cloudwatch_metric_alarm" "alb_elb_5xx_errors" {
   metric_name         = "HTTPCode_ELB_5XX_Count"
   statistic           = "Sum"
   period              = 300
+  evaluation_periods  = 1
+  threshold           = 5
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    LoadBalancer = aws_lb.api_alb[0].arn_suffix
+  }
+
+  alarm_actions = [aws_sns_topic.critical_alerts[0].arn]
+  ok_actions    = [aws_sns_topic.critical_alerts[0].arn]
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
+# --- ALB: load balancer 5xx sustained over an hour ---
+# The SLOW half of the pair with alb_elb_5xx_errors above. Same metric and
+# dimension, different time base, and NEITHER IS REDUNDANT: two alarms on one
+# metric look like duplication, so this is the note that explains why deleting
+# one would reopen the gap both exist to close.
+#
+# The fast alarm needs five occurrences inside a single five-minute period, so it
+# sees a concentrated burst quickly and misses a trickle entirely. This one sums
+# over an hour, so it sees a trickle that never reaches five in any one period,
+# at the cost of up to an hour of latency. Neither time base covers both shapes.
+#
+# This is sized against the 2026-11-02 outage, which produced 4, 14 and 2 ELB
+# 5xx across three consecutive hourly buckets while target 5xx stayed at zero.
+# The 14 crosses this threshold, so the incident would have paged. To be exact
+# rather than reassuring: the 4 and the 2 are still under five even hourly, so
+# the pair catches that incident, not every individual hour of it.
+#
+# Accepted cost: a burst large enough to trip the fast alarm will usually trip
+# this one too, so one event can notify twice. Two notifications for a real
+# outage is cheaper than the missed detection this closes.
+#
+# Period 3600 is not a novel shape here; the checkout-lock alarm already uses it.
+
+resource "aws_cloudwatch_metric_alarm" "alb_elb_5xx_sustained" {
+  count               = local.alerts_enabled && var.ENABLE_API_ALB ? 1 : 0
+  alarm_name          = "${local.name_prefix}-alb-elb-5xx-sustained"
+  alarm_description   = "The ALB has returned 5xx repeatedly over an hour without ever spiking. Low-rate loss of healthy targets; check target group health across the window."
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HTTPCode_ELB_5XX_Count"
+  statistic           = "Sum"
+  period              = 3600
   evaluation_periods  = 1
   threshold           = 5
   comparison_operator = "GreaterThanOrEqualToThreshold"

@@ -120,6 +120,7 @@ that address.
 | ECS no running tasks          | Bot service running task count < 1 for 10 min  | 5 min x 2 |
 | ALB target 5xx errors         | 10+ target HTTP 5xx responses in 10 min        | 5 min x 2 |
 | ALB ELB 5xx errors            | 5+ load-balancer HTTP 5xx responses in 5 min   | 5 min x 1 |
+| ALB ELB 5xx sustained         | 5+ load-balancer HTTP 5xx responses in 1 h     | 1 h x 1   |
 | ALB unhealthy hosts           | Any unhealthy target in `api-tg` for 10 min    | 5 min x 2 |
 | ALB spare unhealthy hosts     | Any unhealthy target in `api-spare` for 10 min | 5 min x 2 |
 | Grafana token rotation errors | Rotation Lambda error in 24 h                  | 1 day x 1 |
@@ -145,6 +146,18 @@ deliberately more sensitive than the target 5xx alarm, at 5 in a single period
 rather than 10 across two, because an ELB 5xx means there was nothing healthy to
 forward to and is rarely benign, whereas target 5xx is an application error rate
 that needs a higher bar; do not harmonise the two.
+
+**There are two alarms on `HTTPCode_ELB_5XX_Count` on purpose, and neither is
+redundant.** They share a metric and a dimension and differ only in time base.
+The 5-minute alarm catches a concentrated burst within five minutes but misses a
+trickle, because a trickle never reaches 5 in any single period. The 1-hour
+alarm catches that trickle, at the cost of up to an hour of latency. No single
+time base covers both shapes, so deleting either one reopens the gap they exist
+to close. The sizing comes from the 2026-11-02 outage, which produced 4, 14 and
+2 ELB 5xx across three consecutive hourly buckets with target 5xx at zero
+throughout: the 14 crosses the hourly threshold, so that incident would have
+paged. A burst big enough to trip the fast alarm will usually trip the slow one
+too, so expect one real outage to notify twice.
 
 The two voice alarms match single app log lines, each a thrown error message:
 `Meeting voice or lease release remains unresolved` for a meeting that finished
