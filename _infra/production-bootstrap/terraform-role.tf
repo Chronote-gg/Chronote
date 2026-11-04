@@ -38,7 +38,15 @@ resource "aws_iam_role_policy" "production_terraform" {
   depends_on = [aws_iam_role.production_terraform]
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    # The two splices below hold the read-only dependency metadata statements.
+    # They move to an attached managed policy when
+    # enable_artifact_preservation_policy is set, and stay here in their
+    # original positions when it is not, so the default rendering is byte for
+    # byte the installed one. See artifact-preservation.tf for why.
+    # Each splice filters with `if` rather than a conditional, because a
+    # conditional between a populated tuple and `[]` is a type error: tuple
+    # lengths are part of the type, so the branches never unify.
+    Statement = concat([
       { Sid = "ApplicationState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = "arn:aws:s3:::${local.state_bucket}/${local.state_key}" },
       # Terraform 1.16 Workspaces lists workspace_key_prefix plus '/', even for default.
       { Sid = "DefaultWorkspaceDiscovery", Effect = "Allow", Action = "s3:ListBucket", Resource = "arn:aws:s3:::${local.state_bucket}", Condition = { StringEquals = { "s3:prefix" = "meeting-notes-terraform/" } } },
@@ -65,22 +73,17 @@ resource "aws_iam_role_policy" "production_terraform" {
       # IAM cannot constrain trust or inline documents; the runtime plan validator and protected source must.
       { Sid = "RuntimeRoles", Effect = "Allow", Action = ["iam:CreateRole", "iam:TagRole", "iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:PutRolePolicy"], Resource = [local.deploy_role_arn, "arn:aws:iam::${var.production_account_id}:role/meeting-notes-prod-prompt-guard"] },
       { Sid = "DeployRoleAttachments", Effect = "Allow", Action = "iam:AttachRolePolicy", Resource = local.deploy_role_arn, Condition = { ArnEquals = { "iam:PolicyARN" = [local.routing_policy_arn, local.site_policy_arn] } } },
-      { Sid = "GitHubProviderMetadata", Effect = "Allow", Action = "iam:GetOpenIDConnectProvider", Resource = "arn:aws:iam::${var.production_account_id}:oidc-provider/token.actions.githubusercontent.com" },
-      { Sid = "SecretMetadata", Effect = "Allow", Action = ["secretsmanager:DescribeSecret", "secretsmanager:GetResourcePolicy"], Resource = "arn:aws:secretsmanager:us-east-1:${var.production_account_id}:secret:meeting-notes-prod/*" },
+      ], [for statement in local.identity_metadata_statements : statement if local.inline_dependency_metadata], [
       { Sid = "SiteBucketMetadata", Effect = "Allow", Action = ["s3:ListBucket", "s3:GetBucketPolicy", "s3:GetBucketAcl", "s3:GetBucketCORS", "s3:GetBucketWebsite", "s3:GetBucketVersioning", "s3:GetAccelerateConfiguration", "s3:GetBucketRequestPayment", "s3:GetBucketLogging", "s3:GetLifecycleConfiguration", "s3:GetReplicationConfiguration", "s3:GetEncryptionConfiguration", "s3:GetBucketObjectLockConfiguration", "s3:GetBucketTagging"], Resource = [for site in ["frontend", "docs"] : "arn:aws:s3:::meeting-notes-prod-${site}-${var.production_account_id}"] },
       # Site certificate, distribution, origin access control and headers policy IDs are generated; function names are not.
       { Sid = "SiteCertificateMetadata", Effect = "Allow", Action = ["acm:DescribeCertificate", "acm:ListTagsForCertificate"], Resource = "arn:aws:acm:us-east-1:${var.production_account_id}:certificate/*" },
       { Sid = "SiteCdnMetadata", Effect = "Allow", Action = ["cloudfront:GetDistribution", "cloudfront:GetOriginAccessControl", "cloudfront:GetResponseHeadersPolicy", "cloudfront:DescribeFunction", "cloudfront:GetFunction", "cloudfront:ListTagsForResource"], Resource = concat([for type in ["distribution", "origin-access-control", "response-headers-policy"] : "arn:aws:cloudfront::${var.production_account_id}:${type}/*"], [for name in ["frontend-route-rewrite", "docs-index-rewrite"] : "arn:aws:cloudfront::${var.production_account_id}:function/meeting-notes-prod-${name}"]) },
-      { Sid = "ClusterMetadata", Effect = "Allow", Action = ["ecs:DescribeClusters", "ecs:ListTagsForResource"], Resource = "arn:aws:ecs:us-east-1:${var.production_account_id}:cluster/meeting-notes-prod-bot-cluster" },
-      { Sid = "CertificateMetadata", Effect = "Allow", Action = ["acm:DescribeCertificate", "acm:ListTagsForCertificate"], Resource = var.production_certificate_arn },
-      { Sid = "ZoneMetadata", Effect = "Allow", Action = ["route53:GetHostedZone", "route53:ListResourceRecordSets", "route53:ListTagsForResource"], Resource = "arn:aws:route53:::hostedzone/${var.production_hosted_zone_id}" },
-      { Sid = "ZoneDiscovery", Effect = "Allow", Action = "route53:ListHostedZones", Resource = "*" },
-      { Sid = "RegionalMetadata", Effect = "Allow", Action = ["ec2:DescribeVpcs", "ec2:DescribeVpcAttribute", "ec2:DescribeSubnets", "ec2:DescribeSecurityGroups", "ec2:DescribeSecurityGroupRules", "elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeLoadBalancerAttributes", "elasticloadbalancing:DescribeCapacityReservation", "elasticloadbalancing:DescribeListeners", "elasticloadbalancing:DescribeListenerAttributes", "elasticloadbalancing:DescribeListenerCertificates", "elasticloadbalancing:DescribeTargetGroups", "elasticloadbalancing:DescribeTargetGroupAttributes", "elasticloadbalancing:DescribeTags"], Resource = "*", Condition = { StringEquals = { "aws:RequestedRegion" = "us-east-1" } } },
+      ], [for statement in local.regional_metadata_statements : statement if local.inline_dependency_metadata], [
       { Sid = "EvidenceControlReadback", Effect = "Allow", Action = local.capture_reads, Resource = local.bucket_arn },
       { Sid = "EvidenceConditionalCreate", Effect = "Allow", Action = "s3:PutObject", Resource = local.capture_objects, Condition = { StringEquals = { "s3:if-none-match" = "*", "s3:x-amz-server-side-encryption" = "aws:kms", "s3:x-amz-server-side-encryption-aws-kms-key-id" = var.kms_key_arn } } },
       { Sid = "EvidenceVersionReadback", Effect = "Allow", Action = "s3:GetObjectVersion", Resource = local.capture_objects },
       { Sid = "EvidenceEncryption", Effect = "Allow", Action = ["kms:GenerateDataKey", "kms:Decrypt"], Resource = var.kms_key_arn, Condition = { StringEquals = { "kms:ViaService" = "s3.us-east-1.amazonaws.com", "kms:CallerAccount" = var.production_account_id }, StringLike = { "kms:EncryptionContext:aws:s3:arn" = local.capture_objects } } }
-    ]
+    ])
   })
   lifecycle { prevent_destroy = true }
 }

@@ -244,6 +244,41 @@ from a count instance to a `for_each` key; both addresses are outside the
 closure. Installed-provider requirements and the typed retry-index gate are
 unchanged. The source pin is refreshed only for these five reviewed files.
 
+### Artifact-preservation plan scope audit (2026-11-04)
+
+The transcripts policy now builds its bucket ARN from `local.transcripts_bucket_name`
+instead of `aws_s3_bucket.transcripts.arn`. The rendered policy document is
+unchanged, because `aws_s3_bucket.transcripts` sets `bucket` from that same local,
+so the two expressions produce the same string. The edit removes a resource
+reference edge and adds none, as the site-permissions audit did for the listener
+count predicate. The local reads only `TRANSCRIPTS_BUCKET`, `name_prefix` and the
+caller identity, all of which the closure already depends on.
+
+The purpose is the new production `artifact-preservation` plan scope, which targets
+only `aws_iam_policy.transcripts_s3_policy`. With the reference removed the bucket
+is no longer in that targeted graph, so the GitHub Terraform executor role needs no
+read permission on the transcripts bucket at all, including `s3:ListBucket`, which
+would otherwise expose transcript object keys.
+`validate-artifact-preservation-plan.cjs` refuses any managed resource other than
+the policy, so a reappearing bucket refresh fails the scope rather than passing
+quietly.
+
+The transcripts policy stays outside the 32-resource delivery closure and outside
+the six-resource site graph, and no resource in either reads it. The closure,
+excluded checks, installed-provider requirements, typed retry-index gate and
+permitted delivery effects are unchanged. The whole-source pin is refreshed only
+for this one reviewed `main.tf` edit. Refreshing it does not permit the IAM change
+through the meeting-delivery or site scopes; the new scope has its own validator,
+its own bootstrap grant and its own approved apply.
+
+That refresh was superseded by the merge with the alarm coverage change. Both
+branches edited the pin over their own file set, so neither committed value
+matched the merged tree. The pin here is recomputed over the merged inventory:
+master's 25 files with this audit's `main.tf` edit applied, which is the only
+hashed file that differs from master. The method was validated by reproducing
+both parents' committed values from their own trees before the new one was
+trusted.
+
 ### Recomputing the pin
 
 There is no script for this. The pin is `bindingHash` over a map of filename to

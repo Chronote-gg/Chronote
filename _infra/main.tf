@@ -1699,9 +1699,11 @@ resource "aws_iam_policy" "transcripts_s3_policy" {
           "s3:AbortMultipartUpload",
           "s3:ListBucket"
         ],
+        # Constructed from the bucket name, not from the bucket resource, so a
+        # targeted artifact-preservation plan does not refresh the bucket.
         Resource = [
-          aws_s3_bucket.transcripts.arn,
-          "${aws_s3_bucket.transcripts.arn}/*"
+          "arn:aws:s3:::${local.transcripts_bucket_name}",
+          "arn:aws:s3:::${local.transcripts_bucket_name}/*"
         ]
       }
     ]

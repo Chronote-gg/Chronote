@@ -31,6 +31,7 @@ const invocationSchema = z
       "site-delivery",
       "sandbox-site-permissions",
       "processing-retry",
+      "artifact-preservation",
       "meeting-update-delivery",
     ]),
   })

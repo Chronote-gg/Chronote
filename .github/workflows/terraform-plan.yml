@@ -19,7 +19,7 @@ on:
         type: string
         default: sandbox
       plan_scope:
-        description: Sandbox supports meeting-update-delivery, processing-retry and sandbox-site-permissions; production supports deployment-prerequisites, deployment-runtime, site-delivery and processing-retry
+        description: Sandbox supports meeting-update-delivery, processing-retry and sandbox-site-permissions; production supports deployment-prerequisites, deployment-runtime, site-delivery, processing-retry and artifact-preservation
         required: true
         type: choice
         default: meeting-update-delivery
@@ -32,6 +32,7 @@ on:
           - site-delivery
           - sandbox-site-permissions
           - processing-retry
+          - artifact-preservation
 
 permissions:
   actions: read
@@ -70,7 +71,7 @@ jobs:
         if: ${{ inputs.github_environment == 'production' }}
         env:
           PLAN_SCOPE: ${{ inputs.plan_scope }}
-        run: test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery || test "$PLAN_SCOPE" = processing-retry
+        run: test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery || test "$PLAN_SCOPE" = processing-retry || test "$PLAN_SCOPE" = artifact-preservation
       - name: Mask production Plan identity
         id: plan-identity
         if: ${{ inputs.github_environment == 'production' }}
