@@ -160,6 +160,9 @@ export function projectProcessingRetry(
     reason: eligibility.eligible ? undefined : eligibility.reason,
     requiresReplaceConfirm:
       eligibility.eligible && eligibility.requiresReplaceConfirm,
+    transcriptSource: eligibility.eligible
+      ? eligibility.transcriptSource
+      : undefined,
     status: retry?.status,
     failureReason: retry?.failureReason,
     settingsSource: retry?.settingsSource,

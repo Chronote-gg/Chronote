@@ -70,6 +70,9 @@ Decisions settled during implementation:
   retry finds out. A checkpoint whose failed ranges come back empty fails
   `nothing_to_retry`, and that or a prior successful retry ends eligibility
   for the `partial`.
+- A retry that re-transcribes the mixed recording (no checkpoint audio) stays
+  allowed, but its confirmation warns that the new transcript and notes lose
+  speaker attribution.
 - Retries never replay the finalized-audio pass, which would rewrite kept
   entries, but keep transcription cleanup.
 - The recovery notice is only fed into prompts for interrupted captures.

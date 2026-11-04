@@ -11,6 +11,9 @@ const eligible: Props["view"] = {
   attemptsRemaining: 3,
 };
 
+const SPEAKERLESS_WARNING =
+  "This meeting has no per-speaker audio, so the new transcript and notes won't say who said what.";
+
 const renderRetry = (patch: Partial<Props> = {}) => {
   const onRetry = jest.fn();
   const result = render(
@@ -72,6 +75,21 @@ describe("MeetingProcessingRetry", () => {
     });
     expect(onRetry).toHaveBeenCalledWith(true);
   });
+
+  it.each([
+    ["mixed", true],
+    ["checkpoint", false],
+    ["existing", false],
+  ] as const)(
+    "a %s transcript source warns about speakers: %p",
+    async (transcriptSource, warns) => {
+      renderRetry({
+        view: { ...eligible, requiresReplaceConfirm: true, transcriptSource },
+      });
+      const dialog = await openModal();
+      expect(dialog.textContent?.includes(SPEAKERLESS_WARNING)).toBe(warns);
+    },
+  );
 
   it("shows progress while queued", () => {
     renderRetry({
