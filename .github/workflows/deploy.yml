@@ -16,19 +16,39 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: chronote-deploy-production
-  cancel-in-progress: false
+# Concurrency is per job rather than per workflow. A workflow-level group holds
+# a newer run entirely pending, so its CI never starts and cannot supersede the
+# stale CI still running from the previous push. Grouping each job instead lets
+# a newer push cancel stale CI while every deploy job still runs to completion.
 
 jobs:
   ci:
     if: github.ref == 'refs/heads/master'
     name: CI
+    # One group across both events, so at most one master CI is ever alive and
+    # the newest run wins. A merge therefore cancels a manual dispatch's CI as
+    # well as an earlier merge's, which is deliberate: splitting the group by
+    # event let a dispatch of an older commit finish CI late and take the deploy
+    # locks after a newer push had already published, rolling the backend, the
+    # frontend and the promoted prompts back. A cancelled dispatch is visible
+    # and can be re-run; a silent rollback of promoted prompts is neither.
+    # Only CI is cancellable; every deploy job below sets false.
+    concurrency:
+      group: chronote-master-ci
+      cancel-in-progress: true
     uses: ./.github/workflows/ci-core.yml
     secrets: inherit
 
   deploybackend:
     name: Deploy Backend
+    # Keeps the original shared group. This is the job that swaps the serving
+    # runtime, and introduce-production.yml and production-introduction.yml sit
+    # in the same group, so holding it here preserves the mutual exclusion the
+    # workflow-level group used to provide for that mutation. It is alone in its
+    # stage, so nothing contends with it for the group.
+    concurrency:
+      group: chronote-deploy-production
+      cancel-in-progress: false
     timeout-minutes: 180
     # Publish privacy/What's New notices before expanded capture goes live.
     needs: [ci, deploy-docs]
@@ -242,6 +262,11 @@ jobs:
 
   deploy-frontend:
     name: Deploy Frontend
+    # Ready at the same moment as promote-prompts and sync-openai-connection,
+    # so all three need groups of their own.
+    concurrency:
+      group: chronote-deploy-production-frontend
+      cancel-in-progress: false
     needs: [ci, deploy-docs, deploybackend]
     runs-on: ubuntu-latest
     environment: production
@@ -332,6 +357,13 @@ jobs:
 
   deploy-docs:
     name: Deploy Docs
+    # Own group, like every deploy job except the backend. GitHub keeps at most
+    # one pending entry per group and a newer pending entry cancels the older
+    # one, so jobs that can be ready at the same time must not share a group or
+    # one of them would be silently dropped.
+    concurrency:
+      group: chronote-deploy-production-docs
+      cancel-in-progress: false
     needs: [ci]
     runs-on: ubuntu-latest
     environment: production
@@ -513,6 +545,9 @@ jobs:
   # a prompt someone else pushed from a stale checkout.
   promote-prompts:
     name: Promote Prompts
+    concurrency:
+      group: chronote-deploy-production-promote-prompts
+      cancel-in-progress: false
     needs: [deploybackend]
     runs-on: ubuntu-latest
     environment: production
@@ -581,6 +616,9 @@ jobs:
   # Only production may update the shared Langfuse OpenAI connection.
   sync-openai-connection:
     name: Sync OpenAI LLM Connection
+    concurrency:
+      group: chronote-deploy-production-sync-openai
+      cancel-in-progress: false
     needs: [deploybackend]
     runs-on: ubuntu-latest
     environment: production
