@@ -287,22 +287,26 @@ test("a manifest changed after attestation refuses the seal", async () => {
   expect(f.state.artifacts.get("old")?.state).toBe("requested");
 });
 
-test("a resumed unexpired attested seal rechecks the guard before consuming", async () => {
-  const f = legacyFixture();
-  await f.coordinator.attestPreservation();
+/** Fails the first consume write once and counts every consume attempt. */
+function loseFirstConsume(f: ReturnType<typeof legacyFixture>) {
   const original = f.aws.getMockImplementation()!;
-  let lose = true;
-  let consumeAttempts = 0;
+  const attempts = { consume: 0 };
   f.aws.mockImplementation(async (service, operation, input) => {
     const put = (input as { TransactItems?: Array<{ Put?: { Item: never } }> })
       .TransactItems?.[0]?.Put;
-    if (put && unmarshall(put.Item).state === "consumed") consumeAttempts++;
-    if (lose && put && unmarshall(put.Item).state === "consumed") {
-      lose = false;
-      throw new Error("transient failure");
+    if (put && unmarshall(put.Item).state === "consumed") {
+      attempts.consume++;
+      if (attempts.consume === 1) throw new Error("transient failure");
     }
     return original(service, operation, input);
   });
+  return attempts;
+}
+
+test("a resumed unexpired attested seal rechecks the guard before consuming", async () => {
+  const f = legacyFixture();
+  await f.coordinator.attestPreservation();
+  const attempts = loseFirstConsume(f);
   await expect(f.coordinator.prepare()).rejects.toThrow(/AWS operation failed/);
   expect(f.state.artifacts.get("old")?.state).toBe("sealed");
   f.state.leases.push({
@@ -311,23 +315,13 @@ test("a resumed unexpired attested seal rechecks the guard before consuming", as
   });
   await expect(f.coordinator.prepare()).rejects.toThrow(/after its backup/);
   expect(f.state.artifacts.get("old")?.state).toBe("sealed");
-  expect(consumeAttempts).toBe(1);
+  expect(attempts.consume).toBe(1);
 });
 
 test("a lapsed attested seal is renewed after a lost consume", async () => {
   const f = legacyFixture();
   await f.coordinator.attestPreservation();
-  const original = f.aws.getMockImplementation()!;
-  let lose = true;
-  f.aws.mockImplementation(async (service, operation, input) => {
-    const put = (input as { TransactItems?: Array<{ Put?: { Item: never } }> })
-      .TransactItems?.[0]?.Put;
-    if (lose && put && unmarshall(put.Item).state === "consumed") {
-      lose = false;
-      throw new Error("transient failure");
-    }
-    return original(service, operation, input);
-  });
+  loseFirstConsume(f);
   await expect(f.coordinator.prepare()).rejects.toThrow(/AWS operation failed/);
   expect(f.state.artifacts.get("old")?.state).toBe("sealed");
   f.state.rows.old.heartbeatAt = 1100;
