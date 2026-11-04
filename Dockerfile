@@ -1,5 +1,5 @@
 # Use an official Node.js runtime as a parent image
-FROM node:24.22.1-bookworm-slim
+FROM node:24.22.2-bookworm-slim
 
 # Install build tools necessary for node-gyp
 RUN apt-get update && apt-get install -y --no-install-recommends \
