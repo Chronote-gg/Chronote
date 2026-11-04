@@ -122,6 +122,27 @@ const buildRuntimeConfig = (
   };
 };
 
+const DICTIONARY_ENTRY: DictionaryEntry = {
+  guildId: "guild-1",
+  termKey: "chronote",
+  term: "Chronote",
+  definition: "Meeting notes bot",
+  createdAt: "2025-01-01T00:00:00.000Z",
+  createdBy: "user-1",
+  updatedAt: "2025-01-01T00:00:00.000Z",
+  updatedBy: "user-1",
+};
+
+/** The dictionary half of a context fixture, shared by the prompt-type tests. */
+const dictionaryFixture = () => ({
+  dictionaryEntries: [DICTIONARY_ENTRY],
+  dictionaryBudgets: {
+    maxEntries: 5,
+    maxCharsTranscription: 200,
+    maxCharsContext: 200,
+  },
+});
+
 const buildHistory = (
   overrides: Partial<MeetingHistory> = {},
 ): MeetingHistory => ({
@@ -142,18 +163,7 @@ const buildMeeting = (overrides: Partial<MeetingData> = {}): MeetingData =>
     guildId: "guild-1",
     voiceChannel: { id: "voice-1" },
     meetingContext: "Discuss launch",
-    dictionaryEntries: [
-      {
-        guildId: "guild-1",
-        termKey: "chronote",
-        term: "Chronote",
-        definition: "Meeting notes bot",
-        createdAt: "2025-01-01T00:00:00.000Z",
-        createdBy: "user-1",
-        updatedAt: "2025-01-01T00:00:00.000Z",
-        updatedBy: "user-1",
-      },
-    ],
+    dictionaryEntries: [DICTIONARY_ENTRY],
     runtimeConfig: buildRuntimeConfig(),
     ...overrides,
   }) as MeetingData;
@@ -226,23 +236,7 @@ describe("contextService", () => {
       serverContext: "Server context",
       channelContext: "Channel context",
       meetingContext: "Meeting context",
-      dictionaryEntries: [
-        {
-          guildId: "guild-1",
-          termKey: "chronote",
-          term: "Chronote",
-          definition: "Meeting notes bot",
-          createdAt: "2025-01-01T00:00:00.000Z",
-          createdBy: "user-1",
-          updatedAt: "2025-01-01T00:00:00.000Z",
-          updatedBy: "user-1",
-        },
-      ] as DictionaryEntry[],
-      dictionaryBudgets: {
-        maxEntries: 5,
-        maxCharsTranscription: 200,
-        maxCharsContext: 200,
-      },
+      ...dictionaryFixture(),
       recentMeetings: [
         buildHistory({
           notes: "Recap with decisions",
@@ -284,23 +278,7 @@ describe("contextService", () => {
       serverContext: directive,
       channelContext: `Channel rule: ${directive}`,
       meetingContext: `Meeting rule: ${directive}`,
-      dictionaryEntries: [
-        {
-          guildId: "guild-1",
-          termKey: "chronote",
-          term: "Chronote",
-          definition: "Meeting notes bot",
-          createdAt: "2025-01-01T00:00:00.000Z",
-          createdBy: "user-1",
-          updatedAt: "2025-01-01T00:00:00.000Z",
-          updatedBy: "user-1",
-        },
-      ] as DictionaryEntry[],
-      dictionaryBudgets: {
-        maxEntries: 5,
-        maxCharsTranscription: 400,
-        maxCharsContext: 400,
-      },
+      ...dictionaryFixture(),
     };
 
     const transcriptionContext = formatContextForPrompt(
