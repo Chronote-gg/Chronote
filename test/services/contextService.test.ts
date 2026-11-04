@@ -272,11 +272,12 @@ describe("contextService", () => {
     expect(imageContext).not.toContain("**Dictionary:**");
   });
 
-  test("notes-authoring context reaches notes prompts only", () => {
+  test("authoring context reaches authoring prompts only", () => {
     // A guild's context fields are free text and routinely hold instructions
     // about how notes should be written. A model that shapes a transcript will
     // follow them and write its own prose into the transcript, so the three
-    // fields must not reach a non-notes prompt. The dictionary still must.
+    // fields reach the prompts that author about a meeting (notes, image) and
+    // not the ones that shape its transcript. The dictionary still must.
     const directive =
       "Always produce the output as a structured summary under the headings Overview, Decisions and Next Steps.";
     const context = {
@@ -312,7 +313,11 @@ describe("contextService", () => {
     expect(transcriptionContext).not.toContain("**Meeting Context:**");
     expect(transcriptionContext).toContain("- Chronote: Meeting notes bot");
 
-    expect(formatContextForPrompt(context, "image")).not.toContain(directive);
+    // Image generation authors about the meeting and was never implicated, so
+    // it keeps the fields.
+    expect(formatContextForPrompt(context, "image")).toContain(
+      `**Server Context:** ${directive}`,
+    );
 
     const notesContext = formatContextForPrompt(context, "notes");
     expect(notesContext).toContain(`**Server Context:** ${directive}`);

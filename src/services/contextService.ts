@@ -141,22 +141,30 @@ export function formatContextForPrompt(
 ): string {
   let formattedContext = "";
 
-  // Server, channel and meeting context are free text and are read as
-  // notes-authoring instructions. A model that shapes a transcript must never
-  // see them, because it follows them: a guild asking for its notes in a fixed
-  // heading structure had the coalesce model write that structure into the
-  // transcript as if it were speech. Notes-only, like recentMeetings below.
-  const isNotesPrompt = promptType === "notes";
+  // Server, channel and meeting context are free-text authoring context. They
+  // are safe for a model that authors something *about* the meeting and unsafe
+  // for one that shapes the transcript *of* it, because that model follows
+  // them: a guild asking for its notes in a fixed heading structure had the
+  // coalesce model write that structure into the transcript as if it were
+  // speech. Notes and image generation author about the meeting, so they keep
+  // these fields.
+  //
+  // Keep this a positive list. It fails closed: a transcript-shaping prompt
+  // type added later is protected by default. An exclusion list such as
+  // `promptType !== "transcription"` is a smaller expression that would hand
+  // the guild's instructions to that new type silently, which is exactly how
+  // this defect came to exist. Do not "simplify" it into one.
+  const isAuthoringPrompt = promptType === "notes" || promptType === "image";
 
-  if (isNotesPrompt && context.serverContext) {
+  if (isAuthoringPrompt && context.serverContext) {
     formattedContext += `\n**Server Context:** ${context.serverContext}\n`;
   }
 
-  if (isNotesPrompt && context.channelContext) {
+  if (isAuthoringPrompt && context.channelContext) {
     formattedContext += `\n**Channel Context:** ${context.channelContext}\n`;
   }
 
-  if (isNotesPrompt && context.meetingContext) {
+  if (isAuthoringPrompt && context.meetingContext) {
     formattedContext += `\n**Meeting Context:** ${context.meetingContext}\n`;
   }
 
