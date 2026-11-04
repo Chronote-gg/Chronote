@@ -7,6 +7,11 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### API request logging notice (November 4)
+
+- We are turning on request-level logging for the Chronote API so we can diagnose errors and availability problems. A log line records the caller's IP address and port, the requested path and query string, the response status, the time of the request, the user agent and the connection's security details.
+- These lines stay in a storage bucket we control, are not sent to another provider, and expire 30 days after they are written. They carry no meeting content. See the updated [Privacy Policy](/legal/privacy).
+
 ### Starting again after a delayed disconnect (November 1)
 
 - A delayed Discord disconnect confirmation can let Chronote finish the previous session's cleanup so another meeting can start. Saved notes stay unchanged. If Chronote cannot confirm that the old session ended safely, the server remains unavailable. See [Active meeting after recording stops](/troubleshooting/common-issues/#server-still-reports-an-active-meeting-after-recording-stops).
