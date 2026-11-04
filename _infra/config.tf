@@ -150,9 +150,10 @@ resource "aws_dynamodb_table" "config_overrides_table" {
 }
 
 # Operator announcement sends, written only by scripts/announce.ts.
-# The production and Sandbox bootstrap Terraform roles do not yet allow
-# CreateTable or the KMS encryption context for this table, so keep
-# enable_announcement_delivery_table off until that change is reviewed and applied.
+# Keep enable_announcement_delivery_table off until both bootstrap Terraform
+# roles allow, on this table's ARN, CreateTable, UpdateContinuousBackups and
+# TagResource/UntagResource, plus the DynamoDB KMS encryption context for its
+# name. Sandbox also needs it in table_suffixes, so TableMetadata covers it.
 resource "aws_dynamodb_table" "announcement_delivery_table" {
   count        = var.enable_announcement_delivery_table ? 1 : 0
   name         = "${local.name_prefix}-AnnouncementDeliveryTable"

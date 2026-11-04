@@ -311,20 +311,28 @@ and no planned change, so the meeting closure, the site graph, the excluded
 checks, the typed retry-index gate and the installed-provider requirements are
 unchanged. The source pin was refreshed only for these two declared edits.
 
-That refresh was superseded by the merge with the alarm coverage and
-artifact-preservation plan scope changes. The pin is recomputed over the merged
+That refresh was superseded by the merge with master's weekly provider audit
+(the AWS lock from 6.70.0 to 6.71.0), the ephemeral storage alarm, the alarm
+coverage and the artifact-preservation plan scope changes. The pin is recomputed over the merged
 inventory: master's 25 files with this audit's `config.tf` and `main.tf` edits
 applied, the only hashed files that differ from master. Both parents' committed
-values were reproduced from their own trees before the new one was trusted.
+values were reproduced from their own trees before the new one was trusted. A
+later wording fix to the enablement comment in `config.tf` and the variable
+description in `main.tf` moved the pin again, by the same method.
 
 Enabling the flag is a separate reviewed change. The production bootstrap
 Terraform role's inline policy allows `dynamodb:CreateTable` only on the
 deployment control table, and the DynamoDB KMS encryption context only for the
 control and subscription table names. Of its attached policies, only
-processing-retry adds that context, for MeetingHistory alone; the
-artifact-preservation and alerting-delivery policies grant no DynamoDB or KMS
-action. The Sandbox role allows neither. Both roles need a
-grant for this table name first. This audit permits no plan, Apply or deployment.
+processing-retry adds that context, for MeetingHistory alone; the site-delivery
+policy grants only CloudFront actions, and the artifact-preservation and
+alerting-delivery policies grant no DynamoDB or KMS action. The Sandbox role
+allows neither. Both roles first need `dynamodb:CreateTable`,
+`UpdateContinuousBackups` and `TagResource`/`UntagResource` on this table's ARN,
+plus the DynamoDB KMS encryption context for its name. Sandbox also needs the
+table in the bootstrap `table_suffixes`, so its `TableMetadata` read grant
+covers it; production's `TableMetadata` already covers every
+`meeting-notes-prod-*` table. This audit permits no plan, Apply or deployment.
 
 ### Recomputing the pin
 

@@ -259,7 +259,7 @@ variable "HOSTED_ZONE_NAME" {
 }
 
 variable "enable_announcement_delivery_table" {
-  description = "Provision AnnouncementDeliveryTable for operator announcements. Enabling it requires a separately reviewed bootstrap grant (CreateTable and the KMS encryption context) for the Terraform role."
+  description = "Provision AnnouncementDeliveryTable for operator announcements. Enabling it first needs a reviewed bootstrap change: CreateTable, UpdateContinuousBackups and TagResource/UntagResource on this table's ARN, plus the DynamoDB KMS encryption context for its name, and in Sandbox an entry in table_suffixes."
   type        = bool
   default     = false
 }

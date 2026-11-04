@@ -139,6 +139,24 @@ describe("parseAnnouncement", () => {
     expect(announcement.body).not.toContain("<!--");
   });
 
+  it("finds a placeholder hidden between two YAML comment markers", () => {
+    const problems = problemsOf(() =>
+      parseAnnouncement(
+        markdown("body", [
+          "id: a-b  # <!--",
+          "kind: info",
+          'title: "{{name}}"',
+          "fields: []  # -->",
+        ]),
+        "markdown",
+      ),
+    );
+
+    expect(problems).toEqual([
+      expect.stringMatching(/^title: unfilled placeholder \{\{name\}\}$/),
+    ]);
+  });
+
   it("names every unfilled placeholder", () => {
     const problems = problemsOf(() =>
       parseAnnouncement(

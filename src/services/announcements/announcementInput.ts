@@ -137,13 +137,21 @@ const findMentionProblems = (texts: LabelledText[]): string[] =>
     ),
   );
 
+const placeholderProblems = (text: string, prefix = ""): string[] =>
+  Array.from(
+    text.matchAll(PLACEHOLDER_PATTERN),
+    ([, name]) => `${prefix}unfilled placeholder {{${name}}}`,
+  );
+
 // Scanned over the whole file before parsing: a placeholder in the id, or a
 // bare {{...}} that YAML reads as a mapping, must still be reported by name.
 const findPlaceholderProblems = (content: string): string[] =>
-  Array.from(
-    stripHtmlComments(content).matchAll(PLACEHOLDER_PATTERN),
-    ([, name]) => `unfilled placeholder {{${name}}}`,
-  );
+  placeholderProblems(stripHtmlComments(content));
+
+// Scanned again after parsing, because "<!--" and "-->" inside two separate
+// YAML comments would otherwise hide a real placeholder from the file scan.
+const findParsedPlaceholderProblems = (texts: LabelledText[]): string[] =>
+  texts.flatMap(({ label, text }) => placeholderProblems(text, `${label}: `));
 
 const findSnowflakeWarnings = (texts: LabelledText[]): string[] =>
   texts.flatMap(({ label, text }) =>
@@ -170,6 +178,7 @@ export const parseAnnouncement = (
   const texts = labelledTexts(announcement);
   const problems = [
     ...findCommentProblems(texts),
+    ...findParsedPlaceholderProblems(texts),
     ...findMentionProblems(texts),
   ];
   if (problems.length > 0) throw new AnnouncementInputError(problems);
