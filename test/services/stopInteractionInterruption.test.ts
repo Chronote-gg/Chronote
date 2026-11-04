@@ -34,6 +34,42 @@ jest.mock("../../src/db", () => ({
 }));
 const capturedClient: { value?: Client } = {};
 const currentBot = () => capturedClient.value!;
+const interactionListener = () =>
+  currentBot().listeners("interactionCreate")[0] as (
+    value: unknown,
+  ) => Promise<void>;
+const interactionResponseSpies = () => ({
+  editReply: jest.fn(async () => {}),
+  followUp: jest.fn(async () => {}),
+  reply: jest.fn(async () => {}),
+});
+const stopRoutes = ["button", "leave", "context"] as const;
+const stopOutcomes = [
+  "acknowledged",
+  "receipt_lost",
+  "defer_lost",
+  "already_deferred",
+  "duplicate",
+  "held_receipt",
+  "held_defer",
+] as const;
+/**
+ * A stop that cannot settle must still tell the user exactly one thing, and a
+ * deferred update's `editReply` would overwrite the control message the whole
+ * channel sees, so on that route the one notice has to follow up instead.
+ */
+const expectedNotices = (
+  route: (typeof stopRoutes)[number],
+  outcome: (typeof stopOutcomes)[number],
+  deferred: boolean,
+): { total: number; followUp: number } => {
+  const deferredUpdate =
+    route === "button" && deferred && outcome !== "already_deferred";
+  return {
+    total: outcome === "duplicate" ? 0 : 1,
+    followUp: deferredUpdate ? 1 : 0,
+  };
+};
 beforeAll(async () => {
   jest.spyOn(Client.prototype, "login").mockImplementation(async function (
     this: Client,
@@ -48,18 +84,10 @@ afterAll(async () => {
   await currentBot().destroy();
   jest.restoreAllMocks();
 });
-describe.each(["button", "leave", "context"] as const)(
-  "%s stop route",
-  (route) => {
-    test.each([
-      "acknowledged",
-      "receipt_lost",
-      "defer_lost",
-      "already_deferred",
-      "duplicate",
-      "held_receipt",
-      "held_defer",
-    ] as const)("preserves exact receipt/defer proof: %s", async (outcome) => {
+describe.each(stopRoutes)("%s stop route", (route) => {
+  test.each(stopOutcomes)(
+    "preserves exact receipt/defer proof: %s",
+    async (outcome) => {
       jest.clearAllMocks();
       mockStopEnvironment.ownership = new AbortController();
       mockStopEnvironment.reservations.length = 0;
@@ -137,15 +165,10 @@ describe.each(["button", "leave", "context"] as const)(
         replied: false,
         deferUpdate: defer,
         deferReply: defer,
-        editReply: jest.fn(async () => {}),
-        followUp: jest.fn(async () => {}),
-        reply: jest.fn(async () => {}),
+        ...interactionResponseSpies(),
       };
       try {
-        const listener = currentBot().listeners("interactionCreate")[0] as (
-          value: unknown,
-        ) => Promise<void>;
-        const handling = listener(interaction);
+        const handling = interactionListener()(interaction);
         if (outcome === "held_receipt" || outcome === "held_defer") {
           await entered.promise;
           fenceRuntimeWorkAdmission(interaction.id);
@@ -158,19 +181,13 @@ describe.each(["button", "leave", "context"] as const)(
           acknowledgment.release();
         }
         await handling;
-        // A stop that cannot settle must still tell the user something.
+        const notices = expectedNotices(route, outcome, deferred);
         expect(
           interaction.reply.mock.calls.length +
             interaction.editReply.mock.calls.length +
             interaction.followUp.mock.calls.length,
-        ).toBe(outcome === "duplicate" ? 0 : 1);
-        // A deferred update's editReply would overwrite the control message
-        // the whole channel sees, so that notice has to follow up instead.
-        const deferredUpdate =
-          route === "button" && deferred && outcome !== "already_deferred";
-        expect(interaction.followUp.mock.calls.length).toBe(
-          deferredUpdate ? 1 : 0,
-        );
+        ).toBe(notices.total);
+        expect(interaction.followUp.mock.calls.length).toBe(notices.followUp);
         expect(mockStopEnvironment.reconcile).not.toHaveBeenCalled();
         cleanup.release();
         const interruption = getMeetingInterruptionCheckpoints().find(
@@ -202,9 +219,9 @@ describe.each(["button", "leave", "context"] as const)(
           ({ meeting }) => meeting === mockStopEnvironment.meeting,
         )?.actual;
       }
-    });
-  },
-);
+    },
+  );
+});
 
 test("delivers nothing while another runtime owns the meeting", async () => {
   jest.clearAllMocks();
@@ -227,15 +244,10 @@ test("delivers nothing while another runtime owns the meeting", async () => {
     deferred: false,
     replied: false,
     deferUpdate: jest.fn(async () => {}),
-    editReply: jest.fn(async () => {}),
-    followUp: jest.fn(async () => {}),
-    reply: jest.fn(async () => {}),
+    ...interactionResponseSpies(),
   };
   try {
-    const listener = currentBot().listeners("interactionCreate")[0] as (
-      value: unknown,
-    ) => Promise<void>;
-    await listener(interaction);
+    await interactionListener()(interaction);
     // Any acknowledgement here makes the owner's defer fail, losing the stop.
     expect(interaction.reply).not.toHaveBeenCalled();
     expect(interaction.editReply).not.toHaveBeenCalled();
