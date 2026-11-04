@@ -418,6 +418,8 @@ function requireProof(input: ArtifactSafetyWrite) {
 export function validateArtifactSafetyWrite(input: ArtifactSafetyWrite) {
   artifactSafetyRecordSchema.parse(input.next);
   if (input.expected) artifactSafetyRecordSchema.parse(input.expected);
+  if (input.next.attestation || input.expected?.attestation)
+    throw new Error("Attested legacy artifact rows are coordinator-owned");
   const rule = rules[input.purpose];
   if (
     !rule ||
