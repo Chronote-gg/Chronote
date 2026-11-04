@@ -141,18 +141,22 @@ export function formatContextForPrompt(
 ): string {
   let formattedContext = "";
 
-  // Add server context
-  if (context.serverContext) {
+  // Server, channel and meeting context are free text and are read as
+  // notes-authoring instructions. A model that shapes a transcript must never
+  // see them, because it follows them: a guild asking for its notes in a fixed
+  // heading structure had the coalesce model write that structure into the
+  // transcript as if it were speech. Notes-only, like recentMeetings below.
+  const isNotesPrompt = promptType === "notes";
+
+  if (isNotesPrompt && context.serverContext) {
     formattedContext += `\n**Server Context:** ${context.serverContext}\n`;
   }
 
-  // Add channel context
-  if (context.channelContext) {
+  if (isNotesPrompt && context.channelContext) {
     formattedContext += `\n**Channel Context:** ${context.channelContext}\n`;
   }
 
-  // Add meeting-specific context
-  if (context.meetingContext) {
+  if (isNotesPrompt && context.meetingContext) {
     formattedContext += `\n**Meeting Context:** ${context.meetingContext}\n`;
   }
 
