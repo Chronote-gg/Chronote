@@ -193,6 +193,15 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # desktop:ci ends in `cargo test` against the Tauri crate, so this job
+      # paid a cold Rust compile on every run while desktop-package.yml, which
+      # builds the same crate, was already caching. Swatinem/rust-cache keys per
+      # job, so this entry does not collide with that one.
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
       - name: Validate desktop app
         run: yarn desktop:ci
 

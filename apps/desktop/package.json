@@ -12,8 +12,7 @@
     "build:ci": "tauri build --ci --no-sign",
     "build:smoke": "tauri build --debug --no-bundle --features synthetic-audio,test-hooks",
     "build:web": "vite build",
-    "typecheck": "tsc --noEmit",
-    "check": "cargo check --manifest-path src-tauri/Cargo.toml"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "react": "^19.3.1",
