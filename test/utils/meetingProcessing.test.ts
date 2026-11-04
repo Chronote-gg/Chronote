@@ -7,25 +7,35 @@ import {
   PARTIAL_TRANSCRIPT_NOTICE,
 } from "../../src/utils/meetingProcessing";
 
-function meetingWithFailedSnippets(failedSegments: number): MeetingData {
+/** A snippet either transcribed or failed, never both, as production records them. */
+function meetingWithSnippets(
+  usableSegments: number,
+  failedSegments: number,
+): MeetingData {
   return {
     transcribeMeeting: true,
     audioData: {
-      audioFiles: Array.from({ length: failedSegments }, () => ({
-        transcript: "usable",
-        processing: false,
-        transcriptionFailed: true,
-      })),
+      audioFiles: [
+        ...Array.from({ length: usableSegments }, () => ({
+          transcript: "usable",
+          processing: false,
+        })),
+        ...Array.from({ length: failedSegments }, () => ({
+          transcript: "",
+          processing: false,
+          transcriptionFailed: true,
+        })),
+      ],
     },
   } as unknown as MeetingData;
 }
 
-test("one or two lost snippets keep normal finalization", () => {
+test("a couple of lost snippets keep normal finalization", () => {
   expect(() =>
-    assertMeetingProcessingSucceeded(meetingWithFailedSnippets(2)),
+    assertMeetingProcessingSucceeded(meetingWithSnippets(153, 2)),
   ).not.toThrow();
   expect(() =>
-    assertMeetingProcessingSucceeded(meetingWithFailedSnippets(3)),
+    assertMeetingProcessingSucceeded(meetingWithSnippets(153, 3)),
   ).toThrow("incomplete");
 });
 
