@@ -667,10 +667,7 @@ async function executeInteractionWork(
   try {
     if (interaction.isRepliable()) {
       if (await isForeignOwnedInteraction(interaction, ownerControl, local)) {
-        // A non-owner must stay silent. The owning runtime can receive the same
-        // interaction, and acknowledging it here makes the owner's defer fail, so
-        // the stop it was about to perform never happens. Logged rather than
-        // answered, because a reply from here can lose a recording.
+        // Acknowledging here makes the owner's defer fail, losing the stop.
         console.log("Skipping foreign-owned interaction", {
           interactionId: interaction.id,
           interactionKind: resolveInteractionKind(interaction),
