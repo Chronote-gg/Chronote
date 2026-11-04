@@ -56,6 +56,9 @@ export const CONFIG_KEYS = {
     channelId: "notes.channelId",
     tags: "notes.tags",
   },
+  announcements: {
+    operatorNoticesEnabled: "announcements.operatorNotices.enabled",
+  },
   meetings: {
     attendeeAccessEnabled: "meetings.attendeeAccess.enabled",
     sharingPolicy: "meetings.sharing.policy",

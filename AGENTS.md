@@ -101,6 +101,7 @@
 - McpOAuthTable stores hashed MCP OAuth clients, authorization codes, tokens, and user consents. Access tokens are resource-bound to the configured MCP endpoint and scopes are enforced per tool. It also stores MCP service account tokens (`SERVICE_ACCOUNT_TOKEN#<hash>` for validation and a `SERVICE_ACCOUNT_TOKENS#<guildId>` mirror for listing), keyed so a lookup by secret is a single point read and the portal never scans.
 - MeetingControlCommand stores short-lived queued MCP meeting control requests and results. Pending commands are claimed by bot workers via `StatusCreatedAtIndex`; commands targeting an active meeting owner include `targetOwnerInstanceId`.
 - NotionIntegrationTable stores per-user Notion connection metadata and per-user meeting export mappings, plus automation config/export/reservation records keyed under `GUILD#guildId`. Personal automation reuses the same automation records with `guildId = personal:<ownerUserId>`. Notion access and refresh tokens are encrypted before persistence.
+- AnnouncementDeliveryTable records operator announcement sends per announcement and server (pending, sent, failed) for idempotent reruns; written only by scripts/announce.ts.
 
 ## Frontend
 

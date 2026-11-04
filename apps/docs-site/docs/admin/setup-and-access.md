@@ -60,6 +60,8 @@ For manual starts, Chronote uses the one-meeting `notes-channel` choice first, t
 
 The destination must be accessible to the starter, and Chronote must have permission to post there. A deleted or inaccessible destination blocks the start without falling back to another channel. Changing settings during a recording affects the next meeting. Its controls, processing updates and final notes stay in the destination selected at start.
 
+**Chronote operator notices**, also in **Server settings**, lets Chronote post occasional service notices, such as incident updates, in the community updates channel (or, without one, the notes or system channel). It is on by default; turn it off to stop these notices, including the direct message to the server owner when Chronote cannot post in the community updates channel.
+
 ### 5. Configure auto-recording
 
 Set up auto-recording so meetings are captured without anyone running `/startmeeting`:

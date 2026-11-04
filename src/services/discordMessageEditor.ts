@@ -43,6 +43,8 @@ export class DiscordMessageHttpError extends Error {
     operation: string,
     readonly status: number,
     readonly retryAfterSeconds?: number,
+    /** Discord's JSON error `code`, such as 50007 for closed DMs, when the caller read it. */
+    readonly discordCode?: number,
   ) {
     super(`Discord ${operation} failed (${status})`);
     this.name = "DiscordMessageHttpError";

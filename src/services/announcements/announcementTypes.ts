@@ -25,6 +25,12 @@ export type AnnouncementEmbed = {
   timestamp: string;
 };
 
+const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
+
+/** True when the value is shaped like a Discord snowflake id. */
+export const isSnowflake = (value: unknown): value is string =>
+  typeof value === "string" && SNOWFLAKE_PATTERN.test(value);
+
 export type ChannelSource = "public_updates" | "notes" | "system" | "owner_dm";
 
 export type RequiredPermissionName =
