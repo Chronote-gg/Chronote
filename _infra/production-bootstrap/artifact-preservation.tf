@@ -6,8 +6,8 @@
 # counts with whitespace removed, and the grant costs about 80. So the same flag
 # that adds the grant also moves the role's read-only dependency metadata and
 # discovery statements out of the inline policy and into this one, where they do
-# not count against that limit. That is what buys the headroom: 8,360 inline
-# characters with the flag on, 1,880 of room.
+# not count against that limit. That is what buys the headroom: 8,280 inline
+# characters with the flag on, 1,960 of room.
 #
 # Effective permissions are unchanged by the move. With the flag off the
 # statements stay inline in their original positions, so the default rendering
