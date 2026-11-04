@@ -128,6 +128,47 @@ export async function buildMeetingContext(
   return (await collectMeetingContext(meeting, includeMemory)).data;
 }
 
+type PromptType = "transcription" | "notes" | "image";
+
+/**
+ * Server, channel and meeting context are free-text authoring context. They
+ * are safe for a model that authors something *about* the meeting and unsafe
+ * for one that shapes the transcript *of* it, because that model follows them:
+ * a guild asking for its notes in a fixed heading structure had the coalesce
+ * model write that structure into the transcript as if it were speech. Notes
+ * and image generation author about the meeting, so they keep these fields.
+ *
+ * Keep the prompt types below a positive list. It fails closed: a
+ * transcript-shaping prompt type added later is protected by default. An
+ * exclusion list such as `promptType !== "transcription"` is a smaller
+ * expression that would hand the guild's instructions to that new type
+ * silently, which is exactly how this defect came to exist. Do not "simplify"
+ * it into one.
+ */
+function formatAuthoringContext(
+  context: MeetingContextData,
+  promptType: PromptType,
+): string {
+  const isAuthoringPrompt = promptType === "notes" || promptType === "image";
+  if (!isAuthoringPrompt) return "";
+
+  let authoringContext = "";
+
+  if (context.serverContext) {
+    authoringContext += `\n**Server Context:** ${context.serverContext}\n`;
+  }
+
+  if (context.channelContext) {
+    authoringContext += `\n**Channel Context:** ${context.channelContext}\n`;
+  }
+
+  if (context.meetingContext) {
+    authoringContext += `\n**Meeting Context:** ${context.meetingContext}\n`;
+  }
+
+  return authoringContext;
+}
+
 /**
  * Format context data for inclusion in AI prompts
  * @param context The context data to format
@@ -136,25 +177,10 @@ export async function buildMeetingContext(
  */
 export function formatContextForPrompt(
   context: MeetingContextData,
-  promptType: "transcription" | "notes" | "image",
+  promptType: PromptType,
   maxContextLength = config.context.maxContextLength,
 ): string {
-  let formattedContext = "";
-
-  // Add server context
-  if (context.serverContext) {
-    formattedContext += `\n**Server Context:** ${context.serverContext}\n`;
-  }
-
-  // Add channel context
-  if (context.channelContext) {
-    formattedContext += `\n**Channel Context:** ${context.channelContext}\n`;
-  }
-
-  // Add meeting-specific context
-  if (context.meetingContext) {
-    formattedContext += `\n**Meeting Context:** ${context.meetingContext}\n`;
-  }
+  let formattedContext = formatAuthoringContext(context, promptType);
 
   if (
     context.dictionaryEntries &&

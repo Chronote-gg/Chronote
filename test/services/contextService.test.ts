@@ -122,6 +122,27 @@ const buildRuntimeConfig = (
   };
 };
 
+const DICTIONARY_ENTRY: DictionaryEntry = {
+  guildId: "guild-1",
+  termKey: "chronote",
+  term: "Chronote",
+  definition: "Meeting notes bot",
+  createdAt: "2025-01-01T00:00:00.000Z",
+  createdBy: "user-1",
+  updatedAt: "2025-01-01T00:00:00.000Z",
+  updatedBy: "user-1",
+};
+
+/** The dictionary half of a context fixture, shared by the prompt-type tests. */
+const dictionaryFixture = () => ({
+  dictionaryEntries: [DICTIONARY_ENTRY],
+  dictionaryBudgets: {
+    maxEntries: 5,
+    maxCharsTranscription: 200,
+    maxCharsContext: 200,
+  },
+});
+
 const buildHistory = (
   overrides: Partial<MeetingHistory> = {},
 ): MeetingHistory => ({
@@ -142,18 +163,7 @@ const buildMeeting = (overrides: Partial<MeetingData> = {}): MeetingData =>
     guildId: "guild-1",
     voiceChannel: { id: "voice-1" },
     meetingContext: "Discuss launch",
-    dictionaryEntries: [
-      {
-        guildId: "guild-1",
-        termKey: "chronote",
-        term: "Chronote",
-        definition: "Meeting notes bot",
-        createdAt: "2025-01-01T00:00:00.000Z",
-        createdBy: "user-1",
-        updatedAt: "2025-01-01T00:00:00.000Z",
-        updatedBy: "user-1",
-      },
-    ],
+    dictionaryEntries: [DICTIONARY_ENTRY],
     runtimeConfig: buildRuntimeConfig(),
     ...overrides,
   }) as MeetingData;
@@ -226,23 +236,7 @@ describe("contextService", () => {
       serverContext: "Server context",
       channelContext: "Channel context",
       meetingContext: "Meeting context",
-      dictionaryEntries: [
-        {
-          guildId: "guild-1",
-          termKey: "chronote",
-          term: "Chronote",
-          definition: "Meeting notes bot",
-          createdAt: "2025-01-01T00:00:00.000Z",
-          createdBy: "user-1",
-          updatedAt: "2025-01-01T00:00:00.000Z",
-          updatedBy: "user-1",
-        },
-      ] as DictionaryEntry[],
-      dictionaryBudgets: {
-        maxEntries: 5,
-        maxCharsTranscription: 200,
-        maxCharsContext: 200,
-      },
+      ...dictionaryFixture(),
       recentMeetings: [
         buildHistory({
           notes: "Recap with decisions",
@@ -270,6 +264,47 @@ describe("contextService", () => {
 
     const imageContext = formatContextForPrompt(context, "image");
     expect(imageContext).not.toContain("**Dictionary:**");
+  });
+
+  test("authoring context reaches authoring prompts only", () => {
+    // A guild's context fields are free text and routinely hold instructions
+    // about how notes should be written. A model that shapes a transcript will
+    // follow them and write its own prose into the transcript, so the three
+    // fields reach the prompts that author about a meeting (notes, image) and
+    // not the ones that shape its transcript. The dictionary still must.
+    const directive =
+      "Always produce the output as a structured summary under the headings Overview, Decisions and Next Steps.";
+    const context = {
+      serverContext: directive,
+      channelContext: `Channel rule: ${directive}`,
+      meetingContext: `Meeting rule: ${directive}`,
+      ...dictionaryFixture(),
+    };
+
+    const transcriptionContext = formatContextForPrompt(
+      context,
+      "transcription",
+    );
+    expect(transcriptionContext).not.toContain(directive);
+    expect(transcriptionContext).not.toContain("**Server Context:**");
+    expect(transcriptionContext).not.toContain("**Channel Context:**");
+    expect(transcriptionContext).not.toContain("**Meeting Context:**");
+    expect(transcriptionContext).toContain("- Chronote: Meeting notes bot");
+
+    // Image generation authors about the meeting and was never implicated, so
+    // it keeps the fields.
+    expect(formatContextForPrompt(context, "image")).toContain(
+      `**Server Context:** ${directive}`,
+    );
+
+    const notesContext = formatContextForPrompt(context, "notes");
+    expect(notesContext).toContain(`**Server Context:** ${directive}`);
+    expect(notesContext).toContain(
+      `**Channel Context:** Channel rule: ${directive}`,
+    );
+    expect(notesContext).toContain(
+      `**Meeting Context:** Meeting rule: ${directive}`,
+    );
   });
 });
 
