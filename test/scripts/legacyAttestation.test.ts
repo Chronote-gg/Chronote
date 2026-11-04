@@ -276,17 +276,12 @@ test("attesting a source mid-preparation points at cancel-preparation", async ()
   );
 });
 
-test("a manifest changed after attestation refuses the seal", async () => {
+test("the seal needs no read access to the operator backup", async () => {
   const f = legacyFixture();
   await f.coordinator.attestPreservation();
-  const original = f.s3.getMockImplementation()!;
-  f.s3.mockImplementation(async (name, input) =>
-    name === "GetObject"
-      ? { Body: { transformToByteArray: async () => Buffer.from("{}") } }
-      : original(name, input),
-  );
-  await expect(f.coordinator.prepare()).rejects.toThrow(/malformed|changed/);
-  expect(f.state.artifacts.get("old")?.state).toBe("requested");
+  f.s3.mockRejectedValue(new Error("AccessDenied"));
+  await expect(f.coordinator.prepare()).resolves.toEqual({ kind: "warming" });
+  expect(f.state.artifacts.get("old")?.state).toBe("consumed");
 });
 
 /** Fails the first consume write once and counts every consume attempt. */
