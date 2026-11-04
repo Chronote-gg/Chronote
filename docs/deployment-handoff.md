@@ -62,6 +62,32 @@ The artifact preparation closes the remaining start race. Accepted artifact-prod
 
 For a separately approved emergency handoff, start the deploy workflow manually with `handoff_quiet_override` checked. The coordinator reads `HANDOFF_QUIET_OVERRIDE=1` and prints a `::warning` naming the counts it overrode. Push-triggered deploys never set it. The override skips only the initial quiet-counter wait. It cannot skip artifact admission, real producer drain, preservation verification, native protection or voice settlement, and it never releases leases.
 
+### Break-glass deploy
+
+A break-glass deploy gets a known fix on `master` to production without re-running CI or completing the runtime's own preservation seal. Only BASIC (GitHub login `BASIC-BIT`) may dispatch it, and the `production` environment reviewer still approves `Deploy Backend` as usual. Agents may prepare the dispatch command and the attestation; they never run the dispatch. There is no push path: `break_glass` is a `workflow_dispatch` input only.
+
+```bash
+gh workflow run deploy.yml --ref master \
+  -f break_glass=true \
+  -f break_glass_reason="<why the standard path cannot be used>" \
+  -f backup_manifest_sha256=<manifestSha256 printed by attest-preservation>
+```
+
+The reason and the record below appear in the public run summary, so they must not carry user data.
+
+Before dispatching, attest a backup of the outgoing task with `attest-preservation` (see [legacy source preservation attestation](production-introduction.md#legacy-source-preservation-attestation)) and pass its `manifestSha256`. For a legacy source this is the existing attestation. For a protocol runtime whose seal cannot complete, set `ATTESTATION_BREAK_GLASS=1` as well: the attestation then replaces the runtime's own row, but only when that row is `idle`, `cancelled` or `blocked`. A runtime still requesting, draining, sealed or acknowledging cancellation refuses. The replaced row records the kind `operator_attested_break_glass`, and only a break-glass deploy may consume it. Setting the flag therefore commits that runtime to a break-glass replacement: a standard `prepare` refuses before taking Control until a break-glass deploy has run, and there is no command that hands the row back to the runtime. `cancel-preparation` returns it to `attested_legacy`, and a plain `attest-preservation` renews it. Once replaced, the runtime writes nothing to its row. It seals admission and storage while the row is `requested`, `sealed` or `consumed`, so it starts no new recordings for the whole handoff, and reopens them when a cancellation returns the row to `attested_legacy`. It cannot verify retirement. Retirement then completes through the [stopped-task continuation](#outgoing-task-stopped-before-acknowledging) once ECS stops the old task. If a failed run left Control `preparing` over a `blocked` runtime row, attest with `ATTESTATION_BREAK_GLASS=1` and then run `cancel-preparation`, which closes it from the attestation as it does for a legacy source.
+
+What it skips:
+
+- the `ci` job (Desktop and E2E included). The `Break-glass Gate` job replaces it with one GraphQL query: the commit must be the merge commit of one merged `master` pull request, and the latest run of every check on that pull request's head must be green, including `Core CI / Build`, `Core CI / Unit Tests`, `Core CI / Deployment Integration`, `Core CI / Docker Build` and `Code quality ratchet`. Each required check must come from GitHub Actions and its expected workflow (`CI`, or `Code quality` for the ratchet). A squash merge of a branch behind `master` deploys a tree CI never built; that is the residual risk the policy accepts. Break-glass cannot ship a prompt change: a pull request that edits `prompts/` keeps `Prompts Check` red until promotion, so the gate refuses it.
+- `Deploy Docs`, entirely. Frontend, prompts and the OpenAI connection sync still run after the backend.
+- the quiet-counter wait, exactly as `handoff_quiet_override` does.
+- the runtime's preservation seal: the coordinator seals from the named attestation instead.
+
+What it still checks: the gate and the coordinator both refuse unless the run is a `workflow_dispatch` on `refs/heads/master` whose actor and triggering actor are `BASIC-BIT`, with a reason of 1 to 1024 characters and a 64 character lowercase hex manifest hash. `Deploy Backend` keeps the exact role session assert, `Refuse held production deployment`, the Secrets Manager preflight, the rule that Control is not owned by a live run, and native protection of the serving runtime. Before taking Control, `prepare` refuses unless the outgoing runtime's artifact row carries an unconsumed attestation whose `manifestSha256` equals the input, whose task id is the outgoing task's, and which outlives the next five minutes. The gate refuses before any production job starts; a coordinator refusal leaves Control, the artifact row and the service untouched (the candidate image may already be in ECR).
+
+Audit: after those checks and before Control or the service is written, the coordinator conditionally creates `ENV` / `BREAK_GLASS#<run id>-<attempt>` in DeploymentControl with the run id and attempt, commit, actor, triggering actor, reason, manifest hash and URI, attestation kind, source task, the skipped checks and the time. The deployment summary prints its public fields (key, commit, actors, reason, manifest hash, skipped checks and time); the manifest URI, instance and task stay in DynamoDB. The deploy role cannot publish to the critical-alerts topic and the job token cannot open issues, so after a break-glass run BASIC opens the `operations` follow-up issue and re-runs the full deploy path within seven days.
+
 ### Preservation before replacement
 
 The worker publishes a separate `ARTIFACTS#<runtime>/STATE` capability row. Control keeps its existing schema. A preparation request binds the exact source identity, coordinator token and epoch, and serving generation. Its deadline is at most five minutes and remains inside the confirmed native protection window.

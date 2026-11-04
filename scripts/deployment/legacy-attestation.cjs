@@ -59,6 +59,7 @@ function createLegacyAttestation(deps) {
       manifestUri: value("ATTESTATION_MANIFEST_URI"),
       operator: value("ATTESTATION_OPERATOR"),
       reason: value("ATTESTATION_REASON"),
+      breakGlass: env.ATTESTATION_BREAK_GLASS === "1",
     };
   }
   async function manifest(uri) {
@@ -206,11 +207,22 @@ function createLegacyAttestation(deps) {
       refuse("Attestation requires exactly one serving runtime");
     return members[0];
   }
-  async function attestable(ctl) {
+  /** Under break-glass only, a runtime row with no preparation of its own may be replaced. */
+  function assertReplaceable(existing, breakGlass) {
+    if (!breakGlass)
+      refuse("Source has an artifact row; it must use the runtime protocol");
+    if (!types.BREAK_GLASS_REPLACEABLE_STATES.includes(existing.state))
+      refuse(
+        "Runtime preservation is in progress; run cancel-preparation or let it settle first",
+      );
+  }
+  async function attestable(ctl, breakGlass) {
     const identity = target(ctl);
     const existing = await lookup(identity);
-    if (existing && !existing.attestation)
-      refuse("Source has an artifact row; it must use the runtime protocol");
+    if (existing && !existing.attestation) {
+      assertReplaceable(existing, breakGlass);
+      return { identity, existing };
+    }
     if (existing && existing.state !== "attested_legacy")
       refuse(
         "Attested preparation is in progress; run cancel-preparation first",
@@ -230,7 +242,11 @@ function createLegacyAttestation(deps) {
       startup: { kind: "pending" },
       state: "attested_legacy",
       attestation: {
-        kind: "operator_attested_legacy",
+        kind:
+          existing?.attestation?.kind ??
+          (existing
+            ? types.BREAK_GLASS_ATTESTATION_KIND
+            : types.LEGACY_ATTESTATION_KIND),
         operator: input.operator,
         reason: input.reason,
         manifestUri: input.manifestUri,
@@ -246,7 +262,7 @@ function createLegacyAttestation(deps) {
     };
   }
   async function bound(input) {
-    const { identity } = await attestable(await control());
+    const { identity } = await attestable(await control(), input.breakGlass);
     const evidence = await manifest(input.manifestUri);
     if (
       !legacy.legacyManifestBound(
@@ -268,8 +284,13 @@ function createLegacyAttestation(deps) {
     const evidence = await bound(input);
     await verifyObjects(evidence);
     const ctl = await control();
-    const { identity, existing } = await attestable(ctl);
+    const checked = await attestable(ctl, input.breakGlass);
+    const { identity } = checked;
     const source = await guard(identity, capturedAt(evidence.document));
+    // A protocol runtime keeps heartbeating its row through the guard's scans.
+    const { existing } = input.breakGlass
+      ? await attestable(ctl, true)
+      : checked;
     const time = now();
     const next = types.artifactSafetyRecordSchema.parse(
       record(identity, existing, evidence, input, source, time),
