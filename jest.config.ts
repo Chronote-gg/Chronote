@@ -37,11 +37,21 @@ const config: Config.InitialOptions = {
   //   "\\\\node_modules\\\\"
   // ],
 
-  // Indicates which provider should be used to instrument code for coverage
-  coverageProvider: "v8",
+  // Istanbul instruments at transform time, so its cost is cached with the
+  // rest of the transform and paid once per changed file. The v8 provider
+  // re-maps every script a test file loads on every run, which scales with
+  // the dependency graph rather than with the test, and measured about 13x
+  // more expensive across this suite.
+  coverageProvider: "babel",
 
   // A preset that is used as a base for Jest's configuration
   preset: "ts-jest",
+
+  // Istanbul instrumentation adds runtime cost to the process-spawning
+  // suites. Under CPU contention that pushed five tests in two Terraform
+  // suites past the 5s default, and CI runs on slower, busier cores. Those
+  // suites cannot take a local timeout here, so the default carries it.
+  testTimeout: 30000,
 
   // The test environment that will be used for testing
   testEnvironment: "jsdom",

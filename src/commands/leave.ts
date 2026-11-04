@@ -19,6 +19,10 @@ function hasLeavePermission(interaction: ChatInputCommandInteraction) {
   return canUserEndMeeting(meeting, interaction.user.id);
 }
 
+function abortIfRequested(signal?: AbortSignal) {
+  signal?.throwIfAborted();
+}
+
 export async function handleLeaveCommand(
   client: Client,
   interaction: ChatInputCommandInteraction,
@@ -26,7 +30,7 @@ export async function handleLeaveCommand(
   work?: RuntimeWorkClaim,
 ) {
   if (!interaction.guildId || !interaction.guild) {
-    signal?.throwIfAborted();
+    abortIfRequested(signal);
     await interaction.reply({
       content: "This command can only be used in a server.",
       ephemeral: true,
@@ -36,7 +40,7 @@ export async function handleLeaveCommand(
 
   const meeting = getMeeting(interaction.guildId);
   if (!meeting || meeting.finished) {
-    signal?.throwIfAborted();
+    abortIfRequested(signal);
     await interaction.reply({
       content: "Chronote is not in an active voice session here.",
       ephemeral: true,
@@ -44,50 +48,45 @@ export async function handleLeaveCommand(
     return;
   }
 
+  abortIfRequested(signal);
+  await deferMeetingStopInteraction(work, () =>
+    interaction.deferReply({ ephemeral: true }),
+  );
+  abortIfRequested(signal);
+
   await hydrateMemberCache(interaction);
   if (!hasLeavePermission(interaction)) {
-    signal?.throwIfAborted();
-    await interaction.reply({
-      content:
-        "You do not have permission to make Chronote leave this session.",
-      ephemeral: true,
-    });
+    abortIfRequested(signal);
+    await interaction.editReply(
+      "You do not have permission to make Chronote leave this session.",
+    );
     return;
   }
 
   if (meeting.sessionMode === "tts_only") {
-    signal?.throwIfAborted();
+    abortIfRequested(signal);
     await endTtsOnlySession(meeting);
-    signal?.throwIfAborted();
-    await interaction.reply({
-      content: "Chronote left the TTS-only voice session.",
-      ephemeral: true,
-    });
+    abortIfRequested(signal);
+    await interaction.editReply("Chronote left the TTS-only voice session.");
     return;
   }
 
   const confirmed = interaction.options.getBoolean("confirm") ?? false;
   if (!confirmed) {
-    signal?.throwIfAborted();
-    await interaction.reply({
-      content:
-        "Chronote is recording this meeting. Run `/leave confirm:true` to end the meeting and disconnect Chronote.",
-      ephemeral: true,
-    });
+    abortIfRequested(signal);
+    await interaction.editReply(
+      "Chronote is recording this meeting. Run `/leave confirm:true` to end the meeting and disconnect Chronote.",
+    );
     return;
   }
 
   meeting.endReason = MEETING_END_REASONS.LEAVE_COMMAND;
   meeting.endTriggeredByUserId = interaction.user.id;
-  signal?.throwIfAborted();
-  await deferMeetingStopInteraction(work, () =>
-    interaction.deferReply({ ephemeral: true }),
-  );
-  signal?.throwIfAborted();
+  abortIfRequested(signal);
   await persistExplicitMeetingStop(meeting, MEETING_END_REASONS.LEAVE_COMMAND);
-  signal?.throwIfAborted();
+  abortIfRequested(signal);
   await handleEndMeetingOther(client, meeting, signal, work);
-  signal?.throwIfAborted();
+  abortIfRequested(signal);
   await interaction.editReply(
     "Meeting ended. Chronote left the voice channel.",
   );

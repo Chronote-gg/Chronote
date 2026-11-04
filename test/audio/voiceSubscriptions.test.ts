@@ -466,12 +466,6 @@ describe("voice subscriptions", () => {
     expect(receiver.subscribe).toHaveBeenCalledTimes(2);
 
     meeting.audioData.captureIncomplete = false;
-    userStartTalking(meeting, "user-1");
-    jest.advanceTimersByTime(800);
-    userStopTalking(meeting, "user-1");
-    expect(meeting.audioData.captureIncomplete).toBe(true);
-
-    meeting.audioData.captureIncomplete = false;
     meeting.finishing = true;
     streams[1].emit("error", new Error("finishing"));
     expect(meeting.audioData.captureIncomplete).toBe(false);
@@ -481,19 +475,24 @@ describe("voice subscriptions", () => {
     streams[1].emit("error", new Error("destroyed"));
     expect(meeting.audioData.captureIncomplete).toBe(false);
 
-    meeting.finishing = true;
-    meeting.connection.state.status = VoiceConnectionStatus.Ready;
-    userStartTalking(meeting, "user-1");
-    jest.advanceTimersByTime(800);
-    userStopTalking(meeting, "user-1");
-    expect(meeting.audioData.captureIncomplete).toBe(false);
-
-    meeting.finishing = false;
-    meeting.connection.state.status = VoiceConnectionStatus.Destroyed;
-    userStartTalking(meeting, "user-1");
-    jest.advanceTimersByTime(800);
-    userStopTalking(meeting, "user-1");
-    expect(meeting.audioData.captureIncomplete).toBe(false);
+    // The speaking event precedes the subscription and decrypt guards, so a sustained
+    // no-PCM turn is only diagnosed, whether or not capture is still active.
+    const log = jest.spyOn(console, "log").mockImplementation(() => {});
+    for (const status of [
+      VoiceConnectionStatus.Ready,
+      VoiceConnectionStatus.Destroyed,
+    ]) {
+      meeting.finishing = status === VoiceConnectionStatus.Destroyed;
+      meeting.connection.state.status = status;
+      userStartTalking(meeting, "user-1");
+      jest.advanceTimersByTime(800);
+      userStopTalking(meeting, "user-1");
+      expect(meeting.audioData.captureIncomplete).toBe(false);
+    }
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("durationMs=800 sustainedNoPcm=true"),
+    );
+    log.mockRestore();
   });
 
   test.each([

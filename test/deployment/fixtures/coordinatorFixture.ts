@@ -14,6 +14,7 @@ import * as builders from "../../../src/services/deploymentControlTransactions";
 import * as types from "../../../src/types/deploymentControl";
 import * as artifactTypes from "../../../src/types/artifactSafety";
 import * as artifactBuilders from "../../../src/services/artifactSafetyTransactions";
+import * as legacyArtifactBuilders from "../../../src/services/legacyArtifactAttestation";
 import { createCoordinator } from "../../../scripts/deployment/coordinator.cjs";
 export const oldIdentity: Extract<types.RuntimeIdentity, { kind: "ecs" }> = {
   kind: "ecs",
@@ -42,6 +43,9 @@ export const env = {
   DEPLOYMENT_RUN_TOKEN: "run-2",
   DEPLOYMENT_CANDIDATE_ID: "run-2",
   CANDIDATE_IMAGE: `repo@${candidateIdentity.imageDigest}`,
+  ATTESTATION_MANIFEST_URI: "s3://backup/recovery/task-old/inventory.json",
+  ATTESTATION_OPERATOR: "operator",
+  ATTESTATION_REASON: "first introduction",
 };
 export const counts = (recording = 0) => ({
   pending_admission: 0,
@@ -106,6 +110,16 @@ export function fixture() {
     onSleep: () => undefined,
     artifacts: new Map<string, artifactTypes.ArtifactSafetyRecord>(),
     artifactAutoSeal: true,
+    leases: [] as Array<{ ownerInstanceId: string; createdAt: string }>,
+    meetings: [] as Array<{
+      ownerInstanceId: string;
+      timestamp: string;
+      status?: string;
+      audioS3Key?: string;
+    }>,
+    s3: async (name: string, input: unknown): Promise<unknown> => {
+      throw new Error(`Unexpected S3 operation: ${name} ${String(input)}`);
+    },
   };
   const snapshot = {
     inventoryDigest: "a".repeat(64),
@@ -333,12 +347,16 @@ export function fixture() {
         unmarshall(input.TransactItems![0].Put.Item),
       );
       state.artifacts.set(next.identity.instanceId, next);
-      if (next.state === "consumed")
-        state.ctl = artifactBuilders.artifactPreparationControl(
-          state.ctl,
-          next.consumedAt,
-          "warming",
-        );
+      const controlUpdate = input.TransactItems!.find(
+        (item) => item.Update && unmarshall(item.Update.Key!).sk === "CONTROL",
+      )?.Update;
+      if (controlUpdate)
+        state.ctl = {
+          ...state.ctl,
+          deployment: unmarshall(controlUpdate.ExpressionAttributeValues!)[
+            ":nextDeployment"
+          ],
+        };
     } else if (input.TransactItems![1]?.Put) continuation(input);
     else if (input.TransactItems![0].Update) promotion(input);
     else retirementRequest(input);
@@ -351,6 +369,17 @@ export function fixture() {
       Items: Object.values(state.rows).map((runtime) => marshall(runtime)),
     }),
     "transact-write-items": transactWrite,
+    scan: (input) => {
+      const values = unmarshall(input.ExpressionAttributeValues!);
+      const rows = String(input.TableName).endsWith("MeetingHistoryTable")
+        ? state.meetings.filter((row) => row.timestamp >= values[":since"])
+        : state.leases;
+      return {
+        Items: rows
+          .filter((row) => row.ownerInstanceId === values[":owner"])
+          .map((row) => marshall(row, { removeUndefinedValues: true })),
+      };
+    },
   };
   function dynamo(operation: string, raw: unknown) {
     const handler = dynamoOperations[operation];
@@ -465,6 +494,8 @@ export function fixture() {
     types,
     artifactTypes,
     artifactBuilders,
+    legacyArtifactBuilders,
+    s3: (name: string, input: unknown) => state.s3(name, input),
     now: () => time,
     sleep: async () => {
       time += 1000;

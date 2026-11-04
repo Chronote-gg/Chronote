@@ -10,10 +10,13 @@ import {
 export const MAX_ARTIFACT_AUTHORITIES = 90;
 export const ARTIFACT_PROOF_SECONDS = 60;
 export const ARTIFACT_PREPARATION_SECONDS = 300;
+export const LEGACY_ATTESTATION_SECONDS = 6 * 60 * 60;
 const epoch = z.number().int().nonnegative();
+const digest = z.string().regex(/^[a-f0-9]{64}$/);
+const operatorText = z.string().trim().min(1).max(1024);
 export const artifactStorageSnapshotSchema = z
   .object({
-    inventoryDigest: z.string().regex(/^[a-f0-9]{64}$/),
+    inventoryDigest: digest,
     fileCount: z.number().int().nonnegative().max(20_000),
     byteLength: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     pendingDirectories: z
@@ -67,6 +70,38 @@ const startupSchema = z.discriminatedUnion("kind", [
     .strict(),
   z.object({ kind: z.literal("active"), activatedAt: epoch }).strict(),
 ]);
+/**
+ * Operator evidence for a source runtime built before this protocol. Such a
+ * runtime never writes its own row, so the coordinator stands in for it and
+ * every row carrying this field is coordinator-owned.
+ */
+export const legacyAttestationSchema = z
+  .object({
+    kind: z.literal("operator_attested_legacy"),
+    operator: operatorText,
+    reason: operatorText,
+    manifestUri: z
+      .string()
+      .regex(/^s3:\/\/[^/]+\/.+$/)
+      .max(1024),
+    manifestSha256: digest,
+    taskId: operatorText,
+    pendingAdmission: epoch,
+    capturedAt: epoch,
+    fileCount: z.number().int().nonnegative().max(20_000),
+    byteLength: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    verifiedAt: epoch,
+    expiresAt: epoch,
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.capturedAt <= value.verifiedAt &&
+      value.expiresAt > value.verifiedAt &&
+      value.expiresAt <= value.verifiedAt + LEGACY_ATTESTATION_SECONDS,
+    "Legacy attestation lifetime is not bounded",
+  );
+export type LegacyAttestation = z.infer<typeof legacyAttestationSchema>;
 const base = z.object({
   pk: z.literal("ENV"),
   sk: z.string().min(1).max(1024),
@@ -77,6 +112,7 @@ const base = z.object({
   heartbeatAt: epoch,
   freshUntil: epoch,
   startup: startupSchema,
+  attestation: legacyAttestationSchema.optional(),
 });
 export const artifactSafetyBaseSchema = base;
 const retirementVerificationSchema = z
@@ -88,6 +124,12 @@ const retirementVerificationSchema = z
 export const artifactSafetyRecordSchema = z
   .discriminatedUnion("state", [
     base.extend({ state: z.literal("idle") }).strict(),
+    base
+      .extend({
+        state: z.literal("attested_legacy"),
+        attestation: legacyAttestationSchema,
+      })
+      .strict(),
     base
       .extend({
         state: z.literal("requested"),
