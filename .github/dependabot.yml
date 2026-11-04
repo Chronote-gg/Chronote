@@ -1,11 +1,15 @@
 version: 2
 
-# One weekly PR across application, desktop, tooling and infrastructure.
+# One monthly PR across application, desktop, tooling and infrastructure.
 multi-ecosystem-groups:
   dependencies:
+    # Set here, not on the updates entries. Dependabot's server-side validation
+    # refuses open-pull-requests-limit on an updates entry that belongs to a
+    # multi-ecosystem group, and a refused config stops version updates
+    # repo-wide without falling back.
+    open-pull-requests-limit: 5
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"
       time: "09:00"
       timezone: "Etc/UTC"
 

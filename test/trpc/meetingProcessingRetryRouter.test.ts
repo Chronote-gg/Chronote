@@ -216,6 +216,7 @@ describe("resolveProcessingRetryView", () => {
       eligible: true,
       reason: undefined,
       requiresReplaceConfirm: false,
+      transcriptSource: "existing",
       status: undefined,
       failureReason: undefined,
       settingsSource: undefined,

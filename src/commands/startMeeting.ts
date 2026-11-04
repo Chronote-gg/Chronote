@@ -753,6 +753,8 @@ export async function handleAutoStartMeeting(
     chatTtsEnabled: options?.chatTtsEnabled,
     chatTtsVoice: options?.chatTtsVoice,
     chatTtsSpeakerPrefixMode: options?.chatTtsSpeakerPrefixMode,
+    maxMeetingDurationMs: limits.maxMeetingDurationMs,
+    maxMeetingDurationPretty: limits.maxMeetingDurationPretty,
     subscriptionTier: subscription.tier,
   });
 

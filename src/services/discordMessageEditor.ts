@@ -213,3 +213,45 @@ export function createDiscordMessageEditor(options: DiscordTransportOptions) {
         : "missing",
   };
 }
+
+export function createFirstPublicationTransport({
+  token,
+  fetchImpl = fetch,
+}: DiscordTransportOptions) {
+  const editor = createDiscordMessageEditor({ token, fetchImpl });
+  return {
+    getBotIdentity: editor.getBotIdentity,
+    getChannel: editor.getChannel,
+    getMessage: editor.getMessage,
+    createNotesMessage: async ({
+      channelId,
+      payload,
+    }: {
+      channelId: string;
+      payload: import("./firstPublicationTypes").PublicationPayload;
+    }) => {
+      const { payloadSchema } = await import("./firstPublicationTypes");
+      const body = payloadSchema.parse(payload);
+      discordIdSchema.parse(channelId);
+      const response = await fetchImpl(
+        `https://discord.com/api/v10/channels/${channelId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bot ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+          redirect: "error",
+          signal: AbortSignal.timeout(15000),
+        },
+      );
+      if (!response.ok)
+        throw new DiscordMessageHttpError(
+          "first publication create",
+          response.status,
+        );
+      return discordEditorMessageSchema.parse(await response.json());
+    },
+  };
+}

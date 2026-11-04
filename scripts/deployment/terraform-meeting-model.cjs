@@ -8,7 +8,7 @@ const { bindingHash } = require("./binding-hash.cjs");
 const { digest } = require("./collector-payload.cjs");
 // Source audit and maintenance contract: docs/terraform-meeting-source-model.md.
 const sourceModel =
-  "59439234b7b744186c8e69e8ffb956182e2433467e282cc9dde49161a36b9fe7";
+  "065b9c181aa34839ee85e7a75b21d1e6acfc867957c600b34e5861a438595da4";
 const awsProvider = "registry.terraform.io/hashicorp/aws";
 const tableAddress = "aws_dynamodb_table.meeting_history_table";
 const resourceChecks = [
@@ -358,7 +358,7 @@ function verifyCheckInstances(check) {
   }
 }
 
-function verifyChecks(plan, evidence) {
+function verifyChecks(plan, evidence, requiredPass = []) {
   if (Object.hasOwn(plan, "checks")) assert.ok(Array.isArray(plan.checks));
   const seen = new Set();
   for (const check of plan.checks ?? []) {
@@ -377,7 +377,8 @@ function verifyChecks(plan, evidence) {
         ["address", "status", "instances"].includes(k),
       ),
     );
-    const excluded = excludedCheck(address);
+    const excluded =
+      excludedCheck(address) && !requiredPass.includes(address.to_display);
     if (check.status === "unknown") {
       assert.ok(evidence && excluded, "Relevant unknown check");
       assert.equal(check.instances, undefined, "Unknown check instances");

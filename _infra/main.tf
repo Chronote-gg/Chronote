@@ -1695,6 +1695,7 @@ resource "aws_iam_policy" "transcripts_s3_policy" {
         Action = [
           "s3:PutObject",
           "s3:GetObject",
+          "s3:GetObjectVersion",
           "s3:AbortMultipartUpload",
           "s3:ListBucket"
         ],

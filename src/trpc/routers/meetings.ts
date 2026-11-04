@@ -1,3 +1,4 @@
+import { saveMeetingArchive } from "./meetingArchiveAction";
 import { approvedCorrectionMutation } from "../../services/approvedMeetingCorrection";
 import { meetingBrowseFiltersSchema } from "../../services/meetingBrowseCursor";
 import { updateMeeting } from "../../services/meetingUpdateService";
@@ -33,7 +34,6 @@ import {
   getMeetingHistoryService,
   listRecentMeetingsForGuildService,
   updateMeetingAccessGrantsService,
-  updateMeetingArchiveService,
 } from "../../services/meetingHistoryService";
 import {
   MEETING_NAME_REQUIREMENTS,
@@ -1014,16 +1014,12 @@ const setArchived = authedProcedure
       userId: ctx.user.id,
     });
 
-    const ok = await updateMeetingArchiveService({
+    return saveMeetingArchive({
       guildId: input.serverId,
       channelId_timestamp: input.meetingId,
       archived: input.archived,
       archivedByUserId: ctx.user.id,
     });
-    if (!ok) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Meeting not found" });
-    }
-    return { ok: true };
   });
 
 const rename = authedProcedure

@@ -88,6 +88,7 @@ export type ProcessingRetryView = {
   eligible: boolean;
   reason?: ProcessingRetryIneligibleReason;
   requiresReplaceConfirm: boolean;
+  transcriptSource?: ProcessingRetryJob["transcriptSource"];
   status?: ProcessingRetryJob["status"];
   failureReason?: ProcessingRetryFailureReason;
   settingsSource?: ProcessingRetryJob["settingsSource"];

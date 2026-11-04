@@ -1,4 +1,5 @@
 import { persistSnippetSpeakerTrack } from "./services/audioPersistenceService";
+import { getMeetingArtifactProducer } from "./services/meetingArtifactProducer";
 export {
   openOutputFile,
   getMeetingOutputCompletion,
@@ -779,9 +780,10 @@ function finishSpeakerTurn(meeting: MeetingData, userId: string) {
       state?.lastStartMs && state.lastEndMs
         ? Math.max(0, state.lastEndMs - state.lastStartMs)
         : 0;
-    if (durationMs >= NO_PCM_MIN_DURATION_MS && isCaptureActive(meeting)) {
-      meeting.audioData.captureIncomplete = true;
-    }
+    // A sustained no-PCM turn is diagnosed, never latched as lost capture: the speaking
+    // event fires before the subscription, payload-type, RTP version and DAVE decrypt
+    // guards, so it also covers users never subscribed to and DAVE transitions.
+    const sustainedNoPcm = durationMs >= NO_PCM_MIN_DURATION_MS;
     const subscription = getVoiceSubscriptions(meeting).get(userId);
     const now = Date.now();
     const lastPcmAgoMs = subscription?.lastPcmAt
@@ -797,7 +799,7 @@ function finishSpeakerTurn(meeting: MeetingData, userId: string) {
       subscription.lastNoPcmAt = now;
       subscription.consecutiveNoPcmEvents += 1;
       if (
-        durationMs >= NO_PCM_MIN_DURATION_MS &&
+        sustainedNoPcm &&
         subscription.consecutiveNoPcmEvents >= NO_PCM_RESUBSCRIBE_THRESHOLD
       ) {
         scheduleResubscribe(meeting, userId, "no-pcm");
@@ -806,7 +808,7 @@ function finishSpeakerTurn(meeting: MeetingData, userId: string) {
       }
     }
     console.log(
-      `Speaking event ended with no PCM frames: guildId=${meeting.guildId} channelId=${meeting.channelId} meetingId=${meeting.meetingId} userId=${userId} speaker=${speakerLabel} durationMs=${durationMs} lastPcmAgoMs=${lastPcmAgoMs ?? "unknown"}`,
+      `Speaking event ended with no PCM frames: guildId=${meeting.guildId} channelId=${meeting.channelId} meetingId=${meeting.meetingId} userId=${userId} speaker=${speakerLabel} durationMs=${durationMs} sustainedNoPcm=${sustainedNoPcm} lastPcmAgoMs=${lastPcmAgoMs ?? "unknown"}`,
     );
     return;
   }
@@ -857,10 +859,22 @@ export function ensureRecordingCheckpointCapture(meeting: MeetingData): void {
     kind: "capturing",
     startedAt: meeting.captureStartedAt.toISOString(),
   };
+  const producer = getMeetingArtifactProducer(meeting);
   meeting.recordingCapture = createRecordingCheckpointCapture({
     directory: path.join(ensureMeetingTempDirSync(meeting), "checkpoints"),
     startedAt: meeting.captureStartedAt.getTime(),
     signal: meeting.ownershipSignal,
+    beginWrite: producer
+      ? (filename, artifact) =>
+          producer.beginWrite(filename, {
+            kind: "content",
+            contentKind: artifact.kind,
+            sourceId: artifact.sourceId,
+            sequence: artifact.sequence,
+            checksumSha256: artifact.checksumSha256,
+            byteLength: artifact.bytes.byteLength,
+          })
+      : undefined,
     commit: async (artifacts, signal) => {
       if (artifacts.some((artifact) => artifact.kind === "audio"))
         checkpointRecordingContext(meeting);

@@ -25,7 +25,6 @@ const {
 } = require("./production-capacity.cjs");
 const { runCli } = require("./coordinator-cli.cjs");
 const { serviceConverged } = require("./stopped-outgoing.cjs");
-
 const { configuration } = require("./coordinator-definition.cjs");
 function protocolModules(options) {
   const builders =
@@ -43,19 +42,7 @@ function createCoordinator(options = {}) {
     );
   const config = configuration(options.env ?? process.env);
   const callAws = createAwsCaller(options.aws ?? awsCli, diagnostic);
-  const aws = async (service, operation, input) => {
-    if (
-      [
-        "update-item",
-        "transact-write-items",
-        "register-task-definition",
-        "update-service",
-        "modify-listener",
-      ].includes(operation)
-    )
-      await assertWriter();
-    return callAws(service, operation, input);
-  };
+  const aws = (...args) => publication.aws(...args);
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   const sleep =
     options.sleep ??
@@ -67,6 +54,22 @@ function createCoordinator(options = {}) {
     activeMeeting: `${config.tablePrefix}ActiveMeetingTable`,
   };
   const same = types.sameRuntimeIdentity;
+  const artifacts = require("./artifact-handoff.cjs").createArtifactHandoff({
+    ...options,
+    builders,
+    aws,
+    tables,
+    now,
+    sleep,
+    runtime,
+    control,
+    renew,
+    assertWriter,
+    own,
+    service,
+    tasks,
+    protectedTask: (...args) => protectedTask(...args),
+  });
   const { ready, protectedTask } =
     require("./runtime-proof.cjs").createRuntimeProof({
       aws,
@@ -98,6 +101,16 @@ function createCoordinator(options = {}) {
         "Routing authority changed",
       );
   }
+  const publication =
+    require("./publication-compatibility.cjs").publicationDeployment({
+      control,
+      config,
+      options,
+      tables,
+      callAws,
+      assertWriter,
+      production,
+    });
   async function assertWriter() {
     const response = await callAws("dynamodb", "get-item", {
       TableName: tables.deploymentControl,
@@ -169,6 +182,7 @@ function createCoordinator(options = {}) {
     return row;
   }
   async function save(previous, next) {
+    ({ previous, next } = await publication.enroll(previous, next));
     if (production) {
       await assertWriter();
       return production.save(previous, next);
@@ -484,6 +498,7 @@ function createCoordinator(options = {}) {
     if (ctl.deployment?.runToken === config.runToken) {
       own(ctl);
       if (ctl.deployment.phase !== "preparing") {
+        await artifacts.committed(ctl);
         await assertAcknowledged("launch");
         return { kind: "preserved", phase: ctl.deployment.phase };
       }
@@ -512,7 +527,7 @@ function createCoordinator(options = {}) {
     }
     ctl = await register(ctl);
     await protectedTask(ctl.deployment.outgoing);
-    ctl = await phase(ctl, "warming");
+    ctl = await artifacts.prepare(ctl);
     await launchCandidate(ctl, svc, deploymentConfiguration);
     const updated = await service();
     if (updated.taskDefinition !== ctl.deployment.taskDefinition)
@@ -563,11 +578,15 @@ function createCoordinator(options = {}) {
     } while (start);
     if (found.length !== 1) return undefined;
     const row = found[0];
-    return row.role === "candidate" &&
+    if (
+      row.role === "candidate" &&
       !row.retirementRequest &&
       ready(row, ctl, row.identity, d.runtimeMode)
-      ? row
-      : undefined;
+    ) {
+      await artifacts.candidate(row.identity);
+      return row;
+    }
+    return undefined;
   }
   function promotionObserved(ctl, target, generation, retained) {
     const expected = [target, ...retained];
@@ -614,17 +633,6 @@ function createCoordinator(options = {}) {
         "continuation_refused",
         "Reviewed candidate changed",
       );
-  }
-  async function promoteCandidate(ctl, promotion, identity, retained) {
-    return production
-      ? await production.promote(ctl, promotion)
-      : await transactPromotion(
-          ctl,
-          builders.buildPromotionTransaction({ ...promotion, tables }),
-          identity,
-          promotion.proposedGeneration,
-          retained,
-        );
   }
   async function promote() {
     await assertWriter();
@@ -687,7 +695,12 @@ function createCoordinator(options = {}) {
           proposedGeneration: d.originalGeneration + 1,
           now: now(),
         };
-        ctl = await promoteCandidate(ctl, promotion, warm.identity, retained);
+        ctl = await artifacts.promote(
+          ctl,
+          promotion,
+          retained,
+          transactPromotion,
+        );
         await completePromotion(ctl, warm.identity);
         return { kind: "promoted" };
       }
@@ -743,13 +756,15 @@ function createCoordinator(options = {}) {
       await writeRetirement(ctl, row, request, identity);
     }
     const observed = await runtime(identity);
-    return (
+    const acknowledged =
       observed.role === "retired" &&
       observed.authorizedGeneration === generation &&
       isDeepStrictEqual(observed.retirementAcknowledgment?.request, request) &&
       observed.workCounts &&
-      Object.values(observed.workCounts).every((count) => count === 0)
-    );
+      Object.values(observed.workCounts).every((count) => count === 0);
+    if (acknowledged)
+      await artifacts.retired(identity, observed.retirementAcknowledgment);
+    return acknowledged;
   }
   /** Confirms the promoted candidate still serves before any retirement step. */
   async function assertRetirementReady(ctl, d) {
@@ -812,6 +827,7 @@ function createCoordinator(options = {}) {
     );
   }
   const handoff = require("./handoff-quiet-gate.cjs").createHandoffGate({
+    artifactEvidence: artifacts.sourceEvidence,
     aws,
     config,
     builders,
@@ -927,6 +943,8 @@ function createCoordinator(options = {}) {
 
   return {
     prepare,
+    cancelPreparation: artifacts.cancelPreparation,
+    attestPreservation: artifacts.attestPreservation,
     promote,
     retire,
     reconcile,

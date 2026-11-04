@@ -171,6 +171,12 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
         Resource = aws_dynamodb_table.deployment_control_table.arn
       },
       {
+        Sid      = "ArtifactAuthorityChecks",
+        Effect   = "Allow",
+        Action   = ["dynamodb:ConditionCheckItem"],
+        Resource = aws_dynamodb_table.meeting_history_table.arn
+      },
+      {
         Sid    = "SandboxObservationAndPreflight",
         Effect = "Allow",
         Action = [

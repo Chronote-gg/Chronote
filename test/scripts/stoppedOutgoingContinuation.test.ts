@@ -67,6 +67,7 @@ test("the next prepare completes a deployment whose outgoing task ECS stopped, t
     outgoing: candidateIdentity,
   });
   expect(f.warnings).toEqual([
+    expect.stringMatching(/^::notice .*verified_at_launch/),
     expect.stringMatching(/^::warning .*finalization=1/),
   ]);
   expect(
@@ -90,9 +91,10 @@ test("the standalone command prints the warning and result and leaves the next d
     ),
   ).toBe(0);
   expect(output.error).not.toHaveBeenCalled();
-  expect(output.log.mock.calls[0][0]).toMatch(/^::warning title=/);
-  expect(output.log.mock.calls[0][0]).not.toContain("ELB");
-  expect(JSON.parse(output.log.mock.calls[1][0])).toEqual({
+  expect(output.log.mock.calls[0][0]).toMatch(/^::notice .*verified_at_launch/);
+  expect(output.log.mock.calls[1][0]).toMatch(/^::warning title=/);
+  expect(output.log.mock.calls[1][0]).not.toContain("ELB");
+  expect(JSON.parse(output.log.mock.calls[2][0])).toEqual({
     kind: "continued",
     taskStatus: "stopped",
     lostWorkCounts: lostCounts,

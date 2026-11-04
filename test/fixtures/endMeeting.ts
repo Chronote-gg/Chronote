@@ -1,6 +1,10 @@
 import { Collection, type ButtonInteraction } from "discord.js";
 import type { MeetingData } from "../../src/types/meeting-data";
 
+jest.mock("../../src/services/meetingArtifactProducer", () => ({
+  getMeetingArtifactProducer: jest.fn(),
+}));
+
 jest.mock("../../src/services/meetingCompletionPolicyService", () => ({
   ...jest.requireActual("../../src/services/meetingCompletionPolicyService"),
   // This orchestration fixture replaces history persistence; exact policy CAS is tested separately.

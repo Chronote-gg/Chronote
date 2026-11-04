@@ -2,6 +2,8 @@
 const { CoordinatorFailure } = require("./coordinator-aws.cjs");
 const CLI_PHASES = {
   prepare: "prepare",
+  "cancel-preparation": "cancelPreparation",
+  "attest-preservation": "attestPreservation",
   promote: "promote",
   retire: "retire",
   reconcile: "reconcile",

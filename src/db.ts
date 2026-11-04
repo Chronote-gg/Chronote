@@ -1,3 +1,4 @@
+import { updateMeetingArchiveInDynamo } from "./repositories/meetingArchiveStorage";
 import {
   AttributeValue,
   DeleteItemCommand,
@@ -2740,64 +2741,11 @@ export async function updateMeetingArchive(params: {
   archived: boolean;
   archivedByUserId: string;
 }): Promise<boolean> {
-  const now = new Date().toISOString();
-  const updateParts = ["#updatedAt = :updatedAt"];
-  const removeParts: string[] = [];
-  const expressionAttributeNames: Record<string, string> = {
-    "#updatedAt": "updatedAt",
-    "#channelIdTimestamp": "channelId_timestamp",
-  };
-  const values: Record<string, unknown> = {
-    ":updatedAt": now,
-  };
-
-  if (params.archived) {
-    updateParts.push("#archivedAt = :archivedAt");
-    updateParts.push("#archivedByUserId = :archivedByUserId");
-    expressionAttributeNames["#archivedAt"] = "archivedAt";
-    expressionAttributeNames["#archivedByUserId"] = "archivedByUserId";
-    values[":archivedAt"] = now;
-    values[":archivedByUserId"] = params.archivedByUserId;
-  } else {
-    removeParts.push("#archivedAt", "#archivedByUserId");
-    expressionAttributeNames["#archivedAt"] = "archivedAt";
-    expressionAttributeNames["#archivedByUserId"] = "archivedByUserId";
-  }
-
-  const updateExpression = [
-    `SET ${updateParts.join(", ")}`,
-    removeParts.length > 0 ? `REMOVE ${removeParts.join(", ")}` : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  const request: UpdateItemCommand["input"] = {
-    TableName: tableName("MeetingHistoryTable"),
-    Key: marshall({
-      guildId: params.guildId,
-      channelId_timestamp: params.channelId_timestamp,
-    }),
-    UpdateExpression: updateExpression,
-    ExpressionAttributeNames: expressionAttributeNames,
-    ExpressionAttributeValues: marshall(values, {
-      removeUndefinedValues: true,
-    }),
-    ConditionExpression: "attribute_exists(#channelIdTimestamp)",
-  };
-
-  const command = new UpdateItemCommand(request);
-  try {
-    await dynamoDbClient.send(command);
-    return true;
-  } catch (error) {
-    if (
-      (error as { name?: string }).name === "ConditionalCheckFailedException"
-    ) {
-      return false;
-    }
-    console.error("Failed to update meeting archive:", error);
-    return false;
-  }
+  return updateMeetingArchiveInDynamo(
+    dynamoDbClient,
+    tableName("MeetingHistoryTable"),
+    params,
+  );
 }
 
 function buildAskPartitionKey(userId: string, guildId: string) {

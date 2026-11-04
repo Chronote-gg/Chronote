@@ -1,11 +1,10 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
+import { removeGeneratedMeetingTemp } from "../fixtures/meetingTemp";
 import path from "node:path";
 import ffmpeg from "fluent-ffmpeg";
 import { buildMixedAudio } from "../../src/audio";
-import {
-  cleanupMeetingTempDir,
-  ensureMeetingTempDir,
-} from "../../src/services/tempFileService";
+import { ensureMeetingTempDir } from "../../src/services/tempFileService";
 import type { MeetingData } from "../../src/types/meeting-data";
 
 jest.mock("fluent-ffmpeg", () => {
@@ -36,7 +35,7 @@ jest.mock("fluent-ffmpeg", () => {
 describe("buildMixedAudio", () => {
   test("encodes a single speaker track", async () => {
     const meeting = {
-      meetingId: "meeting-1",
+      meetingId: `generated-${randomUUID()}`,
       audioData: {
         currentSnippets: new Map(),
         audioFiles: [],
@@ -65,7 +64,7 @@ describe("buildMixedAudio", () => {
         jest.mocked(ffmpeg).mock.results[0].value.input,
       ).toHaveBeenCalledWith(trackPath);
     } finally {
-      await cleanupMeetingTempDir(meeting);
+      await removeGeneratedMeetingTemp(meeting);
     }
   });
 });
@@ -76,7 +75,7 @@ test.each([1, 2])(
     const { stopMeetingProcessing } =
       await import("../../src/services/meetingProcessingLifetime");
     const meeting = {
-      meetingId: `synthetic-mix-${count}`,
+      meetingId: `generated-${randomUUID()}`,
       audioData: {
         speakerTracks: new Map(),
         currentSnippets: new Map(),
@@ -136,7 +135,7 @@ test.each([1, 2])(
       expect(heldBeforeEnd).toBe(true);
       expect(command.kill).toHaveBeenCalledWith("SIGTERM");
     } finally {
-      await cleanupMeetingTempDir(meeting);
+      await removeGeneratedMeetingTemp(meeting);
     }
   },
 );

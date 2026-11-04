@@ -120,9 +120,9 @@ Use `sandbox-site-permissions` only with GitHub environment and Terraform worksp
 `sandbox`. It targets exactly `aws_iam_policy.site_publishing[0]` and
 `aws_iam_role_policy_attachment.site_publishing[0]`. It permits policy creation or a
 policy-only in-place update, attachment creation and complete validated no-ops.
-Deletion, replacement, import, move, failed or unknown checks, resource drift and
+Deletion, replacement, import, move, failed or relevant unknown checks, resource drift and
 unrelated managed writes refuse. This installation operation is pinned to
-`meeting-notes-sandbox-site-publishing` and `meeting-notes-sandbox-github-deploy`.
+`meeting-notes-sandbox-site-publishing` and `meeting-notes-sandbox-github-deploy`. Only source-declared unrelated unknown checks without instances may pass after the complete [site dependency audit and exact source binding](terraform-meeting-source-model.md#sandbox-site-check-classification-2026-11-03) verify; foreign or malformed check identities refuse.
 
 First install and verify the separately reviewed Sandbox bootstrap runner grant
 using [its bounded existing-policy saved-plan procedure](../_infra/sandbox-bootstrap/README.md#bounded-existing-policy-update). The reviewed bootstrap binding adds the two non-secret bucket inputs and an independently observed previous-policy hash. Its only managed update is the runner inline policy; trust, backend, capture storage and encryption remain unchanged. Missing authoritative bootstrap inputs stop installation. The application operation does not change the

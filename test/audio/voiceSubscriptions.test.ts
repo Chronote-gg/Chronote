@@ -17,7 +17,7 @@ jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import * as tempFiles from "../../src/services/tempFileService";
+import { mockMeetingTempDirectory } from "../fixtures/meetingTemp";
 import * as checkpoints from "../../src/services/recordingCheckpointService";
 import { checkpointRecordingContext } from "../../src/services/recordingContentService";
 import { createMockDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
@@ -466,12 +466,6 @@ describe("voice subscriptions", () => {
     expect(receiver.subscribe).toHaveBeenCalledTimes(2);
 
     meeting.audioData.captureIncomplete = false;
-    userStartTalking(meeting, "user-1");
-    jest.advanceTimersByTime(800);
-    userStopTalking(meeting, "user-1");
-    expect(meeting.audioData.captureIncomplete).toBe(true);
-
-    meeting.audioData.captureIncomplete = false;
     meeting.finishing = true;
     streams[1].emit("error", new Error("finishing"));
     expect(meeting.audioData.captureIncomplete).toBe(false);
@@ -481,19 +475,24 @@ describe("voice subscriptions", () => {
     streams[1].emit("error", new Error("destroyed"));
     expect(meeting.audioData.captureIncomplete).toBe(false);
 
-    meeting.finishing = true;
-    meeting.connection.state.status = VoiceConnectionStatus.Ready;
-    userStartTalking(meeting, "user-1");
-    jest.advanceTimersByTime(800);
-    userStopTalking(meeting, "user-1");
-    expect(meeting.audioData.captureIncomplete).toBe(false);
-
-    meeting.finishing = false;
-    meeting.connection.state.status = VoiceConnectionStatus.Destroyed;
-    userStartTalking(meeting, "user-1");
-    jest.advanceTimersByTime(800);
-    userStopTalking(meeting, "user-1");
-    expect(meeting.audioData.captureIncomplete).toBe(false);
+    // The speaking event precedes the subscription and decrypt guards, so a sustained
+    // no-PCM turn is only diagnosed, whether or not capture is still active.
+    const log = jest.spyOn(console, "log").mockImplementation(() => {});
+    for (const status of [
+      VoiceConnectionStatus.Ready,
+      VoiceConnectionStatus.Destroyed,
+    ]) {
+      meeting.finishing = status === VoiceConnectionStatus.Destroyed;
+      meeting.connection.state.status = status;
+      userStartTalking(meeting, "user-1");
+      jest.advanceTimersByTime(800);
+      userStopTalking(meeting, "user-1");
+      expect(meeting.audioData.captureIncomplete).toBe(false);
+    }
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("durationMs=800 sustainedNoPcm=true"),
+    );
+    log.mockRestore();
   });
 
   test.each([
@@ -581,9 +580,7 @@ describe("actual capture preservation cutoff handoff", () => {
       jest.useFakeTimers();
       jest.setSystemTime(new Date("2026-01-01T00:00:02Z"));
       const directory = mkdtempSync(path.join(tmpdir(), "capture-cutoff-"));
-      const temp = jest
-        .spyOn(tempFiles, "ensureMeetingTempDirSync")
-        .mockReturnValue(directory);
+      const restoreDirectory = mockMeetingTempDirectory(directory);
       const row = { ...history, status: "in_progress" as const };
       const repo = createMockDeploymentControlRepository(
         new Map(),
@@ -705,7 +702,7 @@ describe("actual capture preservation cutoff handoff", () => {
         } else expect(row.checkpoint).toBeUndefined();
         meeting.recordingCapture?.releaseSettledBuffers();
       } finally {
-        temp.mockRestore();
+        restoreDirectory();
         append.mockRestore();
         warn.mockRestore();
         rmSync(directory, { recursive: true, force: true });
@@ -718,9 +715,7 @@ describe("actual capture preservation cutoff handoff", () => {
 test("receiver PCM commit serializes its synchronous context checkpoint", async () => {
   jest.useFakeTimers();
   const directory = mkdtempSync(path.join(tmpdir(), "capture-reentrant-"));
-  const temp = jest
-    .spyOn(tempFiles, "ensureMeetingTempDirSync")
-    .mockReturnValue(directory);
+  const restoreDirectory = mockMeetingTempDirectory(directory);
   const append = jest
     .spyOn(checkpoints, "appendMeetingCheckpointArtifacts")
     .mockResolvedValue({
@@ -747,7 +742,13 @@ test("receiver PCM commit serializes its synchronous context checkpoint", async 
   const { meeting } = createMeeting(streams);
   Object.assign(meeting, {
     ownershipSignal: new AbortController().signal,
-    reservation: { sessionMode: "meeting" },
+    reservation: {
+      sessionMode: "meeting",
+      guildId: meeting.guildId,
+      meetingId: meeting.meetingId,
+      ownerInstanceId: "old",
+      executionVersion: 1,
+    },
   });
   try {
     await subscribeToUserVoice(meeting, "user-1");
@@ -764,7 +765,7 @@ test("receiver PCM commit serializes its synchronous context checkpoint", async 
     await meeting.recordingCapture!.settled();
     meeting.recordingCapture!.releaseSettledBuffers();
     jest.mocked(checkpointRecordingContext).mockReset();
-    temp.mockRestore();
+    restoreDirectory();
     append.mockRestore();
     rmSync(directory, { recursive: true, force: true });
     jest.useRealTimers();

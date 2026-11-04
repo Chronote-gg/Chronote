@@ -1,14 +1,70 @@
+import type { MeetingData } from "../../src/types/meeting-data";
 import {
+  assertMeetingProcessingSucceeded,
   classifyTranscription,
+  classifyUploadTranscription,
   getMeetingProcessingNotice,
   EMPTY_RECORDING_NOTICE,
   PARTIAL_TRANSCRIPT_NOTICE,
 } from "../../src/utils/meetingProcessing";
 
+/** A snippet either transcribed or failed, never both, as production records them. */
+function meetingWithSnippets(
+  usableSegments: number,
+  failedSegments: number,
+): MeetingData {
+  return {
+    transcribeMeeting: true,
+    audioData: {
+      audioFiles: [
+        ...Array.from({ length: usableSegments }, () => ({
+          transcript: "usable",
+          processing: false,
+        })),
+        ...Array.from({ length: failedSegments }, () => ({
+          transcript: "",
+          processing: false,
+          transcriptionFailed: true,
+        })),
+      ],
+    },
+  } as unknown as MeetingData;
+}
+
+test("a couple of lost snippets keep normal finalization", () => {
+  expect(() =>
+    assertMeetingProcessingSucceeded(meetingWithSnippets(153, 2)),
+  ).not.toThrow();
+  expect(() =>
+    assertMeetingProcessingSucceeded(meetingWithSnippets(153, 3)),
+  ).toThrow("incomplete");
+});
+
+// A wholly failed recording must not reach the accidental-recording classifier, which
+// runs before the transcription outcome is written and sees only an empty transcript.
+test("a recording whose only snippet failed is never treated as complete", () => {
+  expect(() =>
+    assertMeetingProcessingSucceeded(meetingWithSnippets(0, 1)),
+  ).toThrow("incomplete");
+  expect(
+    classifyTranscription({
+      usableSegments: 0,
+      failedSegments: 1,
+      captureIncomplete: false,
+    }),
+  ).toBe("failed");
+});
+
+// captureIncomplete still demotes because it now records only decoder, stream and
+// subscription loss; a speaking turn without PCM no longer arms it.
 test.each([
   [0, 0, false, "empty"],
   [1, 0, false, "ready"],
-  [1, 1, false, "partial"],
+  [1, 1, false, "ready"],
+  [1, 2, false, "ready"],
+  [153, 2, false, "ready"],
+  [1, 3, false, "partial"],
+  [153, 9, false, "partial"],
   [0, 1, false, "failed"],
   [0, 0, true, "failed"],
   [1, 0, true, "partial"],
@@ -69,4 +125,16 @@ test("imported notes suppress an obsolete empty notice", () => {
       true,
     ),
   ).toBeUndefined();
+});
+
+test("an upload's few long chunks demote on a single failure", () => {
+  // 300 second chunks, not per-turn snippets: one lost chunk is a real gap, and the
+  // Discord floor would call a two chunk upload with one failure "ready".
+  const facts = {
+    usableSegments: 1,
+    failedSegments: 1,
+    captureIncomplete: false,
+  };
+  expect(classifyUploadTranscription(facts)).toBe("partial");
+  expect(classifyTranscription(facts)).toBe("ready");
 });

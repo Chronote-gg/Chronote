@@ -5,6 +5,11 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  storedArtifactSchema,
+  type StoredArtifact,
+} from "../types/storedArtifact";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { config } from "./configService";
@@ -118,6 +123,112 @@ export async function uploadObjectToS3(
       console.error("Failed to upload object to S3", error);
     return undefined;
   }
+}
+
+async function readStoredArtifactDigest(
+  stream: ReadableStream<Uint8Array>,
+  maximumBytes: number,
+  signal?: AbortSignal,
+) {
+  const reader = stream.getReader();
+  const hash = createHash("sha256");
+  let byteLength = 0;
+  try {
+    signal?.throwIfAborted();
+    for (;;) {
+      const next = await reader.read();
+      signal?.throwIfAborted();
+      if (next.done) break;
+      byteLength += next.value.byteLength;
+      if (byteLength > maximumBytes)
+        throw new StoredObjectMetadataError(
+          "Stored artifact exceeds expected length",
+        );
+      hash.update(next.value);
+    }
+    return { byteLength, checksumSha256: hash.digest("hex") };
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+export async function verifyStoredArtifact(
+  reference: StoredArtifact,
+  signal?: AbortSignal,
+): Promise<void> {
+  storedArtifactSchema.parse(reference);
+  signal?.throwIfAborted();
+  let byteLength: number;
+  let checksumSha256: string;
+  if (config.mock.enabled) {
+    const bytes = getMockStore().objectsByKey.get(reference.key);
+    if (bytes === undefined)
+      throw new StoredObjectMetadataError("Stored artifact is missing");
+    byteLength = Buffer.byteLength(bytes);
+    checksumSha256 = createHash("sha256").update(bytes).digest("hex");
+  } else {
+    const response = await s3Client.send(
+      new GetObjectCommand({
+        Bucket: config.storage.transcriptBucket,
+        Key: reference.key,
+        ...(reference.versionId ? { VersionId: reference.versionId } : {}),
+      }),
+      { abortSignal: signal },
+    );
+    if (!response.Body)
+      throw new StoredObjectMetadataError("Stored artifact is unavailable");
+    const stream = response.Body.transformToWebStream();
+    if (reference.versionId && response.VersionId !== reference.versionId) {
+      await stream.cancel();
+      throw new StoredObjectMetadataError(
+        "Stored artifact version is unavailable",
+      );
+    }
+    ({ byteLength, checksumSha256 } = await readStoredArtifactDigest(
+      stream,
+      reference.byteLength,
+      signal,
+    ));
+  }
+  signal?.throwIfAborted();
+  if (
+    byteLength !== reference.byteLength ||
+    checksumSha256 !== reference.checksumSha256
+  )
+    throw new StoredObjectMetadataError(
+      "Stored artifact checksum or length differs",
+    );
+}
+
+/** Ordinary uploads retain their direct-acknowledgment contract. Cleanup opts into readback. */
+export async function uploadVerifiedObjectToS3(
+  key: string,
+  body: string | Uint8Array | Buffer,
+  contentType: string,
+  options: StorageWriteOptions = {},
+): Promise<StoredArtifact | undefined> {
+  let acknowledged: { key: string; versionId: string | null } | undefined;
+  const uploaded = await uploadObjectToS3(key, body, contentType, {
+    ...options,
+    onAcknowledged(receipt) {
+      acknowledged = receipt;
+      options.onAcknowledged?.(receipt);
+    },
+  });
+  if (!uploaded) return undefined;
+  if (!config.mock.enabled && (!acknowledged || acknowledged.key !== key))
+    throw new StoredObjectMetadataError(
+      "Direct artifact acknowledgment unavailable",
+    );
+  const reference = storedArtifactSchema.parse({
+    key: uploaded,
+    versionId: acknowledged?.versionId ?? null,
+    byteLength: Buffer.byteLength(body),
+    checksumSha256: createHash("sha256").update(body).digest("hex"),
+  });
+  await verifyStoredArtifact(reference, options.signal);
+  return reference;
 }
 
 const isMissingKeyError = (error: unknown): boolean => {

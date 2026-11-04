@@ -95,6 +95,7 @@ describe.each(["button", "leave", "context"] as const)(
           releaseSettledBuffers: jest.fn(),
         },
       } as unknown as MeetingData;
+      let deferred = outcome === "already_deferred";
       const defer = jest.fn(async () => {
         if (outcome === "already_deferred")
           throw new Error("Interaction already acknowledged");
@@ -104,6 +105,7 @@ describe.each(["button", "leave", "context"] as const)(
         }
         if (outcome === "defer_lost")
           throw new Error("Synthetic lost defer ACK");
+        deferred = true;
       });
       const interaction = {
         id: `synthetic-interaction-${route}-${outcome}`,
@@ -122,7 +124,9 @@ describe.each(["button", "leave", "context"] as const)(
         isUserContextMenuCommand: () => route === "context",
         isModalSubmit: () => false,
         isChannelSelectMenu: () => false,
-        deferred: outcome === "already_deferred",
+        get deferred() {
+          return deferred;
+        },
         replied: false,
         deferUpdate: defer,
         deferReply: defer,
@@ -147,6 +151,11 @@ describe.each(["button", "leave", "context"] as const)(
           acknowledgment.release();
         }
         await handling;
+        // A stop that cannot settle must still tell the user something.
+        expect(
+          interaction.reply.mock.calls.length +
+            interaction.editReply.mock.calls.length,
+        ).toBe(outcome === "duplicate" ? 0 : 1);
         expect(interaction.followUp).not.toHaveBeenCalled();
         expect(mockStopEnvironment.reconcile).not.toHaveBeenCalled();
         cleanup.release();

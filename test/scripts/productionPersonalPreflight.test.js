@@ -1,7 +1,7 @@
 /** @jest-environment node */
 import { expect, jest, test } from "@jest/globals";
 import { marshall } from "@aws-sdk/util-dynamodb";
-import { introduceProduction } from "../../scripts/deployment/introduce-production.cjs";
+import { preflight } from "../../scripts/deployment/introduce-production.cjs";
 import { completeManifest } from "../fixtures/productionCompleteManifest.js";
 import { bound } from "../fixtures/productionManifest.js";
 import { buildPausedDesktopDraftMarker } from "../../src/testSupport/personalMediaUploadFixtures";
@@ -83,7 +83,7 @@ test.each([
   "initial $table $row.status paused=$paused refuses before hold or stop",
   async ({ table, row, paused }) => {
     const { options } = initial({ [table]: [row] }, paused);
-    await expect(introduceProduction(options, "introduce")).rejects.toThrow(
+    await expect(preflight(options)).rejects.toThrow(
       "personal_retained_prerequisite",
     );
     assertNoInterruption(options);
@@ -114,7 +114,7 @@ test.each([
   "safe completed personal rows or other active legacy work pass the narrow screen: %p",
   async (rows) => {
     const { options, next } = initial(rows);
-    await expect(introduceProduction(options, "introduce")).rejects.toBe(next);
+    await expect(preflight(options)).rejects.toBe(next);
     expect(options.candidate.definitions).toHaveBeenCalledTimes(1);
     expect(options.aws).toHaveBeenCalledWith("dynamodb", "describe-table", {
       TableName: options.binding.manifest.resources.tables.meetingHistory,
@@ -179,7 +179,7 @@ test.each([
     const metadata = meetingUpdateIndexMetadata(options.binding.manifest);
     mutate(metadata.Table);
     options.aws.mockResolvedValue(metadata);
-    await expect(introduceProduction(options, "introduce")).rejects.toThrow(
+    await expect(preflight(options)).rejects.toThrow(
       "meeting_update_index_prerequisite",
     );
     assertIndexReadOnlyRefusal(options);
@@ -189,9 +189,7 @@ test.each([
 test("unreadable index refuses before hold, journal or stop without a row fallback", async () => {
   const { options } = initial({});
   options.aws.mockRejectedValue(new Error("synthetic access denied"));
-  await expect(introduceProduction(options, "introduce")).rejects.toThrow(
-    "synthetic access denied",
-  );
+  await expect(preflight(options)).rejects.toThrow("synthetic access denied");
   assertIndexReadOnlyRefusal(options);
 });
 
@@ -201,7 +199,7 @@ test.each(["unavailable", "malformed"])(
     const { options } = initial({ personalJob: [{ status: "queued" }] });
     if (kind === "unavailable")
       options.scan.mockRejectedValue(new Error("synthetic read unavailable"));
-    await expect(introduceProduction(options, "introduce")).rejects.toThrow();
+    await expect(preflight(options)).rejects.toThrow();
     assertNoInterruption(options);
     expect(options.aws).not.toHaveBeenCalled();
   },
@@ -243,7 +241,7 @@ test.each([
   "known unrelated uncertain effects refuse before any interruption: %j",
   async (rows) => {
     const { options } = initial(rows);
-    await expect(introduceProduction(options, "introduce")).rejects.toThrow(
+    await expect(preflight(options)).rejects.toThrow(
       "retained_work_prerequisite",
     );
     assertNoInterruption(options);

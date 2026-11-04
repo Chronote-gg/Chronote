@@ -276,6 +276,7 @@ test("projection reports remaining attempts and an external block", () => {
   expect(projectProcessingRetry(row)).toEqual({
     eligible: true,
     requiresReplaceConfirm: false,
+    transcriptSource: "existing",
     status: "failed",
     failureReason: "stage_failed",
     settingsSource: "current",
@@ -285,6 +286,23 @@ test("projection reports remaining attempts and an external block", () => {
     eligible: false,
     reason: "unavailable",
   });
+});
+
+test.each([
+  ["checkpoint", { processing: partialNotes, checkpoint: pointer }],
+  ["mixed", { processing: partialNotes }],
+  ["existing", { processing: failedNotes }],
+])("projection exposes the %s transcript source", (source, patch) => {
+  expect(projectProcessingRetry({ ...base, ...patch }).transcriptSource).toBe(
+    source,
+  );
+});
+
+test("projection hides the transcript source from a non-editor", () => {
+  const row = { ...base, processing: failedNotes };
+  expect(
+    projectProcessingRetry(row, "not_permitted").transcriptSource,
+  ).toBeUndefined();
 });
 
 test("projection reports the ineligible reason and never negative attempts", () => {

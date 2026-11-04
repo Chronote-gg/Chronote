@@ -426,7 +426,7 @@ function validateEnvelope(plan, input, applyable) {
 }
 function validateBootstrapPlan(plan, binding) {
   validateBinding(binding, false);
-  const seen = validatePlan(plan, binding, validateCreate, true);
+  const seen = validatePlan(plan, binding, validateCreate, true, false);
   insist(
     Object.keys(managedValues(binding.variables)).every((type) =>
       seen.has(`${type}.${resourceName(type)}[0]`),
@@ -449,7 +449,7 @@ function validateBinding(binding, update) {
     "trust",
   ]);
 }
-function validatePlan(plan, binding, inspectManaged, applyable) {
+function validatePlan(plan, binding, inspectManaged, applyable, update) {
   const input = bindingVariables(binding);
   validateEnvelope(plan, input, applyable);
   const managed = managedValues(input);
@@ -477,7 +477,7 @@ function validatePlan(plan, binding, inspectManaged, applyable) {
         config.name === entry.name,
       "configuration identity mismatch",
     );
-    validateResourceBindings(entry, config, input);
+    validateResourceBindings(entry, config, input, update);
     if (entry.mode === "data") validateMetadata(entry, input, metadata);
     else {
       strict.equal(entry.mode, "managed");
@@ -517,6 +517,7 @@ function validateBootstrapSitePermissionsUpdate(plan, binding) {
     binding,
     validateUnchangedOrSitePolicy,
     changed === true,
+    true,
   );
   insist(seen.has(target), "missing runner policy");
   insist(
@@ -590,7 +591,7 @@ function bindingExpression(expression, field, expected) {
         expression.references.length === 1 &&
         expression.references[0] === `var.${field}`;
 }
-function validateResourceBindings(entry, config, input) {
+function validateResourceBindings(entry, config, input, update) {
   const { after, after_unknown: unknown = {} } = entry.change;
   const region = config.expressions.region;
   insist(
@@ -612,7 +613,18 @@ function validateResourceBindings(entry, config, input) {
     unknown.expected_bucket_owner !== true,
     "unknown expected bucket owner",
   );
-  if (after.expected_bucket_owner != null)
+  const unchangedEmptyOwner =
+    update === true &&
+    [
+      "aws_s3_bucket_server_side_encryption_configuration",
+      "aws_s3_bucket_versioning",
+    ].includes(entry.type) &&
+    !Object.hasOwn(config.expressions, "expected_bucket_owner") &&
+    entry.change.actions.length === 1 &&
+    entry.change.actions[0] === "no-op" &&
+    entry.change.before?.expected_bucket_owner === "" &&
+    after.expected_bucket_owner === "";
+  if (after.expected_bucket_owner != null && !unchangedEmptyOwner)
     strict.equal(after.expected_bucket_owner, input.sandbox_account_id);
 }
 function hasConfiguredSetting(expression, field) {
