@@ -208,6 +208,33 @@ buckets or general KMS key. The six-resource site closure, six required passed
 checks and thirteen excluded checks therefore remain exact under the updated
 whole-source pin. Neither artifact permission is allowed by the site scope.
 
+### Artifact-preservation plan scope audit (2026-11-04)
+
+The transcripts policy now builds its bucket ARN from `local.transcripts_bucket_name`
+instead of `aws_s3_bucket.transcripts.arn`. The rendered policy document is
+unchanged, because `aws_s3_bucket.transcripts` sets `bucket` from that same local,
+so the two expressions produce the same string. The edit removes a resource
+reference edge and adds none, as the site-permissions audit did for the listener
+count predicate. The local reads only `TRANSCRIPTS_BUCKET`, `name_prefix` and the
+caller identity, all of which the closure already depends on.
+
+The purpose is the new production `artifact-preservation` plan scope, which targets
+only `aws_iam_policy.transcripts_s3_policy`. With the reference removed the bucket
+is no longer in that targeted graph, so the GitHub Terraform executor role needs no
+read permission on the transcripts bucket at all, including `s3:ListBucket`, which
+would otherwise expose transcript object keys.
+`validate-artifact-preservation-plan.cjs` refuses any managed resource other than
+the policy, so a reappearing bucket refresh fails the scope rather than passing
+quietly.
+
+The transcripts policy stays outside the 32-resource delivery closure and outside
+the six-resource site graph, and no resource in either reads it. The closure,
+excluded checks, installed-provider requirements, typed retry-index gate and
+permitted delivery effects are unchanged. The whole-source pin is refreshed only
+for this one reviewed `main.tf` edit. Refreshing it does not permit the IAM change
+through the meeting-delivery or site scopes; the new scope has its own validator,
+its own bootstrap grant and its own approved apply.
+
 ### Future source changes
 
 Any top-level Terraform or lock edit requires reviewing and updating the source
