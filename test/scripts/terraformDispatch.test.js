@@ -108,6 +108,7 @@ test("production Plan refuses unsupported scopes before either credential step",
     "deployment-runtime",
     "site-delivery",
     "processing-retry",
+    "artifact-preservation",
     "full",
     "purchase-permission",
     "meeting-update-delivery",
@@ -129,6 +130,7 @@ test("production Plan refuses unsupported scopes before either credential step",
         "deployment-runtime",
         "site-delivery",
         "processing-retry",
+        "artifact-preservation",
       ].includes(scope)
         ? 0
         : 1,
@@ -163,7 +165,7 @@ test.each(["plan", "apply"])(
             "node scripts/deployment/production-writer-guard.cjs --inspect",
           ]
         : [
-            'test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery || test "$PLAN_SCOPE" = processing-retry',
+            'test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery || test "$PLAN_SCOPE" = processing-retry || test "$PLAN_SCOPE" = artifact-preservation',
             "node scripts/deployment/terraform-plan-identity.cjs",
             'test "$IDENTITY_MATCHES" = true',
             "node scripts/deployment/terraform-plan-identity.cjs --validate",
@@ -293,6 +295,7 @@ test("delivery scope is Sandbox-only while production retains its scopes", () =>
     "deployment-runtime",
     "site-delivery",
     "processing-retry",
+    "artifact-preservation",
   ])
     expect(
       parseDispatch(env, {
@@ -351,7 +354,7 @@ test.each(
       "deployment-prerequisites",
       "deployment-runtime",
       "site-delivery",
-      "site-delivery",
+      "artifact-preservation",
       undefined,
     ].map((scope) => [mode, scope]),
   ),

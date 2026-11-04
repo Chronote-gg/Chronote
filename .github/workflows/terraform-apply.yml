@@ -48,6 +48,7 @@ on:
           - site-delivery
           - sandbox-site-permissions
           - processing-retry
+          - artifact-preservation
       confirmation:
         description: Type apply to request the reviewed plan; native approval is also required
         required: true

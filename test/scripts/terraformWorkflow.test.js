@@ -19,6 +19,7 @@ import { dispatchTerraform } from "../fixtures/deployment/terraformDispatch.js";
 import { runtimePlan } from "../fixtures/deployment/runtimePlan.js";
 import { meetingUpdatePlan } from "../fixtures/deployment/terraformMeetingUpdate.js";
 import { sitePlan } from "../fixtures/deployment/sitePlan.js";
+import { artifactPreservationPlan } from "../fixtures/deployment/artifactPreservationPlan.js";
 import {
   sitePermissionsPlan,
   siteVariables,
@@ -501,6 +502,13 @@ test("site delivery Apply revalidates its restored plan", async () => {
   const f = fixture();
   f.controls.planJson = sitePlan();
   await expectApply(f, "applied", { scope: "site-delivery" });
+  expectRevalidated(f);
+});
+
+test("artifact preservation Apply revalidates its restored plan", async () => {
+  const f = fixture();
+  f.controls.planJson = artifactPreservationPlan();
+  await expectApply(f, "applied", { scope: "artifact-preservation" });
   expectRevalidated(f);
 });
 
