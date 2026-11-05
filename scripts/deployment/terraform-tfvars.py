@@ -34,6 +34,7 @@ collection_keys = {
     "production_acceptance_fixtures",
 }
 canonical_keys = collection_keys | {
+    "enable_announcement_delivery_table",
     "frontend_distribution_id",
     "docs_distribution_id",
     "enable_production_introduction_roles",
