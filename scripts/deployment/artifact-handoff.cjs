@@ -158,7 +158,33 @@ function createArtifactHandoff(options) {
       return "UNKNOWN";
     }
   }
-  async function request(ctl, row) {
+  async function retryHeartbeat(row, operation) {
+    const state = (value) => ({
+      ...value,
+      revision: 0,
+      heartbeatAt: 0,
+      freshUntil: 0,
+    });
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await operation(row);
+      } catch (error) {
+        if (row.attestation || attempt === 2) throw error;
+        const observed = await read(row.identity);
+        if (
+          observed.revision <= row.revision ||
+          observed.heartbeatAt < row.heartbeatAt ||
+          observed.freshUntil < row.freshUntil ||
+          !same(state(observed), state(row))
+        )
+          throw error;
+        row = observed;
+      }
+    }
+  }
+  const request = (ctl, row) =>
+    retryHeartbeat(row, (current) => requestOnce(ctl, current));
+  async function requestOnce(ctl, row) {
     if (production)
       refuse(
         "Private recovery recipe requires a reviewed artifact safety upgrade",
@@ -361,6 +387,78 @@ function createArtifactHandoff(options) {
       refuse("Cancellation acknowledgment missing");
     return { kind: "cancelled" };
   }
+  async function cancelUnrequested(ctl, row) {
+    if (production)
+      refuse("Private recovery recipe does not support artifact safety writes");
+    if (
+      ctl.deployment.phase !== "preparing" ||
+      row.startup.kind !== "active" ||
+      ctl.deployment.originalGeneration !== ctl.servingGeneration ||
+      !same(ctl.servingMembers[row.identity.instanceId], row.identity)
+    )
+      refuse("Unrequested preparation authority changed");
+    const definition = ctl.deployment.taskDefinition;
+    if ((await options.tasks()).some((t) => t.taskDefinitionArn === definition))
+      refuse("A candidate task exists; cancellation refused");
+    ctl = await renew(ctl);
+    return retryHeartbeat(row, async (current) => {
+      await protectedTask(current.identity);
+      const source = await runtime(current.identity);
+      const time = now();
+      if (
+        current.freshUntil <= time ||
+        source.role !== "serving" ||
+        source.authorizedGeneration !== ctl.servingGeneration ||
+        source.retirementRequest
+      )
+        refuse("Unrequested preparation source changed");
+      const runtimeCondition = {
+        TableName: tables.deploymentControl,
+        Key: marshall({
+          pk: "ENV",
+          sk: "RUNTIME#" + current.identity.instanceId,
+        }),
+        ...builders.artifactSnapshotCondition(
+          builders.artifactRuntimeAttributes({
+            next: current,
+            context: { runtime: source },
+          }),
+        ),
+      };
+      builders.requireRuntimeProtection(
+        runtimeCondition,
+        current.identity,
+        time,
+      );
+      const completed = builders.artifactPreparationControl(
+        ctl,
+        time,
+        "complete",
+      );
+      try {
+        await aws("dynamodb", "transact-write-items", {
+          TransactItems: [
+            builders.artifactControlOperation(
+              ctl,
+              tables.deploymentControl,
+              time,
+              {
+                leased: true,
+                phase: "complete",
+              },
+            ),
+            condition(current),
+            { ConditionCheck: runtimeCondition },
+          ],
+        });
+      } catch (error) {
+        if (!same(await control(), completed)) throw error;
+      }
+      if (!same(await control(), completed))
+        refuse("Cancellation acknowledgment missing");
+      return { kind: "cancelled" };
+    });
+  }
   async function cancelPreparation() {
     await options.assertWriter();
     const ctl = await control();
@@ -370,6 +468,7 @@ function createArtifactHandoff(options) {
       refuse("Service may already have launched; cancellation refused");
     const row = await lookup(ctl.deployment.outgoing);
     if (row?.attestation) return cancelAttested(ctl, row);
+    if (row?.state === "idle") return cancelUnrequested(ctl, row);
     await cancel(ctl);
     return { kind: "cancellation_requested" };
   }

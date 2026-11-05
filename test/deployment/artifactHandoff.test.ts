@@ -23,7 +23,7 @@ function fixture(now = () => 120) {
       );
     return {};
   });
-  const helper = createArtifactHandoff({
+  const options = {
     artifactTypes,
     artifactBuilders,
     aws,
@@ -39,11 +39,18 @@ function fixture(now = () => 120) {
       throw new Error("unexpected wait");
     },
     production: undefined,
-  });
+    assertWriter: async () => {},
+    own: () => {},
+    service: async () => ({ taskDefinition: "previous" }),
+    tasks: async () => [],
+  };
+  const helper = createArtifactHandoff(options);
   return {
     ...f,
     helper,
     aws,
+    options,
+    getRow: () => row,
     setRow: (value: artifactTypes.ArtifactSafetyRecord | undefined) => {
       row = value;
     },
@@ -65,6 +72,131 @@ test("consumes the exact sealed proof together with warming before launch", asyn
     ),
   ).resolves.toBeDefined();
 });
+
+function idle(f: ReturnType<typeof fixture>) {
+  return artifactTypes.artifactSafetyRecordSchema.parse({
+    ...artifactTypes.artifactSafetyBaseSchema.parse(f.expected),
+    state: "idle",
+  });
+}
+
+test("request retries a heartbeat conflict without adding history checks", async () => {
+  const f = fixture();
+  f.setRow(idle(f));
+  const original = f.aws.getMockImplementation()!;
+  let writes = 0;
+  f.aws.mockImplementation(async (service, operation, input) => {
+    if (operation !== "transact-write-items")
+      return original(service, operation, input);
+    expect(input.TransactItems).toHaveLength(3);
+    if (++writes === 1) {
+      const row = f.getRow()!;
+      f.setRow({
+        ...row,
+        revision: row.revision + 1,
+        heartbeatAt: 120,
+        freshUntil: 180,
+      });
+      throw new Error("TransactionCanceledException");
+    }
+    return original(service, operation, input);
+  });
+  // Stop after the real request path, before the runtime's separate drain/seal.
+  await expect(f.helper.prepare(f.ctl)).rejects.toThrow("unexpected wait");
+  expect(writes).toBe(2);
+  expect(f.getRow()?.state).toBe("requested");
+});
+
+test("an idle unrequested preparation can cancel without changing the artifact row", async () => {
+  const f = fixture();
+  const row = idle(f);
+  f.setRow(row);
+  const original = f.aws.getMockImplementation()!;
+  f.aws.mockImplementation(async (service, operation, input) => {
+    if (operation !== "transact-write-items")
+      return original(service, operation, input);
+    expect(input.TransactItems).toHaveLength(3);
+    expect(input.TransactItems.every((item) => !item.Put)).toBe(true);
+    f.ctl.deployment = {
+      ...f.ctl.deployment!,
+      phase: "complete",
+      updatedAt: 120,
+    };
+    return {};
+  });
+  await expect(f.helper.cancelPreparation()).resolves.toEqual({
+    kind: "cancelled",
+  });
+  expect(f.getRow()).toEqual(row);
+  expect(f.ctl.deployment?.phase).toBe("complete");
+});
+
+test.each(["unchanged", "startup", "exhausted"])(
+  "request refuses a conflict that is %s",
+  async (change) => {
+    const f = fixture();
+    f.setRow(idle(f));
+    const original = f.aws.getMockImplementation()!;
+    let writes = 0;
+    f.aws.mockImplementation(async (service, operation, input) => {
+      if (operation !== "transact-write-items")
+        return original(service, operation, input);
+      writes++;
+      const row = f.getRow()!;
+      if (change !== "unchanged")
+        f.setRow({
+          ...row,
+          revision: row.revision + 1,
+          ...(change === "startup"
+            ? { startup: { kind: "active", activatedAt: 91 } }
+            : {}),
+        });
+      throw new Error("conflict");
+    });
+    await expect(f.helper.prepare(f.ctl)).rejects.toThrow("conflict");
+    expect(writes).toBe(change === "exhausted" ? 3 : 1);
+    expect(f.getRow()?.state).toBe("idle");
+  },
+);
+
+test.each([
+  "warming",
+  "service",
+  "candidate",
+  "runtime",
+  "expired",
+  "startup",
+  "protection",
+])(
+  "idle cancellation refuses changed %s before a transaction",
+  async (change) => {
+    const f = fixture();
+    f.ctl.deployment!.taskDefinition = "candidate";
+    f.setRow(idle(f));
+    if (change === "warming") f.ctl.deployment!.phase = "warming";
+    if (change === "runtime") f.source.authorizedGeneration++;
+    if (change === "expired")
+      f.setRow({ ...idle(f), heartbeatAt: 50, freshUntil: 110 });
+    if (change === "startup")
+      f.setRow({ ...idle(f), startup: { kind: "pending" } });
+    const helper = createArtifactHandoff({
+      ...f.options,
+      service: async () => ({
+        taskDefinition: change === "service" ? "candidate" : "previous",
+      }),
+      tasks: async () =>
+        change === "candidate" ? [{ taskDefinitionArn: "candidate" }] : [],
+      protectedTask: async () => {
+        if (change === "protection") throw new Error("unprotected");
+        return { expirationDate: new Date(600_000).toISOString() };
+      },
+    });
+    await expect(helper.cancelPreparation()).rejects.toThrow();
+    expect(
+      f.aws.mock.calls.some((call) => call[1] === "transact-write-items"),
+    ).toBe(false);
+  },
+);
 
 test("consumption stays bound to one clock reading across a slow runtime read", async () => {
   let clock = 120;
