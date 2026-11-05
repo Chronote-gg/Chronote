@@ -8,11 +8,44 @@ import type {
 } from "./artifactProducerRegistry";
 import type {
   SpeechAdmission,
+  SpeechAdmissionOrigin,
   SpeechAssessment,
   SpeechCoverage,
   SpeechDetector,
   SpeechPhase,
 } from "./speechDetectionTypes";
+
+/** Only fixed admission enums belong in ASR metadata, never coverage or assessment payloads. */
+export function speechAdmissionMetadata(
+  admission:
+    | SpeechAdmissionOrigin
+    | Pick<Extract<SpeechAdmission, { kind: "reused" }>, "kind" | "origin">
+    | undefined,
+): Record<string, string> {
+  if (!admission) return {};
+  switch (admission.kind) {
+    case "reused":
+      if (!admission.origin) return { speechAdmissionKind: "reused" };
+      return {
+        ...speechAdmissionMetadata(admission.origin),
+        speechAdmissionKind: "reused",
+        speechAdmissionOriginKind: admission.origin.kind,
+      };
+    case "not_enforced":
+      return {
+        speechAdmissionKind: admission.kind,
+        speechAdmissionReason: admission.reason,
+      };
+    case "assessed":
+      return {
+        speechAdmissionKind: admission.kind,
+        speechAssessmentKind: admission.assessment.kind,
+        ...(admission.assessment.kind === "unavailable"
+          ? { speechUnavailableReason: admission.assessment.reason }
+          : {}),
+      };
+  }
+}
 
 export type TranscriptionInputRequest = {
   beginArtifactWrite?: ArtifactWriter;

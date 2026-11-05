@@ -65,6 +65,7 @@ import { closeCaptureStream } from "./services/captureStreamSettlementService";
 export { waitForCaptureStreamSettlement } from "./services/captureStreamSettlementService";
 import { Readable } from "node:stream";
 import { transcribeSnippet } from "./services/transcriptionService";
+import { speechAdmissionMetadata } from "./services/transcriptionInputService";
 import { formatParticipantLabel } from "./utils/participants";
 import path from "node:path";
 import { maybeRespondLive } from "./liveVoice";
@@ -329,6 +330,10 @@ export function startProcessingSnippet(
       : snippet.userId;
     console.log(
       `Fast transcript covers snippet, skipping slow transcription: guildId=${meeting.guildId} channelId=${meeting.channelId} meetingId=${meeting.meetingId} userId=${snippet.userId} speaker=${speakerLabel} duration=${duration.toFixed(2)}s bytes=${getAudioBytes(snippet)}`,
+      speechAdmissionMetadata({
+        kind: "reused",
+        origin: snippet.lastFastSpeechAdmission,
+      }),
     );
     audioFileData.transcriptionFailed = false;
     audioFileData.transcript = latestFastText;
@@ -361,6 +366,7 @@ export function startProcessingSnippet(
                 ? {
                     text: latestFastText,
                     coverage: snippet.lastFastSpeechCoverage,
+                    origin: snippet.lastFastSpeechAdmission,
                   }
                 : undefined,
             speechDetectionBypass: options.forceTranscribe,

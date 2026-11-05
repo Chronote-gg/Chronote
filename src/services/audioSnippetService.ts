@@ -225,6 +225,10 @@ export function runFastTranscription(
           audioFileData.fastTranscripts = [];
         }
         audioFileData.fastTranscripts.push(entry);
+        snippet.lastFastSpeechAdmission =
+          result.admission.kind === "reused"
+            ? result.admission.origin
+            : result.admission;
         audioFileData.transcript = transcription;
         audioFileData.transcriptCorrespondence = copyCorrespondence(
           entry.correspondence,

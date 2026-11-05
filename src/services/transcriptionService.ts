@@ -1,5 +1,8 @@
 import { recordSpeechRejection } from "./recordingContentService";
-import { buildTranscriptionVoteCandidate } from "./transcriptionSelectionService";
+import {
+  buildTranscriptionVoteCandidate,
+  type GuardedTranscriptionCandidate,
+} from "./transcriptionSelectionService";
 import { liveTranscriptionInput } from "./liveTranscriptionInput";
 import {
   createTranscriptionFailureScope,
@@ -70,7 +73,14 @@ import type { TranscriptionContentInput } from "../types/transcriptionContent";
 export type { TranscriptionContentInput } from "../types/transcriptionContent";
 import { getMeetingModelOverrides } from "./meetingModelOverrides";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
-import { withPreparedTranscriptionInput } from "./transcriptionInputService";
+import {
+  speechAdmissionMetadata,
+  withPreparedTranscriptionInput,
+} from "./transcriptionInputService";
+import type {
+  SpeechAdmission,
+  SpeechAdmissionOrigin,
+} from "./speechDetectionTypes";
 import {
   DEFAULT_SPEECH_POLICY,
   speechCoverageMatches,
@@ -167,13 +177,13 @@ const resolveRateConfig = (meeting: TranscriptionContentInput) => {
 
 const resolveGuardConfig = (
   meeting: TranscriptionContentInput,
-  context?: TranscriptionTraceContext,
+  context: TranscriptionTraceContext,
 ): TranscriptionGuardConfig => {
   const rateConfig = resolveRateConfig(meeting);
   return {
     suppressionEnabled: resolveSuppressionEnabled(
       meeting,
-      context?.suppressionEnabledOverride,
+      context.suppressionEnabledOverride,
     ),
     promptEchoEnabled: resolvePromptEchoEnabled(meeting),
     hardSilenceDbfs: resolveHardSilenceDbfs(meeting),
@@ -237,12 +247,13 @@ type TranscriptionTraceContext = {
   suppressionEnabledOverride?: boolean;
   speechDetectionMode: SpeechDetectionMode;
   speechPhase: SpeechPhase;
+  speechAdmission: SpeechAdmission;
 };
 
 async function transcribeInternal(
   meeting: TranscriptionContentInput,
   file: string,
-  context: TranscriptionTraceContext | undefined,
+  context: TranscriptionTraceContext,
   queueWaitMs: number,
 ): Promise<string> {
   meeting.signal.throwIfAborted();
@@ -250,7 +261,7 @@ async function transcribeInternal(
   meeting.signal.throwIfAborted();
   const promptValue = prompt.trim();
   const resolvedPrompt = promptValue.length > 0 ? promptValue : undefined;
-  const passMode = context?.noiseGateMode ?? "slow";
+  const passMode = context.noiseGateMode ?? "slow";
   const voteEnabled = resolveTranscriptionVoteEnabled(meeting);
   const language = meetingTranscriptionLanguage(meeting.runtimeConfig);
 
@@ -263,11 +274,11 @@ async function transcribeInternal(
     guildId: meeting.guild.id,
     channelId: meeting.voiceChannel.id,
     meetingId: meeting.meetingId,
-    snippetUserId: context?.userId,
-    snippetTimestamp: context?.timestamp,
-    audioSeconds: context?.audioSeconds,
-    audioBytes: context?.audioBytes,
-    noiseGateEnabled: context?.noiseGateEnabled,
+    snippetUserId: context.userId,
+    snippetTimestamp: context.timestamp,
+    audioSeconds: context.audioSeconds,
+    audioBytes: context.audioBytes,
+    noiseGateEnabled: context.noiseGateEnabled,
     noiseGateMode: passMode,
     promptLength: resolvedPrompt?.length ?? 0,
     promptName: langfusePrompt?.name,
@@ -275,6 +286,7 @@ async function transcribeInternal(
     promptFallback: langfusePrompt?.isFallback ?? false,
     transcriptionVoteEnabled: voteEnabled,
     transcriptionLanguage: language,
+    ...speechAdmissionMetadata(context.speechAdmission),
   };
   const ledger = createTranscriptionAttemptLedger(traceMetadata.audioSeconds);
 
@@ -289,15 +301,13 @@ async function transcribeInternal(
       signal: meeting.signal,
       ledger,
       clientOptions,
-      onSdkInvocation: context
-        ? () =>
-            recordSpeechProviderSubmission({
-              mode: context.speechDetectionMode,
-              phase: context.speechPhase,
-              candidate,
-              audioSeconds: context.audioSeconds,
-            })
-        : undefined,
+      onSdkInvocation: () =>
+        recordSpeechProviderSubmission({
+          mode: context.speechDetectionMode,
+          phase: context.speechPhase,
+          candidate,
+          audioSeconds: context.audioSeconds,
+        }),
       observeGeneration: meeting.observeGeneration,
       generationOperation: `transcription-audio-${passMode}`,
       request: {
@@ -317,22 +327,6 @@ async function transcribeInternal(
   };
 
   const guardConfig = resolveGuardConfig(meeting, context);
-
-  type GuardedTranscriptionResult = {
-    candidateId: "prompt" | "no_prompt";
-    rawTextQuality: ReturnType<typeof getTranscriptionTextQuality>;
-    selectedTextQuality: ReturnType<typeof getTranscriptionTextQuality>;
-    guardResult: ReturnType<typeof applyTranscriptionGuards>;
-    transcriptStats: TranscriptStats;
-    suppressionEnabled: boolean;
-    promptEchoEnabled: boolean;
-    hardSilenceDbfs: number;
-    rateMaxSeconds: number;
-    rateMinWords: number;
-    rateMinSyllables: number;
-    maxSyllablesPerSecond: number;
-    usage?: Transcription["usage"];
-  };
 
   const toLogSafeTextQuality = (
     quality: ReturnType<typeof getTranscriptionTextQuality>,
@@ -355,14 +349,14 @@ async function transcribeInternal(
       id: "prompt" | "no_prompt";
       promptText?: string;
     },
-  ): Promise<GuardedTranscriptionResult> => {
+  ): Promise<GuardedTranscriptionCandidate> => {
     const rawTextQuality = getTranscriptionTextQuality(raw.text);
     const promptEchoEnabledForCandidate =
       guardConfig.promptEchoEnabled && Boolean(candidate.promptText);
 
     const transcriptStats = await buildTranscriptStats({
       transcript: raw.text,
-      audioSeconds: context?.audioSeconds,
+      audioSeconds: context.audioSeconds,
       traceMetadata,
     });
     const guardResult = applyTranscriptionGuards({
@@ -375,8 +369,8 @@ async function transcribeInternal(
       maxSyllablesPerSecond: guardConfig.maxSyllablesPerSecond,
       promptEchoEnabled: promptEchoEnabledForCandidate,
       promptText: candidate.promptText,
-      noiseGateMetrics: context?.noiseGateMetrics,
-      audioSeconds: context?.audioSeconds,
+      noiseGateMetrics: context.noiseGateMetrics,
+      audioSeconds: context.audioSeconds,
       transcriptWordCount: transcriptStats.transcriptWordCount,
       transcriptSyllableCount: transcriptStats.transcriptSyllableCount,
       logprobs: raw.logprobs,
@@ -411,7 +405,7 @@ async function transcribeInternal(
         logprobMetrics: guardResult.logprobMetrics,
         promptEchoDetected: guardResult.promptEchoDetected,
         promptEchoMetrics: guardResult.promptEchoMetrics,
-        noiseGateMetrics: context?.noiseGateMetrics,
+        noiseGateMetrics: context.noiseGateMetrics,
         rawTranscriptionLength: transcriptStats.transcriptCharCount,
         transcriptWordCount: transcriptStats.transcriptWordCount,
         transcriptSyllableCount: transcriptStats.transcriptSyllableCount,
@@ -441,11 +435,11 @@ async function transcribeInternal(
   };
 
   type TranscriptionSelection = {
-    selected: Omit<GuardedTranscriptionResult, "candidateId"> & {
+    selected: Omit<GuardedTranscriptionCandidate, "candidateId"> & {
       candidateId: TranscriptionVoteDecision["selectedId"];
     };
-    promptCandidate: GuardedTranscriptionResult;
-    noPromptCandidate?: GuardedTranscriptionResult;
+    promptCandidate: GuardedTranscriptionCandidate;
+    noPromptCandidate?: GuardedTranscriptionCandidate;
     voteGate: TranscriptionVoteGateResult;
     voteDecision?: TranscriptionVoteDecision;
   };
@@ -550,7 +544,7 @@ async function transcribeInternal(
   return await propagateAttributes(
     {
       traceName: "transcription",
-      userId: context?.userId,
+      userId: context.userId,
       tags: ["feature:transcription"],
       metadata: toLangfuseAttributeMetadata(traceMetadata),
     },
@@ -659,9 +653,9 @@ async function transcribeInternal(
                   promptEchoDetected: guardResult.promptEchoDetected,
                   promptEchoMetrics: guardResult.promptEchoMetrics,
                   rateMismatchDetected: guardResult.rateMismatchDetected,
-                  noiseGateEnabled: context?.noiseGateEnabled,
+                  noiseGateEnabled: context.noiseGateEnabled,
                   noiseGateMode: passMode,
-                  noiseGateMetrics: context?.noiseGateMetrics,
+                  noiseGateMetrics: context.noiseGateMetrics,
                   suppressed: guardResult.suppressed,
                   transcriptionVoteEnabled: voteEnabled,
                   transcriptionVoteGateReasons: selection.voteGate.reasons,
@@ -734,7 +728,7 @@ const langfuseAttachmentLimiter = new Bottleneck({
 async function transcribe(
   meeting: TranscriptionContentInput,
   file: string,
-  context?: TranscriptionTraceContext,
+  context: TranscriptionTraceContext,
 ): Promise<string> {
   const queuedAt = performance.now();
   const scope = createTranscriptionFailureScope();
@@ -845,7 +839,11 @@ export async function transcribeContentSnippet(
     noiseGateEnabledOverride?: boolean;
     suppressionEnabledOverride?: boolean;
     speechDetectionBypass?: boolean;
-    reuseTranscript?: { text: string; coverage: SpeechCoverage };
+    reuseTranscript?: {
+      text: string;
+      coverage: SpeechCoverage;
+      origin?: SpeechAdmissionOrigin;
+    };
   } = {},
 ): Promise<SnippetTranscriptionResult> {
   const startedAt = performance.now();
@@ -882,7 +880,11 @@ export async function transcribeContentSnippet(
       return {
         status: "succeeded",
         text: reuse.text,
-        admission: { kind: "reused", coverage: reuse.coverage },
+        admission: {
+          kind: "reused",
+          coverage: reuse.coverage,
+          origin: reuse.origin,
+        },
       };
     }
     return await withPreparedTranscriptionInput<SnippetTranscriptionResult>(
@@ -922,6 +924,7 @@ export async function transcribeContentSnippet(
           suppressionEnabledOverride: options.suppressionEnabledOverride,
           speechDetectionMode: mode,
           speechPhase: phase,
+          speechAdmission: admission,
         });
         outcome = "transcribed";
         return { status: "succeeded", text, admission };

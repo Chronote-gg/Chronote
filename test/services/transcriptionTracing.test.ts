@@ -66,6 +66,8 @@ function expectPreservedTrace(f: TracingFixture, vote: boolean) {
     metadata: {
       audioBytes: 192_000,
       audioSeconds: 1,
+      speechAdmissionKind: "not_enforced",
+      speechAdmissionReason: "off",
       audioAttachmentBytes: 12,
       audioAttachmentContentType: "audio/mpeg",
       promptLength: "Project Orion delivery terminology.".length,

@@ -1,5 +1,6 @@
 import type {
   SpeechAdmission,
+  SpeechAdmissionOrigin,
   SpeechCoverage,
 } from "../services/speechDetectionTypes";
 import type {
@@ -20,6 +21,7 @@ export interface AudioSnippet {
   fastTranscribed?: boolean;
   lastFastTranscriptBytes?: number;
   lastFastSpeechCoverage?: SpeechCoverage;
+  lastFastSpeechAdmission?: SpeechAdmissionOrigin;
   interjectionTriggered?: boolean;
   interjectionForced?: boolean;
 }
