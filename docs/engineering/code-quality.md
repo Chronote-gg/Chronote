@@ -80,7 +80,7 @@ Use Node 24.22.2 or a newer Node 24 release. CI reads the exact version from `.n
 
 ```powershell
 git clone https://github.com/BASIC-BIT/quality-ratchet.git D:/tools/quality-ratchet
-git -C D:/tools/quality-ratchet checkout --detach 84fa993cf93b9dedd4da19ecbad75bc8712d0874
+git -C D:/tools/quality-ratchet checkout --detach a0dfcca184fd83f0a23762f29353c7772c17906f
 Push-Location D:/tools/quality-ratchet
 npm ci --ignore-scripts --omit=dev --include=optional
 Pop-Location
