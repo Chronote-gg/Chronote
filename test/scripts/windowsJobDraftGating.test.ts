@@ -61,7 +61,7 @@ test("every Windows job in desktop-package.yml is gated on the PR not being a dr
 
 test("ci.yml gates Visual Regression and the Desktop Check input on the draft flag", () => {
   const ci = workflow("ci.yml");
-  expect(ci.jobs["visual-regression"]["runs-on"]).toBe(WINDOWS_RUNNER);
+  expect(ci.jobs["visual-regression"]["runs-on"]).toBe("windows-2025");
   expect(ci.jobs["visual-regression"].if).toContain(
     "github.event.pull_request.draft == false",
   );
