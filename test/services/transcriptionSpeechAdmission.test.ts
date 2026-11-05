@@ -14,6 +14,7 @@ import OpenAI from "openai";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type {
   SpeechAssessment,
+  SpeechAdmissionOrigin,
   SpeechDetector,
 } from "../../src/services/speechDetectionTypes";
 import {
@@ -27,9 +28,12 @@ import {
   type TranscriptionContentInput,
 } from "../../src/services/transcriptionService";
 import * as conversion from "../../src/services/transcriptionAudioService";
+import { runFastTranscription } from "../../src/services/audioSnippetService";
+import type { AudioSnippet } from "../../src/types/audio";
 
 let mockTempDir: string;
 let mockPrompt = "";
+let mockClientMetadata: Record<string, unknown> | undefined;
 const mockEnsureTemp = jest.fn(() => mockTempDir);
 const consumeFile = async (file: ReadStream) => {
   for await (const chunk of file) void chunk;
@@ -74,7 +78,10 @@ jest.mock("../../src/services/speechDetectionService", () => ({
 }));
 const mockOpenAIClient = { audio: { transcriptions: { create: mockCreate } } };
 jest.mock("../../src/services/openaiClient", () => ({
-  createOpenAIClient: () => mockOpenAIClient,
+  createOpenAIClient: (options: { metadata?: Record<string, unknown> }) => {
+    mockClientMetadata = options.metadata;
+    return mockOpenAIClient;
+  },
 }));
 jest.mock("../../src/services/transcriptionPromptService", () => ({
   getTranscriptionPrompt: async () => ({ prompt: mockPrompt }),
@@ -136,6 +143,7 @@ beforeEach(() => {
   mockAssess.mockReset().mockResolvedValue(assessment("non_speech"));
   mockCreate.mockReset().mockImplementation(providerSuccess);
   mockPrompt = "";
+  mockClientMetadata = undefined;
 });
 afterEach(() => {
   mockConvert.mockRestore();
@@ -230,6 +238,10 @@ test.each(["off", "shadow", "enforce"] as const)(
       admission: { kind: "not_enforced", reason: "forced" },
     });
     expect(mockGetDetector).not.toHaveBeenCalled();
+    expect(mockClientMetadata).toMatchObject({
+      speechAdmissionKind: "not_enforced",
+      speechAdmissionReason: "forced",
+    });
     expect(
       await metricTotal("provider_submissions_total", { mode, phase: "slow" }),
     ).toBe(1);
@@ -284,6 +296,15 @@ test.each(["speech", "uncertain", "unavailable"] as const)(
       status: "succeeded",
       admission: { kind: "assessed", assessment: { kind } },
     });
+    expect(mockClientMetadata).toMatchObject({
+      speechAdmissionKind: "assessed",
+      speechAssessmentKind: kind,
+      ...(kind === "unavailable" ? { speechUnavailableReason: "timeout" } : {}),
+    });
+    expect(mockClientMetadata).not.toHaveProperty("speechAssessment");
+    expect(mockClientMetadata).not.toHaveProperty("speechCoverage");
+    if (kind !== "unavailable")
+      expect(mockClientMetadata).not.toHaveProperty("speechUnavailableReason");
     expect(
       await metricTotal("provider_submissions_total", {
         mode: "enforce",
@@ -326,6 +347,11 @@ test("shadow submits ASR without waiting and late negatives only affect assessme
     admission: { kind: "not_enforced", reason: "shadow" },
   });
   expect(mockCreate).toHaveBeenCalledTimes(1);
+  expect(mockClientMetadata).toMatchObject({
+    speechAdmissionKind: "not_enforced",
+    speechAdmissionReason: "shadow",
+  });
+  expect(mockClientMetadata).not.toHaveProperty("speechAssessmentKind");
   expect(readdirSync(mockTempDir)).toEqual([]);
   // The worker may read its owned bytes after every input file has been removed.
   expect(Buffer.from(retainedWav!).subarray(0, 4).toString()).toBe("RIFF");
@@ -485,6 +511,29 @@ test("temporary directory failure records a terminal conversion outcome", async 
   await expectOutcome("off", "conversion_error");
 });
 
+test("accepted fast output retains the detector's unavailable origin", async () => {
+  const meeting = buildMeeting("enforce");
+  const received: AudioSnippet = { ...snippet };
+  meeting.audioData = {
+    currentSnippets: new Map([["test-user", received]]),
+    audioFiles: [],
+  };
+  mockAssess.mockResolvedValue({
+    kind: "unavailable",
+    reason: "queue_full",
+    policyFingerprint: DEFAULT_SPEECH_POLICY.policyFingerprint,
+  });
+  runFastTranscription(meeting, received);
+  const deadline = Date.now() + 2_000;
+  while (!received.fastTranscribed && Date.now() < deadline)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(received.audioFileData?.transcript).toBe("retained words");
+  expect(received.lastFastSpeechAdmission).toMatchObject({
+    kind: "assessed",
+    assessment: { kind: "unavailable", reason: "queue_full" },
+  });
+});
+
 // Exact proven coverage is the only enforcement shortcut; mismatches require full admission.
 test("reuses identical proven PCM and policy without conversion or a new assessment", async () => {
   const convert = jest.spyOn(conversion, "convertTranscriptionPcmToWav");
@@ -492,15 +541,20 @@ test("reuses identical proven PCM and policy without conversion or a new assessm
     pcm,
     DEFAULT_SPEECH_POLICY.policyFingerprint,
   );
+  const origin: SpeechAdmissionOrigin = {
+    kind: "assessed",
+    assessment: assessment("speech"),
+    coverage,
+  };
   try {
     expect(
       await transcribeSnippet(buildMeeting("enforce"), snippet, {
-        reuseTranscript: { text: "proven words", coverage },
+        reuseTranscript: { text: "proven words", coverage, origin },
       }),
     ).toEqual({
       status: "succeeded",
       text: "proven words",
-      admission: { kind: "reused", coverage },
+      admission: { kind: "reused", coverage, origin },
     });
     expect(convert).not.toHaveBeenCalled();
     expect(mockAssess).not.toHaveBeenCalled();
@@ -569,6 +623,7 @@ test.each([
 test.each(["off", "shadow", "enforce"] as const)(
   "%s owner-only fast finalization counts one reuse without a new SDK call or captured denominator",
   async (mode) => {
+    const log = jest.spyOn(console, "log");
     const meeting = buildMeeting(mode);
     const source = new PassThrough({ objectMode: true });
     Object.assign(meeting, {
@@ -597,6 +652,14 @@ test.each(["off", "shadow", "enforce"] as const)(
       pcm,
       DEFAULT_SPEECH_POLICY.policyFingerprint,
     );
+    received.lastFastSpeechAdmission =
+      mode === "enforce"
+        ? {
+            kind: "assessed",
+            assessment: assessment("speech"),
+            coverage: received.lastFastSpeechCoverage,
+          }
+        : { kind: "not_enforced", reason: mode };
     const file = {
       userId: "test-user",
       timestamp: received.timestamp,
@@ -625,8 +688,25 @@ test.each(["off", "shadow", "enforce"] as const)(
       );
       expect(await metricTotal("provider_submissions_total")).toBe(0);
       expect(await metricTotal("assessments_total")).toBe(0);
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Fast transcript covers snippet, skipping slow transcription:",
+        ),
+        mode === "enforce"
+          ? {
+              speechAdmissionKind: "reused",
+              speechAdmissionOriginKind: "assessed",
+              speechAssessmentKind: "speech",
+            }
+          : {
+              speechAdmissionKind: "reused",
+              speechAdmissionOriginKind: "not_enforced",
+              speechAdmissionReason: mode,
+            },
+      );
       await expectOutcome(mode, "reused");
     } finally {
+      log.mockRestore();
       unlinkSync(track.filePath);
       rmdirSync(path.dirname(track.filePath));
       meeting.finished = true;

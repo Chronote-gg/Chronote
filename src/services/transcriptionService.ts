@@ -70,7 +70,14 @@ import type { TranscriptionContentInput } from "../types/transcriptionContent";
 export type { TranscriptionContentInput } from "../types/transcriptionContent";
 import { getMeetingModelOverrides } from "./meetingModelOverrides";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
-import { withPreparedTranscriptionInput } from "./transcriptionInputService";
+import {
+  speechAdmissionMetadata,
+  withPreparedTranscriptionInput,
+} from "./transcriptionInputService";
+import type {
+  SpeechAdmission,
+  SpeechAdmissionOrigin,
+} from "./speechDetectionTypes";
 import {
   DEFAULT_SPEECH_POLICY,
   speechCoverageMatches,
@@ -237,6 +244,7 @@ type TranscriptionTraceContext = {
   suppressionEnabledOverride?: boolean;
   speechDetectionMode: SpeechDetectionMode;
   speechPhase: SpeechPhase;
+  speechAdmission?: SpeechAdmission;
 };
 
 async function transcribeInternal(
@@ -275,6 +283,7 @@ async function transcribeInternal(
     promptFallback: langfusePrompt?.isFallback ?? false,
     transcriptionVoteEnabled: voteEnabled,
     transcriptionLanguage: language,
+    ...speechAdmissionMetadata(context?.speechAdmission),
   };
   const ledger = createTranscriptionAttemptLedger(traceMetadata.audioSeconds);
 
@@ -845,7 +854,11 @@ export async function transcribeContentSnippet(
     noiseGateEnabledOverride?: boolean;
     suppressionEnabledOverride?: boolean;
     speechDetectionBypass?: boolean;
-    reuseTranscript?: { text: string; coverage: SpeechCoverage };
+    reuseTranscript?: {
+      text: string;
+      coverage: SpeechCoverage;
+      origin?: SpeechAdmissionOrigin;
+    };
   } = {},
 ): Promise<SnippetTranscriptionResult> {
   const startedAt = performance.now();
@@ -882,7 +895,11 @@ export async function transcribeContentSnippet(
       return {
         status: "succeeded",
         text: reuse.text,
-        admission: { kind: "reused", coverage: reuse.coverage },
+        admission: {
+          kind: "reused",
+          coverage: reuse.coverage,
+          ...(reuse.origin ? { origin: reuse.origin } : {}),
+        },
       };
     }
     return await withPreparedTranscriptionInput<SnippetTranscriptionResult>(
@@ -922,6 +939,7 @@ export async function transcribeContentSnippet(
           suppressionEnabledOverride: options.suppressionEnabledOverride,
           speechDetectionMode: mode,
           speechPhase: phase,
+          speechAdmission: admission,
         });
         outcome = "transcribed";
         return { status: "succeeded", text, admission };

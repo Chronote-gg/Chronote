@@ -14,6 +14,33 @@ import type {
   SpeechPhase,
 } from "./speechDetectionTypes";
 
+/** Only fixed admission enums belong in ASR metadata, never coverage or assessment payloads. */
+export function speechAdmissionMetadata(
+  admission: SpeechAdmission | undefined,
+  reused = false,
+) {
+  const origin = admission?.kind === "reused" ? admission.origin : admission;
+  return {
+    ...(reused || admission
+      ? { speechAdmissionKind: reused ? "reused" : admission?.kind }
+      : {}),
+    ...((reused || admission?.kind === "reused") && origin
+      ? { speechAdmissionOriginKind: origin.kind }
+      : {}),
+    ...(origin?.kind === "not_enforced"
+      ? { speechAdmissionReason: origin.reason }
+      : {}),
+    ...(origin?.kind === "assessed"
+      ? {
+          speechAssessmentKind: origin.assessment.kind,
+          ...(origin.assessment.kind === "unavailable"
+            ? { speechUnavailableReason: origin.assessment.reason }
+            : {}),
+        }
+      : {}),
+  };
+}
+
 export type TranscriptionInputRequest = {
   beginArtifactWrite?: ArtifactWriter;
   pcm: Buffer;

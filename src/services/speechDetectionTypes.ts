@@ -41,13 +41,20 @@ export type SpeechCoverage = {
   policyFingerprint: string;
 };
 
-export type SpeechAdmission =
-  | { kind: "reused"; coverage: SpeechCoverage }
+export type SpeechAdmissionOrigin =
   | { kind: "not_enforced"; reason: "off" | "forced" | "shadow" }
   | {
       kind: "assessed";
       assessment: SpeechAssessment;
       coverage: SpeechCoverage;
+    };
+
+export type SpeechAdmission =
+  | SpeechAdmissionOrigin
+  | {
+      kind: "reused";
+      coverage: SpeechCoverage;
+      origin?: SpeechAdmissionOrigin;
     };
 
 export interface SpeechDetector {
