@@ -330,7 +330,10 @@ export function startProcessingSnippet(
       : snippet.userId;
     console.log(
       `Fast transcript covers snippet, skipping slow transcription: guildId=${meeting.guildId} channelId=${meeting.channelId} meetingId=${meeting.meetingId} userId=${snippet.userId} speaker=${speakerLabel} duration=${duration.toFixed(2)}s bytes=${getAudioBytes(snippet)}`,
-      speechAdmissionMetadata(snippet.lastFastSpeechAdmission, true),
+      speechAdmissionMetadata({
+        kind: "reused",
+        origin: snippet.lastFastSpeechAdmission,
+      }),
     );
     audioFileData.transcriptionFailed = false;
     audioFileData.transcript = latestFastText;
