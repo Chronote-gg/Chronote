@@ -214,6 +214,33 @@ test("uppercase GitHub distribution variables reach the lowercase Terraform inpu
     docs_distribution_id: "EDOCS2",
   });
 });
+test.each(["true", "false"])(
+  "announcement delivery override %s reaches the lowercase input",
+  (value) => {
+    const values = run(
+      { ...valid, enable_announcement_delivery_table: value !== "true" },
+      { TFVAR_ENABLE_ANNOUNCEMENT_DELIVERY_TABLE: value },
+    );
+    expect(values.enable_announcement_delivery_table).toBe(value);
+    expect(values).not.toHaveProperty("ENABLE_ANNOUNCEMENT_DELIVERY_TABLE");
+  },
+);
+test.each([
+  {},
+  { TFVAR_ENABLE_ANNOUNCEMENT_DELIVERY_TABLE: "" },
+  { TFVAR_ENABLE_ANNOUNCEMENT_DELIVERY_TABLE: " \t\n" },
+])(
+  "missing or blank announcement delivery override preserves default-off behavior: %j",
+  (vars) => {
+    expect(run(valid, vars)).not.toHaveProperty(
+      "enable_announcement_delivery_table",
+    );
+    expect(
+      run({ ...valid, enable_announcement_delivery_table: false }, vars)
+        .enable_announcement_delivery_table,
+    ).toBe(false);
+  },
+);
 test("unselected scalar variables keep their exact suffix and string behavior", () => {
   expect(
     run(valid, { TFVAR_other_input: '["literal"]', TFVAR_OTHER_INPUT: "TRUE" }),
