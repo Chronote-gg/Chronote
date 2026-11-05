@@ -10,7 +10,7 @@ const entry = getConfigEntry(key);
 if (!entry) throw new Error("Attendee access config entry is missing");
 
 const meta = {
-  title: "Settings/Attendee access",
+  title: "Settings/Server configuration",
   component: ServerConfigCard,
   tags: ["attendee-access"],
   render: function AttendeeAccessSettings(args) {
@@ -64,6 +64,37 @@ export const ServerOptOut: Story = {
       canvas.getAllByRole("button", { name: "Save settings" })[0],
     );
     await expect(args.onSet).toHaveBeenCalledWith(key, false);
+    await expect(canvas.getByRole("radio", { name: /^Off$/ })).toBeChecked();
+  },
+};
+
+const noticesKey = CONFIG_KEYS.announcements.operatorNoticesEnabled;
+const noticesEntry = getConfigEntry(noticesKey);
+if (!noticesEntry) throw new Error("Operator notices config entry is missing");
+
+export const OperatorNotices: Story = {
+  args: {
+    registry: [noticesEntry],
+    snapshot: {
+      ...meta.args.snapshot,
+      values: {
+        [noticesKey]: {
+          key: noticesKey,
+          value: noticesEntry.defaultValue,
+          source: "default",
+        },
+      },
+    },
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("Chronote operator notices")).toBeVisible();
+    await expect(canvas.getByRole("radio", { name: /^On$/ })).toBeChecked();
+    await userEvent.click(canvas.getByRole("radio", { name: /^Off$/ }));
+    await userEvent.click(
+      canvas.getAllByRole("button", { name: "Save settings" })[0],
+    );
+    await expect(args.onSet).toHaveBeenCalledWith(noticesKey, false);
     await expect(canvas.getByRole("radio", { name: /^Off$/ })).toBeChecked();
   },
 };
