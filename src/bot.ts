@@ -6,6 +6,7 @@ import { InitiatingStopInterruption } from "./services/meetingStopInterruption";
 import { waitForGuildInstaller } from "./services/guildInstallerOnboardingService";
 import { randomUUID } from "node:crypto";
 import type { WorkAdmissionAuthority } from "./types/deploymentControl";
+import { endMeetingWithNotice } from "./botMeetingEnd";
 import {
   beginRuntimeWorkClaim,
   type RuntimeWorkClaim,
@@ -51,7 +52,6 @@ import { getGuildLimits } from "./services/subscriptionService";
 import { parseTags } from "./utils/tags";
 import {
   handleEndMeetingButton,
-  handleEndMeetingOther,
   persistAutoRecordSuppression,
 } from "./commands/endMeeting";
 import { subscribeToUserVoice, unsubscribeToVoiceUponLeaving } from "./audio";
@@ -910,16 +910,11 @@ async function handleBotVoiceUpdate(
       }
     }
     meeting.endReason = MEETING_END_REASONS.BOT_DISCONNECT;
-    const notice = await meeting.textChannel.send(
+    await endMeetingWithNotice(
+      client,
+      meeting,
       "Meeting ending because the bot was disconnected from the voice channel.",
     );
-    if (meeting.isAutoRecording) {
-      if (!meeting.messagesToDelete) {
-        meeting.messagesToDelete = [];
-      }
-      meeting.messagesToDelete.push(notice.id);
-    }
-    await handleEndMeetingOther(client, meeting);
   }
 }
 
@@ -1185,16 +1180,11 @@ async function handleUserLeave(oldState: VoiceState) {
       if (!meeting.endReason) {
         meeting.endReason = MEETING_END_REASONS.CHANNEL_EMPTY;
       }
-      const notice = await meeting.textChannel.send(
+      await endMeetingWithNotice(
+        client,
+        meeting,
         "Meeting ending due to nobody being left in the voice channel.",
       );
-      if (meeting.isAutoRecording) {
-        if (!meeting.messagesToDelete) {
-          meeting.messagesToDelete = [];
-        }
-        meeting.messagesToDelete.push(notice.id);
-      }
-      await handleEndMeetingOther(client, meeting);
     }
   }
 }

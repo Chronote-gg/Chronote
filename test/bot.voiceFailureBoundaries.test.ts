@@ -162,10 +162,10 @@ jest.mock("../src/services/configOverridesService", () => ({
   listConfigOverridesForScope: jest.fn(),
 }));
 
-function readBotFunction(name: string) {
+function readBotFunction(name: string, file = "bot.ts") {
   const source = ts.createSourceFile(
     "bot.ts",
-    readFileSync(path.join(__dirname, "../src/bot.ts"), "utf8"),
+    readFileSync(path.join(__dirname, "../src", file), "utf8"),
     ts.ScriptTarget.Latest,
     true,
   );
@@ -173,8 +173,216 @@ function readBotFunction(name: string) {
     (node) => ts.isFunctionDeclaration(node) && node.name?.text === name,
   );
   if (!declaration) throw new Error(`Missing production bot function: ${name}`);
-  return declaration.getText(source);
+  return declaration.getText(source).replace(/^export /, "");
 }
+
+function loadEndingNotice(
+  send: () => Promise<{ delete: () => Promise<void> }>,
+  autoRecording = false,
+) {
+  const finish = jest.fn().mockResolvedValue(undefined);
+  const warn = jest.fn();
+  const meeting = {
+    meetingId: "synthetic-meeting",
+    voiceChannel: { id: "synthetic-voice", members: new Collection() },
+    textChannel: { send },
+    isAutoRecording: autoRecording,
+    cancelled: false,
+    finished: false,
+    endReason: undefined,
+  };
+  finish.mockImplementation(async () => {
+    meeting.finished = true;
+  });
+  const context = vm.createContext({
+    client: { user: { id: "synthetic-bot" } },
+    getMeeting: () => meeting,
+    isMeetingCollectingEvents: () => true,
+    recordMeetingParticipantEvent: () => true,
+    unsubscribeToVoiceUponLeaving: jest.fn(),
+    persistAutoRecordSuppression: async () => true,
+    handleEndMeetingOther: finish,
+    MEETING_END_REASONS: {
+      BOT_DISCONNECT: "bot_disconnect",
+      CHANNEL_EMPTY: "channel_empty",
+    },
+    console: { log: jest.fn(), warn },
+  });
+  vm.runInContext(
+    ts.transpileModule(
+      [
+        readBotFunction("handleBotVoiceUpdate"),
+        readBotFunction("handleUserLeave"),
+        readBotFunction("endMeetingWithNotice", "botMeetingEnd.ts"),
+      ].join("\n"),
+      { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
+    ).outputText,
+    context,
+  );
+  const oldState = {
+    guild: { id: "synthetic-guild" },
+    channelId: "synthetic-voice",
+    member: { user: { id: "synthetic-user" } },
+  };
+  const run = (event: "leave" | "disconnect") =>
+    vm.runInContext(
+      event === "leave"
+        ? "handleUserLeave(oldState)"
+        : "handleBotVoiceUpdate(oldState, { channelId: null })",
+      Object.assign(context, { oldState }),
+    );
+  return { run, finish, meeting, warn };
+}
+
+describe.each(["leave", "disconnect"] as const)("%s end notice", (event) => {
+  test("a rejected notice cannot prevent finalization", async () => {
+    const { run, finish } = loadEndingNotice(async () => {
+      throw new Error("private transport details");
+    });
+    await run(event).catch(() => undefined);
+    expect(finish).toHaveBeenCalledTimes(1);
+  });
+
+  test("a notice that never settles cannot delay finalization", async () => {
+    const { run, finish } = loadEndingNotice(() => new Promise(() => {}));
+    let completed = false;
+    void run(event).then(() => {
+      completed = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(finish).toHaveBeenCalledTimes(1);
+    expect(completed).toBe(true);
+  });
+
+  test("a late auto-record notice is deleted after finalization", async () => {
+    let deliver:
+      ((message: { delete: () => Promise<void> }) => void) | undefined;
+    const send = new Promise<{ delete: () => Promise<void> }>((resolve) => {
+      deliver = resolve;
+    });
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const { run, finish, meeting } = loadEndingNotice(() => send, true);
+    finish.mockImplementation(async () => {
+      meeting.cancelled = true;
+      meeting.finished = true;
+    });
+    void run(event);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(finish).toHaveBeenCalledTimes(1);
+    if (!deliver) throw new Error("Missing synthetic transport resolver");
+    deliver({ delete: remove });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  test("a synchronous transport throw is contained and sanitized", async () => {
+    const { run, finish, warn } = loadEndingNotice(() => {
+      throw new Error("private transport details");
+    });
+    await run(event);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(finish).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls).toEqual([
+      ["Meeting end notice failed:", { stage: "send" }],
+    ]);
+  });
+
+  test("manual meeting notices remain visible", async () => {
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const { run, finish, meeting } = loadEndingNotice(async () => ({
+      delete: remove,
+    }));
+    await run(event);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(finish).toHaveBeenCalledWith(expect.anything(), meeting);
+    expect(meeting.endReason).toBe(
+      event === "leave" ? "channel_empty" : "bot_disconnect",
+    );
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  test("auto-record deletion failures cannot reject ending", async () => {
+    const { run, finish, warn, meeting } = loadEndingNotice(
+      async () => ({
+        delete: async () => {
+          throw new Error("private deletion details");
+        },
+      }),
+      true,
+    );
+    finish.mockImplementation(async () => {
+      meeting.cancelled = true;
+      meeting.finished = true;
+    });
+    await run(event);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(finish).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls).toEqual([
+      ["Meeting end notice failed:", { stage: "delete" }],
+    ]);
+  });
+
+  test("successful auto-record notices remain visible when not cancelled", async () => {
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const { run } = loadEndingNotice(async () => ({ delete: remove }), true);
+    await run(event);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  test("finalizer failure propagates without running success-only notice cleanup", async () => {
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const { run, finish } = loadEndingNotice(
+      async () => ({ delete: remove }),
+      true,
+    );
+    const failure = new Error("synthetic finalization failure");
+    finish.mockRejectedValue(failure);
+    await expect(run(event)).rejects.toBe(failure);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  test("a caught finalizer failure cannot delete a cancelled but unfinished notice", async () => {
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const { run, finish, meeting } = loadEndingNotice(
+      async () => ({ delete: remove }),
+      true,
+    );
+    finish.mockImplementation(async () => {
+      meeting.cancelled = true;
+    });
+    await run(event);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(meeting.finished).toBe(false);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  test("an early cancellation notice is deleted only after finalization completes", async () => {
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const { run, finish, meeting } = loadEndingNotice(
+      async () => ({ delete: remove }),
+      true,
+    );
+    let complete: (() => void) | undefined;
+    finish.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const ending = run(event);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(remove).not.toHaveBeenCalled();
+    meeting.cancelled = true;
+    meeting.finished = true;
+    if (!complete) throw new Error("Missing synthetic finalization resolver");
+    complete();
+    await ending;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+});
 
 async function runAutoRecordJoin(options: {
   voiceDestination?: string;
