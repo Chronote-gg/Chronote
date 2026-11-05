@@ -149,6 +149,42 @@ resource "aws_dynamodb_table" "config_overrides_table" {
   }
 }
 
+# Operator announcement sends, written only by scripts/announce.ts.
+# Keep enable_announcement_delivery_table off until both bootstrap Terraform
+# roles allow, on this table's ARN, CreateTable, UpdateContinuousBackups and
+# TagResource/UntagResource, plus the DynamoDB KMS encryption context for its
+# name. Sandbox also needs it in table_suffixes, so TableMetadata covers it.
+resource "aws_dynamodb_table" "announcement_delivery_table" {
+  count        = var.enable_announcement_delivery_table ? 1 : 0
+  name         = "${local.name_prefix}-AnnouncementDeliveryTable"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "announcementId"
+  range_key    = "guildId"
+
+  attribute {
+    name = "announcementId"
+    type = "S"
+  }
+
+  attribute {
+    name = "guildId"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.app_general.arn
+  }
+
+  tags = {
+    Name = "AnnouncementDeliveryTable"
+  }
+}
+
 output "appconfig_application_id" {
   value = aws_appconfig_application.chronote_config.id
 }

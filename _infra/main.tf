@@ -258,6 +258,12 @@ variable "HOSTED_ZONE_NAME" {
   default     = ""
 }
 
+variable "enable_announcement_delivery_table" {
+  description = "Provision AnnouncementDeliveryTable for operator announcements. Enabling it first needs a reviewed bootstrap change: CreateTable, UpdateContinuousBackups and TagResource/UntagResource on this table's ARN, plus the DynamoDB KMS encryption context for its name, and in Sandbox an entry in table_suffixes."
+  type        = bool
+  default     = false
+}
+
 variable "ENABLE_PROCESSING_RETRY_INDEX" {
   description = "Provision the processing retry index; does not enable runtime retries. Disable only when the index is confirmed absent."
   type        = bool

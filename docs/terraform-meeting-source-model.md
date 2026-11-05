@@ -297,6 +297,43 @@ hashed file that differs from master. The method was validated by reproducing
 both parents' committed values from their own trees before the new one was
 trusted.
 
+### Announcement delivery table audit (2026-11-04)
+
+The operator-announcement change adds `aws_dynamodb_table.announcement_delivery_table`
+in `config.tf` and the boolean `enable_announcement_delivery_table` in `main.tf`,
+default `false`, with no validation block. The table is counted by that variable
+and has no lifecycle check. It reads `local.name_prefix` and the general KMS key
+ARN. No closure table, DynamoDB access policy, KMS key or KMS key policy reads
+the new table or the variable, and neither appears in `tables` or `excludedChecks`.
+
+With the flag off the table has no instances. The change adds no check identity
+and no planned change, so the meeting closure, the site graph, the excluded
+checks, the typed retry-index gate and the installed-provider requirements are
+unchanged. The source pin was refreshed only for these two declared edits.
+
+That refresh was superseded by the merge with master's weekly provider audit
+(the AWS lock from 6.70.0 to 6.71.0), the ephemeral storage alarm, the alarm
+coverage and the artifact-preservation plan scope changes. The pin is recomputed over the merged
+inventory: master's 25 files with this audit's `config.tf` and `main.tf` edits
+applied, the only hashed files that differ from master. Both parents' committed
+values were reproduced from their own trees before the new one was trusted. A
+later wording fix to the enablement comment in `config.tf` and the variable
+description in `main.tf` moved the pin again, by the same method.
+
+Enabling the flag is a separate reviewed change. The production bootstrap
+Terraform role's inline policy allows `dynamodb:CreateTable` only on the
+deployment control table, and the DynamoDB KMS encryption context only for the
+control and subscription table names. Of its attached policies, only
+processing-retry adds that context, for MeetingHistory alone; the site-delivery
+policy grants only CloudFront actions, and the artifact-preservation and
+alerting-delivery policies grant no DynamoDB or KMS action. The Sandbox role
+allows neither. Both roles first need `dynamodb:CreateTable`,
+`UpdateContinuousBackups` and `TagResource`/`UntagResource` on this table's ARN,
+plus the DynamoDB KMS encryption context for its name. Sandbox also needs the
+table in the bootstrap `table_suffixes`, so its `TableMetadata` read grant
+covers it; production's `TableMetadata` already covers every
+`meeting-notes-prod-*` table. This audit permits no plan, Apply or deployment.
+
 ### Recomputing the pin
 
 `node scripts/deployment/recompute-source-model.cjs [ref]` prints the pin for a

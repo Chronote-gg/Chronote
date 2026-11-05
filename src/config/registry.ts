@@ -628,6 +628,20 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "text", placeholder: "project x, roadmap, weekly" },
   },
   {
+    key: "announcements.operatorNotices.enabled",
+    label: "Chronote operator notices",
+    description:
+      "Let Chronote post occasional service notices, such as incident updates, in this server.",
+    category: "Notes",
+    group: "Recommended",
+    valueType: "boolean",
+    defaultValue: true,
+    scopes: {
+      server: scope(true, false, "admin", "toggle"),
+    },
+    ui: { type: "toggle" },
+  },
+  {
     key: "meetings.sharing.policy",
     label: "Meeting sharing policy",
     description:

@@ -22,6 +22,7 @@ import {
   createFirstPublicationTransport,
   DiscordMessageHttpError,
 } from "./discordMessageEditor";
+import { permissionOverwritesSchema } from "./discordRestSchemas";
 import { inspectFirstPublicationRuntime } from "./firstPublicationRuntime";
 import {
   publicationProfileSchema,
@@ -99,16 +100,7 @@ export async function connectFirstPublication(
     id: z.string(),
     guild_id: z.string(),
     type: z.number(),
-    permission_overwrites: z
-      .array(
-        z.object({
-          id: z.string(),
-          type: z.number(),
-          allow: z.string(),
-          deny: z.string(),
-        }),
-      )
-      .default([]),
+    permission_overwrites: permissionOverwritesSchema.default([]),
   });
   const memberSchema = z.object({
     roles: z.array(z.string()),

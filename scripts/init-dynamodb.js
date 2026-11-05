@@ -209,6 +209,18 @@ const tables = [
     BillingMode: "PAY_PER_REQUEST",
   },
   {
+    TableName: "AnnouncementDeliveryTable",
+    KeySchema: [
+      { AttributeName: "announcementId", KeyType: "HASH" },
+      { AttributeName: "guildId", KeyType: "RANGE" },
+    ],
+    AttributeDefinitions: [
+      { AttributeName: "announcementId", AttributeType: "S" },
+      { AttributeName: "guildId", AttributeType: "S" },
+    ],
+    BillingMode: "PAY_PER_REQUEST",
+  },
+  {
     TableName: "ConfigOverridesTable",
     KeySchema: [
       { AttributeName: "scopeId", KeyType: "HASH" },
