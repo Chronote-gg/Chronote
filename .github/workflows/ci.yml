@@ -73,11 +73,9 @@ jobs:
   visual-regression:
     name: Visual Regression
     needs: [pr-changes]
-    # Single most expensive job in the repository: Windows minutes bill at twice
-    # Linux and this is the longest Windows job, so a draft skips it and picks
-    # it up on ready_for_review.
+    # Keep the Windows visual baselines and run this check when a draft is ready.
     if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.pr-changes.result != 'success' || needs.pr-changes.outputs.visual == 'true') }}
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-2025
     permissions:
       contents: write
       pull-requests: write
