@@ -2,16 +2,21 @@
 import * as artifactTypes from "../../src/types/artifactSafety";
 import * as artifactBuilders from "../../src/services/artifactSafetyTransactions";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+import type { TransactWriteItemsCommandInput } from "@aws-sdk/client-dynamodb";
 import { artifactSafetyFixture } from "./fixtures/artifactSafetyFixture";
 import { attestation } from "./fixtures/legacyArtifactFixture";
 import { createArtifactHandoff } from "../../scripts/deployment/artifact-handoff.cjs";
 
-function fixture(now = () => 120) {
+function fixture(
+  now = () => 120,
+  beforeWrite: (input: TransactWriteItemsCommandInput) => void = () => {},
+) {
   const f = artifactSafetyFixture();
   let row: artifactTypes.ArtifactSafetyRecord | undefined = f.expected;
   const aws = jest.fn(async (_service, operation, input) => {
     if (operation === "get-item")
       return { Item: row ? marshall(row) : undefined };
+    beforeWrite(input);
     row = artifactTypes.artifactSafetyRecordSchema.parse(
       unmarshall(input.TransactItems[0].Put.Item),
     );
@@ -81,26 +86,24 @@ function idle(f: ReturnType<typeof fixture>) {
 }
 
 test("request retries a heartbeat conflict without adding history checks", async () => {
-  const f = fixture();
-  f.setRow(idle(f));
-  const original = f.aws.getMockImplementation()!;
   let writes = 0;
-  f.aws.mockImplementation(async (service, operation, input) => {
-    if (operation !== "transact-write-items")
-      return original(service, operation, input);
-    expect(input.TransactItems).toHaveLength(3);
-    if (++writes === 1) {
-      const row = f.getRow()!;
-      f.setRow({
-        ...row,
-        revision: row.revision + 1,
-        heartbeatAt: 120,
-        freshUntil: 180,
-      });
-      throw new Error("TransactionCanceledException");
-    }
-    return original(service, operation, input);
-  });
+  const f = fixture(
+    () => 120,
+    (input) => {
+      expect(input.TransactItems).toHaveLength(3);
+      if (++writes === 1) {
+        const row = f.getRow()!;
+        f.setRow({
+          ...row,
+          revision: row.revision + 1,
+          heartbeatAt: 120,
+          freshUntil: 180,
+        });
+        throw new Error("TransactionCanceledException");
+      }
+    },
+  );
+  f.setRow(idle(f));
   // Stop after the real request path, before the runtime's separate drain/seal.
   await expect(f.helper.prepare(f.ctl)).rejects.toThrow("unexpected wait");
   expect(writes).toBe(2);
@@ -134,25 +137,24 @@ test("an idle unrequested preparation can cancel without changing the artifact r
 test.each(["unchanged", "startup", "exhausted"])(
   "request refuses a conflict that is %s",
   async (change) => {
-    const f = fixture();
-    f.setRow(idle(f));
-    const original = f.aws.getMockImplementation()!;
     let writes = 0;
-    f.aws.mockImplementation(async (service, operation, input) => {
-      if (operation !== "transact-write-items")
-        return original(service, operation, input);
-      writes++;
-      const row = f.getRow()!;
-      if (change !== "unchanged")
-        f.setRow({
-          ...row,
-          revision: row.revision + 1,
-          ...(change === "startup"
-            ? { startup: { kind: "active", activatedAt: 91 } }
-            : {}),
-        });
-      throw new Error("conflict");
-    });
+    const f = fixture(
+      () => 120,
+      () => {
+        writes++;
+        const row = f.getRow()!;
+        if (change !== "unchanged")
+          f.setRow({
+            ...row,
+            revision: row.revision + 1,
+            ...(change === "startup"
+              ? { startup: { kind: "active", activatedAt: 91 } }
+              : {}),
+          });
+        throw new Error("conflict");
+      },
+    );
+    f.setRow(idle(f));
     await expect(f.helper.prepare(f.ctl)).rejects.toThrow("conflict");
     expect(writes).toBe(change === "exhausted" ? 3 : 1);
     expect(f.getRow()?.state).toBe("idle");
