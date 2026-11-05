@@ -162,10 +162,10 @@ jest.mock("../src/services/configOverridesService", () => ({
   listConfigOverridesForScope: jest.fn(),
 }));
 
-function readBotFunction(name: string) {
+function readBotFunction(name: string, file = "bot.ts") {
   const source = ts.createSourceFile(
     "bot.ts",
-    readFileSync(path.join(__dirname, "../src/bot.ts"), "utf8"),
+    readFileSync(path.join(__dirname, "../src", file), "utf8"),
     ts.ScriptTarget.Latest,
     true,
   );
@@ -173,7 +173,7 @@ function readBotFunction(name: string) {
     (node) => ts.isFunctionDeclaration(node) && node.name?.text === name,
   );
   if (!declaration) throw new Error(`Missing production bot function: ${name}`);
-  return declaration.getText(source);
+  return declaration.getText(source).replace(/^export /, "");
 }
 
 function loadEndingNotice(
@@ -208,15 +208,15 @@ function loadEndingNotice(
     },
     console: { log: jest.fn(), warn },
   });
-  const source = readFileSync(path.join(__dirname, "../src/bot.ts"), "utf8");
-  const names = ["handleBotVoiceUpdate", "handleUserLeave"];
-  if (source.includes("function endMeetingWithNotice(")) {
-    names.push("endMeetingWithNotice");
-  }
   vm.runInContext(
-    ts.transpileModule(names.map(readBotFunction).join("\n"), {
-      compilerOptions: { target: ts.ScriptTarget.ES2022 },
-    }).outputText,
+    ts.transpileModule(
+      [
+        readBotFunction("handleBotVoiceUpdate"),
+        readBotFunction("handleUserLeave"),
+        readBotFunction("endMeetingWithNotice", "botMeetingEnd.ts"),
+      ].join("\n"),
+      { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
+    ).outputText,
     context,
   );
   const oldState = {
