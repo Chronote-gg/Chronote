@@ -6,6 +6,7 @@ import { InitiatingStopInterruption } from "./services/meetingStopInterruption";
 import { waitForGuildInstaller } from "./services/guildInstallerOnboardingService";
 import { randomUUID } from "node:crypto";
 import type { WorkAdmissionAuthority } from "./types/deploymentControl";
+import type { MeetingData } from "./types/meeting-data";
 import {
   beginRuntimeWorkClaim,
   type RuntimeWorkClaim,
@@ -910,16 +911,29 @@ async function handleBotVoiceUpdate(
       }
     }
     meeting.endReason = MEETING_END_REASONS.BOT_DISCONNECT;
-    const notice = await meeting.textChannel.send(
+    await endMeetingWithNotice(
+      meeting,
       "Meeting ending because the bot was disconnected from the voice channel.",
     );
-    if (meeting.isAutoRecording) {
-      if (!meeting.messagesToDelete) {
-        meeting.messagesToDelete = [];
-      }
-      meeting.messagesToDelete.push(notice.id);
-    }
-    await handleEndMeetingOther(client, meeting);
+  }
+}
+
+async function endMeetingWithNotice(meeting: MeetingData, content: string) {
+  // Informational Discord delivery must never hold finalization or voice release open.
+  const notice = Promise.resolve()
+    .then(() => meeting.textChannel.send(content))
+    .catch(() => {
+      console.warn("Meeting end notice failed:", { stage: "send" });
+    });
+  await handleEndMeetingOther(client, meeting);
+  if (meeting.isAutoRecording && meeting.cancelled && meeting.finished) {
+    void notice
+      .then(async (message) => {
+        if (message) await message.delete();
+      })
+      .catch(() => {
+        console.warn("Meeting end notice failed:", { stage: "delete" });
+      });
   }
 }
 
@@ -1185,16 +1199,10 @@ async function handleUserLeave(oldState: VoiceState) {
       if (!meeting.endReason) {
         meeting.endReason = MEETING_END_REASONS.CHANNEL_EMPTY;
       }
-      const notice = await meeting.textChannel.send(
+      await endMeetingWithNotice(
+        meeting,
         "Meeting ending due to nobody being left in the voice channel.",
       );
-      if (meeting.isAutoRecording) {
-        if (!meeting.messagesToDelete) {
-          meeting.messagesToDelete = [];
-        }
-        meeting.messagesToDelete.push(notice.id);
-      }
-      await handleEndMeetingOther(client, meeting);
     }
   }
 }
