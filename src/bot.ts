@@ -7,6 +7,7 @@ import { waitForGuildInstaller } from "./services/guildInstallerOnboardingServic
 import { randomUUID } from "node:crypto";
 import type { WorkAdmissionAuthority } from "./types/deploymentControl";
 import { endMeetingWithNotice } from "./botMeetingEnd";
+import { RuntimeAdmissionUnavailable } from "./services/runtimeAdmissionError";
 import {
   beginRuntimeWorkClaim,
   type RuntimeWorkClaim,
@@ -848,21 +849,14 @@ async function recordSuppressionVoiceState(
   );
   let work: RuntimeWorkClaim;
   try {
-    work = beginRuntimeWorkClaim(
-      "control",
-      randomUUID(),
-      local
-        ? {
-            guildId: local.reservation.guildId,
-            meetingId: local.reservation.meetingId,
-          }
-        : undefined,
-    );
+    work = beginRuntimeWorkClaim("control", randomUUID(), local?.reservation);
   } catch {
     return;
   }
+  let suppressionStarted = false;
   try {
     const authority = await work.authority();
+    suppressionStarted = true;
     await work.trackPromise(() =>
       autoRecordJoinSuppressionService.clearIfEmpty({
         guildId: oldState.guild.id,
@@ -875,7 +869,9 @@ async function recordSuppressionVoiceState(
       }),
     );
   } catch (error) {
-    work.fence();
+    // A known refusal before suppression issued no artifact-producing work.
+    if (suppressionStarted || !(error instanceof RuntimeAdmissionUnavailable))
+      work.fence();
     throw error;
   } finally {
     await work.settle();

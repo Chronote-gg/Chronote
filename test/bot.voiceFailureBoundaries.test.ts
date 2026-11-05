@@ -11,6 +11,21 @@ import { EventEmitter } from "node:events";
 import vm from "node:vm";
 import ts from "typescript";
 import { createCommandRegistrationContext } from "./fixtures/botCommandRegistration";
+import { createArtifactAdmissionGate } from "../src/services/artifactAdmissionGate";
+import { RuntimeAdmissionUnavailable } from "../src/services/runtimeAdmissionError";
+import { beginRuntimeWorkClaim } from "../src/services/runtimeWorkAdmissionService";
+import * as runtimeLifecycle from "../src/services/runtimeLifecycleService";
+import { context as admissionContext } from "./deployment/controlFixtures";
+
+jest.mock("../src/services/runtimeLifecycleService", () => ({
+  beginRuntimeWork: jest.fn(),
+  getRuntimeAdmissionContext: jest.fn(),
+}));
+jest.mock("../src/services/activeMeetingLeaseService", () => ({
+  getOwnedSessionReservations: () => [],
+  getReservationSignal: () => new AbortController().signal,
+  isReservationControlEligible: () => true,
+}));
 
 // Execute the production registrations without starting Discord or importing cloud clients.
 function loadVoiceBoundary(rejectSubscription: () => Promise<void>) {
@@ -175,6 +190,77 @@ function readBotFunction(name: string, file = "bot.ts") {
   if (!declaration) throw new Error(`Missing production bot function: ${name}`);
   return declaration.getText(source).replace(/^export /, "");
 }
+
+test.each([
+  { stage: "authority", knownRefusal: true, shouldDrain: true },
+  { stage: "authority", knownRefusal: false, shouldDrain: false },
+  { stage: "suppression", knownRefusal: true, shouldDrain: false },
+  { stage: "suppression", knownRefusal: false, shouldDrain: false },
+])(
+  "suppression admission drains only a known pre-operation refusal: $stage/$knownRefusal",
+  async ({ stage, knownRefusal, shouldDrain }) => {
+    const gate = createArtifactAdmissionGate();
+    jest.mocked(runtimeLifecycle.beginRuntimeWork).mockImplementation(() => {
+      const ticket = gate.begin();
+      return {
+        settle: () => ticket.settle(),
+        transition: jest.fn(),
+        beginOwnedControl: () => {
+          throw new Error("Synthetic test has no owned session");
+        },
+      };
+    });
+    const error = knownRefusal
+      ? new RuntimeAdmissionUnavailable("Synthetic admission closed")
+      : new Error("Synthetic outcome unknown");
+    const authority = jest.mocked(runtimeLifecycle.getRuntimeAdmissionContext);
+    if (stage === "authority") authority.mockRejectedValue(error);
+    else authority.mockResolvedValue(admissionContext);
+    const clearIfEmpty = jest.fn().mockRejectedValue(error);
+    const channel = { isVoiceBased: () => true };
+    const sandbox = vm.createContext({
+      beginRuntimeWorkClaim,
+      RuntimeAdmissionUnavailable,
+      getOwnedSessionReservations: () => [],
+      randomUUID: () => `synthetic-${stage}-${knownRefusal}`,
+      autoRecordJoinSuppressionService: { clearIfEmpty },
+      oldState: {
+        channelId: "synthetic-voice",
+        guild: {
+          id: "synthetic-guild",
+          channels: { cache: new Map([["synthetic-voice", channel]]) },
+        },
+      },
+      newState: { channelId: null },
+    });
+    vm.runInContext(
+      ts.transpileModule(readBotFunction("recordSuppressionVoiceState"), {
+        compilerOptions: { target: ts.ScriptTarget.ES2022 },
+      }).outputText,
+      sandbox,
+    );
+    await expect(
+      vm.runInContext(
+        "recordSuppressionVoiceState(oldState, newState)",
+        sandbox,
+      ),
+    ).rejects.toBe(error);
+    expect(clearIfEmpty).toHaveBeenCalledTimes(stage === "authority" ? 0 : 1);
+    const controller = new AbortController();
+    let drained = false;
+    const drain = gate.seal(controller.signal).then(
+      () => {
+        drained = true;
+      },
+      () => {},
+    );
+    await Promise.resolve();
+    controller.abort();
+    await drain;
+    expect(drained).toBe(shouldDrain);
+    expect(gate.active).toBe(shouldDrain ? 0 : 1);
+  },
+);
 
 function loadEndingNotice(
   send: () => Promise<{ delete: () => Promise<void> }>,
