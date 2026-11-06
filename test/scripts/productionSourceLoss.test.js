@@ -1,6 +1,9 @@
 /** @jest-environment node */
 import { test, expect, jest } from "@jest/globals";
-import { productionSourceLossPacket } from "../deployment/fixtures/productionSourceLossPacket";
+import {
+  productionSourceLossPacket,
+  syntheticStopEventEvidence,
+} from "../deployment/fixtures/productionSourceLossPacket";
 import { awsCli } from "../../scripts/deployment/coordinator-aws.cjs";
 jest.mock("../../scripts/deployment/coordinator-aws.cjs", () => ({
   ...jest.requireActual("../../scripts/deployment/coordinator-aws.cjs"),
@@ -246,23 +249,7 @@ async function eventFixture() {
     message: "(service service) has stopped 1 running tasks: (task old).",
   };
   f.svc.events = [event];
-  const projection = {
-    serviceArn: f.svc.serviceArn,
-    clusterArn: f.svc.clusterArn,
-    ...event,
-  };
-  f.packet.eventEvidence = {
-    kind: "ecs_service_stop_event",
-    eventId: event.id,
-    eventBodySha256: bindingHash(projection),
-    eventCaptureSha256: "c".repeat(64),
-    inspectionReceiptSha256: "d".repeat(64),
-    historicalPacketCanonicalHash: "e".repeat(64),
-    historicalInspectionBindingSha256: "b".repeat(64),
-    historicalExecutorCommit: "d19b4fe09885f1f3c65816f89454d2c9e49ed0ff",
-    inspectionWindowStart: new Date(950000).toISOString(),
-    inspectionWindowEnd: new Date(970000).toISOString(),
-  };
+  f.packet.eventEvidence = syntheticStopEventEvidence(f.svc, event);
   f.options.packet = f.packet;
   return { ...f, event };
 }

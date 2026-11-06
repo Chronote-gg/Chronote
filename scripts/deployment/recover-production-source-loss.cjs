@@ -35,21 +35,37 @@ async function recoverProduction(options = {}) {
 async function recoverEventProduction(options = {}) {
   return recoverProductionEntry(options, true);
 }
+async function closeoutProduction(options = {}) {
+  return recoverProductionEntry(options, true, true);
+}
 const eventPacketSchema = packetSchema
   .extend({ eventEvidence: eventEvidenceSchema })
   .strict();
-async function recoverProductionEntry(options, eventMode) {
-  const packet = (eventMode ? eventPacketSchema : packetSchema).parse(
-      options.packet,
-    ),
+const closeoutPacketSchema = eventPacketSchema
+  .extend({
+    closeout: require("./historical-closeout-state.cjs").closeoutManifestSchema,
+  })
+  .strict();
+async function recoverProductionEntry(options, eventMode, closeout = false) {
+  const packet = (
+      closeout
+        ? closeoutPacketSchema
+        : eventMode
+          ? eventPacketSchema
+          : packetSchema
+    ).parse(options.packet),
     p = packet.operation,
     d = p.deployment;
   const env = { ...(options.env ?? process.env) };
   assert(
     !Object.keys(env).some((k) => k.startsWith("AWS_ENDPOINT_URL") && env[k]),
   );
-  assert(["inspect", "apply"].includes(options.mode));
-  if (options.mode === "apply")
+  assert(
+    ["inspect", "apply", ...(closeout ? ["observe"] : [])].includes(
+      options.mode,
+    ),
+  );
+  if (options.mode === "apply" || options.mode === "observe")
     assert.equal(bindingHash(packet), options.packetSha256);
   const rawAws =
     options.aws ??
@@ -72,7 +88,13 @@ async function recoverProductionEntry(options, eventMode) {
     );
   }
   async function aws(service, operation, input) {
-    if (service === "dynamodb" && operation === "transact-write-items") {
+    if (closeout) {
+      require("./historical-closeout-state.cjs").assertCloseoutOperation(
+        service,
+        operation,
+        options.mode,
+      );
+    } else if (service === "dynamodb" && operation === "transact-write-items") {
       assert.equal(options.mode, "apply");
       input = {
         ...input,
@@ -130,6 +152,13 @@ async function recoverProductionEntry(options, eventMode) {
     DEPLOYMENT_TARGET_GROUP_B: d.routing.candidateGroup,
     SOURCE_LOSS_BINDING_SHA256: options.bindingSha256,
   });
+  if (closeout)
+    return require("./historical-closeout.cjs").historicalCloseout({
+      ...options,
+      packet,
+      env,
+      aws,
+    });
   return recoverSourceLoss({
     ...options,
     env,
@@ -158,6 +187,8 @@ module.exports = {
   recoverEventProduction,
   packetSchema,
   eventPacketSchema,
+  closeoutPacketSchema,
+  closeoutProduction,
 };
 if (require.main === module) {
   const fs = require("node:fs"),
@@ -166,10 +197,19 @@ if (require.main === module) {
     process.argv.slice(2);
   runRecoveryCli(
     async () => {
+      const closeout = [
+        "inspect-closeout",
+        "apply-closeout",
+        "observe-closeout",
+      ].includes(mode);
       const eventMode = ["inspect-event", "apply-event"].includes(mode);
-      const packet = (eventMode ? eventPacketSchema : packetSchema).parse(
-        JSON.parse(fs.readFileSync(file, "utf8")),
-      );
+      const packet = (
+        closeout
+          ? closeoutPacketSchema
+          : eventMode
+            ? eventPacketSchema
+            : packetSchema
+      ).parse(JSON.parse(fs.readFileSync(file, "utf8")));
       assert.equal(
         execFileSync("git", ["rev-parse", "HEAD"], {
           encoding: "utf8",
@@ -180,9 +220,19 @@ if (require.main === module) {
       execFileSync("git", ["diff", "--quiet", "HEAD", "--"], {
         windowsHide: true,
       });
-      const recover = eventMode ? recoverEventProduction : recoverProduction;
+      const recover = closeout
+        ? closeoutProduction
+        : eventMode
+          ? recoverEventProduction
+          : recoverProduction;
       const action =
-        { "inspect-event": "inspect", "apply-event": "apply" }[mode] ?? mode;
+        {
+          "inspect-event": "inspect",
+          "apply-event": "apply",
+          "inspect-closeout": "inspect",
+          "apply-closeout": "apply",
+          "observe-closeout": "observe",
+        }[mode] ?? mode;
       return recover({ mode: action, packet, packetSha256, bindingSha256 });
     },
     mode,

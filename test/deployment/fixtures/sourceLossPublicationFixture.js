@@ -393,6 +393,7 @@ export async function qualifiedFixture({
     fault,
     counts,
     addPublicationHold,
+    refreshActualRuntime,
     inspect: async () => {
       const r = await recoverProduction({ ...options, mode: "inspect" });
       options.packetSha256 = bindingHash(packet);

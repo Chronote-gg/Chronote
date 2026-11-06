@@ -314,6 +314,12 @@ These source safeguards do not generalize an operator's actor identity, historic
 
 The separately approved [historical carryforward contract](sandbox-carryforward.md) can archive an availability-restored incident without settling it and hand Control to a new normal protected deployment. Ordinary preparation retains its refusal of unrelated unfinished operations.
 
+## Historical availability handoff closeout
+
+The guarded production source-loss entry also has a distinct historical closeout purpose. It requires a separately approved exact packet, fresh terminal-event/native/routing proofs, active selected-runtime artifact admission and an exclusive writer window. One conditioned transaction writes an immutable closeout receipt, rotates the expired coordinator token and completes the old availability handoff. It preserves the serving epoch/generation, runtime rows, recovery receipt, all source work counters and unresolved claims. Completion records availability only, with settlement still pending.
+
+All four publication fields, including absence, are bound across inspection, the transaction and readback. An existing transition uses the original pre-admission membership image set. Closeout neither reserves a new transition nor clears pins. An exclusive, flushed private submission journal prevents repeating a request after an unknown response. Observe-only mode validates that journal against the approved packet and inspection digest before comparing exact stored outcomes. Retain writer exclusion while any outcome is uncertain. This source path has no ECS, routing, protection or customer-data write operation; offline qualification does not approve a live closeout or the next deployment.
+
 ## Production introduction workflow status
 
 The manual `production-introduction.yml` is source-staged and operationally blocked. It defaults to inspection, binds one exact proposal with read-only identity evidence, and validates the late private envelope before refusing at `Post-bind human authority unavailable; preserve state`. It shares uncancelled production deployment concurrency. A collector alone cannot unlock execution.
