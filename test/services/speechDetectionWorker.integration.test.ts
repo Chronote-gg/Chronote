@@ -20,6 +20,32 @@ import { z } from "zod";
 import { DEFAULT_SPEECH_POLICY } from "../../src/services/speechDetectionPolicy";
 
 const root = path.resolve(__dirname, "../..");
+function waitForProcessExit(pid: number, timeoutMs: number) {
+  return spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `const fs=require('node:fs');
+const pid=Number(process.argv[1]);const start=Date.now();
+const timer=setInterval(()=>{
+  try{process.kill(pid,0)}catch{clearInterval(timer);process.exit(0)}
+  if(process.platform==='linux'){
+    // An exited zombie remains visible to kill(pid, 0) until its new parent reaps it.
+    try{
+      if(/^State:\\s+Z\\b/m.test(fs.readFileSync('/proc/'+pid+'/status','utf8'))){clearInterval(timer);process.exit(0)}
+    }catch(error){
+      if(error.code==='ENOENT'){clearInterval(timer);process.exit(0)}
+      throw error;
+    }
+  }
+  if(Date.now()-start>Number(process.argv[2])){clearInterval(timer);process.exit(1)}
+},50)`,
+      String(pid),
+      String(timeoutMs),
+    ],
+    { encoding: "utf8", timeout: timeoutMs + 2000 },
+  );
+}
 const silence = path.join(
   root,
   "test/fixtures/speech-detection/tune-silence.wav",
@@ -375,6 +401,12 @@ it("settles shutdown when child spawning fails before an exit event", () => {
   expect(JSON.parse(result.stdout)).toEqual({ warm: false, shutdown: true });
 }, 10000);
 
+it("does not consider a live process exited after five seconds", () => {
+  const start = Date.now();
+  expect(waitForProcessExit(process.pid, 5000).status).toBe(1);
+  expect(Date.now() - start).toBeGreaterThanOrEqual(5000);
+});
+
 it(
   "releases the real child after its owner process is killed",
   () =>
@@ -399,15 +431,7 @@ it(
       );
       expect(owner.status).not.toBe(0);
       const pid = Number(readFileSync(marker, "utf8"));
-      const check = spawnSync(
-        process.execPath,
-        [
-          "-e",
-          `const pid=Number(process.argv[1]);const start=Date.now();const timer=setInterval(()=>{try{process.kill(pid,0)}catch{clearInterval(timer);process.exit(0)}if(Date.now()-start>5000){clearInterval(timer);process.exit(1)}},50)`,
-          String(pid),
-        ],
-        { encoding: "utf8", timeout: 7000 },
-      );
+      const check = waitForProcessExit(pid, 5000);
       if (check.status !== 0)
         try {
           process.kill(pid, "SIGKILL");
@@ -459,15 +483,7 @@ it.each(["initializing", "inference"])(
       );
       expect(result.status).not.toBe(0);
       const pid = Number(readFileSync(marker, "utf8"));
-      const check = spawnSync(
-        process.execPath,
-        [
-          "-e",
-          `const pid=Number(process.argv[1]);const start=Date.now();const timer=setInterval(()=>{try{process.kill(pid,0)}catch{clearInterval(timer);process.exit(0)}if(Date.now()-start>3000){clearInterval(timer);process.exit(1)}},50)`,
-          String(pid),
-        ],
-        { timeout: 5000 },
-      );
+      const check = waitForProcessExit(pid, 3000);
       if (check.status !== 0)
         try {
           process.kill(pid, "SIGKILL");

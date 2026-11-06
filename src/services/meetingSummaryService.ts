@@ -1,3 +1,5 @@
+import { startObservation } from "@langfuse/tracing";
+import { isLangfuseTracingEnabled } from "./langfuseClient";
 import { compileSavedChatPrompt } from "./savedRecordingPrompt";
 import type { MeetingNotesInput } from "../types/meeting-data";
 import { config } from "./configService";
@@ -176,7 +178,21 @@ export async function generateMeetingSummaries(
       },
     });
     input.signal?.throwIfAborted();
-    return parseMeetingSummaryResponse(content) ?? {};
+    const summaries = parseMeetingSummaryResponse(content) ?? {};
+    try {
+      if (
+        isLangfuseTracingEnabled() &&
+        (summaries.summarySentence || summaries.summaryLabel)
+      )
+        startObservation(
+          "meeting-summary-final-artifact",
+          { input: messages, output: summaries },
+          { asType: "span", parentSpanContext: input.parentSpanContext },
+        ).end();
+    } catch {
+      console.warn("Final summary telemetry unavailable");
+    }
+    return summaries;
   } catch (error) {
     input.signal?.throwIfAborted();
     console.error("Failed to generate meeting summaries:", error);
