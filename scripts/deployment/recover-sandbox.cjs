@@ -14,6 +14,9 @@ const {
 } = require("./source-loss-inspection.cjs");
 const { inspectObligations } = require("./source-loss-obligations.cjs");
 const {
+  createSourceLossPublication,
+} = require("./source-loss-publication.cjs");
+const {
   controlUpdate,
   receiptWrite,
   initialReceipt,
@@ -32,6 +35,16 @@ async function recoverSandbox(options = {}) {
   const aws = options.aws ?? awsCli;
   const actor = await aws("sts", "get-caller-identity", {});
   assertSandboxIdentity(actor, env);
+  return recoverSourceLoss({
+    ...options,
+    env,
+    aws,
+    actor,
+    inspectionPolicy: undefined,
+  });
+}
+async function recoverSourceLoss(options) {
+  const { env, aws, actor } = options;
   const types =
     options.types ?? require("../../dist/types/deploymentControl.js");
   const builders =
@@ -50,6 +63,20 @@ async function recoverSandbox(options = {}) {
   const original = types.controlRecordSchema.parse(unmarshall(response.Item));
   (options.validateScope ?? assertSandboxScope)(env, original);
   const d = original.deployment;
+  const publication = createSourceLossPublication(
+    original,
+    options.publicationReleases ??
+      require("../operator/recovery-publication-releases.json"),
+  );
+  const recoveryBinding = (control, candidate, terminal) => ({
+    ...sourceLossBinding(
+      control,
+      candidate,
+      terminal,
+      options.inspectionPolicy?.kind,
+    ),
+    publication: publication.binding(control),
+  });
   const config = configuration({
     ...env,
     DEPLOYMENT_RUN_TOKEN: d.runToken,
@@ -63,6 +90,7 @@ async function recoverSandbox(options = {}) {
     types,
     now,
     terminalProof: options.terminalProof,
+    policy: options.inspectionPolicy,
   });
   const observed = await inspector.inspect();
   assert.equal(
@@ -77,7 +105,7 @@ async function recoverSandbox(options = {}) {
     source: d.outgoing,
     now,
   });
-  const binding = sourceLossBinding(
+  const binding = recoveryBinding(
     observed.control,
     observed.candidateIdentity,
     observed.terminal,
@@ -91,12 +119,15 @@ async function recoverSandbox(options = {}) {
   const fresh = await inspector.inspect();
   assert.equal(
     bindingHash(
-      sourceLossBinding(fresh.control, fresh.candidateIdentity, fresh.terminal),
+      recoveryBinding(fresh.control, fresh.candidateIdentity, fresh.terminal),
     ),
     hash,
   );
   let ctl = fresh.control;
   const candidate = fresh.candidateIdentity;
+  const preservation = options.inspectionPolicy
+    ? await inspector.preservationChecks(ctl, candidate)
+    : [];
   const admittedAt = now();
   let receipt = initialReceipt({
     d,
@@ -108,7 +139,7 @@ async function recoverSandbox(options = {}) {
     metadataAudit: obligations,
   });
   let next = {
-    ...ctl,
+    ...publication.admitted(ctl),
     coordinatorExpiresAt: admittedAt + 180,
     servingGeneration: ctl.servingGeneration + 1,
     servingMembers: { [candidate.instanceId]: candidate },
@@ -123,6 +154,17 @@ async function recoverSandbox(options = {}) {
       updatedAt: admittedAt,
     },
   };
+  const transaction = promotion({
+    builders,
+    table,
+    ctl,
+    next,
+    candidate,
+    receipt,
+    now: admittedAt,
+  });
+  transaction.TransactItems.push(...preservation);
+  publication.fence(transaction.TransactItems[0].Update, ctl, next);
   ctl = await writeState({
     aws,
     table,
@@ -130,18 +172,12 @@ async function recoverSandbox(options = {}) {
     types,
     next,
     receipt,
-    transaction: promotion({
-      builders,
-      table,
-      ctl,
-      next,
-      candidate,
-      receipt,
-      now: admittedAt,
-    }),
+    transaction,
+    publication,
   });
   async function readAuthority(expected) {
     const current = await inspector.control();
+    publication.assertCurrent(current, expected);
     assert.deepEqual(await inspector.read(receipt.pk, receipt.sk), receipt);
     const row = await inspector.runtime(candidate);
     for (const key of [
@@ -217,7 +253,13 @@ async function recoverSandbox(options = {}) {
       receipt: updated,
       transaction: {
         TransactItems: [
-          controlUpdate(table, previous, next),
+          {
+            Update: publication.fence(
+              controlUpdate(table, previous, next).Update,
+              previous,
+              next,
+            ),
+          },
           receiptWrite(table, receipt, updated),
           candidateCheck({
             builders,
@@ -229,6 +271,7 @@ async function recoverSandbox(options = {}) {
           }),
         ],
       },
+      publication,
     });
     receipt = updated;
     return result;
@@ -265,7 +308,7 @@ function runRecoveryCli(recover, mode, failureKind) {
       process.exitCode = 1;
     });
 }
-module.exports = { recoverSandbox, runRecoveryCli };
+module.exports = { recoverSandbox, recoverSourceLoss, runRecoveryCli };
 if (require.main === module)
   runRecoveryCli(
     recoverSandbox,
