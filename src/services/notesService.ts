@@ -35,10 +35,7 @@ export async function getNotes(meeting: MeetingNotesInput): Promise<string> {
       startObservation(
         "notes-final-artifact",
         { input: messages, output: sanitizedNotes },
-        {
-          asType: "span",
-          parentSpanContext: meeting.langfuseParentSpanContext,
-        },
+        { parentSpanContext: meeting.langfuseParentSpanContext },
       ).end();
   } catch {
     console.warn("Final notes telemetry unavailable");

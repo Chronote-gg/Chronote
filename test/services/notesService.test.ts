@@ -1,3 +1,4 @@
+import { completedTextResponse } from "../../src/testSupport/openaiResponse";
 import { describe, expect, test, jest } from "@jest/globals";
 import type { MeetingData } from "../../src/types/meeting-data";
 
@@ -85,28 +86,54 @@ test("final notes telemetry emits one sanitized artifact after continuation", as
       output_text: "First part. ",
       output: [],
     })
-    .mockResolvedValueOnce({
-      status: "completed",
-      output_text: "Last part. <@299999999999999999>",
-      output: [],
-    });
+    .mockResolvedValueOnce(
+      completedTextResponse("Last part. <@299999999999999999>"),
+    );
   jest.doMock("../../src/services/openaiClient", () => ({
     createOpenAIClient: () => ({ responses: { create } }),
     buildOpenAISafetyIdentifier: () => "synthetic",
   }));
-  const { module, startObservation, end } = await loadModule("", true);
+  const fixture = await loadModule("", true);
+  const { module, startObservation, end } = fixture;
   expect(await module.getNotes(buildMeeting())).toBe("First part. Last part. ");
-  expect(create).toHaveBeenCalledTimes(2);
-  expect(startObservation).toHaveBeenCalledTimes(1);
   expect(startObservation).toHaveBeenCalledWith(
     "notes-final-artifact",
     {
       input: [{ role: "system", content: "prompt" }],
       output: "First part. Last part. ",
     },
-    { asType: "span", parentSpanContext: undefined },
+    { parentSpanContext: undefined },
   );
-  expect(end).toHaveBeenCalledTimes(1);
+  jest.doMock("../../src/services/langfusePromptService", () => ({
+    getLangfuseChatPrompt: fixture.getNotesPrompt,
+  }));
+  const { generateMeetingSummaries } =
+    await import("../../src/services/meetingSummaryService");
+  const parent = {
+    traceId: "1".repeat(32),
+    spanId: "2".repeat(16),
+    traceFlags: 1,
+  };
+  create.mockResolvedValueOnce(
+    completedTextResponse('{"summarySentence":" S ","summaryLabel":" L "}'),
+  );
+  await generateMeetingSummaries({
+    notes: "notes",
+    serverName: "server",
+    channelName: "channel",
+    recentMeetingNames: "",
+    parentSpanContext: parent,
+  });
+  expect(startObservation).toHaveBeenCalledTimes(2);
+  expect(startObservation).toHaveBeenLastCalledWith(
+    "meeting-summary-final-artifact",
+    {
+      input: [{ role: "system", content: "prompt" }],
+      output: { summarySentence: "S", summaryLabel: "L" },
+    },
+    { asType: "span", parentSpanContext: parent },
+  );
+  expect(end).toHaveBeenCalledTimes(2);
 });
 
 test("telemetry failure preserves finalized notes", async () => {
