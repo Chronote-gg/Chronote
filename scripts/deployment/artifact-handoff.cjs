@@ -305,11 +305,14 @@ function createArtifactHandoff(options) {
     if (
       row.state !== "idle" ||
       row.startup.kind !== "sealed" ||
-      row.freshUntil <= now() ||
-      row.startup.proof.provenAt > now() ||
-      row.startup.proof.expiresAt <= now() + 20
+      row.startup.proof.provenAt > now()
     )
       refuse("Candidate startup preservation proof is unavailable");
+    if (row.freshUntil <= now() || row.startup.proof.expiresAt <= now() + 20)
+      throw new CoordinatorFailure(
+        "candidate_preservation_pending",
+        "Candidate startup preservation proof must refresh before promotion",
+      );
     return row;
   }
   function condition(row, proof) {
