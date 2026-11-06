@@ -1,5 +1,6 @@
 import type { MeetingHistory } from "../types/db";
 import { listMeetingsForGuildInRangeService } from "./meetingHistoryService";
+import { getGrantUsageResetAt } from "./entitlementUsageService";
 
 const ROLLING_WINDOW_DAYS = 7;
 const ROLLING_WINDOW_MS = ROLLING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
@@ -74,7 +75,11 @@ export async function getRollingUsageForGuild(
   now = new Date(),
 ): Promise<RollingUsageWindow> {
   const windowEndMs = now.getTime();
-  const windowStartMs = windowEndMs - ROLLING_WINDOW_MS;
+  const resetAt = await getGrantUsageResetAt(guildId, now);
+  const windowStartMs = Math.max(
+    windowEndMs - ROLLING_WINDOW_MS,
+    resetAt ?? -Infinity,
+  );
   const windowStartIso = new Date(windowStartMs).toISOString();
   const windowEndIso = new Date(windowEndMs).toISOString();
   const meetings = await listMeetingsForGuildInRangeService(
