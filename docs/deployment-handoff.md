@@ -306,7 +306,19 @@ Restoring standalone writes requires a separately reviewed admitted executor. Do
 
 A separately approved stopped-source operation uses [Sandbox source-loss recovery](sandbox-source-loss.md). It restores the existing candidate's admission and routing while preserving pending settlement. Healthy-source continuation and normal retirement still require their original evidence.
 
+Stopped-source inspection also binds the current publication protocol, compatible-image authority, pins and transition, together with the reviewed release/image evidence. Recovery reuses the ordinary publication compatibility decision. Known-compatible images can retain pins; unqualified images require no unresolved pins. An existing transition must name the exact recovery run and image set.
+
+For an enrolled publication protocol and unqualified images, admission reserves the exact transition in the same Control update that grants the next generation. That update conditions all inspected publication fields, including their absence. Routing-state writes and lost-acknowledgment observation preserve the same publication authority. A change before admission refuses the transaction. A change or unavailable readback after admission preserves its committed generation and recovery receipt and holds routing. Recovery never clears pins, replaces another transition, rolls back admission or retries an uncertain listener send to get past the hold.
+
+These source safeguards do not generalize an operator's actor identity, historical terminal-evidence packet or release authority. Local DynamoDB/runtime tests use synthetic provider effects and do not establish native-role or live-provider acceptance.
+
 The separately approved [historical carryforward contract](sandbox-carryforward.md) can archive an availability-restored incident without settling it and hand Control to a new normal protected deployment. Ordinary preparation retains its refusal of unrelated unfinished operations.
+
+## Historical availability handoff closeout
+
+The guarded production source-loss entry also has a distinct historical closeout purpose. It requires a separately approved exact packet, fresh terminal-event/native/routing proofs, active selected-runtime artifact admission and an exclusive writer window. One conditioned transaction writes an immutable closeout receipt, rotates the expired coordinator token and completes the old availability handoff. It preserves the serving epoch/generation, runtime rows, recovery receipt, all source work counters and unresolved claims. Completion records availability only, with settlement still pending.
+
+All four publication fields, including absence, are bound across inspection, the transaction and readback. An existing transition uses the original pre-admission membership image set. Closeout neither reserves a new transition nor clears pins. An exclusive, flushed private submission journal prevents repeating a request after an unknown response. Observe-only mode validates that journal against the approved packet and inspection digest before comparing exact stored outcomes. Retain writer exclusion while any outcome is uncertain. This source path has no ECS, routing, protection or customer-data write operation; offline qualification does not approve a live closeout or the next deployment.
 
 ## Production introduction workflow status
 

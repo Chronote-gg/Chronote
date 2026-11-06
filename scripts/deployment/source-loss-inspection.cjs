@@ -16,6 +16,7 @@ function createSourceLossInspection({
   types,
   now,
   terminalProof,
+  policy,
 }) {
   const table = config.tablePrefix + "DeploymentControlTable";
   const read = async (pk, sk) => {
@@ -99,8 +100,12 @@ function createSourceLossInspection({
       assert.ok(entries.length <= 1);
       flags[name] = entries[0]?.value ?? "";
     }
-    assert.equal(flags.STRIPE_MODE, "test");
-    for (const name of names.slice(1, 4)) assert.notEqual(flags[name], "true");
+    if (policy) assert.deepEqual(flags, policy.billingFlags);
+    else {
+      assert.equal(flags.STRIPE_MODE, "test");
+      for (const name of names.slice(1, 4))
+        assert.notEqual(flags[name], "true");
+    }
     return flags;
   }
   async function native(ctl, candidate) {
@@ -114,6 +119,7 @@ function createSourceLossInspection({
     assert.equal(response.services?.length, 1);
     const svc = response.services[0];
     assert.equal(svc.serviceName, config.service);
+    terminalProof?.validateService?.(svc);
     assert.equal(svc.desiredCount, 1);
     assert.equal(svc.runningCount, 1);
     assert.equal(svc.pendingCount, 0);
@@ -153,9 +159,12 @@ function createSourceLossInspection({
       "image",
     ])
       assert.equal(d[key], config[key]);
-    assert.equal(d.phase, "warming");
+    assert.equal(d.phase, policy ? "promoting" : "warming");
     assert.equal(d.routing?.state, "source");
-    assert.equal(d.candidate, undefined);
+    if (policy) {
+      assert.deepEqual(d.candidate, policy.operation.candidateIdentity);
+      assert.deepEqual(continuationBinding(ctl, d.candidate), policy.operation);
+    } else assert.equal(d.candidate, undefined);
     assert.equal(ctl.servingGeneration, d.originalGeneration);
     assert.deepEqual(Object.values(ctl.servingMembers), [d.outgoing]);
     assert.deepEqual(d.originalMembers, [d.outgoing]);
@@ -208,15 +217,40 @@ function createSourceLossInspection({
     );
     assert.ok(_expiresAt > now() + 120);
     await routing.assertAction(d.routing, false);
+    if (policy) await preservationChecks(ctl, warm.identity);
     return { control: ctl, candidateIdentity: warm.identity, terminal };
   }
-  return { read, control, runtime, proof, routing, native, inspect };
-}
-function sourceLossBinding(control, candidateIdentity, terminal) {
+  async function preservationChecks(ctl, candidate) {
+    const artifacts = require("./artifact-handoff.cjs").createArtifactHandoff({
+      aws,
+      tables: {
+        deploymentControl: table,
+        meetingHistory: config.tablePrefix + "MeetingHistoryTable",
+      },
+      now,
+      runtime,
+      control,
+    });
+    return artifacts.promotionChecks(ctl, candidate);
+  }
   return {
-    kind: terminal.terminalProof
-      ? "sandbox_retained_source_loss"
-      : "sandbox_source_loss",
+    read,
+    control,
+    runtime,
+    proof,
+    routing,
+    native,
+    inspect,
+    preservationChecks,
+  };
+}
+function sourceLossBinding(control, candidateIdentity, terminal, kind) {
+  return {
+    kind:
+      kind ??
+      (terminal.terminalProof
+        ? "sandbox_retained_source_loss"
+        : "sandbox_source_loss"),
     ...continuationBinding(control, candidateIdentity),
     terminal,
   };

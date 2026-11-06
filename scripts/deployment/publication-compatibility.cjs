@@ -1,5 +1,25 @@
 "use strict";
 const { marshall } = require("@aws-sdk/util-dynamodb");
+function compatiblePublicationImages(images, releases) {
+  return Boolean(
+    releases?.contract === "first_publication_archive_fence_v1" &&
+    images.length &&
+    images.every((image) =>
+      releases.images.includes(image.replace(/^.*@/, "")),
+    ),
+  );
+}
+function publicationImages(control, image) {
+  return [
+    image,
+    ...Object.values(control.servingMembers).map(
+      (member) => member.imageDigest,
+    ),
+    ...(control.deployment?.originalMembers ?? []).map(
+      (member) => member.imageDigest,
+    ),
+  ];
+}
 async function reservePublicationCompatibility({
   aws,
   table,
@@ -8,12 +28,7 @@ async function reservePublicationCompatibility({
   runToken,
   releases,
 }) {
-  const known =
-    releases?.contract === "first_publication_archive_fence_v1" &&
-    images.length &&
-    images.every((image) =>
-      releases.images.includes(image.replace(/^.*@/, "")),
-    );
+  const known = compatiblePublicationImages(images, releases);
   if (known) return;
   if (Object.keys(control.publicationPins ?? {}).length)
     throw Error("Unresolved publication excludes incompatible deployment");
@@ -47,6 +62,8 @@ async function reservePublicationCompatibility({
   });
 }
 module.exports = { reservePublicationCompatibility };
+module.exports.compatiblePublicationImages = compatiblePublicationImages;
+module.exports.publicationImages = publicationImages;
 
 function publicationDeployment({
   control,
@@ -63,11 +80,7 @@ function publicationDeployment({
     const releases =
       options.publicationReleases ??
       require("../operator/recovery-publication-releases.json");
-    const images = [
-      config.image,
-      ...Object.values(ctl.servingMembers).map((m) => m.imageDigest),
-      ...(ctl.deployment?.originalMembers ?? []).map((m) => m.imageDigest),
-    ];
+    const images = publicationImages(ctl, config.image);
     await reservePublicationCompatibility({
       aws: callAws,
       table: tables.deploymentControl,
