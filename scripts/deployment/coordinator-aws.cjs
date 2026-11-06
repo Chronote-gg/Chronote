@@ -52,6 +52,24 @@ async function awsCli(service, operation, input, options = {}) {
   }
   return response;
 }
+function conditionalTransactionRefused(error) {
+  let reasons;
+  if (
+    error?.name === "TransactionCanceledException" &&
+    Array.isArray(error.CancellationReasons)
+  )
+    reasons = error.CancellationReasons.map((reason) => reason?.Code);
+  else if (typeof error?.stderr === "string") {
+    const match = error.stderr.match(
+      /\(TransactionCanceledException\) when calling the TransactWriteItems operation: Transaction cancelled, please refer cancellation reasons for specific reasons \[([A-Za-z, ]+)\]/,
+    );
+    reasons = match?.[1].split(/,\s*/);
+  }
+  return (
+    reasons?.includes("ConditionalCheckFailed") &&
+    reasons.every((code) => ["None", "ConditionalCheckFailed"].includes(code))
+  );
+}
 function createAwsCaller(executeAws, diagnostic) {
   return async function callAws(service, operation, input) {
     const name = `${service}.${operation}`;
@@ -60,6 +78,15 @@ function createAwsCaller(executeAws, diagnostic) {
       return await executeAws(service, operation, input);
     } catch (error) {
       if (error instanceof CoordinatorFailure) throw error;
+      if (
+        name === "dynamodb.transact-write-items" &&
+        conditionalTransactionRefused(error)
+      )
+        throw new CoordinatorFailure(
+          "control_store_condition_failed",
+          "Conditional control transaction refused",
+          name,
+        );
       const categories = {
         "ecs.validate-update-service": "cli_capability_unsupported",
         "ecs.get-task-protection": "native_protection_unconfirmed",

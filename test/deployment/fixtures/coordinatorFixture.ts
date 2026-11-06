@@ -498,6 +498,11 @@ export function fixture() {
         : dynamo(operation, input);
     },
   );
+  function advanceTime(seconds: number) {
+    time += seconds;
+    refreshProofs();
+    state.onSleep();
+  }
   const options = {
     env,
     aws,
@@ -509,9 +514,7 @@ export function fixture() {
     s3: (name: string, input: unknown) => state.s3(name, input),
     now: () => time,
     sleep: async () => {
-      time += 1000;
-      refreshProofs();
-      state.onSleep();
+      advanceTime(1000);
     },
   };
   const coordinator = createCoordinator(options);
@@ -523,6 +526,7 @@ export function fixture() {
     definition,
     refreshProofs,
     refreshArtifactProofs,
+    advanceTime,
     options,
     svc,
   };

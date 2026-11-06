@@ -18,7 +18,6 @@ const {
   listServiceTaskArns,
 } = require("./coordinator-aws.cjs");
 const {
-  WARMUP_SECONDS,
   RETIREMENT_SECONDS,
   LEASE_SECONDS,
   RENEWAL_MARGIN_SECONDS,
@@ -625,93 +624,26 @@ function createCoordinator(options = {}) {
       );
     return observed;
   }
-  function assertExpectedCandidate(warm) {
-    if (
-      options.expectedCandidate &&
-      !same(warm.identity, options.expectedCandidate)
-    )
-      throw new CoordinatorFailure(
-        "continuation_refused",
-        "Reviewed candidate changed",
-      );
-  }
-  async function promote() {
-    await assertWriter();
-    await assertAcknowledged("launch");
-    const deadline = now() + WARMUP_SECONDS;
-    while (now() <= deadline) {
-      let ctl = await renew(await control());
-      const d = ctl.deployment;
-      if (["promoted", "retiring", "complete"].includes(d.phase))
-        return { kind: d.phase };
-      if (!["warming", "promoting"].includes(d.phase))
-        throw new CoordinatorFailure(
-          "invalid_phase",
-          "Prepare must precede promotion",
-        );
-      const svc = await service();
-      if (
-        svc.taskDefinition !== d.taskDefinition ||
-        !isDeepStrictEqual(svc.deploymentConfiguration?.earlySuccessCriteria, {
-          enable: true,
-          healthyPercent: 100,
-          sourceServiceRevisionCleanup: "DEFERRED",
-        })
-      )
-        throw new CoordinatorFailure(
-          "configuration_invalid",
-          "Candidate service configuration is not confirmed",
-        );
-      const retained = d.originalMembers.filter(
-        (member) => member.instanceId !== d.outgoing.instanceId,
-      );
-      if (
-        d.candidate &&
-        promotionObserved(ctl, d.candidate, d.originalGeneration + 1, retained)
-      ) {
-        await completePromotion(ctl, d.candidate);
-        return { kind: "promoted", recovered: true };
-      }
-      const warm = await candidate(ctl);
-      if (warm) {
-        assertExpectedCandidate(warm);
-        await protectedTask(d.outgoing);
-        await protectedTask(warm.identity);
-        const revision = await routing.validate(ctl, svc, warm.identity);
-        if (d.routing) await routing.assertAction(d.routing, false);
-        ctl = await phase(ctl, "promoting", {
-          candidate: warm.identity,
-          ...(d.routing
-            ? { routing: { ...d.routing, candidateRevision: revision } }
-            : {}),
-        });
-        const promotion = {
-          coordinatorToken: config.runToken,
-          coordinatorEpoch: ctl.coordinatorEpoch,
-          expectedServingGeneration: d.originalGeneration,
-          expectedServingMembers: d.originalMembers,
-          candidate: warm.identity,
-          candidateRuntimeMode: d.runtimeMode,
-          retainedMembers: retained,
-          proposedGeneration: d.originalGeneration + 1,
-          now: now(),
-        };
-        ctl = await artifacts.promote(
-          ctl,
-          promotion,
-          retained,
-          transactPromotion,
-        );
-        await completePromotion(ctl, warm.identity);
-        return { kind: "promoted" };
-      }
-      await sleep(10000);
-    }
-    throw new CoordinatorFailure(
-      "application_not_ready",
-      "Candidate readiness timeout; old admission retained, protected tasks preserved (check DEPLOYMENT_BLOCKED)",
-    );
-  }
+  const promote = require("./promotion.cjs").createPromotion({
+    config,
+    now,
+    sleep,
+    control,
+    renew,
+    service,
+    candidate,
+    completePromotion,
+    promotionObserved,
+    protectedTask,
+    routing,
+    phase,
+    artifacts,
+    transactPromotion,
+    assertWriter,
+    assertAcknowledged,
+    same,
+    expectedCandidate: options.expectedCandidate,
+  });
   async function writeRetirement(ctl, row, request, identity) {
     if (production) {
       await assertWriter();
