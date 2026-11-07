@@ -90,14 +90,15 @@ export function getMeetingProcessingNotice(
   return undefined;
 }
 
-/** Empty/suppressed speech is successful processing; known lost capture/provider work is not. */
+/** Usable incomplete capture can finish as partial; failed or pending processing cannot. */
 export function assertMeetingProcessingSucceeded(meeting: MeetingData): void {
   const facts = getAudioTranscriptionFacts(meeting.audioData);
   if (
-    facts.captureIncomplete ||
+    (facts.captureIncomplete && facts.usableSegments === 0) ||
     hasTranscriptionLoss(facts, FAILED_SEGMENT_PARTIAL_THRESHOLD) ||
     Object.values(meeting.processing ?? {}).includes("failed") ||
-    meeting.processing?.transcription === "partial"
+    (meeting.processing?.transcription === "partial" &&
+      !facts.captureIncomplete)
   )
     throw new Error("Meeting processing failed or remains incomplete");
   if (

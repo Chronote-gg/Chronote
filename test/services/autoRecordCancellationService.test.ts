@@ -357,6 +357,27 @@ test("failed sparse transcription is excluded before the actual cancellation pro
   expect(responsesCreate).not.toHaveBeenCalled();
 });
 
+test.each([true, false])(
+  "usable incomplete capture retains the deliberate cancellation decision %s",
+  async (cancel) => {
+    const { evaluateAutoRecordCancellation, responsesCreate } =
+      await loadModule({
+        responseContent: JSON.stringify({
+          cancel,
+          reason: "Synthetic decision",
+        }),
+      });
+    const meeting = buildSparseMeeting();
+    meeting.audioData.captureIncomplete = true;
+    expect(await evaluateAutoRecordCancellation(meeting)).toEqual({
+      cancel,
+      ...(cancel ? { reason: "Synthetic decision" } : {}),
+    });
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+    expect(meeting.audioData.captureIncomplete).toBe(true);
+  },
+);
+
 test("actual automatic cancellation provider failure is propagated for durable failure", async () => {
   const { evaluateAutoRecordCancellation, responsesCreate } =
     await loadModule();
