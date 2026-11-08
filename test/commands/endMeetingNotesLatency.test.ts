@@ -35,7 +35,10 @@ import {
   ensureMeetingNotes,
   ensureMeetingSummaries,
 } from "../../src/services/meetingNotesService";
-import { EMPTY_RECORDING_NOTICE } from "../../src/utils/meetingProcessing";
+import {
+  EMPTY_RECORDING_NOTICE,
+  PARTIAL_TRANSCRIPT_NOTICE,
+} from "../../src/utils/meetingProcessing";
 import { updateMeetingSummaryMessage } from "../../src/embed";
 
 describe("completion notes latency contract", () => {
@@ -224,7 +227,7 @@ describe("completion notes latency contract", () => {
     });
   });
 
-  it.each(["empty", "generated"])(
+  it.each(["empty", "generated", "capture-incomplete"])(
     "persists actual delivery and completion timing for %s notes",
     async (outcome) => {
       const db = await import("../../src/db");
@@ -246,6 +249,15 @@ describe("completion notes latency contract", () => {
       if (outcome === "empty") {
         meeting.audioData.audioFiles = [];
         jest.mocked(compileTranscriptions).mockResolvedValue("");
+      }
+      if (outcome === "capture-incomplete") {
+        meeting.audioData.captureIncomplete = true;
+        meeting.audioData.audioFiles = Array.from({ length: 316 }, () => ({
+          ...meeting.audioData.audioFiles[0],
+          transcript: "Synthetic usable speech",
+          transcriptionFailed: false,
+          processing: false,
+        }));
       }
       meeting.startMessageId = "summary";
       const edit = jest.fn().mockResolvedValue(undefined);
@@ -354,10 +366,23 @@ describe("completion notes latency contract", () => {
           notesChannelId: "text",
           recovery: { disposition: "done", outcome: "completed" },
           processing: {
-            transcription: outcome === "empty" ? "empty" : "ready",
+            transcription:
+              outcome === "empty"
+                ? "empty"
+                : outcome === "capture-incomplete"
+                  ? "partial"
+                  : "ready",
             notes: outcome === "empty" ? "skipped" : "generated",
           },
         });
+        if (outcome === "capture-incomplete") {
+          expect(meeting.audioData.captureIncomplete).toBe(true);
+          expect(
+            send.mock.calls[0][0].embeds[0].toJSON().footer.text,
+          ).toContain(PARTIAL_TRANSCRIPT_NOTICE);
+          expect(row.notes).toBe("Private notes");
+          expect(row.delivery?.notes).toMatchObject({ intended: 1, sent: 1 });
+        }
         const completion = completionCapture();
         if (outcome === "empty") {
           expect(row.notes).toBeUndefined();

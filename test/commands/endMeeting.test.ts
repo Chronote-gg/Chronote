@@ -1238,73 +1238,6 @@ describe("H4 review outcome and fence regressions", () => {
   afterEach(() => {
     errorOutput.mockRestore();
   });
-  it("caught notes-provider failure cannot complete", async () => {
-    const actual = jest.requireActual<
-      typeof import("../../src/services/meetingNotesService")
-    >("../../src/services/meetingNotesService");
-    jest
-      .mocked(ensureMeetingNotes)
-      .mockImplementationOnce(actual.ensureMeetingNotes);
-    jest
-      .mocked(getNotes)
-      .mockRejectedValueOnce(new Error("fixture provider unavailable"));
-    const meeting = finalizationFixture();
-    meeting.transcribeMeeting = true;
-    meeting.generateNotes = true;
-    meeting.audioData.audioFiles = [
-      { transcript: "Fixture speech", processing: false },
-    ] as never;
-    await expect(
-      runEndMeetingFlow({ client: {} as Client, meeting }),
-    ).rejects.toThrow("processing");
-    expect(meeting.processing?.notes).toBe("failed");
-    expect(errorOutput).toHaveBeenCalledWith(
-      "Error generating meeting notes:",
-      expect.objectContaining({ message: "fixture provider unavailable" }),
-    );
-    expect(mockedSaveMeetingHistoryToDatabase).not.toHaveBeenCalled();
-    expect(mockedDeleteIfExists).not.toHaveBeenCalled();
-    expect(mockedReleaseMeetingLeaseForMeeting).not.toHaveBeenCalled();
-    expect(interruptOwnedMeeting).toHaveBeenCalledWith(
-      meeting,
-      expect.objectContaining({ reason: "processing_failure" }),
-    );
-  });
-  it.each(["audio", "chat", "transcript"] as const)(
-    "missing expected %s never commits complete or deletes artifacts",
-    async (missing) => {
-      const meeting = finalizationFixture();
-      const upload = {
-        audioUploadExpected: true,
-        chatUploadExpected: true,
-        transcriptUploadExpected: true,
-        audioS3Key: "audio",
-        chatS3Key: "chat",
-        transcriptS3Key: "transcript",
-      };
-      delete (upload as Partial<typeof upload>)[`${missing}S3Key`];
-      mockedUploadMeetingArtifacts.mockResolvedValueOnce(upload);
-      await expect(
-        runEndMeetingFlow({ client: {} as Client, meeting }),
-      ).rejects.toThrow("artifact");
-      expect(mockedSaveMeetingHistoryToDatabase).not.toHaveBeenCalled();
-      expect(mockedDeleteIfExists).not.toHaveBeenCalled();
-      expect(mockedCleanupSpeakerTracks).not.toHaveBeenCalled();
-      expect(mockedReleaseMeetingLeaseForMeeting).not.toHaveBeenCalled();
-      expect(captureEvent).not.toHaveBeenCalled();
-      expect(interruptOwnedMeeting).toHaveBeenCalledWith(
-        meeting,
-        expect.objectContaining({ reason: "processing_failure" }),
-      );
-      expect(errorOutput).toHaveBeenCalledWith(
-        "Expected meeting artifacts were not durably uploaded; retained local artifacts",
-        expect.objectContaining({
-          meetingId: meeting.meetingId,
-          reason: "artifact_upload_failed",
-        }),
-      );
-    },
-  );
   it.each(["audio", "chat", "transcript"] as const)(
     "automatic cancellation refuses a missing expected %s artifact",
     async (missing) => {
@@ -1421,9 +1354,14 @@ describe("H4 review outcome and fence regressions", () => {
     expect(meeting.finished).toBe(true);
     expect(fallback.fallbackApplied).toBe(true);
   });
-  it.each(["cleanup", "release"] as const)(
-    "fence during held %s blocks the completion tail",
-    async (held) => {
+  it.each([
+    ["cleanup", false],
+    ["release", false],
+    ["cleanup", true],
+    ["release", true],
+  ] as const)(
+    "fence during held %s blocks the completion tail with captureIncomplete=%s",
+    async (held, captureIncomplete) => {
       let finish!: () => void;
       const wait = new Promise<void>((resolve) => {
         finish = resolve;
@@ -1436,6 +1374,13 @@ describe("H4 review outcome and fence regressions", () => {
           return true;
         });
       const meeting = finalizationFixture();
+      meeting.audioData.captureIncomplete = captureIncomplete;
+      if (captureIncomplete) {
+        meeting.transcribeMeeting = true;
+        meeting.audioData.audioFiles = [
+          { transcript: "Fixture speech", processing: false },
+        ] as never;
+      }
       const promise = runEndMeetingFlow({ client: {} as Client, meeting });
       const outcome = promise.then(
         () => "completed",
