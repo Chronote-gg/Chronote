@@ -103,8 +103,8 @@ function resolveStripeTier(
   return storedTier ?? "basic";
 }
 
-function resolveCacheExpiresAt(activeGrantExpiresAt?: string) {
-  const defaultExpiresAt = Date.now() + CACHE_TTL_MS;
+function resolveCacheExpiresAt(at: Date, activeGrantExpiresAt?: string) {
+  const defaultExpiresAt = at.getTime() + CACHE_TTL_MS;
   if (!activeGrantExpiresAt) return defaultExpiresAt;
   const grantExpiresAt = Date.parse(activeGrantExpiresAt);
   if (!Number.isFinite(grantExpiresAt)) return defaultExpiresAt;
@@ -168,11 +168,15 @@ function buildResolvedSubscription(params: {
 
 export async function resolveGuildSubscription(
   guildId: string,
+  at = new Date(),
 ): Promise<ResolvedSubscription> {
   const forced = resolveForcedSubscription();
   if (forced) return forced;
 
-  const cached = getCachedGuildSubscription<ResolvedSubscription>(guildId);
+  const cached = getCachedGuildSubscription<ResolvedSubscription>(
+    guildId,
+    at.getTime(),
+  );
   if (cached) return cached;
 
   const stripeEnabled =
@@ -182,17 +186,17 @@ export async function resolveGuildSubscription(
     stripeEnabled
       ? getSubscriptionRepository().get(guildId)
       : Promise.resolve(undefined),
-    getBestActiveEntitlementGrantForGuild(guildId),
+    getBestActiveEntitlementGrantForGuild(guildId, at),
   ]);
   const status = subscription?.status || "free";
   const renewalAccess = stripeEnabled
-    ? await resolveRenewalAccess(subscription, Math.floor(Date.now() / 1000))
+    ? await resolveRenewalAccess(subscription, Math.floor(at.getTime() / 1000))
     : undefined;
   const stripeTier = renewalAccess
     ? renewalAccess.tier
     : resolveStripeTier(subscription);
   const grantTier = activeGrant?.tier ?? null;
-  const publicGrant = toPublicEntitlementGrant(activeGrant);
+  const publicGrant = toPublicEntitlementGrant(activeGrant, at);
   const sub = buildResolvedSubscription({
     status,
     stripeTier,
@@ -203,14 +207,17 @@ export async function resolveGuildSubscription(
     guildId,
     sub,
     Math.min(
-      resolveCacheExpiresAt(activeGrant?.expiresAt),
+      resolveCacheExpiresAt(at, activeGrant?.expiresAt),
       renewalAccess?.expiresAt ?? Infinity,
     ),
   );
   return sub;
 }
 
-export async function getGuildLimits(guildId: string | null): Promise<{
+export async function getGuildLimits(
+  guildId: string | null,
+  at = new Date(),
+): Promise<{
   subscription: ResolvedSubscription;
   limits: TierLimits;
 }> {
@@ -228,7 +235,7 @@ export async function getGuildLimits(guildId: string | null): Promise<{
       limits: DEFAULT_LIMITS.free,
     };
   }
-  const subscription = await resolveGuildSubscription(guildId);
+  const subscription = await resolveGuildSubscription(guildId, at);
   const limits = getLimitsForTier(subscription.tier);
   return { subscription, limits };
 }

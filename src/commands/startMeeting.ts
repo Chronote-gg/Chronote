@@ -218,13 +218,14 @@ const notifyAutoRecordPermissionFailure = async (options: {
 async function getLimitNotice(
   guildId: string,
   limits: GuildLimits,
+  at: Date,
 ): Promise<{
   message: string;
   limitMinutes: number;
   usedMinutes: number;
 } | null> {
   if (!limits.maxMeetingMinutesRolling) return null;
-  const usage = await getRollingUsageForGuild(guildId);
+  const usage = await getRollingUsageForGuild(guildId, at);
   const limitSeconds = limits.maxMeetingMinutesRolling * 60;
   if (usage.usedSeconds < limitSeconds) return null;
   const windowStartMs = Date.parse(usage.windowStartIso);
@@ -233,6 +234,7 @@ async function getLimitNotice(
     windowStartMs,
     getRollingWindowMs(),
     limitSeconds,
+    usage.nextUsageResetAtIso,
   );
   return {
     message: buildLimitReachedMessage(nextAvailableAtIso),
@@ -347,8 +349,9 @@ export async function startManualMeetingFromChannels({
     return { ok: false, error: meetingConflict };
   }
 
-  const { limits, subscription } = await getGuildLimits(guildId);
-  const limitNotice = await getLimitNotice(guildId, limits);
+  const at = new Date();
+  const { limits, subscription } = await getGuildLimits(guildId, at);
+  const limitNotice = await getLimitNotice(guildId, limits, at);
   if (limitNotice) {
     const recordingLimitNotice = await encounterRecordingLimit({
       ...limitNotice,
@@ -696,8 +699,9 @@ export async function handleAutoStartMeeting(
   if (staleLease && isLeaseActive(staleLease)) {
     return false;
   }
-  const { limits, subscription } = await getGuildLimits(guildId);
-  const limitNotice = await getLimitNotice(guildId, limits);
+  const at = new Date();
+  const { limits, subscription } = await getGuildLimits(guildId, at);
+  const limitNotice = await getLimitNotice(guildId, limits, at);
   if (limitNotice) {
     await options?.assertAdmission?.();
     await notifyRecordingLimit(

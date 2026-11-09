@@ -1,5 +1,6 @@
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import { getEntitlementGrantRepository } from "../../src/repositories/entitlementGrantRepository";
+import { getSubscriptionRepository } from "../../src/repositories/subscriptionRepository";
 import {
   clearGuildSubscriptionCache,
   getGuildLimits,
@@ -67,6 +68,90 @@ test("ordinary rolling usage is unchanged without grants", async () => {
     usedSeconds: 600,
     windowStartIso: iso(expiry - 7 * day),
   });
+});
+
+test("a billing read crossing expiry keeps the tier and usage at one instant", async () => {
+  seed(grant());
+  jest.setSystemTime(expiry - 1);
+  await getGuildLimits(guild);
+  jest
+    .spyOn(getSubscriptionRepository(), "get")
+    .mockImplementationOnce(async () => {
+      await Promise.resolve();
+      jest.setSystemTime(expiry + 1);
+      return undefined;
+    });
+  await expect(getMockBillingSnapshot(guild)).resolves.toMatchObject({
+    tier: "pro",
+    usage: { usedMinutes: 10, windowEndIso: iso(expiry - 1) },
+  });
+});
+
+test("grant selection crossing expiry uses the captured evaluation instant", async () => {
+  const row = grant();
+  seed(row);
+  jest.setSystemTime(expiry - 1);
+  jest
+    .spyOn(getEntitlementGrantRepository(), "listActiveForGuild")
+    .mockImplementationOnce(async () => {
+      jest.setSystemTime(expiry + 1);
+      return [row];
+    });
+  await expect(getMockBillingSnapshot(guild)).resolves.toMatchObject({
+    tier: "pro",
+    activeGrant: { status: "active" },
+    usage: { usedMinutes: 10, windowEndIso: iso(expiry - 1) },
+  });
+});
+
+test("exhausted temporary Basic coverage exposes its upcoming fresh allowance", async () => {
+  seed(grant({ tier: "basic" }));
+  recordings(meeting(expiry - hour, 20 * 3600));
+  await expect(usage(expiry - 1)).resolves.toMatchObject({
+    usedSeconds: 20 * 3600,
+    nextUsageResetAtIso: iso(expiry),
+  });
+  const window = await usage(expiry - 1);
+  expect(
+    getNextAvailableAt(
+      window.meetings,
+      Date.parse(window.windowStartIso),
+      getRollingWindowMs(),
+      20 * 3600,
+      window.nextUsageResetAtIso,
+    ),
+  ).toBe(iso(expiry));
+  await expect(usage(expiry)).resolves.toMatchObject({ usedSeconds: 0 });
+});
+
+test("a continuous renewal does not advertise a reset at its intermediate expiry", async () => {
+  seed(
+    grant({ tier: "basic" }),
+    grant({
+      grantId: "renewal",
+      tier: "basic",
+      startsAt: iso(expiry),
+      expiresAt: iso(expiry + 2 * day),
+    }),
+  );
+  await expect(usage(expiry - 1)).resolves.toMatchObject({
+    nextUsageResetAtIso: iso(expiry + 2 * day),
+  });
+});
+
+test("an earlier rolling release takes precedence over the future grant reset", async () => {
+  seed(grant({ tier: "basic" }));
+  recordings(meeting(expiry - 7 * day - 1, 21 * 3600));
+  const window = await usage(expiry - hour);
+  expect(
+    getNextAvailableAt(
+      window.meetings,
+      Date.parse(window.windowStartIso),
+      getRollingWindowMs(),
+      20 * 3600,
+      window.nextUsageResetAtIso,
+    ),
+  ).toBe(iso(expiry - 1));
 });
 test("usage is not reset before a grant actually expires", async () => {
   seed(grant());
@@ -267,6 +352,7 @@ test.each([
   { startsAt: "invalid" },
   { expiresAt: iso(expiry - 11 * day) },
   { status: "revoked", revokedAt: undefined },
+  { status: "revoked", revokedAt: iso(expiry - 11 * day) },
 ] satisfies Partial<EntitlementGrant>[])(
   "invalid grant history cannot fabricate zero usage: %j",
   async (invalid) => {
@@ -274,11 +360,36 @@ test.each([
     await expect(usage()).rejects.toThrow(/grant usage history/i);
   },
 );
+
+test("malformed overlapping history cannot manufacture a fresh allowance", async () => {
+  seed(
+    grant(),
+    grant({
+      grantId: "invalid-overlap",
+      status: "revoked",
+      startsAt: iso(expiry - day),
+      expiresAt: iso(expiry + day),
+      revokedAt: iso(expiry - 2 * day),
+    }),
+  );
+  await expect(usage()).rejects.toThrow(/grant usage history/i);
+});
 test("a grant history read failure is not silently treated as no history", async () => {
   jest
     .spyOn(getEntitlementGrantRepository(), "list")
     .mockRejectedValueOnce(new Error("Synthetic history unavailable"));
   await expect(usage()).rejects.toThrow("Synthetic history unavailable");
+});
+test("an undeployed optional grant table preserves ordinary usage without a reset", async () => {
+  jest.spyOn(getEntitlementGrantRepository(), "list").mockRejectedValueOnce(
+    Object.assign(new Error("Synthetic optional table absent"), {
+      name: "ResourceNotFoundException",
+    }),
+  );
+  await expect(usage()).resolves.toMatchObject({
+    usedSeconds: 600,
+    windowStartIso: iso(expiry - 7 * day),
+  });
 });
 test("the cached entitlement expires with the grant and agrees with the new allowance", async () => {
   seed(grant());

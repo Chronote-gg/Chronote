@@ -23,6 +23,7 @@ function period(raw: unknown, guildId: string) {
   const revocation = grant.revokedAt ? Date.parse(grant.revokedAt) : Infinity;
   if (
     expiry <= start ||
+    revocation < start ||
     (grant.status === "expired" && !grant.expiresAt) ||
     (grant.status === "revoked") !== Boolean(grant.revokedAt)
   ) {
@@ -31,29 +32,39 @@ function period(raw: unknown, guildId: string) {
   return { start, expiry, end: Math.min(expiry, revocation), tier: grant.tier };
 }
 
-export async function getGrantUsageResetAt(
-  guildId: string,
-  at: Date,
-): Promise<number | null> {
+export async function getGrantUsageBoundaries(guildId: string, at: Date) {
   const now = at.getTime();
   if (!Number.isFinite(now)) {
     throw new Error("Invalid grant usage history evaluation time");
   }
-  const grants = await getEntitlementGrantRepository().list({ guildId });
+  const grants = await getEntitlementGrantRepository()
+    .list({ guildId })
+    .catch((error: unknown) => {
+      if (
+        error instanceof Error &&
+        error.name === "ResourceNotFoundException"
+      ) {
+        return [];
+      }
+      throw error;
+    });
   const periods = grants.map((grant) => period(grant, guildId));
   let latest: number | null = null;
+  let next: number | null = null;
   // shortcut: retained periods cannot reconstruct expiry dates edited after expiry.
   // Preserve expiry history before adding support for that operator action.
   for (const ended of periods) {
     const expiry = ended.expiry;
-    if (expiry > now || ended.end !== expiry) continue;
+    if (!Number.isFinite(expiry) || ended.end !== expiry) continue;
     const continues = periods.some(
       (other) =>
         other.start <= expiry &&
         other.end > expiry &&
         rank[other.tier] >= rank[ended.tier],
     );
-    if (!continues) latest = Math.max(latest ?? expiry, expiry);
+    if (continues) continue;
+    if (expiry <= now) latest = Math.max(latest ?? expiry, expiry);
+    else next = Math.min(next ?? expiry, expiry);
   }
-  return latest;
+  return { latest, next };
 }

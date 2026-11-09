@@ -1,6 +1,6 @@
 import type { MeetingHistory } from "../types/db";
 import { listMeetingsForGuildInRangeService } from "./meetingHistoryService";
-import { getGrantUsageResetAt } from "./entitlementUsageService";
+import { getGrantUsageBoundaries } from "./entitlementUsageService";
 
 const ROLLING_WINDOW_DAYS = 7;
 const ROLLING_WINDOW_MS = ROLLING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
@@ -10,6 +10,7 @@ export type RollingUsageWindow = {
   windowStartIso: string;
   windowEndIso: string;
   nextAvailableAtIso: string | null;
+  nextUsageResetAtIso?: string | null;
   meetings: MeetingHistory[];
 };
 
@@ -39,6 +40,7 @@ export function getNextAvailableAt(
   windowStartMs: number,
   windowMs: number,
   limitSeconds: number,
+  nextUsageResetAtIso?: string | null,
 ): string | null {
   if (limitSeconds <= 0) return null;
   const windowMeetings = meetings
@@ -56,13 +58,16 @@ export function getNextAvailableAt(
     (sum, meeting) => sum + (meeting.duration ?? 0),
     0,
   );
-  if (totalSeconds <= limitSeconds) return null;
+  if (totalSeconds < limitSeconds) return null;
 
   let remaining = totalSeconds;
   for (const meeting of windowMeetings) {
     remaining -= meeting.duration ?? 0;
-    if (remaining <= limitSeconds) {
-      return new Date(meeting.timestampMs + windowMs).toISOString();
+    if (remaining < limitSeconds) {
+      const rolloff = new Date(meeting.timestampMs + windowMs).toISOString();
+      return nextUsageResetAtIso && nextUsageResetAtIso < rolloff
+        ? nextUsageResetAtIso
+        : rolloff;
     }
   }
 
@@ -75,10 +80,10 @@ export async function getRollingUsageForGuild(
   now = new Date(),
 ): Promise<RollingUsageWindow> {
   const windowEndMs = now.getTime();
-  const resetAt = await getGrantUsageResetAt(guildId, now);
+  const boundary = await getGrantUsageBoundaries(guildId, now);
   const windowStartMs = Math.max(
     windowEndMs - ROLLING_WINDOW_MS,
-    resetAt ?? -Infinity,
+    boundary.latest ?? -Infinity,
   );
   const windowStartIso = new Date(windowStartMs).toISOString();
   const windowEndIso = new Date(windowEndMs).toISOString();
@@ -98,6 +103,8 @@ export async function getRollingUsageForGuild(
     windowStartIso,
     windowEndIso,
     nextAvailableAtIso: null,
+    nextUsageResetAtIso:
+      boundary.next === null ? null : new Date(boundary.next).toISOString(),
     meetings,
   };
 }

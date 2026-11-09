@@ -40,7 +40,11 @@ beforeEach(() => {
   jest.mocked(getStripeClient).mockReturnValue(null);
   resetMockStore();
   clearGuildSubscriptionCache();
-  jest.spyOn(Date, "now").mockReturnValue((deadline - 1) * 1000);
+  jest
+    .useFakeTimers({
+      doNotFake: ["nextTick", "setImmediate", "setTimeout", "clearTimeout"],
+    })
+    .setSystemTime((deadline - 1) * 1000);
 });
 afterEach(() => {
   config.mock.enabled = original.mock;
@@ -130,7 +134,7 @@ test.each(["grace", "canceling", "canceled"] as const)(
       tier: "pro",
       stripeTier: "pro",
     });
-    jest.mocked(Date.now).mockReturnValue(deadline * 1000);
+    jest.setSystemTime(deadline * 1000);
     expect(await resolveGuildSubscription(guildId)).toMatchObject({
       tier: "free",
       stripeTier: null,
@@ -142,7 +146,7 @@ test("accepted grace still expires after enforcement is disabled", async () => {
   const guildId = seed();
   config.stripe.renewalGraceEnabled = false;
   expect((await resolveGuildSubscription(guildId)).tier).toBe("pro");
-  jest.mocked(Date.now).mockReturnValue(deadline * 1000);
+  jest.setSystemTime(deadline * 1000);
   expect((await resolveGuildSubscription(guildId)).tier).toBe("free");
 });
 test("independent entitlement grants survive the grace deadline", async () => {
@@ -152,7 +156,7 @@ test("independent entitlement grants survive the grace deadline", async () => {
     tier: "basic",
     createdBy: "admin",
   });
-  jest.mocked(Date.now).mockReturnValue(deadline * 1000);
+  jest.setSystemTime(deadline * 1000);
   expect(await resolveGuildSubscription(guildId)).toMatchObject({
     tier: "basic",
     billingSource: "manual_comp",
@@ -186,9 +190,9 @@ test("older canceled courtesy cannot override a replacement subscription", async
 
 test("the last verified paid period also bounds the cache when renewal evidence is unavailable", async () => {
   const guildId = seed("watching");
-  jest.mocked(Date.now).mockReturnValue((paidEndsAt - 1) * 1000);
+  jest.setSystemTime((paidEndsAt - 1) * 1000);
   expect((await resolveGuildSubscription(guildId)).tier).toBe("pro");
-  jest.mocked(Date.now).mockReturnValue(paidEndsAt * 1000);
+  jest.setSystemTime(paidEndsAt * 1000);
   expect((await resolveGuildSubscription(guildId)).tier).toBe("free");
 });
 test("a newly verified paid subscription wins over older canceled courtesy", async () => {
@@ -227,7 +231,7 @@ test("a newly verified paid subscription wins over older canceled courtesy", asy
     throw new Error(`Unexpected request ${request.path}`);
   });
   jest.mocked(getStripeClient).mockReturnValue(f.stripe);
-  jest.mocked(Date.now).mockReturnValue((paidEndsAt - 1) * 1000);
+  jest.setSystemTime((paidEndsAt - 1) * 1000);
   expect((await resolveGuildSubscription(guildId)).tier).toBe("basic");
 });
 

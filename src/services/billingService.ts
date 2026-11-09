@@ -111,6 +111,30 @@ export function buildBillingDisabledSnapshot(): BillingSnapshot {
   };
 }
 
+async function getBillingUsage(guildId: string) {
+  const at = new Date();
+  const [subscription, resolvedSubscription] = await Promise.all([
+    getSubscriptionRepository().get(guildId),
+    resolveGuildSubscription(guildId, at),
+  ]);
+
+  const limits = getLimitsForTier(resolvedSubscription.tier);
+  const usage = await getRollingUsageForGuild(guildId, at);
+  const usedMinutes = Math.ceil(usage.usedSeconds / 60);
+  const limitMinutes = limits.maxMeetingMinutesRolling ?? null;
+  const hasStripeBilling = Boolean(
+    subscription?.stripeSubscriptionId || subscription?.stripeCustomerId,
+  );
+  return {
+    subscription,
+    resolvedSubscription,
+    usage,
+    usedMinutes,
+    limitMinutes,
+    hasStripeBilling,
+  };
+}
+
 export async function getBillingSnapshot(params: {
   stripe: StripeClient | null;
   guildId: string;
@@ -122,19 +146,14 @@ export async function getBillingSnapshot(params: {
   }
   // Before the subscription read, so a reconciled completion shows in this snapshot.
   await releaseExpiredPurchaseAttempt({ stripe, guildId });
-
-  const [subscription, resolvedSubscription] = await Promise.all([
-    getSubscriptionRepository().get(guildId),
-    resolveGuildSubscription(guildId),
-  ]);
-
-  const limits = getLimitsForTier(resolvedSubscription.tier);
-  const usage = await getRollingUsageForGuild(guildId);
-  const usedMinutes = Math.ceil(usage.usedSeconds / 60);
-  const limitMinutes = limits.maxMeetingMinutesRolling ?? null;
-  const hasStripeBilling = Boolean(
-    subscription?.stripeSubscriptionId || subscription?.stripeCustomerId,
-  );
+  const {
+    subscription,
+    resolvedSubscription,
+    usage,
+    usedMinutes,
+    limitMinutes,
+    hasStripeBilling,
+  } = await getBillingUsage(guildId);
 
   const [introOffer, annualIntroOffer, providerState, renewalRecovery] =
     await Promise.all([
@@ -196,17 +215,14 @@ export async function getBillingSnapshot(params: {
 export async function getMockBillingSnapshot(
   guildId: string,
 ): Promise<BillingSnapshot> {
-  const [subscription, resolvedSubscription] = await Promise.all([
-    getSubscriptionRepository().get(guildId),
-    resolveGuildSubscription(guildId),
-  ]);
-  const limits = getLimitsForTier(resolvedSubscription.tier);
-  const usage = await getRollingUsageForGuild(guildId);
-  const usedMinutes = Math.ceil(usage.usedSeconds / 60);
-  const limitMinutes = limits.maxMeetingMinutesRolling ?? null;
-  const hasStripeBilling = Boolean(
-    subscription?.stripeSubscriptionId || subscription?.stripeCustomerId,
-  );
+  const {
+    subscription,
+    resolvedSubscription,
+    usage,
+    usedMinutes,
+    limitMinutes,
+    hasStripeBilling,
+  } = await getBillingUsage(guildId);
 
   return {
     renewalRecovery: { status: "none" },
