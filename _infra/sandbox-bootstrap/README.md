@@ -176,3 +176,26 @@ For native application target-graph verification, capture `terraform -chdir=_inf
 These are synthetic mocked-provider checks. The integration test combines the actual mock changes with a fixed reviewed synthetic envelope and policy hashes. It does not create an applyable saved binary or prove native installation.
 
 Actual installation, OIDC claim acceptance, capture/readback, individual approval, scoped Plan/Apply, deployment and hosted acceptance remain separate native checks. Use the existing authenticated workstation route and protected files. Do not bridge credentials into a cloud sandbox.
+
+## Sandbox runtime channel prerequisite
+
+The optional `enable_sandbox_exec_channels` input defaults to false. It adds only
+`meeting-notes-sandbox-ecs-exec-channels` to the existing Sandbox application role.
+The four `ssmmessages` channel actions enable the task side of ECS Exec; they do
+not grant an operator ECS Exec, StartSession, or access to production. The channel
+service requires `Resource = "*"`.
+
+Use the native signed-in bootstrap administrator and the existing fixed backend.
+Keep the installed bootstrap inputs unchanged, set this flag true, and save a plan
+targeting `aws_iam_role_policy.sandbox_exec_channels` and the read-only
+`data.aws_caller_identity.current`. Capture the binary,
+JSON, review text and SHA-256 privately. Before applying the exact saved bytes, run
+`node _infra/sandbox-bootstrap/verify-exec-channels.cjs PRIVATE_PLAN_JSON ACCOUNT_ID`.
+It accepts one policy create, unchanged dependencies and outputs, and no drift,
+imports or moves. The target and enabled-identity checks must pass. Only the
+named unrelated checks excluded by targeting may remain unknown, with no
+instances. Existing installation guards accept the new flag
+only while false; they cannot authorize this additional policy. Installation needs
+BASIC's specific IAM approval. After Apply, read the exact policy back and retry the
+metadata-only ECS Exec probe. A running agent or IAM simulation alone is not proof
+that ECS Exec works. Do not restart the runtime to obtain that proof.

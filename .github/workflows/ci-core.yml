@@ -394,4 +394,4 @@ jobs:
           terraform -chdir=_infra/sandbox-bootstrap test -no-color -filter=tests/bootstrap.tftest.hcl
           terraform -chdir=_infra/sandbox-bootstrap test -no-color -json -verbose -filter=tests/guard-plan.tftest.hcl > "$RUNNER_TEMP/sandbox-bootstrap-mock-raw.jsonl"
           node _infra/sandbox-bootstrap/compact-mock-plan.cjs "$RUNNER_TEMP/sandbox-bootstrap-mock-raw.jsonl" > "$SANDBOX_BOOTSTRAP_MOCK_PLAN_JSONL"
-          node --test _infra/sandbox-bootstrap/verify-plan.test.cjs
+          node --test _infra/sandbox-bootstrap/verify-plan.test.cjs _infra/sandbox-bootstrap/verify-exec-channels.test.cjs

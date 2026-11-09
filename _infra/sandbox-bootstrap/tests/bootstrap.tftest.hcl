@@ -214,3 +214,24 @@ run "rejects_wildcard_docs_bucket" {
   }
   expect_failures = [var.site_docs_bucket]
 }
+
+run "sandbox_task_channels_are_opt_in_and_exact" {
+  command = plan
+  variables {
+    enable_private_evidence_store = true
+    enable_sandbox_terraform_role = true
+    enable_sandbox_exec_channels  = true
+  }
+  assert {
+    condition = length(aws_iam_role_policy.sandbox_exec_channels) == 1 && aws_iam_role_policy.sandbox_exec_channels[0].role == "meeting-notes-sandbox-ecs-task-app-role" && aws_iam_role_policy.sandbox_exec_channels[0].name == "meeting-notes-sandbox-ecs-exec-channels" && jsondecode(aws_iam_role_policy.sandbox_exec_channels[0].policy) == {
+      Version   = "2012-10-17"
+      Statement = [{ Effect = "Allow", Action = ["ssmmessages:CreateControlChannel", "ssmmessages:CreateDataChannel", "ssmmessages:OpenControlChannel", "ssmmessages:OpenDataChannel"], Resource = "*" }]
+    }
+    error_message = "Only the four task-side Sandbox channel actions are allowed."
+  }
+}
+run "runtime_channels_require_sandbox_store_identity" {
+  command = plan
+  variables { enable_sandbox_exec_channels = true }
+  expect_failures = [var.enable_sandbox_exec_channels]
+}

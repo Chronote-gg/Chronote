@@ -373,6 +373,15 @@ function configuredResources(plan, managed, metadata) {
   insist(Array.isArray(configs), "resource configuration missing");
   const unique = new Set();
   for (const config of configs) {
+    if (
+      config.address === "aws_iam_role_policy.sandbox_exec_channels" &&
+      plan.variables.enable_sandbox_exec_channels?.value === false
+    ) {
+      strict.deepEqual(config.count_expression, {
+        references: ["var.enable_sandbox_exec_channels"],
+      });
+      continue;
+    }
     const name =
       config.mode === "data"
         ? metadata[config.type]?.[0]
@@ -414,10 +423,12 @@ function validateEnvelope(plan, input, applyable) {
     strict.deepEqual(plan[field] ?? [], [], `unreviewed ${field}`);
   strict.deepEqual(
     Object.fromEntries(
-      Object.entries(plan.variables).map(([name, value]) => [
-        name,
-        value.value,
-      ]),
+      Object.entries(plan.variables)
+        .filter(
+          ([name, value]) =>
+            name !== "enable_sandbox_exec_channels" || value.value !== false,
+        )
+        .map(([name, value]) => [name, value.value]),
     ),
     input,
   );
