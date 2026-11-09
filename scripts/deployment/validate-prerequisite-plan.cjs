@@ -56,6 +56,17 @@ function assertOtherwiseUnchanged({ before, after, unknown }, changed) {
   }
 }
 
+function expectedCheckInstances(plan, address) {
+  const display = address.to_display;
+  return address.kind === "var"
+    ? [display]
+    : plan.resource_changes
+        .filter(
+          (r) => r.address === display || r.address.startsWith(`${display}[`),
+        )
+        .map((r) => r.address);
+}
+
 function validatePrerequisitePlan(plan) {
   const { result, changes } = validateScopedPlan(plan, {
     targets: new Map([...targets].map((t) => [t, ["create", "update"]])),
@@ -77,6 +88,7 @@ module.exports = {
   validatePrerequisitePlan,
   validateScopedPlan,
   assertOtherwiseUnchanged,
+  expectedCheckInstances,
   runCli,
   targets,
 };

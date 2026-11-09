@@ -73,6 +73,7 @@ function parseInvocation(value) {
         "meeting-update-delivery",
         "processing-retry",
         "sandbox-site-permissions",
+        "artifact-preservation",
       ].includes(parsed.scope),
       "Unsupported Sandbox scope",
     );

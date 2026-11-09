@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { expect, test } from "@jest/globals";
+import { expectedCheckInstances } from "../../scripts/deployment/validate-prerequisite-plan.cjs";
 import {
   prerequisiteGuard,
   runPlanGuard,
@@ -31,6 +32,30 @@ function change(address: string, actions = ["update"], mode = "managed") {
 }
 const validate = (input: unknown) =>
   runPlanGuard(prerequisiteGuard, JSON.stringify(input));
+
+test("check bindings distinguish variables, counted resources and absent resources", () => {
+  const plan = {
+    resource_changes: [
+      { address: "aws_iam_role.sandbox_deploy[0]" },
+      { address: "aws_iam_role.sandbox_deploy_other[0]" },
+    ],
+  };
+  expect(
+    expectedCheckInstances(plan, { kind: "var", to_display: "var.aws_region" }),
+  ).toEqual(["var.aws_region"]);
+  expect(
+    expectedCheckInstances(plan, {
+      kind: "resource",
+      to_display: "aws_iam_role.sandbox_deploy",
+    }),
+  ).toEqual(["aws_iam_role.sandbox_deploy[0]"]);
+  expect(
+    expectedCheckInstances(plan, {
+      kind: "resource",
+      to_display: "aws_iam_role.production_deploy",
+    }),
+  ).toEqual([]);
+});
 
 test("accepts only the four prerequisite creates/updates, existing key no-op and dependent reads", () => {
   const result = validate({

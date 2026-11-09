@@ -1,6 +1,22 @@
 # Sandbox Terraform bootstrap
 
-This separate root creates a private evidence bucket and one OIDC execution role for the Sandbox `meeting-update-delivery` and `sandbox-site-permissions` scopes. Both enable flags default to false. Enabling both creates exactly eight resources. The application root and production bootstrap remain separately owned.
+This separate root creates a private evidence bucket and one OIDC execution role for the Sandbox `meeting-update-delivery`, `sandbox-site-permissions` and `artifact-preservation` scopes. Both enable flags default to false. Enabling both creates exactly eight resources. The application root and production bootstrap remain separately owned.
+
+The artifact scope adds metadata reads and `CreatePolicyVersion` on the exact
+Sandbox transcripts policy, metadata reads plus `CreatePolicy`/`TagPolicy` on the
+new artifact-authority policy, and `AttachRolePolicy` on the existing deploy role
+conditioned on that exact policy ARN. It adds no future version permission on the
+new policy, `PutRolePolicy`, version pruning or application-service metadata.
+The artifact Plan session denies IAM mutations; Apply retains only these exact
+writes. The site session also constrains attachment by policy ARN so it cannot
+use the new artifact grant. State-lock and capture access remain unchanged.
+
+Reuse the existing policy-update validator with the reviewed previous-policy
+hash for any executor installation. Review and separately approve the exact
+bootstrap saved bytes before installing permissions, then produce and approve
+the protected application saved plan. Fresh policy version counts remain an
+execution prerequisite, five retained versions stops execution without pruning.
+Source fixtures and local policy-size checks are not installed IAM evidence.
 
 Use Terraform 1.16.0 and the checked AWS 6.69.1 lock. The backend has its own fixed key, `meeting-notes-terraform/sandbox-bootstrap/state`, and workspace prefix. Bootstrap uses only the default workspace. Never override its backend, import application resources, or migrate application state.
 

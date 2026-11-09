@@ -17,6 +17,26 @@ const {
 } = require("./verify-plan.cjs");
 const fixture = (name) =>
   JSON.parse(readFileSync(join(__dirname, "tests/fixtures", name), "utf8"));
+test("artifact executor contract contains only exact version/create/conditioned attachment grants", () => {
+  const input = fixture("reviewed-binding.json").variables;
+  const policy = require("./policy-contracts.cjs").expectedRolePolicy(input);
+  const artifact = policy.Statement.filter((s) => s.Sid.startsWith("Artifact"));
+  assert.equal(artifact.length, 3);
+  assert.deepEqual(
+    artifact.map((s) => s.Sid),
+    [
+      "ArtifactTranscriptVersion",
+      "ArtifactAuthorityCreate",
+      "ArtifactAuthorityAttachment",
+    ],
+  );
+  assert.ok(!artifact[1].Action.includes("iam:CreatePolicyVersion"));
+  assert.equal(
+    artifact[2].Condition.StringEquals["iam:PolicyARN"],
+    `arn:aws:iam::${input.sandbox_account_id}:policy/meeting-notes-sandbox-artifact-authority`,
+  );
+  assert.ok(JSON.stringify(policy).length < 10240);
+});
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 function candidate(noop = false) {
   const plan = fixture("create-plan.json");

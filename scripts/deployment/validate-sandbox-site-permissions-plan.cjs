@@ -13,6 +13,7 @@ const { digest } = require("./collector-payload.cjs");
 const {
   validateScopedPlan,
   assertOtherwiseUnchanged,
+  expectedCheckInstances,
 } = require("./validate-prerequisite-plan.cjs");
 const { hasUnknown, without } = require("./terraform-meeting-update.cjs");
 const {
@@ -289,16 +290,7 @@ function verifySiteChecks(plan, directory, sourceSha) {
   verifyChecks(plan, proof, requiredSiteChecks);
   for (const check of plan.checks ?? []) {
     if (check.status !== "pass") continue;
-    const display = check.address.to_display;
-    const expected =
-      check.address.kind === "var"
-        ? [display]
-        : plan.resource_changes
-            .filter(
-              (r) =>
-                r.address === display || r.address.startsWith(`${display}[`),
-            )
-            .map((r) => r.address);
+    const expected = expectedCheckInstances(plan, check.address);
     assert.deepEqual(
       (check.instances ?? []).map((i) => i.address.to_display).sort(),
       expected.sort(),
@@ -411,6 +403,12 @@ function prepareSandboxSitePermissionSession(b) {
         Effect: "Deny",
         Action: "iam:AttachRolePolicy",
         NotResource: b.deploymentRoleArn,
+      },
+      {
+        Effect: "Deny",
+        Action: "iam:AttachRolePolicy",
+        Resource: "*",
+        Condition: { StringNotEquals: { "iam:PolicyARN": policyArn(b) } },
       },
     ],
   });
