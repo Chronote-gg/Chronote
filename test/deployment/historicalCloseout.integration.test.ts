@@ -117,38 +117,56 @@ test.each([
     await f.historicalReplacement();
     const witness = f.packet.closeout.historicalReplacement;
     const successor = witness.successorControl;
-    if (scenario === "missing") delete f.packet.closeout.historicalReplacement;
-    if (scenario === "absent")
-      await f.change("CONTROL", (c) => {
-        delete c.compatibleReplacement;
-      });
-    if (scenario === "hash") witness.successorControlSha256 = "0".repeat(64);
-    if (scenario === "marker")
-      successor.compatibleReplacement.runToken += "foreign";
-    if (scenario === "same_run")
-      successor.compatibleReplacement.runToken =
-        f.packet.operation.deployment.runToken;
-    if (scenario === "generation")
-      successor.compatibleReplacement.servingGeneration =
-        successor.servingGeneration;
-    if (scenario === "overlap")
-      successor.compatibleReplacement.servingMembers = successor.servingMembers;
-    if (scenario === "keys")
-      successor.compatibleReplacement.servingMembers = {
-        foreign: successor.compatibleReplacement.servingMembers.historic,
-      };
-    if (scenario === "phase") successor.deployment.phase = "retiring";
-    if (scenario === "epoch")
-      successor.coordinatorEpoch = f.packet.operation.coordinatorEpoch;
-    if (scenario === "members") successor.servingMembers = {};
-    if (scenario === "candidate")
-      successor.deployment.candidate = successor.deployment.outgoing;
-    if (scenario === "maintenance")
-      successor.maintenance = {
-        holdId: "hold",
-        introductionId: "hold",
-        revision: 1,
-      };
+    const mutate: Record<string, () => unknown> = {
+      missing: () => delete f.packet.closeout.historicalReplacement,
+      absent: () =>
+        f.change("CONTROL", (c) => {
+          delete c.compatibleReplacement;
+        }),
+      hash: () => {
+        witness.successorControlSha256 = "0".repeat(64);
+      },
+      marker: () => {
+        successor.compatibleReplacement.runToken += "foreign";
+      },
+      same_run: () => {
+        successor.compatibleReplacement.runToken =
+          f.packet.operation.deployment.runToken;
+      },
+      generation: () => {
+        successor.compatibleReplacement.servingGeneration =
+          successor.servingGeneration;
+      },
+      overlap: () => {
+        successor.compatibleReplacement.servingMembers =
+          successor.servingMembers;
+      },
+      keys: () => {
+        successor.compatibleReplacement.servingMembers = {
+          foreign: successor.compatibleReplacement.servingMembers.historic,
+        };
+      },
+      phase: () => {
+        successor.deployment.phase = "retiring";
+      },
+      epoch: () => {
+        successor.coordinatorEpoch = f.packet.operation.coordinatorEpoch;
+      },
+      members: () => {
+        successor.servingMembers = {};
+      },
+      candidate: () => {
+        successor.deployment.candidate = successor.deployment.outgoing;
+      },
+      maintenance: () => {
+        successor.maintenance = {
+          holdId: "hold",
+          introductionId: "hold",
+          revision: 1,
+        };
+      },
+    };
+    await mutate[scenario]();
     if (!["missing", "absent", "hash"].includes(scenario)) {
       witness.successorControlSha256 = bindingHash(successor);
       if (scenario !== "marker")
