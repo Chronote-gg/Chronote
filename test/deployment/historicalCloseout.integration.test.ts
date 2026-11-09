@@ -9,6 +9,246 @@ import { marshall } from "@aws-sdk/util-dynamodb";
 import { createHandoffGate } from "../../scripts/deployment/handoff-quiet-gate.cjs";
 import * as types from "../../src/types/deploymentControl";
 import { readFileSync, writeFileSync } from "node:fs";
+import { buildCompatibleReplacementTransaction } from "../../src/services/deploymentControlTransactions";
+import { writeIntroduction } from "./fixtures/introductionStore";
+import { runtime } from "./controlFixtures";
+
+test("historical marker is preserved without granting admission or settlement authority", async () => {
+  const f = await historicalCloseoutFixture();
+  try {
+    await f.historicalReplacement();
+    const before = await f.read("CONTROL");
+    const rows = await Promise.all([
+      f.read("RUNTIME#old"),
+      f.readReceipt(),
+      f.readLease(),
+      f.readVoice(),
+    ]);
+    const inspection = await f.inspectCloseout();
+    await f.applyCloseout();
+    const closed = await f.read("CONTROL");
+    expect(closed.compatibleReplacement).toEqual(before.compatibleReplacement);
+    expect(closed.servingMembers).toEqual(before.servingMembers);
+    expect(closed.servingGeneration).toBe(before.servingGeneration);
+    expect(
+      await Promise.all([
+        f.read("RUNTIME#old"),
+        f.readReceipt(),
+        f.readLease(),
+        f.readVoice(),
+      ]),
+    ).toEqual(rows);
+    expect((await f.receipt()).evidence.historicalReplacement).toMatchObject({
+      origin: "unknown",
+      treatment: "preserved_non_authoritative_history",
+      successorControl:
+        f.packet.closeout.historicalReplacement.successorControl,
+    });
+    expect(inspection.bindingSha256).toBeTruthy();
+    const old = await f.read("RUNTIME#new");
+    old.readiness.expiresAt = f.loss.clock - 1;
+    await putIntroductionDocument(f.table, old);
+    const candidate = structuredClone(old);
+    candidate.identity = {
+      ...old.identity,
+      instanceId: "replacement",
+      taskArn: runtime("replacement").identity.taskArn,
+    };
+    candidate.sk = "RUNTIME#replacement";
+    candidate.role = "candidate";
+    candidate.readiness = {
+      ...candidate.readiness,
+      identity: candidate.identity,
+      expiresAt: f.loss.clock + 100,
+    };
+    candidate.protection.identity = candidate.identity;
+    await putIntroductionDocument(f.table, candidate);
+    const input = {
+      control: closed,
+      candidate,
+      members: [old],
+      now: f.loss.clock,
+    };
+    const transaction = buildCompatibleReplacementTransaction(input, {
+      deploymentControl: f.table,
+    });
+    for (const change of ["token", "membership"] as const) {
+      const reused = structuredClone(input);
+      if (change === "token")
+        reused.control.deployment.runToken =
+          closed.compatibleReplacement.runToken;
+      else reused.control.servingMembers = {};
+      expect(() =>
+        buildCompatibleReplacementTransaction(reused, {
+          deploymentControl: f.table,
+        }),
+      ).toThrow();
+    }
+    await writeIntroduction(transaction);
+    expect((await f.read("CONTROL")).servingGeneration).toBe(
+      closed.servingGeneration + 1,
+    );
+    expect((await f.read("CONTROL")).compatibleReplacement.runToken).toBe(
+      closed.deployment.runToken,
+    );
+    await expect(writeIntroduction(transaction)).rejects.toThrow();
+  } finally {
+    await f.stop();
+  }
+});
+
+test.each([
+  "missing",
+  "absent",
+  "hash",
+  "marker",
+  "same_run",
+  "generation",
+  "overlap",
+  "keys",
+  "phase",
+  "epoch",
+  "members",
+  "candidate",
+  "maintenance",
+])("historical witness refuses %s without submission", async (scenario) => {
+  const f = await historicalCloseoutFixture();
+  try {
+    await f.historicalReplacement();
+    const witness = f.packet.closeout.historicalReplacement;
+    const successor = witness.successorControl;
+    const mutate: Record<string, () => unknown> = {
+      missing: () => delete f.packet.closeout.historicalReplacement,
+      absent: () =>
+        f.change("CONTROL", (c) => {
+          delete c.compatibleReplacement;
+        }),
+      hash: () => {
+        witness.successorControlSha256 = "0".repeat(64);
+      },
+      marker: () => {
+        successor.compatibleReplacement.runToken += "foreign";
+      },
+      same_run: () => {
+        successor.compatibleReplacement.runToken =
+          f.packet.operation.deployment.runToken;
+      },
+      generation: () => {
+        successor.compatibleReplacement.servingGeneration =
+          successor.servingGeneration;
+      },
+      overlap: () => {
+        successor.compatibleReplacement.servingMembers =
+          successor.servingMembers;
+      },
+      keys: () => {
+        successor.compatibleReplacement.servingMembers = {
+          foreign: successor.compatibleReplacement.servingMembers.historic,
+        };
+      },
+      phase: () => {
+        successor.deployment.phase = "retiring";
+      },
+      epoch: () => {
+        successor.coordinatorEpoch = f.packet.operation.coordinatorEpoch;
+      },
+      members: () => {
+        successor.servingMembers = {};
+      },
+      candidate: () => {
+        successor.deployment.candidate = successor.deployment.outgoing;
+      },
+      maintenance: () => {
+        successor.maintenance = {
+          holdId: "hold",
+          introductionId: "hold",
+          revision: 1,
+        };
+      },
+    };
+    await mutate[scenario]();
+    if (!["missing", "absent", "hash"].includes(scenario)) {
+      witness.successorControlSha256 = bindingHash(successor);
+      if (scenario !== "marker")
+        await f.change("CONTROL", (c) => {
+          c.compatibleReplacement = successor.compatibleReplacement;
+        });
+    }
+    await f.bindControl();
+    await expect(f.inspectCloseout()).rejects.toThrow();
+    expect(f.activity.submissions).toBe(0);
+  } finally {
+    await f.stop();
+  }
+});
+
+test.each(["marker", "witness", "delayed"])(
+  "historical closeout fences %s changes",
+  async (scenario) => {
+    const f = await historicalCloseoutFixture();
+    try {
+      await f.historicalReplacement();
+      await f.inspectCloseout();
+      if (scenario === "witness") {
+        f.packet.closeout.historicalReplacement.captureSha256 = "c".repeat(64);
+        f.closeoutOptions.packetSha256 = bindingHash(f.packet);
+      } else if (scenario === "marker") {
+        f.activity.before = () =>
+          f.change("CONTROL", (c) => {
+            c.compatibleReplacement.runToken += "race";
+          });
+      } else {
+        const previous = structuredClone(
+          f.packet.closeout.historicalReplacement.successorControl,
+        );
+        previous.deployment.phase = "complete";
+        const member = await f.read("RUNTIME#old");
+        member.readiness.observedEpoch = previous.coordinatorEpoch;
+        member.readiness.expiresAt = f.loss.clock - 1;
+        const candidate = structuredClone(member);
+        candidate.identity = {
+          ...member.identity,
+          instanceId: "delayed",
+          taskArn: runtime("delayed").identity.taskArn,
+        };
+        candidate.sk = "RUNTIME#delayed";
+        candidate.role = "candidate";
+        candidate.readiness = {
+          ...candidate.readiness,
+          identity: candidate.identity,
+          expiresAt: f.loss.clock + 100,
+        };
+        candidate.protection = {
+          identity: candidate.identity,
+          provenAt: f.loss.clock,
+          expiresAt: f.loss.clock + 600,
+        };
+        for (const kind of Object.keys(candidate.workCounts))
+          candidate.workCounts[kind] = 0;
+        await putIntroductionDocument(f.table, candidate);
+        const delayed = buildCompatibleReplacementTransaction(
+          {
+            control: previous,
+            members: [member],
+            candidate,
+            now: f.loss.clock,
+          },
+          { deploymentControl: f.table },
+        );
+        await f.applyCloseout();
+        await expect(writeIntroduction(delayed)).rejects.toHaveProperty(
+          "CancellationReasons.0.Code",
+          "ConditionalCheckFailed",
+        );
+        return;
+      }
+      await expect(f.applyCloseout()).rejects.toThrow();
+      expect(await f.receipt()).toBeUndefined();
+    } finally {
+      await f.stop();
+    }
+  },
+);
 
 test("closeout preserves unsettled history and actual serving admission", async () => {
   const f = await historicalCloseoutFixture();
@@ -137,6 +377,7 @@ test.each([
 ])("inspection refuses changed %s without submission", async (scenario) => {
   const f = await historicalCloseoutFixture();
   try {
+    await f.historicalReplacement();
     await f.inspectCloseout();
     const changeRow = {
       token: () =>
@@ -220,6 +461,7 @@ test.each([
 ])("atomic transaction refuses a late %s race", async (scenario) => {
   const f = await historicalCloseoutFixture();
   try {
+    await f.historicalReplacement();
     await f.inspectCloseout();
     f.activity.before = async () => {
       if (scenario === "counter")

@@ -127,7 +127,12 @@ async function inspectHistoricalCloseout({
   assert.equal(d.phase, "promoted");
   assert.equal(d.routing.state, "candidate");
   assert(ctl.coordinatorExpiresAt <= now());
-  assert(!ctl.maintenance && !ctl.compatibleReplacement);
+  assert(!ctl.maintenance);
+  const historicalReplacement = inspectHistoricalReplacement(
+    ctl,
+    packet,
+    types,
+  );
   assert.equal(ctl.servingGeneration, d.originalGeneration + 1);
   assert.deepEqual(Object.values(ctl.servingMembers), [candidate]);
   assert.deepEqual(d.originalMembers, [d.outgoing]);
@@ -230,6 +235,7 @@ async function inspectHistoricalCloseout({
     candidateRevision: terminal.candidateRevision,
     billingFlags: terminal.billingFlags,
     introduction: introduction ?? null,
+    ...(historicalReplacement ? { historicalReplacement } : {}),
   };
   return {
     control: ctl,
@@ -242,6 +248,57 @@ async function inspectHistoricalCloseout({
     sourceArtifact,
     introduction,
     binding,
+  };
+}
+function inspectHistoricalReplacement(ctl, packet, types) {
+  const marker = ctl.compatibleReplacement;
+  const witness = packet.closeout.historicalReplacement;
+  if (!marker) {
+    assert(!witness, "Historical witness requires a marker");
+    return undefined;
+  }
+  assert(witness, "Historical marker requires an approved capture witness");
+  const successor = types.controlRecordSchema.parse(witness.successorControl);
+  const prior = successor.deployment;
+  const current = ctl.deployment;
+  assert.equal(bindingHash(successor), witness.successorControlSha256);
+  assert.equal(successor.runtimeEnvironment, "ecs");
+  assert(!successor.maintenance && prior?.phase === "promoted");
+  assert.equal(prior.routing?.state, "candidate");
+  assert.equal(successor.coordinatorToken, prior.runToken);
+  assert(successor.coordinatorEpoch < ctl.coordinatorEpoch);
+  assert.notEqual(prior.runToken, current.runToken);
+  assert.equal(successor.servingGeneration, prior.originalGeneration + 1);
+  assert.equal(successor.servingGeneration, current.originalGeneration);
+  assert.deepEqual(Object.values(successor.servingMembers), [prior.candidate]);
+  assert.deepEqual(prior.originalMembers, [prior.outgoing]);
+  assert.deepEqual(
+    successor.servingMembers,
+    Object.fromEntries(current.originalMembers.map((m) => [m.instanceId, m])),
+  );
+  assert.deepEqual(prior.candidate, current.outgoing);
+  assert.deepEqual(successor.compatibleReplacement, marker);
+  assert(marker.servingGeneration < prior.originalGeneration);
+  assert.notEqual(marker.runToken, prior.runToken);
+  assert.notEqual(marker.runToken, current.runToken);
+  const selected = [
+    ...Object.values(successor.servingMembers),
+    ...Object.values(ctl.servingMembers),
+  ];
+  assert(Object.keys(marker.servingMembers).length > 0);
+  for (const [id, member] of Object.entries(marker.servingMembers)) {
+    assert(member.kind === "ecs" && id === member.instanceId);
+    assert(
+      selected.every(
+        (m) => m.instanceId !== id && m.taskArn !== member.taskArn,
+      ),
+    );
+  }
+  // The operator accepts capture provenance; digests and the adjacent acknowledgement do not authenticate it.
+  return {
+    ...witness,
+    successorControl: successor,
+    treatment: "preserved_non_authoritative_history",
   };
 }
 module.exports = { historicalCloseout };
