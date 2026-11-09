@@ -30,6 +30,9 @@ locals {
   terraform_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      { Sid = "ArtifactTranscriptVersion", Effect = "Allow", Action = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions", "iam:CreatePolicyVersion"], Resource = "arn:aws:iam::${var.sandbox_account_id}:policy/meeting-notes-sandbox-bot-transcripts-s3-policy" },
+      { Sid = "ArtifactAuthorityCreate", Effect = "Allow", Action = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions", "iam:CreatePolicy", "iam:TagPolicy"], Resource = "arn:aws:iam::${var.sandbox_account_id}:policy/meeting-notes-sandbox-artifact-authority" },
+      { Sid = "ArtifactAuthorityAttachment", Effect = "Allow", Action = "iam:AttachRolePolicy", Resource = "arn:aws:iam::${var.sandbox_account_id}:role/meeting-notes-sandbox-github-deploy", Condition = { StringEquals = { "iam:PolicyARN" = "arn:aws:iam::${var.sandbox_account_id}:policy/meeting-notes-sandbox-artifact-authority" } } },
       { Sid = "SitePolicy", Effect = "Allow", Action = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions", "iam:CreatePolicy", "iam:TagPolicy", "iam:CreatePolicyVersion"], Resource = "arn:aws:iam::${var.sandbox_account_id}:policy/meeting-notes-sandbox-site-publishing" },
       { Sid = "SiteAttachment", Effect = "Allow", Action = "iam:AttachRolePolicy", Resource = "arn:aws:iam::${var.sandbox_account_id}:role/meeting-notes-sandbox-github-deploy", Condition = { StringEquals = { "iam:PolicyARN" = "arn:aws:iam::${var.sandbox_account_id}:policy/meeting-notes-sandbox-site-publishing" } } },
       { Sid = "SiteRoleMetadata", Effect = "Allow", Action = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies"], Resource = "arn:aws:iam::${var.sandbox_account_id}:role/meeting-notes-sandbox-github-deploy" },

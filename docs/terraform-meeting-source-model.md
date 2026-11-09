@@ -1,5 +1,28 @@
 # Sandbox delivery plan source model
 
+## Sandbox artifact saved-plan scope
+
+Sandbox `artifact-preservation` reuses the protected bundle, producer-source,
+native approval and restored-plan verification. It admits exactly the transcript
+policy update adding `s3:GetObjectVersion`, a new `sandbox_artifact_authority[0]`
+managed policy granting only `dynamodb:ConditionCheckItem` on the named Sandbox
+MeetingHistory table, and its attachment to the existing Sandbox deploy role.
+The deploy role must be a fully known, byte-equal no-op. Completed target no-ops
+are refused. The separate `meeting-update-delivery` scope retains the runtime
+readiness grant. Production retains its existing single-policy update contract.
+
+The guard verifies the current 26-file source pin and complete source-declared
+check catalog, including a passing deploy-role instance. Unknown excluded checks
+need that source proof. A created attachment's unknown policy ARN additionally
+needs the exact direct configuration reference to the newly created known policy.
+Only the policy's mock-observed computed fields and attachment id/ARN may be
+unknown. Transcript metadata, bucket and existing grants must remain unchanged.
+
+Terraform mock exports prove the four-resource empty-state graph and computed
+masks. They omit checks, configuration and prior state. Synthetic saved-plan
+fixtures test the expected installed-state update/no-op shape. Native execution
+must supply its own complete saved plan and separately approved bytes.
+
 The delivery guard may classify aggregate unknown checks and computed GSI warm
 throughput only for the audited Sandbox model below. The permitted effects remain
 the two delivery attributes, `UpdateDeliveryDueIndex`, and the exact MeetingHistory

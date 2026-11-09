@@ -335,6 +335,12 @@ test("Apply session intersects current writes with exact future grants within ST
         Action: "iam:AttachRolePolicy",
         NotResource: permissionBinding().deploymentRoleArn,
       },
+      {
+        Effect: "Deny",
+        Action: "iam:AttachRolePolicy",
+        Resource: "*",
+        Condition: { StringNotEquals: { "iam:PolicyARN": policyArn } },
+      },
     ],
   });
   expect(prepared.masks).toContain(prepared.policy);
@@ -375,7 +381,9 @@ test("Apply session intersects current writes with exact future grants within ST
     const denied = policy.Statement.filter((s) => s.Effect === "Deny").some(
       (s) =>
         [s.Action].flat().includes(action) &&
-        (!s.NotResource || arn !== s.NotResource),
+        (!s.NotResource || arn !== s.NotResource) &&
+        (!s.Condition?.StringNotEquals ||
+          attached !== s.Condition.StringNotEquals["iam:PolicyARN"]),
     );
     return base && !denied;
   };
@@ -492,17 +500,20 @@ const conditionMatches = (condition, context) =>
   Object.entries(condition ?? {}).every(([operator, fields]) => {
     expect([
       "StringEquals",
+      "StringNotEquals",
       "StringLike",
       "ForAllValues:StringEquals",
     ]).toContain(operator);
     return Object.entries(fields).every(([key, expected]) => {
-      if (!Object.hasOwn(context, key)) return false;
+      if (!Object.hasOwn(context, key)) return operator === "StringNotEquals";
       const wanted = [expected].flat(),
         actual = [context[key]].flat();
       const matches = (value) =>
         wanted.some((v) =>
           operator === "StringLike" ? policyMatches(v, value) : v === value,
         );
+      if (operator === "StringNotEquals")
+        return actual.every((value) => !wanted.includes(value));
       return operator === "ForAllValues:StringEquals"
         ? actual.every(matches)
         : actual.some(matches);
@@ -603,6 +614,27 @@ test("completed base policy has exactly the reviewed write inventory and effecti
     ...(Condition ? { Condition } : {}),
   });
   expect(writes).toEqual([
+    grant(
+      "ArtifactTranscriptVersion",
+      ["iam:CreatePolicyVersion"],
+      "arn:aws:iam::123456789012:policy/meeting-notes-sandbox-bot-transcripts-s3-policy",
+    ),
+    grant(
+      "ArtifactAuthorityCreate",
+      ["iam:CreatePolicy", "iam:TagPolicy"],
+      "arn:aws:iam::123456789012:policy/meeting-notes-sandbox-artifact-authority",
+    ),
+    grant(
+      "ArtifactAuthorityAttachment",
+      ["iam:AttachRolePolicy"],
+      deploymentRole,
+      {
+        StringEquals: {
+          "iam:PolicyARN":
+            "arn:aws:iam::123456789012:policy/meeting-notes-sandbox-artifact-authority",
+        },
+      },
+    ),
     grant(
       "SitePolicy",
       ["iam:CreatePolicy", "iam:TagPolicy", "iam:CreatePolicyVersion"],

@@ -39,6 +39,8 @@ const {
 } = require("./validate-processing-retry-plan.cjs");
 const {
   artifactPreservationTargets,
+  sandboxArtifactTargets,
+  sandboxArtifactBinding,
   validateArtifactPreservationPlan,
 } = require("./validate-artifact-preservation-plan.cjs");
 const scopedValidators = {
@@ -66,15 +68,21 @@ const scopedTargets = {
 };
 // Resource names differ by environment while sandbox and production share an account.
 const scopeBinding = (options, invocation) =>
-  invocation.scope === "sandbox-site-permissions"
-    ? sandboxSitePermissionsBinding(
+  invocation.scope === "artifact-preservation" &&
+  invocation.environment === "sandbox"
+    ? sandboxArtifactBinding(
         options.binding,
         JSON.parse(options.env.GITHUB_VARS_JSON),
       )
-    : {
-        ...options.binding,
-        environment: invocation.environment,
-      };
+    : invocation.scope === "sandbox-site-permissions"
+      ? sandboxSitePermissionsBinding(
+          options.binding,
+          JSON.parse(options.env.GITHUB_VARS_JSON),
+        )
+      : {
+          ...options.binding,
+          environment: invocation.environment,
+        };
 const prerequisites = new WeakMap();
 function privatePrerequisiteVerified(token, config) {
   const binding = prerequisites.get(token);
@@ -248,9 +256,13 @@ async function plan(options, invocation, e) {
     args.push(...[...targets].map((target) => `-target=${target}`));
   if (scopedTargets[invocation.scope])
     args.push(
-      ...[...scopedTargets[invocation.scope].keys()].map(
-        (target) => `-target=${target}`,
-      ),
+      ...[
+        ...(invocation.scope === "artifact-preservation" &&
+        invocation.environment === "sandbox"
+          ? sandboxArtifactTargets
+          : scopedTargets[invocation.scope]
+        ).keys(),
+      ].map((target) => `-target=${target}`),
     );
   const planned = await e.terraform(args, [0, 2]);
   const validateScope = scopedValidators[invocation.scope];

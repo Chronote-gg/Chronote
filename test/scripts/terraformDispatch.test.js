@@ -162,6 +162,7 @@ test.each(["plan", "apply"])(
       ...(mode === "apply"
         ? [
             "node scripts/deployment/validate-sandbox-site-permissions-plan.cjs --session",
+            "node scripts/deployment/validate-artifact-preservation-plan.cjs --session apply",
             "node scripts/deployment/production-writer-guard.cjs --inspect",
           ]
         : [
@@ -169,6 +170,7 @@ test.each(["plan", "apply"])(
             "node scripts/deployment/terraform-plan-identity.cjs",
             'test "$IDENTITY_MATCHES" = true',
             "node scripts/deployment/terraform-plan-identity.cjs --validate",
+            "node scripts/deployment/validate-artifact-preservation-plan.cjs --session plan",
           ]),
       "set +x\nnode scripts/deployment/terraform-dispatch.cjs\n",
     ]);
@@ -261,7 +263,7 @@ test("unexpected delegated failure stays unknown without raw errors or retry", a
   expect(result.invocations).toBe(1);
   expect(result.exitCode).toBe(1);
 });
-test("Apply uses the bounded session only for the Sandbox site-permissions scope", () => {
+test("Apply selects bounded Sandbox artifact or site-permissions sessions", () => {
   const steps = parse(
     readFileSync(".github/workflows/terraform-apply.yml", "utf8"),
   ).jobs.apply.steps;
@@ -277,7 +279,7 @@ test("Apply uses the bounded session only for the Sandbox site-permissions scope
     (s) => s.name === "Configure Sandbox AWS credentials",
   );
   expect(credentials.with["inline-session-policy"]).toBe(
-    "${{ steps.site-permissions-session.outputs.policy }}",
+    "${{ steps.artifact-session.outputs.policy || steps.site-permissions-session.outputs.policy }}",
   );
   expect(steps.indexOf(prepared)).toBeLessThan(steps.indexOf(credentials));
   for (const mode of ["plan", "apply"])
@@ -354,7 +356,6 @@ test.each(
       "deployment-prerequisites",
       "deployment-runtime",
       "site-delivery",
-      "artifact-preservation",
       undefined,
     ].map((scope) => [mode, scope]),
   ),
@@ -370,6 +371,7 @@ test.each(
       undefined,
       "meeting-update-delivery",
       "processing-retry",
+      "artifact-preservation",
     ].map((scope) => [mode, scope]),
   ),
 )(
@@ -421,9 +423,11 @@ test.each(
       true,
     );
     expect(effects).toEqual([]);
-    const supported = ["meeting-update-delivery", "processing-retry"].includes(
-      scope,
-    );
+    const supported = [
+      "meeting-update-delivery",
+      "processing-retry",
+      "artifact-preservation",
+    ].includes(scope);
     expect(messages).toEqual(supported ? [] : ['{"status":"refused"}']);
     expect(fakeProcess.exitCode).toBe(supported ? undefined : 1);
   },
@@ -533,7 +537,7 @@ test.each(["plan", "apply"])(
     }
     const condition =
       mode === "plan"
-        ? "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' }}"
+        ? "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' && inputs.plan_scope != 'artifact-preservation' }}"
         : "${{ inputs.github_environment == 'sandbox' }}";
     const oidc = steps.find(
       (s) =>
@@ -628,7 +632,7 @@ test("Plan selects site-only extra bucket reads while legacy scopes retain exact
     (s) => s.name === "Configure Sandbox site-permissions Plan credentials",
   );
   expect(legacy.if).toBe(
-    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' }}",
+    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' && inputs.plan_scope != 'artifact-preservation' }}",
   );
   expect(site.if).toBe(
     "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions' }}",
