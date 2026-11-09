@@ -124,7 +124,16 @@ function createCoordinator(options = {}) {
         );
       return;
     }
-    const hold = types.parseDeploymentControlRecord(unmarshall(response.Item));
+    const record = unmarshall(response.Item);
+    if (
+      !production &&
+      require("./sandbox-introduction-receipt.cjs").isCompletedSandboxIntroduction(
+        record,
+        config,
+      )
+    )
+      return;
+    const hold = types.parseDeploymentControlRecord(record);
     if (hold.deployment.state === "released" && !production) return;
     if (production) return production.guard(await control(), config);
     throw new CoordinatorFailure(
