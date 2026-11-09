@@ -113,6 +113,70 @@ export async function historicalCloseoutFixture(options = {}) {
     closeoutOptions.bindingSha256 = result.bindingSha256;
     return result;
   };
+  const bindControl = async () => {
+    const current = await f.read("CONTROL");
+    packet.operation = continuationBinding(
+      current,
+      current.deployment.candidate,
+    );
+    packet.closeout.controlSha256 = bindingHash(current);
+    closeoutOptions.packetSha256 = bindingHash(packet);
+  };
+  const historicalReplacement = async () => {
+    const current = await f.read("CONTROL");
+    current.servingGeneration += 10;
+    current.deployment.originalGeneration += 10;
+    for (const id of ["old", "new"]) {
+      const row = await f.read("RUNTIME#" + id);
+      row.authorizedGeneration += 10;
+      row.readiness.observedGeneration += 10;
+      await putIntroductionDocument(f.table, row);
+    }
+    const sourceArtifact = await f.read("ARTIFACTS#old/STATE");
+    sourceArtifact.request.servingGeneration += 10;
+    await putIntroductionDocument(f.table, sourceArtifact);
+    packet.closeout.sourceRuntimeSha256 = bindingHash(
+      await f.read("RUNTIME#old"),
+    );
+    const historic = {
+      ...current.deployment.outgoing,
+      instanceId: "historic",
+      taskArn: "arn:aws:ecs:us-east-1:123456789012:task/fixture/historic",
+    };
+    current.compatibleReplacement = {
+      runToken: "historic-run",
+      servingGeneration: 1,
+      servingMembers: { historic },
+    };
+    const successor = structuredClone(current);
+    Object.assign(successor, {
+      coordinatorToken: "successor-run",
+      coordinatorEpoch: current.coordinatorEpoch - 1,
+      servingGeneration: current.deployment.originalGeneration,
+      servingMembers: {
+        [current.deployment.outgoing.instanceId]: current.deployment.outgoing,
+      },
+    });
+    successor.deployment = {
+      ...successor.deployment,
+      runToken: "successor-run",
+      phase: "promoted",
+      originalGeneration: successor.servingGeneration - 1,
+      originalMembers: [historic],
+      outgoing: historic,
+      candidate: current.deployment.outgoing,
+    };
+    packet.closeout.historicalReplacement = {
+      origin: "unknown",
+      provenance: "operator_retained_pre_operation_control_capture",
+      captureSha256: "a".repeat(64),
+      acknowledgementSha256: "b".repeat(64),
+      successorControlSha256: bindingHash(successor),
+      successorControl: successor,
+    };
+    await putIntroductionDocument(f.table, current);
+    await bindControl();
+  };
   return {
     ...f,
     event,
@@ -120,6 +184,8 @@ export async function historicalCloseoutFixture(options = {}) {
     closeoutOptions,
     activity,
     inspectCloseout,
+    bindControl,
+    historicalReplacement,
     observeCloseout: () =>
       closeoutProduction({ ...closeoutOptions, mode: "observe" }),
     applyCloseout: () =>

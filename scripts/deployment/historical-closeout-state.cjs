@@ -18,6 +18,19 @@ const closeoutManifestSchema = z
     controlSha256: hash,
     recoverySha256: hash,
     sourceRuntimeSha256: hash,
+    historicalReplacement: z
+      .object({
+        origin: z.literal("unknown"),
+        provenance: z.literal(
+          "operator_retained_pre_operation_control_capture",
+        ),
+        captureSha256: hash,
+        acknowledgementSha256: hash,
+        successorControlSha256: hash,
+        successorControl: z.record(z.string(), z.unknown()),
+      })
+      .strict()
+      .optional(),
     submissionFile: z.string().min(1).refine(path.isAbsolute),
   })
   .strict();
