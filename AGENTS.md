@@ -238,10 +238,10 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - Create a dedicated Discord text channel and voice channel for the branch, then use those for testing.
 - If `.env` changes on main, re-run the script or copy `.env` into the worktree.
 
-## Proportionality and stopping
+## Scope and escalation
 
-- If the policy-compliant path is more than about five times the size of the change it delivers, stop and propose the exception to BASIC instead of building machinery around the rule. State both sizes. Two IAM permissions do not justify a new validated delivery scope (PR #532, 3,318 lines, closed unmerged on 2026-11-04).
-- On the second unexpected failure in one step (a quality scan invalidated twice, a quota hit after the design assumed room, a review that finds defects after a fix pass), stop and report. Working around it is how a two-permission change became that PR.
+- Keep work within the approved outcome and minimize unnecessary machinery. File counts, changed lines, effort estimates and implementation-to-change ratios are planning aids, not automatic approval gates. Continue necessary tests, callers, fixtures and supporting source work without repeated approval for those estimates.
+- Escalate substantive changes in outcome, privacy, risk, spending or required authority. Honor explicit human limits and provider limits; preserve existing restrictions on retries, state-changing operations and deployment prerequisites. Diagnose unexpected failures and report real blockers rather than stopping at a fixed failure count.
 - A merge that introduces a prerequisite for the deploy path (a new permission, capability row, protocol, or proof the serving worker must supply) lands the prerequisite first or carries a fallback that lets the next deploy complete. If neither is possible, the PR body and the merge-ready message say in one sentence that production is frozen until X, and the question goes to BASIC before merge. PR #524 merged on 2026-11-03 with neither, and every production deploy after it refused with `artifact_preservation_unconfirmed`.
 
 ## Dependency maintenance
