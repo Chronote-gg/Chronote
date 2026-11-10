@@ -574,6 +574,7 @@ function validateUnchangedOrSitePolicy(entry, binding) {
 module.exports = {
   validateBootstrapPlan,
   validateBootstrapSitePermissionsUpdate,
+  hasUnknown,
 };
 if (require.main === module) {
   const args = process.argv.slice(2);

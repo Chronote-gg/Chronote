@@ -1,9 +1,7 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
-const {
-  hasUnknown,
-} = require("../../scripts/deployment/terraform-meeting-update.cjs");
+const { hasUnknown } = require("./verify-plan.cjs");
 const target = "aws_iam_role_policy.sandbox_exec_channels[0]";
 const expectedPolicy = {
   Version: "2012-10-17",

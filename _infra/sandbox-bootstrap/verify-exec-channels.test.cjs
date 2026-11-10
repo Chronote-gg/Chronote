@@ -209,3 +209,12 @@ test("binds policy to the approved root provider and actual caller", () => {
     assert.throws(() => validateExecChannelsPlan(p, "123456789012"));
   }
 });
+
+test("saved-plan guard loads without application dependencies in Terraform CI", () => {
+  const { spawnSync } = require("node:child_process");
+  const script = `const Module=require('node:module');const load=Module._load;Module._load=function(id,...args){if(!id.startsWith('node:')&&!id.startsWith('.')&&!require('node:path').isAbsolute(id))throw Error('External dependency: '+id);return load.call(this,id,...args)};require(${JSON.stringify(join(__dirname, "verify-exec-channels.cjs"))});`;
+  assert.equal(
+    spawnSync(process.execPath, ["-e", script], { encoding: "utf8" }).status,
+    0,
+  );
+});
