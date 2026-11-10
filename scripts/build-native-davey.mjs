@@ -6,15 +6,6 @@ import { spawnSync } from "node:child_process";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const nativeRoot = join(root, "native/davey");
-if (process.arch !== "x64" || !["linux", "win32"].includes(process.platform)) {
-  throw new Error("Patched Davey requires Linux or Windows x64");
-}
-if (
-  process.platform === "linux" &&
-  !process.report.getReport().header.glibcVersionRuntime
-) {
-  throw new Error("Patched Davey requires a glibc Linux runtime");
-}
 let artifact = process.env.DAVEY_NATIVE_ARTIFACT;
 if (!artifact) {
   const toolchain = spawnSync(
@@ -42,17 +33,16 @@ if (!artifact) {
   artifact = join(
     nativeRoot,
     "target/release",
-    process.platform === "win32" ? "snazzah_davey.dll" : "libsnazzah_davey.so",
+    process.platform === "win32"
+      ? "snazzah_davey.dll"
+      : process.platform === "darwin"
+        ? "libsnazzah_davey.dylib"
+        : "libsnazzah_davey.so",
   );
 }
 const require = createRequire(import.meta.url);
 const packageRoot = dirname(require.resolve("@snazzah/davey/package.json"));
-const destination = join(
-  packageRoot,
-  process.platform === "win32"
-    ? "davey.win32-x64-msvc.node"
-    : "davey.linux-x64-gnu.node",
-);
+const destination = join(packageRoot, "chronote-native.node");
 mkdirSync(dirname(destination), { recursive: true });
 copyFileSync(artifact, destination);
 const binding = require(destination);
