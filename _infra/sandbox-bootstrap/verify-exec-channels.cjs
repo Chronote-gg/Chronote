@@ -3,21 +3,9 @@ const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const { hasUnknown } = require("./verify-plan.cjs");
 const target = "aws_iam_role_policy.sandbox_exec_channels[0]";
-const expectedPolicy = {
-  Version: "2012-10-17",
-  Statement: [
-    {
-      Effect: "Allow",
-      Action: [
-        "ssmmessages:CreateControlChannel",
-        "ssmmessages:CreateDataChannel",
-        "ssmmessages:OpenControlChannel",
-        "ssmmessages:OpenDataChannel",
-      ],
-      Resource: "*",
-    },
-  ],
-};
+const {
+  expectedExecChannelsPolicy: expectedPolicy,
+} = require("./policy-contracts.cjs");
 function validateExecChannelsPlan(plan, accountId) {
   assert.match(accountId, /^\d{12}$/);
   assert.equal(plan.format_version, "1.2");

@@ -3,6 +3,7 @@ const strict = require("node:assert/strict");
 const fs = require("node:fs");
 const crypto = require("node:crypto");
 const {
+  expectedExecChannelsPolicy,
   expectedBucketPolicy,
   expectedTrustPolicy,
   expectedRolePolicy,
@@ -517,7 +518,73 @@ function validateCreate(entry) {
   strict.deepEqual(entry.change.actions, ["create"]);
   strict.equal(entry.change.before, null);
 }
+// Existing installation approvals may preserve this policy, never create or change it.
+function preserveInstalledExecChannels(plan, binding) {
+  if (!Object.hasOwn(binding.variables, "enable_sandbox_exec_channels"))
+    return { plan, binding };
+  strict.equal(binding.variables.enable_sandbox_exec_channels, true);
+  strict.equal(plan.variables.enable_sandbox_exec_channels?.value, true);
+  const address = "aws_iam_role_policy.sandbox_exec_channels";
+  const entries = plan.resource_changes.filter(
+    (r) => r.address === address + "[0]",
+  );
+  strict.equal(entries.length, 1);
+  const r = entries[0],
+    c = r.change;
+  strict.equal(r.mode, "managed");
+  strict.equal(r.provider_name, AWS);
+  strict.equal(r.previous_address ?? null, null);
+  strict.equal(c.importing ?? null, null);
+  strict.deepEqual(c.actions, ["no-op"]);
+  insist(
+    !hasUnknown(c.after_unknown ?? {}),
+    "installed channel policy must be fully known",
+  );
+  strict.deepEqual(c.after, c.before);
+  strict.deepEqual(Object.keys(c.after).sort(), [
+    "id",
+    "name",
+    "name_prefix",
+    "policy",
+    "role",
+  ]);
+  strict.equal(c.after.name, "meeting-notes-sandbox-ecs-exec-channels");
+  strict.equal(c.after.role, "meeting-notes-sandbox-ecs-task-app-role");
+  strict.equal(c.after.id, c.after.role + ":" + c.after.name);
+  insist(
+    c.after.name_prefix == null || c.after.name_prefix === "",
+    "unexpected policy prefix",
+  );
+  strict.deepEqual(JSON.parse(c.after.policy), expectedExecChannelsPolicy);
+  const configs = plan.configuration.root_module.resources.filter(
+    (r) => r.address === address,
+  );
+  strict.equal(configs.length, 1);
+  const config = configs[0];
+  strict.equal(config.mode, "managed");
+  strict.equal(config.type, "aws_iam_role_policy");
+  strict.equal(config.name, "sandbox_exec_channels");
+  strict.equal(config.provider_config_key, "aws");
+  strict.deepEqual(config.count_expression, {
+    references: ["var.enable_sandbox_exec_channels"],
+  });
+  for (const key of ["name", "role"])
+    strict.deepEqual(config.expressions[key], { constant_value: c.after[key] });
+  const keptPlan = structuredClone(plan),
+    keptBinding = structuredClone(binding);
+  delete keptPlan.variables.enable_sandbox_exec_channels;
+  delete keptBinding.variables.enable_sandbox_exec_channels;
+  keptPlan.resource_changes = keptPlan.resource_changes.filter(
+    (r) => r.address !== address + "[0]",
+  );
+  keptPlan.configuration.root_module.resources =
+    keptPlan.configuration.root_module.resources.filter(
+      (r) => r.address !== address,
+    );
+  return { plan: keptPlan, binding: keptBinding };
+}
 function validateBootstrapSitePermissionsUpdate(plan, binding) {
+  ({ plan, binding } = preserveInstalledExecChannels(plan, binding));
   validateBinding(binding, true);
   const target = "aws_iam_role_policy.sandbox_terraform[0]";
   const changed = plan.resource_changes?.some(

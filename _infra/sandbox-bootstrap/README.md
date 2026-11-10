@@ -199,3 +199,13 @@ only while false; they cannot authorize this additional policy. Installation nee
 BASIC's specific IAM approval. After Apply, read the exact policy back and retry the
 metadata-only ECS Exec probe. A running agent or IAM simulation alone is not proof
 that ECS Exec works. Do not restart the runtime to obtain that proof.
+
+After installation, retain `enable_sandbox_exec_channels=true` in the canonical
+protected bootstrap inputs. A future bounded-update binding must include the same
+explicit flag. Its guard requires the exact installed policy as a fully known
+no-op, then checks the original bootstrap contract. Missing inputs, a missing
+policy, deletion, recreation, changed permissions and unknown values all refuse.
+The original thirteen-field inputs and any plan saved before installation are
+stale for this installed state. Reconcile the reviewed source, protected inputs
+and binding before preparing another plan; do not reuse an earlier approval or
+omit the resource to make an old guard pass.
