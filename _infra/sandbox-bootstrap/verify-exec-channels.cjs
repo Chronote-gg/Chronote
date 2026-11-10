@@ -6,7 +6,7 @@ const target = "aws_iam_role_policy.sandbox_exec_channels[0]";
 const {
   expectedExecChannelsPolicy: expectedPolicy,
 } = require("./policy-contracts.cjs");
-function validateExecChannelsPlan(plan, accountId) {
+function assertPlanEnvelope(plan, accountId) {
   assert.match(accountId, /^\d{12}$/);
   assert.equal(plan.format_version, "1.2");
   assert.equal(plan.terraform_version, "1.16.0");
@@ -48,6 +48,8 @@ function validateExecChannelsPlan(plan, accountId) {
       plan.checks.find((c) => c.address.to_display === name)?.status,
       "pass",
     );
+}
+function assertSandboxIdentity(plan, accountId) {
   const configuration = plan.configuration;
   assert.deepEqual(Object.keys(configuration.provider_config), ["aws"]);
   const provider = configuration.provider_config.aws;
@@ -87,6 +89,8 @@ function validateExecChannelsPlan(plan, accountId) {
     enable_private_evidence_store: true,
   }))
     assert.equal(plan.variables[key]?.value, value);
+}
+function assertOnlyChannelCreate(plan) {
   let created = 0;
   for (const r of plan.resource_changes) {
     assert.equal(r.provider_name, "registry.terraform.io/hashicorp/aws");
@@ -121,6 +125,12 @@ function validateExecChannelsPlan(plan, accountId) {
   assert.equal(created, 1);
   for (const output of Object.values(plan.output_changes ?? {}))
     assert.deepEqual(output.actions, ["no-op"]);
+  return true;
+}
+function validateExecChannelsPlan(plan, accountId) {
+  assertPlanEnvelope(plan, accountId);
+  assertSandboxIdentity(plan, accountId);
+  assertOnlyChannelCreate(plan);
   return true;
 }
 module.exports = { validateExecChannelsPlan };

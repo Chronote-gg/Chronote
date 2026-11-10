@@ -194,7 +194,7 @@ JSON, review text and SHA-256 privately. Before applying the exact saved bytes, 
 It accepts one policy create, unchanged dependencies and outputs, and no drift,
 imports or moves. The target and enabled-identity checks must pass. Only the
 named unrelated checks excluded by targeting may remain unknown, with no
-instances. Existing installation guards accept the new flag
+instances. Cold-create installation guards accept the new flag
 only while false; they cannot authorize this additional policy. Installation needs
 BASIC's specific IAM approval. After Apply, read the exact policy back and retry the
 metadata-only ECS Exec probe. A running agent or IAM simulation alone is not proof
