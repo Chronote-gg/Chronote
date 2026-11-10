@@ -35,6 +35,8 @@ import {
 import { fetchObjectBytesFromS3, uploadObjectToS3 } from "./storageService";
 import { getRecordingArtifactFolder } from "./uploadService";
 
+const CHECKPOINT_VERIFICATION_CONCURRENCY = 16;
+
 export type RecordingCheckpointMeeting = Pick<
   MeetingData,
   | "reservation"
@@ -450,9 +452,25 @@ export function createRecordingCheckpointService(
   ) {
     const verified: CheckpointArtifact[] = [];
     const missing: CheckpointArtifact[] = [];
-    for (const item of artifacts) {
-      if (await verifiedBytes(item.object, signal)) verified.push(item);
-      else missing.push(item);
+    for (
+      let start = 0;
+      start < artifacts.length;
+      start += CHECKPOINT_VERIFICATION_CONCURRENCY
+    ) {
+      const batch = artifacts.slice(
+        start,
+        start + CHECKPOINT_VERIFICATION_CONCURRENCY,
+      );
+      // Keep only verification results, and settle every issued read before returning failure.
+      const results = await Promise.allSettled(
+        batch.map(async (item) =>
+          Boolean(await verifiedBytes(item.object, signal)),
+        ),
+      );
+      for (const [index, result] of results.entries()) {
+        if (result.status === "rejected") throw result.reason;
+        (result.value ? verified : missing).push(batch[index]);
+      }
     }
     return { verified, missing };
   }
