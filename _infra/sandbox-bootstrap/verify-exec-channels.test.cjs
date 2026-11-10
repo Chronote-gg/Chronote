@@ -212,9 +212,13 @@ test("binds policy to the approved root provider and actual caller", () => {
 
 test("saved-plan guard loads without application dependencies in Terraform CI", () => {
   const { spawnSync } = require("node:child_process");
-  const script = `const Module=require('node:module');const load=Module._load;Module._load=function(id,...args){if(!id.startsWith('node:')&&!id.startsWith('.')&&!require('node:path').isAbsolute(id))throw Error('External dependency: '+id);return load.call(this,id,...args)};require(${JSON.stringify(join(__dirname, "verify-exec-channels.cjs"))});`;
+  const script = `const Module=require('node:module');const load=Module._load;Module._load=function(id,...args){if(!id.startsWith('node:')&&!id.startsWith('.')&&!require('node:path').isAbsolute(id))throw Error('External dependency: '+id);return load.call(this,id,...args)};require(process.argv[1]);`;
   assert.equal(
-    spawnSync(process.execPath, ["-e", script], { encoding: "utf8" }).status,
+    spawnSync(
+      process.execPath,
+      ["-e", script, join(__dirname, "verify-exec-channels.cjs")],
+      { encoding: "utf8" },
+    ).status,
     0,
   );
 });
