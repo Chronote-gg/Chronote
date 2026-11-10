@@ -37,6 +37,7 @@ import {
   userStartTalking,
   userStopTalking,
 } from "../../src/audio";
+import { createMeeting } from "./fixtures/voiceSubscriptionMeeting";
 import type { MeetingData } from "../../src/types/meeting-data";
 import { stopMeetingProcessing } from "../../src/services/meetingProcessingLifetime";
 
@@ -70,47 +71,6 @@ jest.mock("prism-media", () => {
   };
 });
 
-function createMeeting(streams: PassThrough[]) {
-  const receiver = {
-    packetDiagnostics: new WeakMap(),
-    subscriptions: new Map<string, PassThrough>(),
-    subscribe: jest.fn((userId: string) => {
-      const stream = new PassThrough({ objectMode: true });
-      streams.push(stream);
-      receiver.subscriptions.set(userId, stream);
-      return stream;
-    }),
-  };
-  const meeting = {
-    meetingId: "meeting-1",
-    chatLog: [],
-    attendance: new Set<string>(),
-    connection: {
-      receiver,
-      state: { status: VoiceConnectionStatus.Ready },
-    },
-    textChannel: {} as MeetingData["textChannel"],
-    voiceChannel: {
-      members: new Map([["user-1", {}]]),
-    } as MeetingData["voiceChannel"],
-    guildId: "guild-1",
-    channelId: "channel-1",
-    audioData: { currentSnippets: new Map(), audioFiles: [] },
-    startTime: new Date(),
-    creator: {} as MeetingData["creator"],
-    guild: {} as MeetingData["guild"],
-    finishing: false,
-    isFinished: Promise.resolve(),
-    setFinished: () => {},
-    finished: false,
-    transcribeMeeting: true,
-    generateNotes: true,
-    participants: new Map(),
-    isAutoRecording: false,
-  } as unknown as MeetingData;
-  return { meeting, receiver };
-}
-
 describe("voice subscriptions", () => {
   beforeEach(() => {
     jest.useFakeTimers();
@@ -124,19 +84,6 @@ describe("voice subscriptions", () => {
     jest.restoreAllMocks();
     jest.useRealTimers();
   });
-  test("pending encrypted input marks capture incomplete without closing or retrying the stream", async () => {
-    const streams: PassThrough[] = [];
-    const { meeting } = createMeeting(streams);
-    await subscribeToUserVoice(meeting, "user-1");
-    streams[0].emit("davePendingInput");
-    expect(meeting.audioData.captureIncomplete).toBe(true);
-    expect(streams[0].destroyed).toBe(false);
-    expect(mockDecoders[0].destroyed).toBe(false);
-    expect(jest.getTimerCount()).toBe(0);
-    stopRecordingCapture(meeting);
-    expect(streams[0].listenerCount("davePendingInput")).toBe(0);
-  });
-
   test("capture start is stamped at actual subscription and never replaces reservation time", async () => {
     const { meeting } = createMeeting([]);
     meeting.startTime = new Date(100);

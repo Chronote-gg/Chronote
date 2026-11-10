@@ -16,6 +16,7 @@ import Davey from "@snazzah/davey";
 import { VoiceOpcodes } from "discord-api-types/voice/v8";
 import prism from "prism-media";
 import { OpusDiagnosticDecoder } from "../../src/utils/opusDiagnosticDecoder";
+import { generatedOpus } from "./fixtures/generatedOpus.mjs";
 import controls from "./fixtures/davePublicControls.cjs";
 import { offlineVoiceConnection } from "./fixtures/offlineVoiceConnection.mjs";
 
@@ -384,17 +385,7 @@ test.each([false, true])(
     const sender = installDave(senderNetwork);
     activate(senderNetwork);
     const options = { rate: 48000, channels: 2, frameSize: 960 };
-    const encoder = new prism.opus.Encoder(options);
-    const pcm = Buffer.alloc(960 * 2 * 2);
-    for (let sample = 0; sample < 960; sample++) {
-      const value = Math.round(
-        Math.sin((sample * 2 * Math.PI * 440) / 48000) * 10000,
-      );
-      pcm.writeInt16LE(value, sample * 4);
-      pcm.writeInt16LE(value, sample * 4 + 2);
-    }
-    const opus = encoder._encode(pcm);
-    encoder.destroy();
+    const opus = generatedOpus();
     const input = encrypted ? sender.session.encryptOpus(opus) : opus;
     if (encrypted) expect(input.equals(opus)).toBe(false);
 

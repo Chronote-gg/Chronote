@@ -9,7 +9,7 @@ import { expect, test } from "@jest/globals";
 import { DAVESession, VoiceReceiver, EndBehaviorType } from "@discordjs/voice";
 import { OpusDiagnosticDecoder } from "../../src/utils/opusDiagnosticDecoder";
 import Davey from "@snazzah/davey";
-import prism from "prism-media";
+import { generatedOpus } from "./fixtures/generatedOpus.mjs";
 import { createExternalSender } from "./fixtures/daveExternalSender.mjs";
 
 const ALICE = "100";
@@ -41,27 +41,6 @@ function prepareWelcome(alice, bob, external, transitionId) {
   });
   expect(alice.executeTransition(transitionId)).toBe(true);
   return Buffer.concat([prefix, welcome]);
-}
-
-function generatedOpus() {
-  const encoder = new prism.opus.Encoder({
-    rate: 48000,
-    channels: 2,
-    frameSize: 960,
-  });
-  try {
-    const pcm = Buffer.alloc(960 * 2 * 2);
-    for (let sample = 0; sample < 960; sample++) {
-      const value = Math.round(
-        Math.sin((sample * 2 * Math.PI * 440) / 48000) * 10000,
-      );
-      pcm.writeInt16LE(value, sample * 4);
-      pcm.writeInt16LE(value, sample * 4 + 2);
-    }
-    return encoder._encode(pcm);
-  } finally {
-    encoder.destroy();
-  }
 }
 
 test("authenticates remote media after delayed initial welcome and again after native reset", () => {
