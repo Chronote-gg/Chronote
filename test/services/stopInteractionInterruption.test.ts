@@ -45,6 +45,23 @@ const interactionResponseSpies = () => ({
   followUp: jest.fn(async () => {}),
   reply: jest.fn(async () => {}),
 });
+const closingInteraction = (id: string, guildId: string) => ({
+  id,
+  guildId,
+  createdTimestamp: Date.now(),
+  commandName: "leave",
+  isRepliable: () => true,
+  isButton: () => false,
+  isChatInputCommand: () => true,
+  isUserContextMenuCommand: () => false,
+  ...interactionResponseSpies(),
+});
+const resetClosingSession = () => {
+  jest.clearAllMocks();
+  mockStopEnvironment.ownership = new AbortController();
+  mockStopEnvironment.reservations.length = 0;
+  mockStopEnvironment.receipt.mockResolvedValue(true);
+};
 const stopRoutes = ["button", "leave", "context"] as const;
 const stopOutcomes = [
   "acknowledged",
@@ -270,10 +287,7 @@ test("delivers nothing while another runtime owns the meeting", async () => {
 test.each(["closing", "aborted", "duplicate", "receipt_lost", "reply_lost"])(
   "answers leave for a %s local session without reopening its stop",
   async (outcome) => {
-    jest.clearAllMocks();
-    mockStopEnvironment.ownership = new AbortController();
-    mockStopEnvironment.reservations.length = 0;
-    mockStopEnvironment.receipt.mockResolvedValue(true);
+    resetClosingSession();
     if (outcome === "duplicate")
       mockStopEnvironment.receipt.mockResolvedValue(false);
     if (outcome === "receipt_lost")
@@ -285,20 +299,10 @@ test.each(["closing", "aborted", "duplicate", "receipt_lost", "reply_lost"])(
     );
     await fenceAndSettleSessionWork(original);
     if (outcome === "aborted") mockStopEnvironment.ownership.abort();
-    const interaction = {
-      id: `synthetic-closing-leave-interaction-${outcome}`,
-      createdTimestamp: Date.now(),
-      guildId: original.guildId,
-      user: { id: "synthetic-user" },
-      commandName: "leave",
-      isRepliable: () => true,
-      isButton: () => false,
-      isChatInputCommand: () => true,
-      isUserContextMenuCommand: () => false,
-      deferred: false,
-      replied: false,
-      ...interactionResponseSpies(),
-    };
+    const interaction = closingInteraction(
+      `synthetic-closing-leave-interaction-${outcome}`,
+      original.guildId,
+    );
     if (outcome === "reply_lost")
       interaction.reply.mockRejectedValue(
         new Error("Synthetic reply unavailable"),
@@ -339,25 +343,15 @@ test.each(["receipt", "reply"])(
     const pending = held();
     const entered = held();
     try {
-      jest.clearAllMocks();
-      mockStopEnvironment.ownership = new AbortController();
-      mockStopEnvironment.reservations.length = 0;
-      mockStopEnvironment.receipt.mockResolvedValue(true);
+      resetClosingSession();
       const { original, childSettled } = stoppedRecordingFixture(
         `synthetic-held-${stage}`,
       );
       await fenceAndSettleSessionWork(original);
-      const interaction = {
-        id: `synthetic-held-response-${stage}`,
-        createdTimestamp: Date.now(),
-        guildId: original.guildId,
-        commandName: "leave",
-        isRepliable: () => true,
-        isButton: () => false,
-        isChatInputCommand: () => true,
-        isUserContextMenuCommand: () => false,
-        ...interactionResponseSpies(),
-      };
+      const interaction = closingInteraction(
+        `synthetic-held-response-${stage}`,
+        original.guildId,
+      );
       if (stage === "receipt")
         mockStopEnvironment.receipt.mockImplementationOnce(async () => {
           entered.release();
@@ -415,114 +409,58 @@ test("response-only admission refuses a replaced original reservation", () => {
   ).toThrow("original local session");
 });
 
-test("expired receipt continuation cannot start a reply before an overdue timer runs", async () => {
-  jest.useFakeTimers();
-  const pending = held();
-  const entered = held();
-  try {
-    jest.clearAllMocks();
-    mockStopEnvironment.ownership = new AbortController();
-    mockStopEnvironment.reservations.length = 0;
-    const { original, childSettled } = stoppedRecordingFixture(
-      "synthetic-overdue-receipt",
-    );
-    await fenceAndSettleSessionWork(original);
-    mockStopEnvironment.receipt.mockImplementationOnce(async () => {
-      entered.release();
-      await pending.promise;
-      return true;
-    });
-    const interaction = {
-      id: "synthetic-overdue-receipt-interaction",
-      createdTimestamp: Date.now(),
-      guildId: original.guildId,
-      commandName: "leave",
-      isRepliable: () => true,
-      isButton: () => false,
-      isChatInputCommand: () => true,
-      isUserContextMenuCommand: () => false,
-      ...interactionResponseSpies(),
-    };
-    const handling = interactionListener()(interaction);
-    await entered.promise;
-    jest.setSystemTime(Date.now() + 2501);
-    pending.release();
-    await handling;
-    expect(interaction.reply).not.toHaveBeenCalled();
-    expect(childSettled).toHaveBeenCalledTimes(1);
-  } finally {
-    pending.release();
-    jest.useRealTimers();
-  }
-});
-
-test("known declined receipt releases response ownership after its deadline", async () => {
-  jest.useFakeTimers();
-  const pending = held();
-  const entered = held();
-  try {
-    jest.clearAllMocks();
-    mockStopEnvironment.ownership = new AbortController();
-    mockStopEnvironment.reservations.length = 0;
-    const { original, childSettled } = stoppedRecordingFixture(
-      "synthetic-declined-receipt",
-    );
-    await fenceAndSettleSessionWork(original);
-    mockStopEnvironment.receipt.mockImplementationOnce(async () => {
-      entered.release();
-      await pending.promise;
-      return false;
-    });
-    const interaction = {
-      id: "synthetic-declined-receipt-interaction",
-      createdTimestamp: Date.now(),
-      guildId: original.guildId,
-      commandName: "leave",
-      isRepliable: () => true,
-      isButton: () => false,
-      isChatInputCommand: () => true,
-      isUserContextMenuCommand: () => false,
-      ...interactionResponseSpies(),
-    };
-    const handling = interactionListener()(interaction);
-    await entered.promise;
-    await jest.advanceTimersByTimeAsync(2501);
-    expect(childSettled).not.toHaveBeenCalled();
-    pending.release();
-    await handling;
-    expect(interaction.reply).not.toHaveBeenCalled();
-    expect(childSettled).toHaveBeenCalledTimes(1);
-    expect(
-      getRuntimeWorkAdmissionCheckpoints().find(
-        ({ id }) => id === interaction.id,
-      ),
-    ).toBeUndefined();
-  } finally {
-    pending.release();
-    jest.useRealTimers();
-  }
-});
+test.each(["overdue", "declined"])(
+  "%s receipt completion releases response ownership without starting a reply",
+  async (outcome) => {
+    jest.useFakeTimers();
+    const pending = held();
+    const entered = held();
+    try {
+      resetClosingSession();
+      const { original, childSettled } = stoppedRecordingFixture(
+        `synthetic-${outcome}-receipt`,
+      );
+      await fenceAndSettleSessionWork(original);
+      mockStopEnvironment.receipt.mockImplementationOnce(async () => {
+        entered.release();
+        await pending.promise;
+        return outcome !== "declined";
+      });
+      const interaction = closingInteraction(
+        `synthetic-${outcome}-receipt-interaction`,
+        original.guildId,
+      );
+      const handling = interactionListener()(interaction);
+      await entered.promise;
+      if (outcome === "declined") await jest.advanceTimersByTimeAsync(2501);
+      else jest.setSystemTime(Date.now() + 2501);
+      expect(childSettled).not.toHaveBeenCalled();
+      pending.release();
+      await handling;
+      expect(interaction.reply).not.toHaveBeenCalled();
+      expect(childSettled).toHaveBeenCalledTimes(1);
+      expect(
+        getRuntimeWorkAdmissionCheckpoints().find(
+          ({ id }) => id === interaction.id,
+        ),
+      ).toBeUndefined();
+    } finally {
+      pending.release();
+      jest.useRealTimers();
+    }
+  },
+);
 
 test("fencing before receipt invocation releases response ownership without I/O", async () => {
-  jest.clearAllMocks();
-  mockStopEnvironment.ownership = new AbortController();
-  mockStopEnvironment.reservations.length = 0;
-  mockStopEnvironment.receipt.mockResolvedValue(true);
+  resetClosingSession();
   const { original, childSettled } = stoppedRecordingFixture(
     "synthetic-before-receipt",
   );
   await fenceAndSettleSessionWork(original);
-  const interaction = {
-    id: "synthetic-before-receipt-interaction",
-    createdTimestamp: Date.now(),
-    guildId: original.guildId,
-    commandName: "leave",
-    isRepliable: () => true,
-    isButton: () => false,
-    isChatInputCommand: () => true,
-    isUserContextMenuCommand: () => false,
-    ...interactionResponseSpies(),
-  };
+  const interaction = closingInteraction(
+    "synthetic-before-receipt-interaction",
+    original.guildId,
+  );
   const handling = interactionListener()(interaction);
   fenceRuntimeWorkAdmission(interaction.id);
   await handling;

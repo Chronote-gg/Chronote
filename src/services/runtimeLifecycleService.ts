@@ -289,18 +289,21 @@ export function createRuntimeLifecycle(options: {
       : undefined;
     counts[kind]++;
     let settled = false;
+    function assertChildOwnership(child: "response" | "control") {
+      if (
+        settled ||
+        !["recording", "finalization", "voice_operation"].includes(kind) ||
+        unsafe ||
+        !safetyHandler ||
+        !protection.isSafe() ||
+        !row ||
+        ["releasing", "retired", "stale", "candidate"].includes(row.role)
+      )
+        throw new Error(`Session cannot grant ${child} ownership`);
+    }
     return {
       beginOwnedResponse() {
-        if (
-          settled ||
-          !["recording", "finalization", "voice_operation"].includes(kind) ||
-          unsafe ||
-          !safetyHandler ||
-          !protection.isSafe() ||
-          !row ||
-          ["releasing", "retired", "stale", "candidate"].includes(row.role)
-        )
-          throw new Error("Session cannot grant response ownership");
+        assertChildOwnership("response");
         counts.ancillary_delivery++;
         let responseSettled = false;
         return {
@@ -312,16 +315,7 @@ export function createRuntimeLifecycle(options: {
         };
       },
       beginOwnedControl() {
-        if (
-          settled ||
-          !["recording", "finalization", "voice_operation"].includes(kind) ||
-          unsafe ||
-          !safetyHandler ||
-          !protection.isSafe() ||
-          !row ||
-          ["releasing", "retired", "stale", "candidate"].includes(row.role)
-        )
-          throw new Error("Session cannot grant control ownership");
+        assertChildOwnership("control");
         const artifacts = artifactWork?.beginOwned();
         counts.ancillary_delivery++;
         let controlSettled = false;
