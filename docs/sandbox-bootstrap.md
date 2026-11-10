@@ -75,6 +75,11 @@ The bootstrap lease lasts 30 minutes. Expired or changed ownership refuses progr
 
 After promotion, observe a fresh serving heartbeat and complete a generated recording in the selected existing test server. Then use the normal coordinator for the single-server handoff and subsequent new-start checks. The bootstrap alone does not create completed-deployment lineage for compatible crash replacement.
 
+Completed Sandbox introduction receipts remain stored as evidence. The ordinary
+Sandbox coordinator recognizes their exact completed format and binds the receipt
+to its Sandbox role, operation session and image account. Incomplete or unknown
+receipts still block deployment; do not delete them to pass the guard.
+
 ## Collect bounded observations
 
 ```text

@@ -340,6 +340,7 @@ jobs:
             --tools "Read"
       - name: Extract Claude review Markdown
         id: extract_review
+        if: ${{ always() && !cancelled() && (steps.claude_review.outcome == 'success' || steps.claude_review.outcome == 'failure') }}
         env:
           EXECUTION_FILE: ${{ steps.claude_review.outputs.execution_file }}
         shell: bash
@@ -370,7 +371,14 @@ jobs:
               process.exit(1);
             }
             const text = typeof result.result === "string" ? result.result : "";
+            const errorText = text.toLowerCase();
+            const failureKind = ["hit your limit", "usage limit", "rate limit", "quota", "out of extra usage"].some((value) => errorText.includes(value))
+              ? "usage_limit_message"
+              : ["invalid api key", "authentication_error", "oauth token expired", "token has expired"].some((value) => errorText.includes(value))
+                ? "authentication_message"
+                : "unclassified";
             const fields = [
+              `failure_kind=${failureKind}`,
               `subtype=${result.subtype}`,
               `is_error=${result.is_error}`,
               `num_turns=${result.num_turns}`,
