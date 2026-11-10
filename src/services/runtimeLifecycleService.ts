@@ -34,6 +34,7 @@ export type RuntimeReadinessProbe = Pick<
 export type RuntimeWorkRegistration = RuntimeWorkHandle & {
   transition(kind: RuntimeWorkKind): void;
   beginOwnedControl(): RuntimeWorkHandle;
+  beginOwnedResponse(): RuntimeWorkHandle;
 };
 export type RuntimeLifecycle = ReturnType<typeof createRuntimeLifecycle>;
 export type OrdinaryAdmissionListener = (
@@ -289,6 +290,27 @@ export function createRuntimeLifecycle(options: {
     counts[kind]++;
     let settled = false;
     return {
+      beginOwnedResponse() {
+        if (
+          settled ||
+          !["recording", "finalization", "voice_operation"].includes(kind) ||
+          unsafe ||
+          !safetyHandler ||
+          !protection.isSafe() ||
+          !row ||
+          ["releasing", "retired", "stale", "candidate"].includes(row.role)
+        )
+          throw new Error("Session cannot grant response ownership");
+        counts.ancillary_delivery++;
+        let responseSettled = false;
+        return {
+          settle() {
+            if (responseSettled) return;
+            responseSettled = true;
+            counts.ancillary_delivery--;
+          },
+        };
+      },
       beginOwnedControl() {
         if (
           settled ||

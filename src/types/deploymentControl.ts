@@ -512,6 +512,7 @@ export type SessionReservation = {
   workHandle: RuntimeWorkHandle & {
     transition(kind: RuntimeWorkKind): void;
     beginOwnedControl(): RuntimeWorkHandle;
+    beginOwnedResponse(): RuntimeWorkHandle;
   };
 } & (
   | { sessionMode: "meeting"; historyKey: HistoryKey }
