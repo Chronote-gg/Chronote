@@ -119,6 +119,9 @@ jobs:
       - name: Install FFmpeg for conversion fixtures
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
+      - name: Test patched native frame contract
+        run: cargo +1.88.0 test --manifest-path native/davey/Cargo.toml --locked -p davey --lib
+
       - name: Run Jest
         run: yarn test
 

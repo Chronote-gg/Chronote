@@ -628,8 +628,15 @@ export async function subscribeToUserVoice(
       scheduleResubscribe(meeting, userId, "opus-stream-error");
     };
     opusStream.on("error", onOpusError);
+    const onDavePendingInput = () => {
+      if (!subscriptionState.suppressResubscribe && isCaptureActive(meeting)) {
+        meeting.audioData.captureIncomplete = true;
+      }
+    };
+    opusStream.on("davePendingInput", onDavePendingInput);
     const opusListenerCleanups = [
       () => opusStream.removeListener("error", onOpusError),
+      () => opusStream.removeListener("davePendingInput", onDavePendingInput),
     ];
     subscriptionState.ownedListenerCleanups.set(
       opusStream,

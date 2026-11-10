@@ -124,6 +124,19 @@ describe("voice subscriptions", () => {
     jest.restoreAllMocks();
     jest.useRealTimers();
   });
+  test("pending encrypted input marks capture incomplete without closing or retrying the stream", async () => {
+    const streams: PassThrough[] = [];
+    const { meeting } = createMeeting(streams);
+    await subscribeToUserVoice(meeting, "user-1");
+    streams[0].emit("davePendingInput");
+    expect(meeting.audioData.captureIncomplete).toBe(true);
+    expect(streams[0].destroyed).toBe(false);
+    expect(mockDecoders[0].destroyed).toBe(false);
+    expect(jest.getTimerCount()).toBe(0);
+    stopRecordingCapture(meeting);
+    expect(streams[0].listenerCount("davePendingInput")).toBe(0);
+  });
+
   test("capture start is stamped at actual subscription and never replaces reservation time", async () => {
     const { meeting } = createMeeting([]);
     meeting.startTime = new Date(100);
