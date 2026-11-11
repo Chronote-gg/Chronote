@@ -36,7 +36,7 @@ jobs:
 
       - name: Check shared quality policy
         id: quality
-        uses: BASIC-BIT/quality-ratchet@a0dfcca184fd83f0a23762f29353c7772c17906f # v1.1.0
+        uses: BASIC-BIT/quality-ratchet@394f47ae323e18291ba5a3136e2e28c0e5b035fb # v1.1.1
         with:
           github-token: ${{ github.token }}
           repository-path: ${{ github.workspace }}

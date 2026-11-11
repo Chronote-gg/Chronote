@@ -72,7 +72,7 @@ Close #527 in favour of this branch. Its unincorporated proposals are the ones
 already tracked above, so it adds no decision that #520 does not already hold
 open.
 
-## Remaining advisories assessed on 2026-11-02
+## Historical advisory assessment on 2026-11-02
 
 | Dependency      | Advisory and upstream limit                                                                                                                                  | Current exposure and follow-up                                                                                                                                                                                                                                     |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -84,3 +84,88 @@ open.
 These entries are tracked limitations, not dismissed or fixed alerts. Recheck the advisory database and actual dependency paths on each maintenance run. Do not infer that GitHub's alert count has cleared from a successful build or from this document.
 
 Cargo audit also reports `proc-macro-error` 1.0.4 as unmaintained ([RUSTSEC-2024-0370](https://rustsec.org/advisories/RUSTSEC-2024-0370.html)). It is inherited through the Linux GTK chain and is absent from the locked Windows target. Reassess it with that framework migration.
+
+## Maintenance assessment on 2026-11-11
+
+This refresh starts from current `master` and incorporates the compatible changes
+from [#585](https://github.com/Chronote-gg/Chronote/pull/585). Keep that PR open:
+its ONNX, Stripe, proxy middleware, Webpack Dev Server and protobufjs proposals
+still require the compatibility work described above. Node 24.22.2, TypeScript
+6, the speech engine inventory, Stripe API and patched DAVE JavaScript binding
+remain intentional pins.
+
+Refresh the coordinated AWS SDK 3.1166, Langfuse 6.1.1, Mantine 9.8 and tRPC
+11.28 packages, plus OpenAI 7.55, PostHog, Playwright 1.65, Storybook 10.6.7,
+Vite 8.3.8 and compatible transitive dependencies. All three tRPC packages now
+exist in the registry at the matching release. Preserve the Langfuse token
+accounting patch under its new versioned filename. AWS retry defaults remain
+three attempts in standard mode. The SDK normalizes aborted retry handling to
+`AbortError`; cancellation tests assert that stable error name and retain their
+actual transport-settlement, watchdog and request-count checks. Update the
+qualified quality-tool patch to v1.1.1 without changing scanner policy. Existing upload-artifact inputs retain
+archive behavior under v7.
+
+Refresh AWS provider locks to 6.72 and Grafana to 4.54. The audited AWS resource
+source files are byte-identical to 6.71 for the source-model review. Update the
+exact provider identity and model digest without broadening permission or plan
+allowances. Sandbox bootstrap retains its separate exact provider pin. No live
+Terraform operation is part of dependency maintenance.
+
+[#610](https://github.com/Chronote-gg/Chronote/pull/610) proposes Rand 0.10 for
+native DAVE. That literal change does not compile because `rand::rngs::OsRng`
+was removed. Retire the redundant direct Rand dependency and import the OS RNG
+through P256's existing `rand_core` re-export instead. This preserves the
+signing API, 32-byte private keys and 65-byte uncompressed public keys. Rust
+1.88 tests cover key parsing, signature verification and independent generation.
+Keep the patched DAVE fork and JavaScript binding at their qualified versions.
+Refresh its compatible Rust lockfile, the desktop lockfile and Boto3 1.44.
+
+### Current security limits
+
+The npm audit reports two low findings, Quill and deepmerge, with the limitations
+above. Fast XML Parser 5.12 fixes
+[GHSA-474x-hrwr-fgx4](https://github.com/advisories/GHSA-474x-hrwr-fgx4).
+The desktop npm audit reports no findings. The current Minimatch advisory
+[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+affects versions from 7 up to 11.0.1, so the historical 3.1.5 assessment above
+no longer matches its published affected range. Preserve legacy callers' API;
+modern copies resolve to a fixed release.
+
+The native DAVE Cargo audit decreases from twelve findings to eleven after the
+compatible crossbeam-epoch fix. Four findings involve packages in the Node
+binding's normal dependency tree:
+
+| Package               | Advisory                                                                                                                                               | Required fixed family |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------- |
+| crypto-bigint 0.5.5   | [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387.html)                                                                             | 0.7.6 or newer        |
+| libcrux-secrets 0.0.5 | [RUSTSEC-2026-0212](https://rustsec.org/advisories/RUSTSEC-2026-0212.html)                                                                             | 0.0.6 or newer        |
+| libcrux-sha3 0.0.8    | [RUSTSEC-2026-0207](https://rustsec.org/advisories/RUSTSEC-2026-0207.html), [RUSTSEC-2026-0208](https://rustsec.org/advisories/RUSTSEC-2026-0208.html) | 0.0.10 or newer       |
+
+Presence in the dependency tree does not establish execution of the affected
+operations. It also does not establish safety. These fixes cross the current
+cryptography dependencies' supported version ranges. Qualify a separate
+P256/OpenMLS/DAVE migration with wire interoperability and key compatibility
+before replacing these families.
+
+The other seven lockfile findings are in optional or other workspace paths:
+libcrux-aesgcm, RUSTSEC-2026-0209 and RUSTSEC-2026-0211;
+libcrux-chacha20poly1305, RUSTSEC-2026-0124;
+libcrux-kem, RUSTSEC-2026-0330 and RUSTSEC-2026-0331;
+and Pyo3, RUSTSEC-2026-0176 and RUSTSEC-2026-0177.
+All eleven predate this refresh. Compatible lockfile updates do not fix them.
+The desktop Cargo audit has no vulnerabilities but retains the Linux GLib
+unsoundness and unmaintained GTK-chain warnings described above. Native Cargo
+also reports unmaintained-package warnings; do not describe either audit as
+warning-free.
+
+GitHub's Dependabot-alert API returned HTTP 403 for this integration. Local
+package audits cannot verify or dismiss the repository's alert dashboard.
+Recheck these findings on each maintenance run and report them separately from
+build and CI results.
+
+Release references: [AWS SDK](https://github.com/aws/aws-sdk-js-v3/releases/tag/v3.1166.0),
+[Langfuse](https://github.com/langfuse/langfuse-js/releases/tag/v6.1.1),
+[tRPC](https://github.com/trpc/trpc/releases/tag/v11.28.0),
+[Playwright](https://github.com/microsoft/playwright/releases/tag/v1.65.0),
+[AWS provider](https://github.com/hashicorp/terraform-provider-aws/releases/tag/v6.72.0),
+and [quality tool](https://github.com/BASIC-BIT/quality-ratchet/releases/tag/v1.1.1).

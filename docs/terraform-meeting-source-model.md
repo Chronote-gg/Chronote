@@ -44,7 +44,7 @@ source relation. A later Apply commit is allowed only under the existing verifie
 relation proving Terraform inputs unchanged. The model then binds an opaque proof
 to that exact rendering. A boolean, digest supplied by a caller, or another plan's
 proof cannot enable it. Readonly init must succeed and a subsequent version JSON
-record must identify Terraform 1.17.1 and installed AWS 6.71.0. The checked lock
+record must identify Terraform 1.17.1 and installed AWS 6.72.0. The checked lock
 pins the installation. Older captures without that record remain refused.
 
 ## Dependency audit
@@ -98,6 +98,19 @@ critical-alerts topic by name through `local.app_log_group_name` and
 locals derive only from `name_prefix`, the region and the caller identity, and
 only the log group, the topic and that filter and alarm read them. No closure
 resource reads either local, the log group or the topic.
+
+## Provider dependency audit (2026-11-11)
+
+AWS advances from 6.71.0 to 6.72.0 in the application, state-management and
+production-bootstrap locks. The application Terraform configuration is unchanged.
+The source manifest is recomputed for the new lock, and installed-provider
+fixtures require 6.72.0 while previous-provider evidence is rejected.
+The DynamoDB table implementation and the reviewed IAM policy, role, attachment,
+OIDC lookup, S3 bucket/versioning/encryption/policy and KMS key implementations
+are byte-identical between those provider versions. The closure, configured
+GSI requirements, excluded checks and allowed effects remain unchanged.
+Sandbox bootstrap retains its independent exact 6.69.1 pin. No native operation
+or production acceptance is established by these offline checks.
 
 ## Computed GSI representation
 
@@ -162,7 +175,7 @@ lookup. Its closure, excluded checks, unknown handling and installed-provider
 requirements are unchanged. The source pin is refreshed only for these declared
 edits to `sandbox-deployment.tf` and `production-deployment.tf`.
 
-The checked application lock and exceptional meeting model both require AWS 6.71.0;
+The checked application lock and exceptional meeting model both require AWS 6.72.0;
 the model also requires Terraform 1.17.1 and post-init installation evidence.
 Offline mocks use their own checked locks and the CI Terraform 1.16.0 toolchain;
 they do not prove native meeting-model acceptance. The exact version refusals

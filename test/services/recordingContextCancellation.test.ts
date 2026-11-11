@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { expectSdkAbort } from "../fixtures/sdkAbort";
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { fetchChannelContext } from "../../src/services/channelContextService";
@@ -89,10 +90,7 @@ test.each(reads)(
       });
     try {
       const task = read(controller.signal);
-      const rejected = expect(task).rejects.toThrow("generated abort");
-      await ready;
-      controller.abort();
-      await rejected;
+      await expectSdkAbort({ task, started: ready, controller });
       expect(settled).toBe(true);
       expect(watchdogFired).toBe(false);
       expect(handler).toHaveBeenCalledTimes(1);
