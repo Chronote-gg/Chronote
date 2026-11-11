@@ -59,7 +59,7 @@ jobs:
         run: yarn markdownlint:check
 
   test:
-    name: Unit Tests (Non-blocking)
+    name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -76,14 +76,7 @@ jobs:
         run: bash scripts/ci-install-dependencies.sh
 
       - name: Run tests
-        id: run-tests
-        run: |
-          yarn test --passWithNoTests || echo "test_failed=true" >> $GITHUB_OUTPUT
-
-      - name: Report test results
-        if: steps.run-tests.outputs.test_failed == 'true'
-        run: |
-          echo "::warning::Some tests failed, but continuing with deployment. Please fix failing tests."
+        run: yarn test
 
   code-stats:
     name: Code Stats

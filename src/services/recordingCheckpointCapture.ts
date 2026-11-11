@@ -2,6 +2,7 @@ import type { PcmSpan } from "../types/transcriptCorrespondence";
 import { createHash } from "node:crypto";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type {
   CheckpointArtifactInput,
   RecordingCoverage,
@@ -305,9 +306,7 @@ export function createRecordingCheckpointCapture(input: Input) {
   async function finish(): Promise<boolean> {
     intakeStopped = true;
     closeAll();
-    startWorker();
-    await worker;
-    if (closed.length || signal.aborted) return false;
+    if (!(await drainContent())) return false;
     completion = input.commit([], signal);
     try {
       return await completion;
@@ -366,8 +365,16 @@ export function createRecordingCheckpointCapture(input: Input) {
   }
   async function drainContent(): Promise<boolean> {
     await completion;
-    startWorker();
-    await worker;
+    while (closed.length && !signal.aborted) {
+      startWorker();
+      await worker;
+      if (!closed.length || signal.aborted) break;
+      if (closed[0].attempts >= 3) return false;
+      // Stopping must await the publisher's existing retry, not report it as loss.
+      await delay(Math.max(0, retryAt - Date.now()), undefined, {
+        signal,
+      }).catch(() => {});
+    }
     return !closed.length && !signal.aborted;
   }
   return {

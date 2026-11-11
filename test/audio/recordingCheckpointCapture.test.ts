@@ -46,6 +46,72 @@ const contextSnapshot = (sequence: number): CheckpointArtifactInput => ({
   coverage: { kind: "unknown" },
 });
 
+test("finish waits for the already scheduled save retry", async () => {
+  jest.useRealTimers();
+  const commit = jest
+    .fn<Promise<boolean>, [readonly CheckpointArtifactInput[], AbortSignal]>()
+    .mockResolvedValueOnce(false)
+    .mockResolvedValue(true);
+  const f = fixture(commit);
+  f.capture.queueContent(contextSnapshot(1));
+  await f.capture.settled();
+  let result: boolean | undefined;
+  const finishing = f.capture.finish().then((value) => {
+    result = value;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(result).toBeUndefined();
+  await finishing;
+  expect(result).toBe(true);
+  expect(commit).toHaveBeenCalledTimes(3);
+  f.controller.abort();
+  await f.capture.settled();
+  f.capture.releaseSettledBuffers();
+});
+
+test("finish preserves failed bytes after the existing three attempts", async () => {
+  jest.useRealTimers();
+  const commit = jest.fn(async () => false);
+  const f = fixture(commit);
+  f.capture.queueContent(contextSnapshot(1));
+  expect(await f.capture.finish()).toBe(false);
+  expect(commit).toHaveBeenCalledTimes(3);
+  expect(f.capture.pending()).toHaveLength(1);
+  expect(readdirSync(directory)).toEqual(["context-1.json"]);
+  f.controller.abort();
+  await f.capture.settled();
+  f.capture.releaseSettledBuffers();
+});
+
+test("ownership loss cancels a stop waiting for its save retry", async () => {
+  jest.useRealTimers();
+  const commit = jest.fn(async () => false);
+  const f = fixture(commit);
+  f.capture.queueContent(contextSnapshot(1));
+  await f.capture.settled();
+  let settled = false;
+  const finishing = f.capture.finish().then((value) => {
+    settled = true;
+    return value;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(settled).toBe(false);
+  f.controller.abort();
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<string>((resolve) => {
+    timer = setTimeout(() => resolve("abort wait timed out"), 500);
+  });
+  try {
+    expect(await Promise.race([finishing, timeout])).toBe(false);
+  } finally {
+    clearTimeout(timer!);
+  }
+  expect(commit).toHaveBeenCalledTimes(1);
+  expect(f.capture.pending()).toHaveLength(1);
+  await f.capture.settled();
+  f.capture.releaseSettledBuffers();
+});
+
 test("a sealed artifact producer refuses local writes before file creation", async () => {
   const stopped = jest.fn();
   const beginWrite = jest.fn(() => {
