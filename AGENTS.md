@@ -21,6 +21,7 @@
   heading; never concatenate the prefix directly with a heading like
   `[AGENT]## Summary`.
 - PR descriptions should stay concise. Do not publish long "Tests" or "Verification" checklists for checks already enforced by CI; mention validation only when it adds non-obvious signal, such as manual/provider checks, visual-review rationale, skipped checks, or rollout risk.
+- **Break-glass deploys are dispatched by BASIC (`BASIC-BIT`) only; agents may prepare the `gh workflow run deploy.yml -f break_glass=true ...` command and the attestation but never run the dispatch.** Terraform Plan/Apply is manual and needs GitHub environment approval. Read `docs/engineering/infrastructure.md` before any deploy or Terraform work.
 - Token leaks: don’t reintroduce secret re-exports in `constants.ts`; use `configService`.
 - Avoid hedging and speculative fallbacks. Follow YAGNI and KISS, do not add code for hypothetical cases unless explicitly required.
 - Avoid `in`/`instanceof`/`typeof` hedging for core platform APIs; we target a known Node/SDK set. Prefer simple, direct calls with minimal branching.
