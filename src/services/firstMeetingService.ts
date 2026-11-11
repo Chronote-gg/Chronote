@@ -13,7 +13,10 @@ import {
 } from "../utils/meetingCaptureNotice";
 import { config } from "./configService";
 import { ensureUserCanReadChannelHistory } from "./discordPermissionsService";
-import { ensureUserCanAccessMeeting } from "./meetingAccessService";
+import {
+  ensureUserCanAccessMeeting,
+  type MeetingAccessContext,
+} from "./meetingAccessService";
 import {
   getMeetingHistoryService,
   listRecentMeetingsForGuildService,
@@ -196,12 +199,14 @@ export async function getFirstMeetingState(input: {
   const candidates = rows
     .filter((row): row is MeetingHistory => Boolean(row))
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  const accessContext: MeetingAccessContext = new Map();
   for (const history of candidates) {
     const allowed = await ensureUserCanAccessMeeting({
       guildId: input.guildId,
       userId: input.userId,
       meeting: history,
       attendeeOverrideEnabled,
+      accessContext,
     });
     if (allowed === null) permissionUnavailable();
     if (!allowed) continue;

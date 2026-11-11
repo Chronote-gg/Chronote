@@ -1,3 +1,4 @@
+import { resolveGuildHistoryAuthority } from "../../src/services/guildHistoryAuthorityService";
 import {
   ensureUserCanConnectChannel,
   ensureUserCanReadChannelHistory,
@@ -12,9 +13,14 @@ jest.mock("../../src/services/discordPermissionsService", () => ({
   ensureUserCanReadChannelHistory: jest.fn(),
 }));
 
+jest.mock("../../src/services/guildHistoryAuthorityService", () => ({
+  resolveGuildHistoryAuthority: jest.fn(),
+}));
+
 type Meeting = Parameters<typeof checkUserMeetingAccess>[0]["meeting"];
 
 const buildMeeting = (overrides: Partial<Meeting> = {}): Meeting => ({
+  guildId: "guild-1",
   channelId: "voice-1",
   channelId_timestamp: "voice-1#2025-01-01T00:00:00.000Z",
   notesChannelId: "text-1",
@@ -33,6 +39,9 @@ describe("meetingAccessService", () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    jest
+      .mocked(resolveGuildHistoryAuthority)
+      .mockResolvedValue({ allowed: false });
     mockedEnsureUserCanConnectChannel.mockResolvedValue(true);
     mockedEnsureUserCanReadChannelHistory.mockResolvedValue(true);
   });
@@ -155,5 +164,106 @@ describe("meetingAccessService", () => {
     });
 
     expect(allowed).toBe(true);
+  });
+});
+
+describe("guild history authority", () => {
+  const authority = jest.mocked(resolveGuildHistoryAuthority);
+  const evaluate = (
+    overrides: Partial<Parameters<typeof checkUserMeetingAccess>[0]> = {},
+  ) =>
+    checkUserMeetingAccess({
+      guildId: "guild-1",
+      userId: "user-1",
+      meeting: buildMeeting(),
+      ...overrides,
+    });
+  beforeEach(() => {
+    jest.resetAllMocks();
+    authority.mockResolvedValue({ allowed: false });
+    jest.mocked(ensureUserCanConnectChannel).mockResolvedValue(false);
+    jest.mocked(ensureUserCanReadChannelHistory).mockResolvedValue(false);
+  });
+  test.each(["guild_owner", "guild_administrator"] as const)(
+    "allows %s independently of channels or attendance settings",
+    async (via) => {
+      authority.mockResolvedValue({ allowed: true, via });
+      await expect(
+        evaluate({ attendeeOverrideEnabled: false }),
+      ).resolves.toEqual({ allowed: true, via });
+      await expect(
+        evaluate({
+          meeting: buildMeeting({
+            channelId: undefined,
+            channelId_timestamp: undefined,
+          }),
+        }),
+      ).resolves.toEqual({ allowed: true, via });
+      expect(ensureUserCanConnectChannel).not.toHaveBeenCalled();
+      expect(ensureUserCanReadChannelHistory).not.toHaveBeenCalled();
+    },
+  );
+  test("never grants for a different meeting guild", async () => {
+    authority.mockResolvedValue({ allowed: true, via: "guild_owner" });
+    await expect(
+      evaluate({ meeting: buildMeeting({ guildId: "other" }) }),
+    ).resolves.toMatchObject({ allowed: false });
+    expect(authority).not.toHaveBeenCalled();
+  });
+  test("disabled authority override and personal recordings do not read guild authority", async () => {
+    authority.mockResolvedValue({ allowed: true, via: "guild_owner" });
+    await expect(
+      evaluate({ guildAuthorityOverrideEnabled: false }),
+    ).resolves.toMatchObject({ allowed: false });
+    await expect(
+      evaluate({
+        meeting: buildMeeting({
+          ownershipScope: "personal",
+          ownerUserId: "other",
+          guildId: "personal:other",
+        }),
+      }),
+    ).resolves.toMatchObject({ allowed: false });
+    expect(authority).not.toHaveBeenCalled();
+  });
+  test("reuses proof only within a request and isolates actors and guilds", async () => {
+    const accessContext = new Map();
+    authority.mockResolvedValue({ allowed: true, via: "guild_administrator" });
+    await Promise.all([
+      evaluate({ accessContext }),
+      evaluate({ accessContext }),
+    ]);
+    expect(authority).toHaveBeenCalledTimes(1);
+    await evaluate({ accessContext, userId: "user-2" });
+    await evaluate({
+      accessContext,
+      guildId: "guild-2",
+      meeting: buildMeeting({ guildId: "guild-2" }),
+    });
+    expect(authority).toHaveBeenCalledTimes(3);
+    authority.mockResolvedValue({ allowed: false });
+    await expect(evaluate({ accessContext: new Map() })).resolves.toMatchObject(
+      { allowed: false },
+    );
+    expect(authority).toHaveBeenCalledTimes(4);
+  });
+  test("rate limits cannot become a confirmed denial but channel proof can independently allow", async () => {
+    authority.mockResolvedValue({ allowed: null });
+    await expect(evaluate()).resolves.toMatchObject({ allowed: null });
+    await expect(
+      evaluate({
+        meeting: buildMeeting({
+          channelId: undefined,
+          channelId_timestamp: undefined,
+        }),
+      }),
+    ).resolves.toMatchObject({ allowed: null });
+    jest.mocked(ensureUserCanConnectChannel).mockResolvedValue(true);
+    await expect(evaluate()).resolves.toMatchObject({ allowed: null });
+    jest.mocked(ensureUserCanReadChannelHistory).mockResolvedValue(true);
+    await expect(evaluate()).resolves.toEqual({
+      allowed: true,
+      via: "channel_permissions",
+    });
   });
 });

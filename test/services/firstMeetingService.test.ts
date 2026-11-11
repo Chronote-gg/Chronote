@@ -1,3 +1,4 @@
+import { resolveGuildHistoryAuthority } from "../../src/services/guildHistoryAuthorityService";
 /** @jest-environment node */
 import { getFirstMeetingState } from "../../src/services/firstMeetingService";
 import { getActiveMeetingLease } from "../../src/db";
@@ -29,6 +30,10 @@ jest.mock("../../src/services/unifiedConfigService", () => ({
   getSnapshotBoolean: jest.fn(),
 }));
 
+jest.mock("../../src/services/guildHistoryAuthorityService", () => ({
+  resolveGuildHistoryAuthority: jest.fn(),
+}));
+
 const guildId = "123456789012345678";
 const userId = "234567890123456789";
 const channelId = "345678901234567890";
@@ -52,6 +57,9 @@ const history = (overrides: Partial<MeetingHistory> = {}): MeetingHistory => ({
 
 beforeEach(() => {
   jest.resetAllMocks();
+  jest
+    .mocked(resolveGuildHistoryAuthority)
+    .mockResolvedValue({ allowed: false });
   jest.mocked(listRecentMeetingsForGuildService).mockResolvedValue([]);
   jest.mocked(getMeetingHistoryService).mockResolvedValue(history());
   jest.mocked(resolveConfigSnapshot).mockResolvedValue({

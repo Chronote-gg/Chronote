@@ -1,3 +1,8 @@
+import {
+  resolveGuildHistoryAuthority,
+  type GuildHistoryAuthorityDecision,
+} from "./guildHistoryAuthorityService";
+
 import { isRecordedMeetingAttendee } from "../utils/meetingUserIndex";
 import type { MeetingHistory } from "../types/db";
 import {
@@ -13,6 +18,11 @@ import {
   type GuildSessionCache,
 } from "./guildAccessService";
 
+export type MeetingAccessContext = Map<
+  string,
+  Promise<GuildHistoryAuthorityDecision>
+>;
+
 export type MeetingAccessMissingPermission =
   "voice_connect" | "notes_read_history";
 
@@ -20,6 +30,8 @@ export type MeetingAccessDecision =
   | {
       allowed: true;
       via:
+        | "guild_owner"
+        | "guild_administrator"
         | "attendee"
         | "channel_permissions"
         | "owner"
@@ -73,6 +85,8 @@ export async function ensureUserCanAccessMeeting(options: {
   userId: string;
   attendeeOverrideEnabled?: boolean;
   sharedGuildIds?: string[];
+  accessContext?: MeetingAccessContext;
+  guildAuthorityOverrideEnabled?: boolean;
 }): Promise<boolean | null> {
   const decision = await checkUserMeetingAccess(options);
   return decision.allowed;
@@ -113,6 +127,8 @@ export async function checkUserMeetingAccess(options: {
   userId: string;
   attendeeOverrideEnabled?: boolean;
   sharedGuildIds?: string[];
+  accessContext?: MeetingAccessContext;
+  guildAuthorityOverrideEnabled?: boolean;
 }): Promise<MeetingAccessDecision> {
   const { guildId, userId, meeting } = options;
   const attendeeOverrideEnabled = options.attendeeOverrideEnabled !== false;
@@ -129,10 +145,43 @@ export async function checkUserMeetingAccess(options: {
     return { allowed: false, missing: [] };
   }
 
+  if (meeting.guildId !== guildId) return { allowed: false, missing: [] };
+
   if (attendeeOverrideEnabled && isRecordedMeetingAttendee(meeting, userId)) {
     return { allowed: true, via: "attendee" };
   }
 
+  let authority: GuildHistoryAuthorityDecision = { allowed: false };
+  if (options.guildAuthorityOverrideEnabled !== false) {
+    const key = JSON.stringify([guildId, userId]);
+    let pending = options.accessContext?.get(key);
+    if (!pending) {
+      pending = resolveGuildHistoryAuthority({ guildId, userId });
+      options.accessContext?.set(key, pending);
+    }
+    authority = await pending;
+    if (authority.allowed) return authority;
+  }
+
+  const decision = await checkMeetingChannelAccess({
+    guildId,
+    userId,
+    meeting,
+  });
+  return decision.allowed === false && authority.allowed === null
+    ? { ...decision, allowed: null }
+    : decision;
+}
+
+async function checkMeetingChannelAccess({
+  guildId,
+  userId,
+  meeting,
+}: {
+  guildId: string;
+  userId: string;
+  meeting: MeetingAccessRecord;
+}): Promise<MeetingAccessDecision> {
   const voiceChannelId = resolveVoiceChannelId(meeting);
   if (!voiceChannelId) {
     return { allowed: false, missing: ["voice_connect"] };
