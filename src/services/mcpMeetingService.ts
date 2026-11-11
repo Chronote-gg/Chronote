@@ -730,13 +730,13 @@ function createBrowseAuthorizer({
             ? false
             : !input.restriction &&
               (await resolveAttendeeAccessEnabled(meeting.guildId)),
+          guildAuthorityOverrideEnabled: !input.restriction,
+          accessContext: new Map(),
           sharedGuildIds,
         };
         accessContexts.set(meeting.guildId, context);
       }
-      // Only actual recorded attendance permits a former member to retain a
-      // real guild recording. Creator, trigger and share pointers are discovery,
-      // never membership or authorization evidence.
+      // Only recorded attendance permits former-member access; pointers do not.
       if (
         !personal &&
         !(

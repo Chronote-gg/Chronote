@@ -132,7 +132,13 @@ The portal's **Teach Chronote** workflow requires **Manage Server**. It can prop
 
 ### Web portal access
 
-The web portal uses Discord OAuth. Users land on **My Meetings** first, then can open direct meeting links or use **View servers** to browse Server Library for one server at a time. Users see meetings from channels they have access to in Discord. Attendees of a meeting can always view it regardless of current channel permissions.
+The web portal uses Discord OAuth. Users land on **My Meetings** first, then can open direct meeting links or use **View servers** to browse Server Library for one server at a time. Users can read meetings through their current Discord channel permissions or the server's Attendee access setting.
+
+Current server owners and members with Discord's **Administrator** permission can also read server-owned meeting history, including meetings they did not attend and meetings whose original voice or notes channel was deleted. **Manage Server** or **Manage Channels** alone does not grant this access. This works independently of the Attendee access setting and applies to past and future server meetings.
+
+Chronote verifies current server authority on each request. If you lose ownership, Administrator or server membership, this access route ends on a later request. Your existing attendee or channel permissions may still allow access. If Discord cannot verify authority, Chronote grants no access through that check; retry if rate limited.
+
+Restricted Remote MCP and service-account tokens still need their current channel permissions and must stay within their channel allowlists. Personal recordings keep their existing ownership and sharing rules. Reading a meeting does not grant permission to edit it or publish it elsewhere. Archive and attended-only filters still apply.
 
 Server artifact settings are checked after meeting access. A user may be allowed to open a meeting while its transcript, audio recording, or both are unavailable.
 

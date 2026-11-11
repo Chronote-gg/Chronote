@@ -81,7 +81,10 @@ import { MEETING_STATUS } from "../../types/meetingLifecycle";
 import type { TranscriptPayload } from "../../types/transcript";
 
 import { resolveAttendeeAccessEnabled } from "../../services/attendeeAccessSetting";
-import { ensureUserCanAccessMeeting } from "../../services/meetingAccessService";
+import {
+  ensureUserCanAccessMeeting,
+  type MeetingAccessContext,
+} from "../../services/meetingAccessService";
 import {
   resolveMeetingArtifactAccess,
   resolveServerMeetingArtifactAccess,
@@ -472,10 +475,9 @@ const list = guildMemberProcedure
   .query(async ({ ctx, input }) => {
     await requireBotInGuild(input.serverId);
 
-    const limit = input.limit ?? config.ask.maxMeetings;
     const meetings = await listRecentMeetingsForGuildService(
       input.serverId,
-      limit,
+      input.limit ?? config.ask.maxMeetings,
       {
         archivedOnly: input.archivedOnly,
         includeArchived: input.includeArchived,
@@ -486,6 +488,7 @@ const list = guildMemberProcedure
       input.serverId,
     );
 
+    const accessContext: MeetingAccessContext = new Map();
     const allowedMeetings = [] as typeof meetings;
     for (const meeting of meetings) {
       const allowed = await ensureUserCanAccessMeeting({
@@ -493,6 +496,7 @@ const list = guildMemberProcedure
         meeting,
         userId: ctx.user.id,
         attendeeOverrideEnabled,
+        accessContext,
       });
       if (allowed === null) {
         throw new TRPCError({
@@ -518,12 +522,8 @@ const list = guildMemberProcedure
       console.warn("Unable to resolve guild channels for meeting list", err);
       channels = [];
     }
-    const channelMap = new Map(
-      channels.map((channel) => [channel.id, channel.name]),
-    );
-    // Library cards derive their summary from notes when no summarySentence
-    // exists, so list payloads need the same mention resolution as detail.
-    // One role fetch for the whole list, since this endpoint is guild scoped.
+    const channelMap = new Map(channels.map(({ id, name }) => [id, name]));
+    // Resolve notes-derived summaries with one guild role fetch, as detail does.
     const roleNamesByGuildId = new Map([
       [input.serverId, await resolveGuildRoleNames(input.serverId)],
     ]);

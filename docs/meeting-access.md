@@ -19,6 +19,16 @@ By default, a user can view a meeting through server-scoped Library or Ask if th
 3. Can read the meeting's notes channel history.
    - Required Discord permissions: `View Channel` and `Read Message History` on the text channel where Chronote posted the meeting summary/notes.
 
+### Server owner and Administrator access
+
+A current server owner or member with Discord's Administrator permission can read ordinary server-owned meeting history even if they did not attend or the original voice or notes channel has been deleted. Manage Server and Manage Channels alone do not grant this access. The Attendee access setting does not control it.
+
+Chronote checks current ownership, membership and Administrator roles on each request, reusing the result only within that request. Losing that authority removes this access route on a later request. Existing attendee or channel permissions can still independently allow access. If Discord cannot verify authority, that check grants nothing; rate limits can require a retry.
+
+Restricted MCP and service-account tokens keep their current membership, channel permissions and channel allowlists. They do not receive this owner/Administrator history grant. Personal recordings keep their existing ownership and sharing rules.
+
+Read access does not change editing, correction, archive, sharing or publication permissions. Archive and attended-only filters still determine which records a list displays; cancelled records remain excluded from lists that already exclude them.
+
 ### Attendee exception
 
 If a user participated in the meeting (their Discord user id appears in the meeting's stored participant snapshot), Chronote can allow portal access even if they no longer have access to the voice or notes channel.
@@ -44,7 +54,7 @@ When you use Ask (both in the portal and via `/ask` in Discord), Chronote only s
 
 ## Notes
 
-- Access is evaluated at view-time, based on current Discord permissions (plus the attendee exception).
+- Access is evaluated at view-time, based on current Discord permissions, server authority or the attendee exception.
 - Older meeting records may not include the notes channel id. For those records, Chronote can only enforce voice-channel access.
 - Audio playback links are short-lived signed URLs.
 - A disabled artifact is omitted at the server boundary, not merely hidden in the frontend.

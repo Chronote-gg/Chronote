@@ -1,3 +1,4 @@
+import { resolveGuildHistoryAuthority } from "../guildHistoryAuthorityService";
 import { jest } from "@jest/globals";
 import {
   checkUserMeetingAccess,
@@ -18,6 +19,10 @@ jest.mock("../discordPermissionsService", () => ({
 
 jest.mock("../guildAccessService", () => ({
   ensureUserInGuild: jest.fn(),
+}));
+
+jest.mock("../guildHistoryAuthorityService", () => ({
+  resolveGuildHistoryAuthority: jest.fn(),
 }));
 
 const createMeeting = (
@@ -64,6 +69,9 @@ describe("meetingAccessService", () => {
   });
   beforeEach(() => {
     jest.clearAllMocks();
+    jest
+      .mocked(resolveGuildHistoryAuthority)
+      .mockResolvedValue({ allowed: false });
   });
 
   it("allows personal meeting owners without Discord channel checks", async () => {

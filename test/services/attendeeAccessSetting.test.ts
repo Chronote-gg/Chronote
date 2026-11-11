@@ -79,7 +79,11 @@ test("restricted MCP tokens never receive the attendee override", async () => {
     resolveMcpMeetingAccessContext("guild-1", "attendee-1", {
       restricted: true,
     }),
-  ).resolves.toEqual({ attendeeOverrideEnabled: false });
+  ).resolves.toEqual({
+    attendeeOverrideEnabled: false,
+    guildAuthorityOverrideEnabled: false,
+    accessContext: expect.any(Map),
+  });
   expect(getGuildMemberCached).toHaveBeenCalledWith("guild-1", "attendee-1");
 });
 
