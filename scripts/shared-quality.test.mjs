@@ -44,7 +44,7 @@ test("missing local checkout gives setup instructions and operational exit", () 
     const result = run(launcher, home);
     assert.equal(result.status, 2, result.stderr);
     assert.match(result.stderr, /QUALITY_RATCHET_HOME/);
-    assert.match(result.stderr, /a0dfcca184fd83f0a23762f29353c7772c17906f/);
+    assert.match(result.stderr, /394f47ae323e18291ba5a3136e2e28c0e5b035fb/);
   }
 });
 
@@ -98,7 +98,7 @@ test("a clean pinned tool receives literal arguments and the current Node, with 
     writeFileSync(
       fixtureLauncher,
       readFileSync(launcher, "utf8").replaceAll(
-        "a0dfcca184fd83f0a23762f29353c7772c17906f",
+        "394f47ae323e18291ba5a3136e2e28c0e5b035fb",
         git(home, "rev-parse", "HEAD"),
       ),
     );

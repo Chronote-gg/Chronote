@@ -569,7 +569,7 @@ test.each([
     const v = JSON.parse(Buffer.from(output[1].stdout, "base64").toString());
     if (fault !== "wrong-terraform")
       v.provider_selections["registry.terraform.io/hashicorp/aws"] =
-        fault === "previous-provider" ? "6.70.0" : "6.69.1";
+        fault === "previous-provider" ? "6.71.0" : "6.69.1";
     else v.terraform_version = "1.16.0";
     output[1].stdout = Buffer.from(JSON.stringify(v)).toString("base64");
   }

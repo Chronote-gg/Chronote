@@ -1,5 +1,5 @@
 import providerPlan from "./terraformMeetingUpdate-provider.json";
-// Originally captured with AWS 6.69.1; the audited schema is unchanged in 6.71.0.
+// Originally captured with AWS 6.69.1; the audited schema is unchanged in 6.72.0.
 // Synthetic resource names and the mocked computed region are rebound to the
 // guard's fixed Sandbox identity.
 export const identity = { accountId: "123456789012", region: "us-east-1" };
