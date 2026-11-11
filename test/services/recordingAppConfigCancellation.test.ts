@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { expectSdkAbort } from "../fixtures/sdkAbort";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import { HttpResponse } from "@smithy/core/protocols";
 import { Readable } from "node:stream";
@@ -103,10 +104,7 @@ test.each([1, 2])(
       });
     try {
       const task = read({ strict: true, signal: controller.signal });
-      const rejected = expect(task).rejects.toThrow("generated abort");
-      await ready;
-      controller.abort();
-      await rejected;
+      await expectSdkAbort({ task, started: ready, controller });
       expect(settled).toBe(true);
       expect(watchdogFired).toBe(false);
       expect(count).toBe(heldRequest);

@@ -99,8 +99,10 @@ Refresh the coordinated AWS SDK 3.1166, Langfuse 6.1.1, Mantine 9.8 and tRPC
 Vite 8.3.8 and compatible transitive dependencies. All three tRPC packages now
 exist in the registry at the matching release. Preserve the Langfuse token
 accounting patch under its new versioned filename. AWS retry defaults remain
-three attempts in standard mode. Update the qualified quality-tool patch to
-v1.1.1 without changing scanner policy. Existing upload-artifact inputs retain
+three attempts in standard mode. The SDK normalizes aborted retry handling to
+`AbortError`; cancellation tests assert that stable error name and retain their
+actual transport-settlement, watchdog and request-count checks. Update the
+qualified quality-tool patch to v1.1.1 without changing scanner policy. Existing upload-artifact inputs retain
 archive behavior under v7.
 
 Refresh AWS provider locks to 6.72 and Grafana to 4.54. The audited AWS resource
