@@ -9,6 +9,8 @@ import type { MeetingData } from "../../src/types/meeting-data";
 import { setupBot } from "../../src/bot";
 import { getMeetingInterruptionCheckpoints } from "../../src/services/ownedMeetingInterruption";
 import {
+  beginRuntimeWorkClaim,
+  fenceAndSettleSessionWork,
   fenceRuntimeWorkAdmission,
   getRuntimeWorkAdmissionCheckpoints,
 } from "../../src/services/runtimeWorkAdmissionService";
@@ -43,6 +45,23 @@ const interactionResponseSpies = () => ({
   followUp: jest.fn(async () => {}),
   reply: jest.fn(async () => {}),
 });
+const closingInteraction = (id: string, guildId: string) => ({
+  id,
+  guildId,
+  createdTimestamp: Date.now(),
+  commandName: "leave",
+  isRepliable: () => true,
+  isButton: () => false,
+  isChatInputCommand: () => true,
+  isUserContextMenuCommand: () => false,
+  ...interactionResponseSpies(),
+});
+const resetClosingSession = () => {
+  jest.clearAllMocks();
+  mockStopEnvironment.ownership = new AbortController();
+  mockStopEnvironment.reservations.length = 0;
+  mockStopEnvironment.receipt.mockResolvedValue(true);
+};
 const stopRoutes = ["button", "leave", "context"] as const;
 const stopOutcomes = [
   "acknowledged",
@@ -263,4 +282,195 @@ test("delivers nothing while another runtime owns the meeting", async () => {
     activeLease = noActiveLease;
     independentWork = refuseIndependentWork;
   }
+});
+
+test.each(["closing", "aborted", "duplicate", "receipt_lost", "reply_lost"])(
+  "answers leave for a %s local session without reopening its stop",
+  async (outcome) => {
+    resetClosingSession();
+    if (outcome === "duplicate")
+      mockStopEnvironment.receipt.mockResolvedValue(false);
+    if (outcome === "receipt_lost")
+      mockStopEnvironment.receipt.mockRejectedValue(
+        new Error("Synthetic receipt unavailable"),
+      );
+    const { original, childSettled } = stoppedRecordingFixture(
+      `synthetic-closing-leave-${outcome}`,
+    );
+    await fenceAndSettleSessionWork(original);
+    if (outcome === "aborted") mockStopEnvironment.ownership.abort();
+    const interaction = closingInteraction(
+      `synthetic-closing-leave-interaction-${outcome}`,
+      original.guildId,
+    );
+    if (outcome === "reply_lost")
+      interaction.reply.mockRejectedValue(
+        new Error("Synthetic reply unavailable"),
+      );
+
+    await interactionListener()(interaction);
+
+    if (!["duplicate", "receipt_lost"].includes(outcome))
+      expect(interaction.reply).toHaveBeenCalledWith({
+        content: expect.stringMatching(/already finishing/i),
+        ephemeral: true,
+      });
+    else expect(interaction.reply).not.toHaveBeenCalled();
+    expect(original.workHandle.settle).not.toHaveBeenCalled();
+    expect(mockStopEnvironment.reconcile).not.toHaveBeenCalled();
+    expect(childSettled).toHaveBeenCalledTimes(
+      ["receipt_lost", "reply_lost"].includes(outcome) ? 0 : 1,
+    );
+    expect(mockStopEnvironment.receipt).toHaveBeenCalledWith(
+      expect.anything(),
+      undefined,
+      {
+        kind: "session",
+        ownership: expect.objectContaining({
+          guildId: original.guildId,
+          voiceOperationAttemptId: original.voiceOperationAttemptId,
+        }),
+        now: expect.any(Number),
+      },
+    );
+  },
+);
+
+test.each(["receipt", "reply"])(
+  "closing response retains actual held %s work after its deadline",
+  async (stage) => {
+    jest.useFakeTimers();
+    const pending = held();
+    const entered = held();
+    try {
+      resetClosingSession();
+      const { original, childSettled } = stoppedRecordingFixture(
+        `synthetic-held-${stage}`,
+      );
+      await fenceAndSettleSessionWork(original);
+      const interaction = closingInteraction(
+        `synthetic-held-response-${stage}`,
+        original.guildId,
+      );
+      if (stage === "receipt")
+        mockStopEnvironment.receipt.mockImplementationOnce(async () => {
+          entered.release();
+          await pending.promise;
+          return true;
+        });
+      else
+        interaction.reply.mockImplementationOnce(async () => {
+          entered.release();
+          await pending.promise;
+        });
+      const handling = interactionListener()(interaction);
+      await entered.promise;
+      mockStopEnvironment.ownership.abort();
+      await jest.advanceTimersByTimeAsync(2501);
+      expect(childSettled).not.toHaveBeenCalled();
+      expect(
+        getRuntimeWorkAdmissionCheckpoints().find(
+          ({ id }) => id === interaction.id,
+        ),
+      ).toMatchObject({ localSettled: false, fenced: true });
+      pending.release();
+      await handling;
+      expect(interaction.reply).toHaveBeenCalledTimes(
+        stage === "receipt" ? 0 : 1,
+      );
+      expect(childSettled).toHaveBeenCalledTimes(1);
+      expect(original.workHandle.settle).not.toHaveBeenCalled();
+    } finally {
+      pending.release();
+      jest.useRealTimers();
+    }
+  },
+);
+
+test("response-only admission refuses a replaced original reservation", () => {
+  mockStopEnvironment.reservations.length = 0;
+  mockStopEnvironment.ownership = new AbortController();
+  const { original } = stoppedRecordingFixture("synthetic-replaced-original");
+  mockStopEnvironment.reservations[0] = {
+    reservation: {
+      ...original,
+      voiceOperationAttemptId: "replacement-attempt",
+    },
+  };
+  expect(() =>
+    beginRuntimeWorkClaim(
+      "interaction_response",
+      "synthetic-stale-original",
+      original,
+    ),
+  ).toThrow("original local session");
+  expect(() =>
+    beginRuntimeWorkClaim("interaction_response", "synthetic-no-original"),
+  ).toThrow("original local session");
+});
+
+test.each(["overdue", "declined"])(
+  "%s receipt completion releases response ownership without starting a reply",
+  async (outcome) => {
+    jest.useFakeTimers();
+    const pending = held();
+    const entered = held();
+    try {
+      resetClosingSession();
+      const { original, childSettled } = stoppedRecordingFixture(
+        `synthetic-${outcome}-receipt`,
+      );
+      await fenceAndSettleSessionWork(original);
+      mockStopEnvironment.receipt.mockImplementationOnce(async () => {
+        entered.release();
+        await pending.promise;
+        return outcome !== "declined";
+      });
+      const interaction = closingInteraction(
+        `synthetic-${outcome}-receipt-interaction`,
+        original.guildId,
+      );
+      const handling = interactionListener()(interaction);
+      await entered.promise;
+      if (outcome === "declined") await jest.advanceTimersByTimeAsync(2501);
+      else jest.setSystemTime(Date.now() + 2501);
+      expect(childSettled).not.toHaveBeenCalled();
+      pending.release();
+      await handling;
+      expect(interaction.reply).not.toHaveBeenCalled();
+      expect(childSettled).toHaveBeenCalledTimes(1);
+      expect(
+        getRuntimeWorkAdmissionCheckpoints().find(
+          ({ id }) => id === interaction.id,
+        ),
+      ).toBeUndefined();
+    } finally {
+      pending.release();
+      jest.useRealTimers();
+    }
+  },
+);
+
+test("fencing before receipt invocation releases response ownership without I/O", async () => {
+  resetClosingSession();
+  const { original, childSettled } = stoppedRecordingFixture(
+    "synthetic-before-receipt",
+  );
+  await fenceAndSettleSessionWork(original);
+  const interaction = closingInteraction(
+    "synthetic-before-receipt-interaction",
+    original.guildId,
+  );
+  const handling = interactionListener()(interaction);
+  fenceRuntimeWorkAdmission(interaction.id);
+  await handling;
+  expect(mockStopEnvironment.receipt).not.toHaveBeenCalled();
+  expect(interaction.reply).not.toHaveBeenCalled();
+  expect(childSettled).toHaveBeenCalledTimes(1);
+  expect(original.workHandle.settle).not.toHaveBeenCalled();
+  expect(
+    getRuntimeWorkAdmissionCheckpoints().find(
+      ({ id }) => id === interaction.id,
+    ),
+  ).toBeUndefined();
 });

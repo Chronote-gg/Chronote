@@ -207,6 +207,7 @@ test("pending admission cannot grant existing owner control authority", async ()
   await lifecycle.getRuntimeAdmissionContext();
   const pending = lifecycle.beginRuntimeWork("pending_admission");
   expect(() => pending.beginOwnedControl()).toThrow();
+  expect(() => pending.beginOwnedResponse()).toThrow();
   pending.settle();
   lifecycle.stop();
 });
@@ -219,6 +220,9 @@ test("an unsafe session parent cannot grant a control child", async () => {
   await protection.release();
   expect(() => recording.beginOwnedControl()).toThrow(
     "Session cannot grant control ownership",
+  );
+  expect(() => recording.beginOwnedResponse()).toThrow(
+    "Session cannot grant response ownership",
   );
   expect(lifecycle.getWorkCounts().ancillary_delivery).toBe(0);
   recording.settle();
@@ -851,4 +855,30 @@ test("actual runtime start and refreshed heartbeat advertise exact canonical wri
   } finally {
     lifecycle.stop();
   }
+});
+
+test("owned closing responses stay counted on an outgoing runtime without artifact admission", async () => {
+  const gate = createArtifactAdmissionGate();
+  const { lifecycle, repository } = await fixture(undefined, gate);
+  await promote(repository);
+  await lifecycle.getRuntimeAdmissionContext();
+  const recording = lifecycle.beginRuntimeWork("recording");
+  const drained = gate.seal();
+  await replace(repository);
+  await lifecycle.prepareRuntimeRetirement({ retirementEpoch: 1 });
+  const response = recording.beginOwnedResponse();
+  expect(gate.active).toBe(1);
+  recording.settle();
+  await drained;
+  expect(lifecycle.getWorkCounts().ancillary_delivery).toBe(1);
+  expect(
+    (await lifecycle.prepareRuntimeRetirement({ retirementEpoch: 1 })).kind,
+  ).toBe("busy");
+  expect(() => recording.beginOwnedResponse()).toThrow();
+  response.settle();
+  response.settle();
+  expect(
+    (await lifecycle.prepareRuntimeRetirement({ retirementEpoch: 1 })).kind,
+  ).toBe("retired");
+  lifecycle.stop();
 });

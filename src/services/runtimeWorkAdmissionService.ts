@@ -19,6 +19,7 @@ type Domain =
   | "personal"
   | "recovery"
   | "interaction"
+  | "interaction_response"
   | "ancillary"
   | "api_correction"
   | "billing"
@@ -52,9 +53,16 @@ type Checkpoint = {
   interactionReceiptAcknowledged?: boolean;
   interactionDeferAcknowledged?: boolean;
   interactionStopAcknowledged?: boolean;
+  interactionResponseOutcome?: "delivered" | "not_admitted" | "not_started";
 };
 const work = new Map<string, Checkpoint>();
 const closingSessions = new WeakSet<SessionReservation>();
+
+export class SessionControlClosing extends Error {
+  constructor(readonly reservation: SessionReservation) {
+    super("Session control ownership is closing");
+  }
+}
 
 function resolveParentSession(
   domain: Domain,
@@ -67,15 +75,23 @@ function resolveParentSession(
           (!session.meetingId || reservation.meetingId === session.meetingId),
       )
     : undefined;
-  if (session && (!owned || !["control", "interaction"].includes(domain)))
+  if (
+    session &&
+    (!owned ||
+      !["control", "interaction", "interaction_response"].includes(domain))
+  )
     throw new Error("Session control is not locally owned");
-  if (owned) getReservationSignal(owned.reservation).throwIfAborted();
   const parent = owned?.reservation;
   if (
     parent &&
-    (closingSessions.has(parent) || !isReservationControlEligible(parent))
+    domain !== "interaction_response" &&
+    (closingSessions.has(parent) ||
+      !isReservationControlEligible(parent) ||
+      getReservationSignal(parent).aborted)
   )
-    throw new Error("Session control ownership is closing");
+    throw new SessionControlClosing(parent);
+  if (domain === "interaction_response" && (!parent || session !== parent))
+    throw new Error("Response requires its original local session");
   return parent;
 }
 
@@ -99,7 +115,11 @@ export function beginRuntimeWorkClaim(
           "meeting_update_delivery",
         ].includes(domain),
       );
-  const handle = parent ? parent.workHandle.beginOwnedControl() : registration!;
+  const handle = parent
+    ? domain === "interaction_response"
+      ? parent.workHandle.beginOwnedResponse()
+      : parent.workHandle.beginOwnedControl()
+    : registration!;
   const checkpoint: Checkpoint = {
     id,
     domain,
@@ -119,7 +139,10 @@ export function beginRuntimeWorkClaim(
     apiOutcomeKnown: domain === "api_correction" ? true : undefined,
     effects: new Set(),
   };
-  const parentSignal = parent ? getReservationSignal(parent) : undefined;
+  const parentSignal =
+    parent && domain !== "interaction_response"
+      ? getReservationSignal(parent)
+      : undefined;
   const onParentFence = () => {
     checkpoint.stage = "unresolved";
     checkpoint.controller.abort();
@@ -234,7 +257,7 @@ export function beginRuntimeWorkClaim(
       });
     },
     acknowledgeInteractionReceipt() {
-      if (checkpoint.domain !== "interaction")
+      if (!["interaction", "interaction_response"].includes(checkpoint.domain))
         throw new Error("Interaction receipt requires interaction ownership");
       checkpoint.interactionReceiptAcknowledged = true;
     },
@@ -247,6 +270,34 @@ export function beginRuntimeWorkClaim(
           "Interaction defer requires its original acknowledged receipt",
         );
       checkpoint.interactionDeferAcknowledged = true;
+    },
+    acknowledgeInteractionResponse() {
+      if (
+        checkpoint.domain !== "interaction_response" ||
+        !checkpoint.interactionReceiptAcknowledged
+      )
+        throw new Error(
+          "Response acknowledgment requires its original receipt",
+        );
+      checkpoint.interactionResponseOutcome = "delivered";
+    },
+    acknowledgeInteractionResponseNotAdmitted() {
+      if (
+        checkpoint.domain !== "interaction_response" ||
+        checkpoint.interactionReceiptAcknowledged
+      )
+        throw new Error(
+          "Response non-admission requires an unclaimed response receipt",
+        );
+      checkpoint.interactionResponseOutcome = "not_admitted";
+    },
+    acknowledgeInteractionResponseNotStarted() {
+      if (
+        checkpoint.domain !== "interaction_response" ||
+        !checkpoint.interactionReceiptAcknowledged
+      )
+        throw new Error("Unstarted response requires its original receipt");
+      checkpoint.interactionResponseOutcome = "not_started";
     },
     acknowledgeInteractionStop(
       original: SessionOwnership,
@@ -445,6 +496,8 @@ function sameClaim(left: ClaimCheckpoint, right: ClaimCheckpoint): boolean {
   );
 }
 function acknowledgedWithoutClaim(entry: Checkpoint) {
+  if (entry.domain === "interaction_response")
+    return entry.interactionResponseOutcome !== undefined;
   if (entry.domain === "meeting_update_delivery")
     return !entry.claim && entry.meetingUpdateAcknowledged;
   if (entry.domain === "billing")

@@ -37,6 +37,7 @@ export function stoppedRecordingFixture(guildId: string) {
       transition: jest.fn(),
       settle: jest.fn(),
       beginOwnedControl: () => ({ settle: childSettled }),
+      beginOwnedResponse: () => ({ settle: childSettled }),
     },
   } as unknown as SessionReservation;
   mockStopEnvironment.reservations.push({ reservation: original });

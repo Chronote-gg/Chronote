@@ -34,6 +34,7 @@ export type RuntimeReadinessProbe = Pick<
 export type RuntimeWorkRegistration = RuntimeWorkHandle & {
   transition(kind: RuntimeWorkKind): void;
   beginOwnedControl(): RuntimeWorkHandle;
+  beginOwnedResponse(): RuntimeWorkHandle;
 };
 export type RuntimeLifecycle = ReturnType<typeof createRuntimeLifecycle>;
 export type OrdinaryAdmissionListener = (
@@ -288,18 +289,33 @@ export function createRuntimeLifecycle(options: {
       : undefined;
     counts[kind]++;
     let settled = false;
+    function assertChildOwnership(child: "response" | "control") {
+      if (
+        settled ||
+        !["recording", "finalization", "voice_operation"].includes(kind) ||
+        unsafe ||
+        !safetyHandler ||
+        !protection.isSafe() ||
+        !row ||
+        ["releasing", "retired", "stale", "candidate"].includes(row.role)
+      )
+        throw new Error(`Session cannot grant ${child} ownership`);
+    }
     return {
+      beginOwnedResponse() {
+        assertChildOwnership("response");
+        counts.ancillary_delivery++;
+        let responseSettled = false;
+        return {
+          settle() {
+            if (responseSettled) return;
+            responseSettled = true;
+            counts.ancillary_delivery--;
+          },
+        };
+      },
       beginOwnedControl() {
-        if (
-          settled ||
-          !["recording", "finalization", "voice_operation"].includes(kind) ||
-          unsafe ||
-          !safetyHandler ||
-          !protection.isSafe() ||
-          !row ||
-          ["releasing", "retired", "stale", "candidate"].includes(row.role)
-        )
-          throw new Error("Session cannot grant control ownership");
+        assertChildOwnership("control");
         const artifacts = artifactWork?.beginOwned();
         counts.ancillary_delivery++;
         let controlSettled = false;
