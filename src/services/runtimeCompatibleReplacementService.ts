@@ -31,7 +31,6 @@ function terminalAuthority(input: CompatibleReplacementInput) {
   if (
     !deployment ||
     deployment.phase !== "complete" ||
-    !deployment.candidate ||
     control.coordinatorExpiresAt > input.now
   )
     throw new Error(
@@ -44,6 +43,25 @@ function terminalAuthority(input: CompatibleReplacementInput) {
       !isDeepStrictEqual(continuation.servingMembers, control.servingMembers)
     )
       throw new Error("Replacement authority changed");
+    return;
+  }
+  if (!deployment.candidate) {
+    // Cancelling preparation keeps the original serving authority, without a promotion.
+    const original = Object.fromEntries(
+      deployment.originalMembers.map((row) => [row.instanceId, row]),
+    );
+    if (
+      control.servingGeneration !== deployment.originalGeneration ||
+      !isDeepStrictEqual(original, control.servingMembers) ||
+      !isDeepStrictEqual(
+        original[deployment.outgoing.instanceId],
+        deployment.outgoing,
+      ) ||
+      (deployment.routing && deployment.routing.state !== "source")
+    )
+      throw new Error(
+        "Cancelled preparation does not authorize selected generation",
+      );
     return;
   }
   const expected = Object.fromEntries(
