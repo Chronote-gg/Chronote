@@ -13,210 +13,62 @@
 - Discord bot that records voice meetings, transcribes them with OpenAI (gpt-4o-transcribe), generates notes with GPT-6.1 Sol, and posts results back to Discord.
 - Supports auto-recording, meeting history in DynamoDB, context injection (server/channel/meeting), dictionary terms for prompt context, and a user-driven notes correction flow using LLMs.
 
-## Tech stack
+## Rules for every session
 
-- Runtime: Node.js 24.22.2, TypeScript.
-- Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
-- AI: openai SDK; gpt-4o-transcribe for transcription; gpt-6.1-sol for notes; gpt-5.2 for summaries, cleanup, corrections and image prompts; gpt-5-mini for live gate; DALL-E 3 for images.
-- Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts. AMG (Grafana) service account token is auto-rotated via EventBridge + Lambda (see `_infra/grafana.tf` and `_infra/README.md`). Critical alerts (ECS down, ALB 5xx, unhealthy hosts, rotation failures, OpenAI quota or rate-limit rejections, processing retry worker failures) are sent via SNS email and optionally to a Discord channel via a separate Node.js Lambda (see `_infra/notifications.tf` and `_infra/README.md`).
-- Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, MeetingControlCommand, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, MeetingUserIndex, PersonalMediaUploadJob, PersonalRecordingSegment, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
-- Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
-- IaC scanning: Checkov runs in `.github/workflows/ci-core.yml`, called by PR CI and production deploys. Local: `npm run checkov` (uses `uvx --from checkov checkov`; install uv first: https://docs.astral.sh/uv/).
-- Known/suppressed infra choices:
-  - Public subnets + public ECS IPs retained temporarily to avoid NAT Gateway cost (see checkov skips on CKV_AWS_130/333 with rationale in `_infra/main.tf`).
-  - VPC flow logs enabled to CloudWatch (365d, KMS `app_general`).
-  - ECR hardened (immutable tags, scan on push, KMS).
-  - CloudWatch logs KMS + 365d, tightened SG egress (443 + DNS), split ECS execution/task roles, DynamoDB tables use PITR + KMS (app_general), default SG locked down.
-- Tooling: Jest, ESLint, Prettier, Husky, lint-staged; ts-node/nodemon for dev.
-
-## Key flows (server code in `src/`)
-
-- Entry: `index.ts` -> `setupBot()` and `setupWebServer()`. Independent runtimes: `src/apps/bot/main.ts` and `src/apps/api/main.ts` boot the bot and API separately.
-- Bot interactions: `src/bot.ts`
-  - Slash commands: `/startmeeting`, `/autorecord`, `/context`, `/dictionary`.
-  - User context menu app actions: `Start meeting`, `Stop recording`.
-  - Buttons: end meeting, generate image, suggest correction.
-  - Auto-record on voice join if configured.
-- Web server: `webserver.ts` (health check; optional Discord OAuth scaffolding). API routes are modularized under `src/api/` (billing, guilds, MCP) and share services with bot commands (ask/context/autorecord/billing).
-- Remote MCP live controls enqueue meeting control commands in DynamoDB so API-only and bot runtimes can be split. Bot workers claim start/stop/live-status/live-transcript commands from `MeetingControlCommandTable`; live meeting owner-specific commands target the active lease owner instance.
-- Frontend: `src/frontend/` (Vite + React 19), builds to `build/frontend/`, deployed to S3/CloudFront. Express only handles API/health; static assets served via CDN.
-- Public docs site: `apps/docs-site/` (Docusaurus), builds to `build/docs-site/`, deployed to S3/CloudFront at `docs.chronote.gg`.
-- Dev/QA commands: `yarn start` (bot via nodemon+ts-node), `yarn dev` (starts local Dynamo + init + bot), `yarn frontend:dev`, `yarn docs:dev`, `yarn build`, `yarn build:web`, `yarn build:all`, `yarn docs:build`, `yarn docs:check`, `yarn test`, `yarn lint`, `yarn prettier`, `yarn terraform:init|plan|apply`, `yarn prompts:push`, `yarn prompts:pull`, `yarn prompts:check`.
-- Meeting lifecycle: `meetings.ts`, `commands/startMeeting.ts`, `commands/endMeeting.ts`.
-  - Records audio, chat log, attendance; splits audio; transcribes; generates notes; saves MeetingHistory (with transcript, notes versioning).
-- Transcription, notes, and image generation: `src/services/transcriptionService.ts`, `src/services/notesService.ts`, `src/services/imageService.ts`.
-  - Prompt builders live in `src/services/*PromptService.ts`.
-  - Builds context from server/channel/meeting and recent history (`services/contextService.ts`).
-- Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`). Guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs), a prompt echo gate, and a low-confidence prompt/no-prompt vote fallback on slow snippets.
-  - Snippet ASR attempts belong to `services/transcriptionRequest.ts`, with at most four attempts per candidate. Keep successful prompted work when a no-prompt vote retries; use attempt-aware accounting and operation-local exhausted-error provenance for the breaker. See `docs/audio-transcription.md`.
-  - A finalized audio verification pass can run at meeting end (`transcription.finalPass.enabled`) to auto-apply high-confidence hallucination fixes before notes generation.
-  - GPT prompts tuned for cleanup, notes, and optional image generation. Notes guidance covers explicit assignments and volunteered follow-ups, stated owners and deadlines, and qualified or completed status. The prompt instructs a silent completeness check within the same generation call.
-- Dictionary management: `commands/dictionary.ts`, `services/dictionaryService.ts`
-  - Terms are injected into transcription and context prompts, definitions are used outside transcription to reduce prompt bloat.
-- Notes correction flow: `commands/notesCorrections.ts`
-  - “Suggest correction” button → modal (single textarea).
-  - Fetches saved notes + transcript from DB, uses the notes-correction model with a “minimal edits, do not copy transcript” prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), saves canonical MeetingHistory plus durable update intent through the shared action and bumps version/last editor. The worker verifies later Discord delivery separately, preserving existing approval and Notion rules.
-  - Web UI uses `meetings.suggestNotesCorrection` and `meetings.applyNotesCorrection` to generate a diff and apply changes, mirroring the Discord flow.
-- Context management: `commands/context.ts` writes/reads ServerContext and ChannelContext.
-- Meeting history persistence: `commands/saveMeetingHistory.ts`, `db.ts` helpers.
-  - Optional `processing` metadata records transcription, notes, and summary outcomes independently of lifecycle status. Missing outcomes are unknown. Never infer transcription failure from an unrelated upload error or insert processing notices into stored notes.
-- Processing retry: `services/processingRetryEligibility.ts` decides eligibility for the portal, `meetings.retryProcessing` and `scripts/retry-meeting-processing.ts`; jobs live on the MeetingHistory row (`processingRetry`, `ProcessingRetryDueIndex`), run in the API-runtime worker under the `recovery` work domain, and save through `updateMeeting`'s `regeneration` mutation. Gated by `meetings.processingRetry.enabled`, which stays off until the index is ACTIVE. The index and worker alarm ship through the `processing-retry` Terraform Plan/Apply scope in Sandbox and Production, which refuses while `UpdateDeliveryDueIndex` is missing. See `docs/adr-20261028-meeting-processing-retry.md`.
-  - Users who cannot edit the meeting's notes see no retry control or job state. Retries never replay the finalized-audio pass but keep cleanup, and never replace notes a person edited. Operator runs exit 1 when retry is unavailable under `--apply`, a queueable meeting fails to queue, the run throws, or the analytics flush fails; skipped meetings, including those needing replace confirmation, are reported but do not fail the run.
-- Web server: `webserver.ts` (health check, optional Discord OAuth scaffolding).
-
-## Configuration & env
-
-- Central config: `src/services/configService.ts`; preferred source (avoid re-exporting secrets from `constants.ts`).
-- Required always: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`.
-- OAuth (optional): `ENABLE_OAUTH` (default true). `SESSION_SECRET` or `OAUTH_SECRET` is always required outside mock mode for session and CSRF signing. If OAuth is true, also require `DISCORD_CLIENT_SECRET` and `DISCORD_CALLBACK_URL`. If not using OAuth, set `ENABLE_OAUTH=false` (wired into Terraform env).
-- Production OAuth should use the API domain callback (e.g., `https://api.chronote.gg/auth/discord/callback`). When `API_DOMAIN` is set in Terraform, the backend is behind an ALB and the frontend build uses `VITE_API_BASE_URL` from GitHub Actions env vars.
-- Remote MCP (optional): `ENABLE_MCP` defaults true only when Discord OAuth is enabled, requires `OAUTH_SECRET`, and exposes `/mcp` on the API server. Set `MCP_PUBLIC_BASE_URL` to the externally reachable API origin for production so OAuth resource-bound tokens match the public endpoint. Optional overrides: `MCP_ENDPOINT_PATH`, `MCP_ACCESS_TOKEN_TTL_SECONDS`, `MCP_REFRESH_TOKEN_TTL_SECONDS`, `MCP_AUTH_CODE_TTL_SECONDS`.
-- Notion export (optional): set `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and `NOTION_REDIRECT_URI` to enable user OAuth, one-way export, manual sync, server automation, and personal automation from Chronote notes to Notion pages. Notion tokens are encrypted with `NOTION_TOKEN_ENCRYPTION_SECRET` when set, otherwise `OAUTH_SECRET`/`SESSION_SECRET`.
-- OpenAI org/project IDs are optional (defaults empty).
-- Text generation uses the Responses API through `services/openaiTextService.ts`; keep one request path and remove superseded transports when migrating callers. Audio transcription, speech and image generation use their dedicated endpoints. Preserve saved model/parameter/prompt snapshots, cancellation, mention guards and per-caller fallbacks. See `docs/superpowers/specs/2026-10-21-responses-meeting-evaluation-design.md`.
-- `NOTES_MODEL` defaults to `gpt-6.1-sol` and controls notes generation only. `models.notes` can override it. Meeting summary, notes correction, transcription cleanup and image prompt roles keep independent `gpt-5.2` defaults through their existing `models.*` settings. Frozen DynamoDB v1 model, parameter and prompt snapshots remain authoritative for saved recordings.
-- Notes default to low reasoning without temperature; honor compatible explicit
-  `modelParams.notes.*` overrides. Notes requests using supported model profiles,
-  including GPT-6.1 Sol, request explicit 30-minute cache control without
-  breakpoints, including continuations. Older overrides omit unsupported cache
-  fields. Preserve prompt and input ordering; static-prefix optimization needs a
-  separate design. See `docs/adr-20261022-sol-notes-caching.md`.
-- Langfuse prompt sync uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`, `LANGFUSE_PROMPT_DICTIONARY_TEACHING`. `LANGFUSE_BASE_URL` defaults to `https://us.cloud.langfuse.com` (`services/langfuseDefaults.ts`), shared by the app and the scripts so they cannot resolve to different hosts. An EU or self-hosted project must set it, or its keys reach the US host and every call returns 401.
-- Optional Langfuse prompt override for the finalized audio pass: `LANGFUSE_PROMPT_TRANSCRIPTION_FINAL_PASS`.
-- Langfuse MCP tooling: run `node scripts/setup-langfuse-mcp-auth.js` to write `.opencode/langfuse.mcp.auth` plus `.opencode/langfuse.public` and `.opencode/langfuse.secret` for OpenCode. The `langfuse_obs` OpenCode MCP uses uvx and reads those files; Codex and Claude Code still expect `LANGFUSE_MCP_AUTH` in the environment.
-- Other env defaults: `PORT` (3001), `NODE_ENV`, Dynamo local toggles via `USE_LOCAL_DYNAMODB`.
-- Cloud dev bootstrap: run `./scripts/setup-cloud-dev.sh` to sync uv, install scc into `.bin/`, install lizard into `.venv/bin/`, and install Playwright browsers (no flags needed). Add `.bin` and `.venv/bin` to `PATH` for `yarn code:stats`.
-- Mock-friendly env file: copy `scripts/mock.env.example` to `.env` or source it directly (`set -a; source scripts/mock.env.example; set +a`) instead of exporting many vars manually. The file keeps mock mode enabled, disables OAuth, points at local DynamoDB, and supplies dummy tokens.
-- Transcript storage: set `TRANSCRIPTS_BUCKET` (required for S3 uploads), optional `TRANSCRIPTS_PREFIX`, `AWS_REGION` (defaults to `us-east-1`).
-
-## Data model highlights (see `src/types/db.ts`)
-
-- MeetingHistory: guildId, channelId_timestamp, meetingId, notes, `transcriptS3Key`, context, attendees, duration, transcribe/generate flags, notesMessageId/channelId, notesVersion, notesLastEditedBy/At, ownershipScope/ownerUserId/accessGrants for personal meeting ownership and shares, meetingCreatorId, isAutoRecording, `suggestionsHistory`, `notesHistory`.
-- MeetingUserIndex: userId, userTimestamp, guildId, channelId_timestamp, meetingId, timestamp, optional accessReason. This is a pointer index for cross-guild/personal My Meetings views; always re-check MeetingHistory access before returning data.
-- PersonalMediaUploadJob: uploadId, ownerUserId, status, mediaKind, sourceS3Key, file metadata, optional desktop source manifest, optional meeting pointers, error/retry metadata, created/updated/completed timestamps, and upload expiry.
-- PersonalRecordingSegment: per-segment desktop recording state keyed by uploadId and source/sequence, including source label, S3 key, checksum, duration, status, and timestamps.
-- DictionaryEntry: guildId, termKey, term, definition, created/updated metadata.
-- ServerContext / ChannelContext store prompt context.
-- AutoRecordSettings enable record-all or per-channel auto-start.
-- McpOAuthTable stores hashed MCP OAuth clients, authorization codes, tokens, and user consents. Access tokens are resource-bound to the configured MCP endpoint and scopes are enforced per tool. It also stores MCP service account tokens (`SERVICE_ACCOUNT_TOKEN#<hash>` for validation and a `SERVICE_ACCOUNT_TOKENS#<guildId>` mirror for listing), keyed so a lookup by secret is a single point read and the portal never scans.
-- MeetingControlCommand stores short-lived queued MCP meeting control requests and results. Pending commands are claimed by bot workers via `StatusCreatedAtIndex`; commands targeting an active meeting owner include `targetOwnerInstanceId`.
-- NotionIntegrationTable stores per-user Notion connection metadata and per-user meeting export mappings, plus automation config/export/reservation records keyed under `GUILD#guildId`. Personal automation reuses the same automation records with `guildId = personal:<ownerUserId>`. Notion access and refresh tokens are encrypted before persistence.
-- AnnouncementDeliveryTable records operator announcement sends per announcement and server (pending, sent, failed) for idempotent reruns; written only by scripts/announce.ts.
-
-## Frontend
-
-- Vite + React 19 lives in `src/frontend/`; production build is static assets in `build/frontend/` served via S3/CloudFront (see deploy workflow). Use `yarn frontend:dev` for local HMR.
-- Public product docs live in `apps/docs-site/`; run `yarn docs:dev` for local authoring and `yarn docs:check` before merging docs changes.
-- **A new publicly indexable route has to be added to `scripts/public-routes.json`, or it ships disowning itself.** The app is one bundle, so every route is served the same `index.html` and inherits the homepage's canonical URL and Open Graph tags. A crawler reads that as "this page is really the homepage" and folds it in rather than indexing it, and a link shared in Discord previews as the homepage pitch. `scripts/build-route-html.mjs` runs after `vite build` and rewrites those tags into `build/frontend-routes/<key>.html` per route; `deploy.yml` uploads each to an **extensionless** S3 key so CloudFront serves `/join` from its own document instead of falling through the 404-to-`index.html` SPA fallback. The `key` therefore has to match the path. That same file generates `build/frontend/sitemap.xml`, so the sitemap cannot advertise a route that lacks correct metadata; there is deliberately no hand-maintained `public/sitemap.xml` to drift from it. The script throws when a tag it needs is missing from the head, because quietly shipping the homepage's canonical URL is the failure it exists to prevent. An optional `ogImage` per route overrides the shared share card; leave it unset unless the image would carry route-specific information, since one card per route is one more asset to keep on-brand for no gain. The upload itself lives in the `./.github/actions/sync-frontend` composite action, used by both `deploy.yml` and `deploy-staging.yml`, because the two hand-maintained copies had already drifted once.
-- Storybook lives in `.storybook/` for component development. Start it with `yarn storybook` (port 6006 by default, no auto-open). Use `yarn storybook:open` when you want the browser to open automatically.
-- **Storybook must keep `typescript.reactDocgen: "react-docgen-typescript"`.** The default `react-docgen` parser reads the root `babel.config.js`, which exists for Jest and carries `@babel/preset-typescript` with no JSX support, so it parses every `.tsx` as plain TS and throws on the first `<Component prop={x}>`. The failure is total and misleading: every `.tsx` in the project 404s, the preview renders blank, and `test-storybook` fails all suites with `Cannot access 'StorybookTestRunnerError' before initialization`, which points nowhere near the cause. `Storybook Build` in `ci-core.yml` guards it.
-- Restarting Storybook needs the port freed first. `storybook dev` survives a `pkill -f storybook`, and a fresh start silently offers port 6007 instead, so a config change can look like it did nothing while the old server is still answering on 6006. Kill by port: `Get-NetTCPConnection -LocalPort 6006 | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force }`.
-- To capture component screenshots, run `yarn test-storybook` while Storybook is running. Screenshots are written to `test/storybook/screenshots`.
-- When making UI changes, run Storybook and capture screenshots with `yarn test-storybook` before finishing. If the UI change is not covered by a story, add or update a story first.
-- Always run Storybook screenshot capture and do a VLM review for any UI change before responding with final UI edits.
-- When making UI changes, use the VLM to review the Storybook screenshots so you can verify the component changes without scanning the full page.
-- When making UI changes, review Playwright visual snapshots in `test/e2e/visual.spec.ts-snapshots` with the VLM to understand existing UI flows. It is OK to update snapshots with `yarn test:visual:update` or use the Playwright MCP during UI work.
-- Scroll regressions: add a Playwright assertion test that proves the intended scroll container actually scrolls (for example, checking `scrollHeight > clientHeight` and that `scrollTop` changes) and run it locally alongside visual snapshots.
-
-## Infra (Terraform)
-
-- Variables (tfvars.example): Discord IDs/tokens, OpenAI keys, OAuth secrets, ENABLE_OAUTH (false by default in example), AWS/GitHub tokens.
-- ECS task environment passes all relevant vars from Terraform; OpenAI org/project optional; OAuth vars included but can be blank if disabled.
-- Terraform plan/apply is manual via `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`; merges do not auto-apply Terraform. Apply uses an exact private saved-plan bundle, whole-bundle digest and verified native GitHub environment approval. See `docs/terraform-private-delivery.md`; missing approved storage or supported protection metadata refuses execution. The workflows expect environment-scoped AWS credentials and a `TERRAFORM_TFVARS_JSON` secret. Production uses GitHub environment `production` with Terraform workspace `default`; sandbox uses GitHub environment `sandbox` with Terraform workspace `sandbox`. Keep `grafana_api_key` empty after Grafana token rotation is active, and use `grafana_service_account_id` plus the rotated Secrets Manager token.
-- **Production Terraform Plan/Apply and the cold cutover run on `master` only.** The cutover shares the `chronote-deploy-production` concurrency group with `deploy.yml`, and GitHub keeps one pending run per group, so a merge while a cutover is queued displaces (cancels) it. Apply has its own `chronote-terraform-<environment>` group. Apply may run on the plan's source commit or a later `master` commit, but only if no Terraform input changed in between (`verifyApplySource` in `terraform-native.cjs`; the input set is listed in `docs/terraform-private-delivery.md`). Otherwise re-plan. Production Apply also refuses while a deploy, cutover or introduction run is active, but that check is a snapshot, so avoid merging during an approved Apply.
-- **Non-credential Terraform inputs go in GitHub Actions variables, not in the `TERRAFORM_TFVARS_JSON` secret.** Set an environment variable named `TFVAR_<KEY>` and it overrides `<KEY>` from the secret. The secret is write-only, so a flag parked in it cannot be read back, cannot be diffed or reviewed, and cannot be changed without retyping a blob that also holds credentials. That is not a theoretical cost: `ENABLE_ONBOARDING` sat in the secret at `"false"` while `main.tf` declared a `"true"` default, so the onboarding DM was off in production, a plan showed no changes, and nothing in the repo revealed why. A variable default in `main.tf` is dead code for any key the secret sets. Credentials (`GITHUB_TOKEN`, `AWS_TOKEN_KEY`, `LANGFUSE_SECRET_KEY`, `DOCS_ALGOLIA_API_KEY`, `REDIS_AUTH_TOKEN`, `REDIS_URL`, `grafana_api_key`) are refused through the `TFVAR_` path on purpose, because variables are writable by people who cannot write secrets. `REDIS_URL` is on that list because an external cache provider embeds its password in the URL; set it as a `REDIS_URL` environment secret, which the plan and apply workflows overlay onto the tfvars blob the same way they do `REDIS_AUTH_TOKEN`.
-- **Changing a Terraform-managed ECS env var needs three steps, and the third is the one people miss.** Terraform apply registers a new task definition revision, but `aws_ecs_service` sets `ignore_changes = [task_definition]`, so the service keeps running the old revision and nothing observable changes. A backend deploy is what moves it: `deploy.yml` resolves the task definition by _family_, which returns the latest ACTIVE revision, so it picks up Terraform's new one, registers a new revision on top and repoints the service. So: set the value, apply, then deploy.
-- **The production bootstrap role's inline policy sits near IAM's 10,240-character inline-policy limit, which AWS counts with whitespace removed.** It renders at 10,050 characters by default and 8,280 with `enable_artifact_preservation_policy` on, so measure the rendered `jsonencode` output before adding a statement to `_infra/production-bootstrap/terraform-role.tf` instead of discovering the ceiling as a `LimitExceeded` on apply. Grants that do not fit go in a managed policy attached to the same role, which does not count against that limit; site delivery, processing retry, artifact preservation and alerting delivery are the existing examples. See `_infra/production-bootstrap/README.md`.
-- Production keeps legacy VPC flow log resource names (`vpc_flow_logs_role` and `/vpc/flow/app-vpc`) to avoid replacing live logging resources; non-production environments use scoped names. Production AMG workspace naming is pinned to the existing seed in Terraform code; do not change it without an approved AMG workspace replacement plan.
-- Backend deploy workflows must confirm native protection of the serving runtime before requesting replacement, then warm the candidate once the serving runtime is quiet (see the next rule). Promote only exact ready members under a new generation. Preserve session ownership and targeted controls; retire the old runtime only after its owned work and uncertain voice operations settle and it durably acknowledges native protection release. Never unprotect unconditionally, terminate active work or delete live leases. Production and Sandbox use the same coordinator.
-- **ECS refuses the outgoing task's protection renewals once the candidate is protected** (desired count 1, so a second protected task is `DEPLOYMENT_BLOCKED`), and the outgoing runtime shuts itself down about eight minutes later. The handoff therefore launches only when the serving runtime holds no recording, finalization or voice operation (`prepare` waits up to 30 minutes, then fails `outgoing_busy` without writing). A leaked in-memory counter keeps that gate shut until restart; the manual-only `handoff_quiet_override` deploy input skips it with a `::warning`. The coordinator completes a `retiring` deployment whose outgoing task ECS already stopped (as soon as `retire` sees the task `STOPPED`, in the next `prepare`, or alone via `continue-stopped-outgoing`), records the lost work counts on the retired runtime row, and never touches leases. Do not add fields to the Control row for this kind of record: running runtimes parse it strictly. See `docs/deployment-handoff.md`.
-- **Break-glass deploys are dispatched by BASIC (`BASIC-BIT`) only; agents may prepare the `gh workflow run deploy.yml -f break_glass=true ...` command and the attestation but never run the dispatch.** The `Break-glass Gate` job (dispatcher check plus the merged pull request's check-runs) replaces `ci`; Docs, the quiet wait and the runtime seal are skipped; the seal is replaced by an operator attestation whose `manifestSha256` must equal the `backup_manifest_sha256` input. A protocol runtime's own row can be replaced only with `ATTESTATION_BREAK_GLASS=1`, which commits it to a break-glass replacement (a standard deploy refuses before taking Control); the runtime seals admission while that row is requested, sealed or consumed and reopens on cancellation. Break-glass cannot ship a prompt change (Prompts Check stays red on such a PR). The coordinator writes `ENV` / `BREAK_GLASS#<run token>` to DeploymentControl before Control or the service changes. The deploy role cannot `sns:Publish` and the job token cannot open issues, so the alert email and seven-day follow-up issue are manual. See `docs/deployment-handoff.md#break-glass-deploy`.
-- First production introduction from legacy code uses the cold cutover in [the production procedure](docs/production-introduction.md#cold-cutover): `production-cutover.yml` stops legacy only when no lease, queued or claimed control, or unfinished upload job or segment exists, and rechecks after the stop. Never relaunch legacy or delete rows to get past it. The staged fence-and-drain workflow stays blocked. Normal compatible handoff and literal Sandbox bootstrap keep their own contracts.
-- Future work suggestion: keep cache and Redis Terraform resources in `_infra/cache.tf`, and add new cache infrastructure there.
-- **An external `REDIS_URL` must use the `rediss://` scheme, not `redis://`.** ioredis decides whether to negotiate TLS from the scheme alone, and managed Redis accepts TLS only, so a `redis://` URL connects in plaintext, has its socket reset, and retries forever instead of failing. That starves every cache-backed request rather than degrading, and it took the portal down on 2026-07-31. Upstash's console displays the string as `redis-cli --tls -u redis://...`, where the TLS comes from the flag and not the scheme, so pasting it verbatim reproduces this. `isUsableRedisUrl` in `src/utils/redisUrl.ts` now refuses a plaintext URL for a remote host and drops to the in-process memory cache, allowing plaintext only for localhost and the docker-compose `redis` host.
-- Cache backend is chosen by two Terraform variables, not by code. `REDIS_URL` always wins; `ENABLE_ELASTICACHE` decides whether an in-VPC cluster is provisioned at all; with neither set the app falls back to an in-process memory cache in `src/services/cacheService.ts`. Sandbox runs on the memory fallback. See `_infra/README.md` for the full matrix and the egress caveat for external providers.
-
-## Product analytics (PostHog)
-
-- Server-side capture goes through `captureEvent` in `src/services/analyticsService.ts`. It no-ops without `POSTHOG_KEY`, never throws into a caller, and flushes on SIGTERM. Instrument at the **shared service** both the Discord command and the tRPC router already call, so one call site covers both surfaces.
-- **Event properties carry shape, never content.** Counts, lengths, and enums are fine. Notes, transcripts, context prompts, dictionary terms, and question text are user data and must not leave the system as properties.
-- **Exactly two identifiers are sent, and adding a third is a decision, not a detail.** The guild (server-level analysis is the point) and the acting Discord user as `distinct_id` (so portal and bot activity resolve to one person). Anything finer grained, a channel or message id for instance, is a stable identifier wearing a property's clothes: it needs a question that actually requires it _and_ a matching line in the privacy policy. A raw `channel_id` shipped on `meeting_started` and was caught in review.
-- **A simple event is not a privacy-policy change (BASIC, 2026-10-28).** An event that carries only the two identifiers above and content-free shape (counts, durations, fixed enums, booleans) needs no policy edit, no What's New entry and no "Last updated" bump. Do not hold back or drop such an event over policy cost.
-- **Outage recovery is `guildAvailable`, not `guildCreate`.** `GUILD_CREATE.js` emits `guildCreate` only for a guild that is **not already cached**, and only once `ws.status === Ready`; a cached guild returning from an outage takes the other branch and emits `guildAvailable`. Attach outage-recovery logic to `guildAvailable` or it will never run. `guildDelete` is symmetric: the gateway flags outages with `unavailable` and discord.js routes those to `guildUnavailable`, so a `guildDelete` really is a removal.
-- The `joinedTimestamp` guard on `server_installed` covers a narrower case than an outage: a `GUILD_CREATE` re-emitted for a guild joined longer ago than the window, if it were ever dropped from cache while the client is Ready. A re-emission inside the window is still counted, so treat it as narrowing double counting rather than as idempotency.
-- **The server count is not event-sourced.** `guild_count` is read from Discord and attached as a property, so it self-heals on every event. A cumulative sum of installs minus removals bakes in every dropped event permanently; do not replace the gauge with one.
-- **Prometheus counters in `src/metrics.ts` are a separate concern and must not be merged with this.** They are dimensionless and cannot answer "which server" or "which person". Their call sites are still a useful map of moments worth an event.
-- Verifying analytics is full of false negatives. Query the `events` table with the PostHog MCP's `execute-sql`; **`read-data-schema` lists event definitions, which lag ingestion**, so a newly shipped event is missing from it while its rows already exist.
-
-## Known nuances / gotchas
-
-- Token leaks: don’t reintroduce secret re-exports in `constants.ts`; use `configService`.
-- Discord interaction timing: modal/button handlers must reply within 3s; correction flow already uses direct replies.
-- Diff output is intentionally minimal (line diff, capped length); LLM output is stripped of code fences to avoid code-block embeds.
-- Meeting duration capped at 2h (`MAXIMUM_MEETING_DURATION`).
-- Auto-record will end meeting if channel empties.
-- Noise gate can suppress very quiet snippets; forced transcriptions bypass it.
-- **A "partial" meeting needs evidence that audio was lost, and a speaking event without PCM is not that evidence.** The discord.js speaking event fires before the subscription, Opus payload-type, RTP version and DAVE decrypt guards, so a sustained no-PCM turn also covers users the bot never subscribed to, DAVE transitions and non-Opus payloads. It used to latch the meeting-global `captureIncomplete`, which diverted roughly a third of all meetings into preservation and the "recording was interrupted" copy; it is now only logged (`sustainedNoPcm=`). `captureIncomplete` remains a write-once latch for real loss (Opus decoder errors, decoded-stream errors, failed voice subscriptions, mixed-output write errors) and still demotes and diverts. Separately, one lost snippet out of a median 153 is a transient provider hiccup, so `FAILED_SEGMENT_PARTIAL_THRESHOLD` in `utils/meetingProcessing.ts` floors the demotion at three; do not replace it with a percentage, which misclassifies the measured genuine failures at 2.65 and 3.64 percent. **That floor applies only to a recording that has usable speech, and `hasTranscriptionLoss` is the one place that decides it.** Without usable speech any failure is the whole recording, so the floor must not apply: `assertMeetingProcessingSucceeded` runs before `classifyTranscription` writes the outcome and before `evaluateAutoRecordCancellation`, so a wholly failed recording that passes the assert reaches the accidental-recording classifier with an empty transcript and can be cancelled away instead of entering failure recovery. Call the predicate rather than re-testing the constant, or the two surfaces will share a number while disagreeing about the rule. **The floor's unit is a per-turn snippet, and a caller whose segments are few and long must pass its own threshold.** `classifyTranscription` takes one, defaulting to the Discord floor; the personal upload path passes 1 because its segments are 300 second chunks, where one failure is a real gap rather than a hiccup. Applying the Discord floor there called a two chunk upload with one failed chunk "ready", which broke the upload contract and master's unit suite (2026-11-04).
-- Attendance entries are stored as Discord mentions (`<@snowflakeId>`), and the web UI resolves them to display names server-side.
-- Meeting artifact access is server-wide and read-time: `meetings.artifacts.transcriptAccess.enabled` and `meetings.artifacts.audioAccess.enabled` default on, apply to existing and future guild meetings, and must be enforced at backend delivery boundaries. Personal meetings bypass them. They do not stop recording, transcription, notes generation, storage, or transcript-backed notes correction. Do not terminate an already-open live transcript stream when a setting changes; enforce the current value on new connections and subsequent requests.
-- Notes may contain user mentions (`<@snowflakeId>`) and role mentions (`<@&snowflakeId>`). All read surfaces (web portal, share payload, MCP, Notion, Markdown export) must resolve them through `createMeetingMentionReplacer` in `services/meetingMentionService.ts`; do not resolve mentions inline at a call site. Role names are fetched via `listGuildRolesCached` and degrade to raw mentions if Discord is unavailable.
-- Mentions inside Discord embeds render but never notify. Notes are posted as embed descriptions, so mentions in notes are display-only. Do not move notes out of embeds without an explicit product decision to start pinging people.
-- Optional summary and final-notes Upgrade reminders reuse a guild-scoped InteractionReceipt with a seven-day expiry and atomic expired-receipt replacement, independent of TTL cleanup. Ordinary interaction receipts retain insert-only idempotency. Recorded time is retained history plus the completed current meeting once, not a lifetime or cost counter. Skip history scans during active cooldowns and claim only after history succeeds. Bound the entire optional lookup to one second, propagate the abort signal through history pagination, and omit the reminder on timeout/failure; never let promotion block meeting delivery. Keep existing billing pointers on the separately guarded transition path.
-- **Any surface that blocks on a purchase attempt's state must call `releaseExpiredPurchaseAttempt` first.** The `checkout.session.expired` webhook is not guaranteed to arrive, and an `open` attempt past its local `checkout.expires_at` only clears through a provider read. `getBillingSnapshot` and `prepareBillingChangeOwned` do this; a new reader that skips it recreates the stale-lock incident. A live `open` attempt is superseded (expired at Stripe, then released through `refreshAttempt`) only from `reserve`.
-- Any surface that posts notes-derived text as **ordinary message content** (not an embed) must set `allowedMentions: { parse: [] }`, because message content does ping. `/ask` answers and the correction diff already do. Mentions still render as names; they just do not notify.
-- Prompt-visible role lists exclude `@everyone` (role id equals guild id) and managed integration roles. `MAX_ROLES_IN_PROMPT` in `notesPromptService.ts` caps the list.
-- Generated notes are persisted and posted verbatim, so mention ids must be validated, not trusted to the prompt. Any path that generates notes runs the output through `stripUnknownMentions` (`utils/mentionSanitizer.ts`) against the ids that path actually showed the model. An invented id renders as a broken mention and the guild id renders as `@everyone`. New note-generating paths must add this call; `getNotes` and the personal upload path are the current examples.
-- Prompt fragments live in `prompts/_fragments` and are composed via `extends` in front matter. `prompts:pull` skips prompts that use `extends` unless `--force` is passed.
-- Transcription guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs), a prompt echo gate using similarity checks, and a low-confidence prompt/no-prompt vote fallback on slow snippets.
-- **Server, channel and meeting context must never reach a prompt that shapes a transcript.** They are free text a guild writes to steer its _notes_, and a transcript-shaping model follows them as instructions. One guild asking for its notes under fixed headings had the coalesce step write that heading structure into the transcript as if it were speech, attributed to a speaker, and the generated notes then cited the fabrications as decisions the participants never made. `formatContextForPrompt` in `services/contextService.ts` gates all three fields on an `isAuthoringPrompt` positive list of `notes` and `image`, because those author something _about_ the meeting rather than the transcript _of_ it. Keep it a positive list: it fails closed, so a transcript-shaping prompt type added later is protected by default, whereas `promptType !== "transcription"` would hand that new type the guild's instructions silently. The dictionary is the supported way to bias transcription and is deliberately still included. The raw-ASR guards do not cover this: the prompt echo gate runs only on ASR candidates and compares against the transcription prompt, so notes-shaped text never matches it, and `coalesceTranscription` has no output guard at all.
-- **Current outbound network rules (ECS service SG)**: temporarily allowing all egress (UDP/TCP any port) for Discord voice debugging. Previously it was limited to TCP 443 and DNS (53) only. Remember to tighten this once voice is stable and update this note.
-- Avoid `in`/`instanceof`/`typeof` hedging for core platform APIs; we target a known Node/SDK set. Prefer simple, direct calls with minimal branching.
-- Config UX: treat overrides as implicit (setting a value creates an override), show a clear inherited vs overridden indicator, keep a reset-to-default action, and avoid disabling inputs just to signal default values.
-- Config taxonomy: avoid hardcoded group names in UI, derive them from the registry or make them required, and keep advanced and experimental settings collapsed by default to reduce noise.
-- Config typing: avoid freeform strings for fixed option sets (for example TTS voice), use enumerated options and shared constants, and avoid hardcoded config key strings in consumers by relying on shared key constants or typed accessors.
-- Config access: prefer shared helpers that resolve and transform config values (trim strings, validate enums, etc.) instead of inline snapshot parsing. When you add a helper to replace boilerplate, update existing consumers proactively, keep it KISS, and avoid hedging.
-- Portal base URLs are always configured. Do not add fallback behavior for missing `FRONTEND_SITE_URL` or relative portal links; treat missing config as an error.
-- **MCP service accounts do not introduce a second permission model, and must not grow one.** A service account token binds to a Discord bot's user id, and every read still goes through `checkUserMeetingAccess` for that id, so the boundary is the bot's roles and channel overwrites. The token's own `guildId` and optional `channelIds` only ever narrow that result; nothing on a token may widen access. Two guards carry the model. Minting requires the caller to hold Administrator in the guild (Manage Server does not imply access to any particular channel, so a manager denied a private channel could otherwise delegate reads of it), and the bound identity must be a bot (a token bound to a human would inherit their personal meetings and their access in other guilds, which no guild permission covers).
-- **A bot holding Administrator is allowed as a service account identity, deliberately.** Administrator does bypass every channel overwrite in `discordPermissionsService`, so such a token reaches every meeting in the guild. That is not an escalation: minting already requires an administrator, who can read all of those meetings in the portal. An earlier version refused these bots, which prevented nothing and only forced people to restructure Discord for Chronote's benefit. Reach for the channel allowlist when a bound token is wanted, and do not reintroduce the refusal.
-- Channel-allowlist enforcement for service accounts lives in `mcpMeetingService`, not at the call sites: `meetingMatchesListFilters` covers both list paths and `assertMeetingChannelAllowed` covers both direct lookups. A new MCP read path must route through one of them, and its out-of-scope error must stay identical to a permission denial so a restricted token cannot probe for meetings it cannot see.
-- **The desktop API is open to any signed-in Discord account, and that is not a widening of what Chronote already allows.** It carries no beta allowlist and no enable flag; the boundary is the desktop OAuth token and its scopes, same as the portal's is the session. The allowlist that used to sit here gated a _client_, not a capability: personal media upload, transcription and notes generation already run for every logged-in user through `personalUploadsRouter`, which is an `authedProcedure` with a rate limit and a size cap and no plan check. Re-adding a desktop-only allowlist would not close that surface, it would only close one client to it. If per-user metering is ever wanted, it belongs in the personal upload path where both clients pass through, never in `requireDesktopAuth`.
-- **A desktop recording is bounded per source by declared audio duration, not by segment count or total bytes.** Each registered source may contribute at most one `MAXIMUM_MEETING_DURATION`, enforced in `createPersonalRecordingSegmentUploadIntent` before a signed upload is issued. The per-segment byte cap does not bound a job on its own, because nothing caps how many segments a session may add, and that was genuinely unbounded until the beta allowlist came off. Duration is the right unit: a byte cap would have to assume a WAV format the capture device actually chooses (48 kHz stereo float puts a legitimate two hour four source recording near 11 GB), and transcription cost scales with minutes rather than segments.
-- **`RECORDING_SOURCE_MAX_MILLIS` in the desktop client must stay equal to `MAXIMUM_MEETING_DURATION`, and the client has to stop first.** Server-side rejection alone loses the whole recording rather than the overflow: `upload_manifest_segments` propagates the first segment error with `?` and never reaches `submit_recording_upload`, and each retry re-sends the same rejected segment, so a recording that passes the cap can never be submitted at all. The recorder therefore watches its own sealed duration and emits `recording-limit-reached`, and the frontend runs its normal stop-and-upload on that event, which keeps one teardown path instead of a second racing it. If the server cap is ever changed, change the client constant in the same PR: raising the server alone only wastes headroom, but lowering it strands every installed build on the old number with no way to submit a recording that crosses the new one.
-- **That duration check is a sanity bound, not an abuse control, and should not be mistaken for one.** It reads the existing segments and then writes, so concurrent intents for one source can both observe the same total and overshoot it, and nothing limits how many jobs an account creates in the first place. Making the check transactional would not change that second fact, so it would buy precision on the wrong axis. A real per-account limit belongs in the personal upload path shared with the portal.
-- **A signed-in portal session is not consent, and the desktop authorize route must never treat it as one.** The flow has no `client_id` and cannot have a usable secret (it is a public client with a loopback redirect), so PKCE proves only that the process that started the flow is the one finishing it, never that the process is Chronote Desktop. Without a consent step, any local program could silently mint a 30 day refresh token carrying `meetings:read` for anyone signed in to the portal. `/api/desktop/auth/authorize` therefore renders a consent page and issues the code only from `POST /api/desktop/auth/authorize/consent`. Approval is deliberately not remembered: with no client identity, a stored consent would apply to any local program, which is the thing being guarded against.
-- The consent post is CSRF-blocklisted in `webserver.ts` like the MCP one, because it carries a signed request plus a single use session nonce instead of a CSRF token. The nonce is consumed on first use, so an approval cannot be replayed. The signed token, the nonce and the desktop client's `LOGIN_TIMEOUT_SECONDS` all sit at 5 minutes, so a slow approval fails as one thing rather than half expiring. Pending nonces are a bounded list rather than one slot, so two desktop instances can each hold a consent page open.
-- **Known ceiling on that nonce list: `express-session` is read-modify-write over the whole record, so two genuinely overlapping requests in one session lose one of the writes.** A dropped nonce fails a consent page, and a restored one briefly re-permits a consumed approval. This is a property of the session store rather than of the list, and the MCP consent nonce (a single string in the same record) carries it identically. Closing it means moving pending consents into their own DynamoDB items with conditional writes, which is worth doing for both flows at once or not at all. Do not "fix" it here alone and leave the same hole one field over.
-- `SUPER_ADMIN_USER_IDS` is unrelated to desktop and still live: `isSuperAdmin` in `adminAccessService` drives the portal admin surfaces. Desktop no longer falls back to it.
-- When launching Chronote Desktop for operator/manual testing, use production endpoints by default: run `yarn desktop:start:prod` from the repo root. Use `yarn desktop:dev:prod` only when an interactive Tauri dev server is needed. Do not use generic `yarn dev` unless explicitly testing a local API/portal flow.
-- Avoid hedging and speculative fallbacks. Follow YAGNI and KISS, do not add code for hypothetical cases unless explicitly required.
-- Config constraints: when numeric settings depend on caps, use minKey/maxKey to reference other config entries, clamp inputs in the UI, and enforce bounds in API validation.
-- My Meetings UX: default the portal home list to All time, keep the initial page bounded, and use an explicit Load more control for older meetings.
-- Personal Settings UX: keep account-owned integrations and preferences under `/portal/settings`; keep My Meetings focused on browsing, filtering, upload entry, and meeting detail access.
-- Playwright mock mode: ensure only the mock API (port 3001) and frontend dev server (port 5173) are running. If ports are occupied, stop them first (`Get-NetTCPConnection -LocalPort 3001,5173 | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ }`). Clear `VITE_API_BASE_URL` (for example via `.env.local`) so the frontend uses the mock server.
-- Comment hygiene: don’t leave transient or change-log style comments (e.g., “SDK v3 exposes transformToString”). Use comments only to clarify non-obvious logic, constraints, or intent.
-- Writing style: do not use em dashes in copy/docs/comments; prefer commas, parentheses, or hyphens.
-- Planning questions: number clarifying questions when asking the user to choose direction.
 - **User data in public outputs (CRITICAL):** This is a public repository. NEVER include real user data in PR descriptions, commit messages, issue comments, code comments, docs, or any other content that is or may become publicly visible. This includes Discord usernames, display names, user/server/channel IDs, meeting content, transcription excerpts, notes content, server names, and any other user-generated or user-identifying information. When referencing real scenarios for context, replace all identifying details with generic placeholders (e.g., "User A", "User B", "Server X", "Channel Y", "#general"). The technical meaning must be preserved while all PII and user content is stripped.
 - GitHub prose: prefix any PR comments, PR descriptions, issue text, or other GitHub prose with `[AGENT]`. If the prose starts with a
   Markdown heading, put `[AGENT]` on its own line or add a blank line before the
   heading; never concatenate the prefix directly with a heading like
   `[AGENT]## Summary`.
 - PR descriptions should stay concise. Do not publish long "Tests" or "Verification" checklists for checks already enforced by CI; mention validation only when it adds non-obvious signal, such as manual/provider checks, visual-review rationale, skipped checks, or rollout risk.
-- Durable instruction capture: when the user corrects a standing behavior or asks future agents to know something, update the appropriate durable surface in the same turn. Use repo `AGENTS.md` for Chronote-specific rules, and global OpenCode or basics-agentic-dogfooding guidance for cross-repo meta-instructions.
-- PR review hygiene: before asking the user to merge a PR, reply to and resolve all AI bot review threads (Copilot, Greptile, etc). If we disagree with the suggestion, say so and resolve the thread anyway. Use reactions when helpful. When replying to review comments, reply directly to each thread using the review comment replies API (`POST /repos/OWNER/REPO/pulls/PR/comments/COMMENT_ID/replies`), not by creating a new pending review. Direct replies keep each response in its original thread context.
-- PR bot thread audit: when checking for unresolved AI comments, fetch _all_ review threads via the GitHub GraphQL API and paginate until `hasNextPage=false` (don't assume `first: 100` is enough). Also scan PR issue comments for bot follow-ups (Greptile sometimes posts as regular PR comments, which cannot be "resolved" but should still be replied to or reacted to).
-- Post-push PR SOP: after every commit push to an active PR, run a full checks and review audit (status checks, unresolved AI threads, bot issue comments, mergeability), then wait at least 5 minutes and re-check for late AI reviewer comments before declaring merge-ready.
-- Documentation accuracy: after changes that affect behavior, config, prompts, infra, or user flows, review and update `AGENTS.md`, `.github/copilot-instructions.md`, `README.md`, and any related `docs/` or prompt files to keep them accurate and high signal. Keep the copilot instructions high level to reduce drift.
-- Docs policy: user-facing PRs should include a docs delta in `apps/docs-site/`. Purely technical PRs can use `docs-exempt` with rationale.
-- README should stay high signal for users, avoid listing research outcomes like query parameter details. Put rationale or research notes in planning documentation files instead.
+- Token leaks: don’t reintroduce secret re-exports in `constants.ts`; use `configService`.
+- Avoid hedging and speculative fallbacks. Follow YAGNI and KISS, do not add code for hypothetical cases unless explicitly required.
+- Avoid `in`/`instanceof`/`typeof` hedging for core platform APIs; we target a known Node/SDK set. Prefer simple, direct calls with minimal branching.
+- Comment hygiene: don’t leave transient or change-log style comments (e.g., “SDK v3 exposes transformToString”). Use comments only to clarify non-obvious logic, constraints, or intent.
+- Writing style: do not use em dashes in copy/docs/comments; prefer commas, parentheses, or hyphens.
+- Planning questions: number clarifying questions when asking the user to choose direction.
+- Do not suppress runtime warnings by monkey-patching globals (e.g., overriding console.error). Fix the underlying issue or accept the warning; never silence it via code hacks.
 - Backwards compatibility: ask the user whether changes need to preserve compatibility for URLs, API contracts, stored data, or behavior. If unsure, ask before implementing and favor simplicity for early-stage tradeoffs.
 - Backwards compatibility update (January 6, 2026): prioritize DynamoDB data compatibility; URLs and UI flows can change without preserving prior behavior.
+- Durable instruction capture: when the user corrects a standing behavior or asks future agents to know something, update the appropriate durable surface in the same turn. Use repo `AGENTS.md` for Chronote-specific rules, and global OpenCode or basics-agentic-dogfooding guidance for cross-repo meta-instructions.
+- “Remember that …” shorthand: when the user says “remember that <rule>”, add it to AGENTS.md under the relevant section as a standing rule.
+- Documentation accuracy: after changes that affect behavior, config, prompts, infra, or user flows, review and update `.github/copilot-instructions.md`, `README.md`, and any related `docs/` or prompt files to keep them accurate and high signal. Keep the copilot instructions high level to reduce drift.
+- Docs policy: user-facing PRs should include a docs delta in `apps/docs-site/`. Purely technical PRs can use `docs-exempt` with rationale.
+- README should stay high signal for users, avoid listing research outcomes like query parameter details. Put rationale or research notes in planning documentation files instead.
 - Workflow sync: when changing GitHub Actions env or steps, review `.github/workflows/ci.yml`, `.github/workflows/ci-core.yml`, `.github/workflows/deploy.yml`, and `.github/workflows/deploy-staging.yml` to keep them aligned.
 - ADRs: use the existing ADR format (see `docs/adr-20260106-voice-receiver-resubscribe.md`). New ADRs must live in `docs/` with filename `adr-YYYYMMDD-<slug>.md` and include Status, Date, Owners, Context, Decision, Consequences, Alternatives Considered, and Notes. Keep ADRs short and factual. Update or add ADRs when a design decision changes behavior or data contracts.
-- “Remember that …” shorthand: when the user says “remember that <rule>”, add it to AGENTS.md under the relevant section as a standing rule.
-- Do not suppress runtime warnings by monkey-patching globals (e.g., overriding console.error). Fix the underlying issue or accept the warning; never silence it via code hacks.
-- Stripe webhook parsing: keep a single `express.raw({ type: "application/json" })` at app-level in `webserver.ts`; do not add per-route raw parsers elsewhere.
-- React tests: when a test triggers state updates (e.g., data-fetching effects), wrap renders/updates in `act` (from `react`/RTL helpers) to avoid act warnings instead of silencing console errors.
+- PR review hygiene: before asking the user to merge a PR, reply to and resolve all AI bot review threads (Copilot, Greptile, etc). If we disagree with the suggestion, say so and resolve the thread anyway. Use reactions when helpful. When replying to review comments, reply directly to each thread using the review comment replies API (`POST /repos/OWNER/REPO/pulls/PR/comments/COMMENT_ID/replies`), not by creating a new pending review. Direct replies keep each response in its original thread context.
+- PR bot thread audit: when checking for unresolved AI comments, fetch _all_ review threads via the GitHub GraphQL API and paginate until `hasNextPage=false` (don't assume `first: 100` is enough). Also scan PR issue comments for bot follow-ups (Greptile sometimes posts as regular PR comments, which cannot be "resolved" but should still be replied to or reacted to).
+- Post-push PR SOP: after every commit push to an active PR, run a full checks and review audit (status checks, unresolved AI threads, bot issue comments, mergeability) once its checks finish, before declaring merge-ready.
+- When launching Chronote Desktop for operator/manual testing, use production endpoints by default: run `yarn desktop:start:prod` from the repo root. Use `yarn desktop:dev:prod` only when an interactive Tauri dev server is needed. Do not use generic `yarn dev` unless explicitly testing a local API/portal flow.
+
+## Scope and escalation
+
+- Keep work within the approved outcome and minimize unnecessary machinery. File counts, changed lines, effort estimates and implementation-to-change ratios are planning aids, not automatic approval gates. Continue necessary tests, callers, fixtures and supporting source work without repeated approval for those estimates.
+- Escalate substantive changes in outcome, privacy, risk, spending or required authority. Honor explicit human limits and provider limits; preserve existing restrictions on retries, state-changing operations and deployment prerequisites. Diagnose unexpected failures and report real blockers rather than stopping at a fixed failure count.
+- A merge that introduces a prerequisite for the deploy path (a new permission, capability row, protocol, or proof the serving worker must supply) lands the prerequisite first or carries a fallback that lets the next deploy complete. If neither is possible, the PR body and the merge-ready message say in one sentence that production is frozen until X, and the question goes to BASIC before merge. PR #524 merged on 2026-11-03 with neither, and every production deploy after it refused with `artifact_preservation_unconfirmed`.
+
+## Reference (read on demand)
+
+Product and architecture facts live in `docs/engineering/`, not in this file. Read the file for the area you are touching and record new facts there.
+
+- `docs/engineering/architecture.md`: tech stack, key flows and entry points, data model.
+- `docs/engineering/configuration.md`: environment variables and config rules.
+- `docs/engineering/frontend.md`: portal, docs site, and the public-route rule (`scripts/public-routes.json`).
+- `docs/engineering/infrastructure.md`: Terraform, deploy workflows and deployment handoff. Read before any Terraform or deploy work; it holds the Plan/Apply and break-glass authority rules.
+- `docs/engineering/product-analytics.md`: PostHog capture rules, including what an event may carry.
+- `docs/engineering/invariants.md`: per-area rules that must keep holding (mentions, artifact access, MCP service accounts, desktop auth and recording limits, billing, transcript prompts).
+- `docs/engineering/checks.md`: why each check exists, prompt promotion and LLM connection sync.
+- `docs/engineering/evals.md`: eval runners and datasets.
+
+## Worktrees (standard flow)
+
+- Use `scripts/new-worktree.ps1` from the main repo to create a worktree and branch, and copy the main `.env`.
+  - Example: `.\scripts\new-worktree.ps1 -Branch feature-chat-tts`
+  - If you run the script from a non-main worktree, pass `-SourceEnv ..\meeting-notes-discord-bot\.env`.
+  - Default worktree path is `..\meeting-notes-discord-bot-<branch>`.
+- Create a dedicated Discord text channel and voice channel for the branch, then use those for testing.
+- If `.env` changes on main, re-run the script or copy `.env` into the worktree.
 
 ## Quick start (local)
 
@@ -230,29 +82,6 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 
 - `powershell -ExecutionPolicy Bypass -File scripts/dev.ps1`
 - `powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 -Mock`
-
-## Worktrees (standard flow)
-
-- Use `scripts/new-worktree.ps1` from the main repo to create a worktree and branch, and copy the main `.env`.
-  - Example: `.\scripts\new-worktree.ps1 -Branch feature-chat-tts`
-  - If you run the script from a non-main worktree, pass `-SourceEnv ..\meeting-notes-discord-bot\.env`.
-  - Default worktree path is `..\meeting-notes-discord-bot-<branch>`.
-- Create a dedicated Discord text channel and voice channel for the branch, then use those for testing.
-- If `.env` changes on main, re-run the script or copy `.env` into the worktree.
-
-## Scope and escalation
-
-- Keep work within the approved outcome and minimize unnecessary machinery. File counts, changed lines, effort estimates and implementation-to-change ratios are planning aids, not automatic approval gates. Continue necessary tests, callers, fixtures and supporting source work without repeated approval for those estimates.
-- Escalate substantive changes in outcome, privacy, risk, spending or required authority. Honor explicit human limits and provider limits; preserve existing restrictions on retries, state-changing operations and deployment prerequisites. Diagnose unexpected failures and report real blockers rather than stopping at a fixed failure count.
-- A merge that introduces a prerequisite for the deploy path (a new permission, capability row, protocol, or proof the serving worker must supply) lands the prerequisite first or carries a fallback that lets the next deploy complete. If neither is possible, the PR body and the merge-ready message say in one sentence that production is frozen until X, and the question goes to BASIC before merge. PR #524 merged on 2026-11-03 with neither, and every production deploy after it refused with `artifact_preservation_unconfirmed`.
-
-## Dependency maintenance
-
-- The weekly maintenance job covers Chronote and chronote-ops, consolidates dependency PRs, checks compatible upgrades and leaves merging to a human.
-- Stripe 23 uses API `2026-09-30.endive`; billing-cycle anchor requests use `{ type: "now" }`. Langfuse 6 records trace input/output on the root observation.
-- Dependabot proposes one cross-ecosystem version-update PR each Monday at 09:00 UTC, including desktop npm and Rust dependencies. Security updates are grouped within each ecosystem and may arrive outside that schedule.
-- Consolidate outstanding dependency PRs on current master, retain intentional compatibility ignores and security resolutions, run the normal quality gates, and close superseded PRs only after the replacement is published with their links.
-- Audit both npm lockfiles and the desktop Cargo lockfile during maintenance; direct version bumps can leave stale security resolutions in place. Refresh fixed-version floors, verify compatibility, and report unresolved advisories rather than dismissing them. See `docs/engineering/dependency-security.md`.
 
 ## Checks
 
@@ -271,45 +100,19 @@ Optional Windows helper (prints loaded env, supports `-Mock` / `-SkipDocker`):
 - Upgrade billing defaults to Monthly unless the arrival link requests Annual. Annual savings use matching monthly/yearly prices in the same currency; never hardcode a discount or substitute a monthly price for an unavailable annual plan. Screenshot coverage includes both selected billing periods.
 - Review baseline changes before committing. The PR Visual Regression check fails on visual test failures; upgrade and post-install welcome snapshots cover desktop, mobile and wide screens. Branch protection separately controls whether that check is required for merge.
 
-### Why each check exists
-
-- Lint (ESLint) catches common errors and keeps code quality consistent. Docs: https://eslint.org/docs/latest/use/command-line-interface
-- Format (Prettier) enforces a consistent style and removes formatting churn. Docs: https://prettier.io/docs/cli
-- Tests and coverage (Jest) protect behavior and enforce coverage thresholds defined in `jest.config.ts`. Current global thresholds: statements 30%, branches 60%, functions 40%, lines 30%. Docs: https://jestjs.io/docs/29.7/configuration
-- Build (TypeScript + Vite) validates type safety and ensures the frontend bundles. Docs: https://www.typescriptlang.org/docs/handbook/compiler-options.html and https://vite.dev/guide/
-- Docs build (Docusaurus) validates docs compile and link integrity. Command: `yarn docs:check`. Docs: https://docusaurus.io/docs
-- E2E (Playwright) validates core user flows against the UI. Docs: https://playwright.dev/docs/running-tests
-- Code quality: configure a clean, pinned shared tool checkout through `QUALITY_RATCHET_HOME`, then run `yarn check:quality` before committing. Git-relative duplication, complexity, and file-size checks include tests. `yarn code:stats` reports scc and Lizard diagnostics without suppressions. See `docs/engineering/code-quality.md`.
-  - **A clean local `code:stats` does not prove the `Code Stats` job green, and a red one does not prove it red.** Lizard's TS/TSX parsing differs between the local install and the one CI pip-installs, and the two disagree about where a function ends, so they score the same code differently. Both directions have been seen on one branch: CI flagged `callTool` in `src/api/mcp.ts` at CCN 16 while local scored it under the threshold, and local flagged `PersonalSettings` at CCN 20 while CI scored the same function at 7. When the job fails, read the warning table out of the CI log rather than trying to reproduce the number locally, and fix the function CI names.
-- Markdown lint (markdownlint-cli2) enforces consistent Markdown style across all repo `.md` files. Config in `.markdownlint-cli2.jsonc`. Command: `yarn markdownlint:check` (or `yarn markdownlint:fix` to auto-fix). Docs: https://github.com/DavidAnson/markdownlint-cli2 and https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
-- IaC scan (Checkov via uvx) catches Terraform misconfigurations. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
-- Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`. It diffs the repo against the live Langfuse label, so a PR that edits anything in `prompts/` fails the core CI check until the prompts are promoted. That red is expected on the PR; say so in the description rather than trying to clear it.
-- **Prompt promotion is automatic on merge, and agents should not do it by hand.** The `Promote Prompts` job in `deploy.yml` runs after `Deploy Backend` succeeds and does the dry run, the push, and a verifying check. Two properties matter and are easy to break if this is ever changed:
-  - **Order.** Code deploys first, prompts second. A prompt is safe against newer code, which simply ignores variables it does not reference, but not against older code. Promoting first is how a role-mention prompt once went live against code that did not supply its roster, producing plain-text role names that looked like a feature bug.
-  - **Revision.** CI pushes from the merged commit, so it cannot revert a prompt that someone else promoted. `prompts:push` versions every local prompt that differs from the remote, so pushing from a stale checkout is genuinely dangerous. That is the main reason to leave this to CI.
-- OpenAI LLM connection sync is automatic after a successful production backend deploy. `Sync OpenAI LLM Connection` uses only the merged revision's `openai.yml`, runs dry-run/push/check, and reads the existing provider key from Secrets Manager plus the project ID from the serving ECS service's exact task definition. Both values are required because the upsert replaces credentials and the `OpenAI-Project` header. Do not manually sync before merge or add live pushes to PR/staging workflows. Staging shares the Langfuse project; other providers remain explicitly managed. See `docs/langfuse-llm-connections.md`.
-- LLM connection checks compare YAML with external Langfuse state without reading secret values. Connection YAML changes can leave `LLM Connections Check` red on a PR until the merged revision is synced. Document expected drift in the PR; keep the check and quality gates intact.
-- Deploy jobs deliberately do **not** gate on `Prompts Check` or `LLM Connections Check`. Both describe external Langfuse state rather than whether the code is good, both are already enforced by core CI on PRs and production deploys, and while they gated deploys a single Langfuse outage or an unpromoted prompt would silently skip every deploy job while the run still looked handled. Keep code-quality gates on the deploy path; keep external-state checks off it.
-- If a prompt ever needs promoting outside a deploy, check out and pull the merged `master` first, run `yarn prompts:push --dry-run`, and confirm the "would push" list contains exactly the prompts you expect. Any extra name means the checkout is behind: re-sync instead of pushing.
-
-### Evals
-
-- `yarn eval:meeting-notes` runs the notes eval against a Langfuse dataset (`LANGFUSE_EVAL_DATASET`, default `meeting-notes`). Cases carry rendered prompt variables rather than a `MeetingData` object, so `formatParticipantRoster` and `formatRoleRoster` are exported from `notesPromptService.ts` for reuse.
-- Mention grading is deterministic (`src/evals/roleMentionGraders.ts`): it verifies every emitted mention id came from the roster, blocks `@everyone`/`@here`, and scores recall against expected ids. Prefer extending these graders over adding a judge model.
-- `yarn evals:harvest-downvotes --output <path>` turns downvoted meetings into eval case stubs with `expectedOutput` left blank for a human to curate. Output contains real meeting content: write it outside this public repo. `*.harvested.json` is gitignored as a backstop.
-- `yarn evals:upload --dataset <name> --file <cases.json>` seeds a Langfuse dataset, creating it if absent. Items upsert on id (explicit `id`, else `metadata.label`), so re-uploading a file is idempotent; a case with neither gets a generated id and the command warns that re-running will duplicate it. `meeting-notes` and `meeting-summary` are seeded and both evals run. `transcription-eval` is not, and cannot be from the sample file: it points at an audio clip that is not in the repo, and grading needs a human-checked reference transcript, so seeding it is a content task. A runner pointed at a missing dataset now names the upload command instead of throwing from `dataset.get`.
-- Build a runner's `expectedOutput` schema with `expectedOutputSchema()` from `src/evals/expectedOutput.ts`, never a bare `z.object(...).optional()`. Langfuse sends `null` for a case that declares none, `.optional()` accepts a missing key but rejects an explicit null, and the result is an aborted experiment rather than a case whose reference-dependent grades are skipped. The helper exists so this cannot be got wrong per runner.
-- **Running any eval needs a full app environment, not just Langfuse keys.** The runners import `configService`, which validates the entire config at module load, so `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`, `FRONTEND_SITE_URL`, `OAUTH_SECRET` and friends must be set or the process exits before it reaches Langfuse. `scripts/mock.env.example` covers the non-OpenAI values.
-- Do not point `eval:transcription` at the project's existing `Transcription` dataset. It was created outside this repo, holds one item with an empty `expectedOutput`, and its input shape does not match `DatasetInputSchema`. Seed a kebab-case `transcription-eval` instead, matching the other names.
-- The two datasets that do exist were created outside this repo and are not eval-ready: `Transcription` (1 item, empty `expectedOutput`) and `hallucination-audit-20260209` (198 items, `expectedOutput` null). Neither matches the runners' input schemas. Treat them as raw corpora, not graded sets.
-- `yarn eval:meeting-notes` has been run end to end against live model output (2026-07-30, `meeting-notes`, 2 cases, all six grades 1.000). The graders work on real notes: the multi-assignment case emitted both expected role mentions plus the expected member mention, and the no-assignment case correctly emitted none. Recall over a non-empty expected set cannot pass without the mentions actually being present, so that result is not vacuous.
-- Pass `--items` to print each case's generated notes and per-case grades. Aggregate scores tell you a run regressed but not why.
-
 ### Coverage guidance
 
 - Prefer adding tests over coverage ignores.
 - If a coverage ignore is unavoidable, use `istanbul ignore` directives with a short justification comment. Coverage runs through the istanbul provider, so a `c8 ignore` comment is accepted by the compiler and then counts for nothing.
 - After coverage improvements or coverage scope changes, round each threshold down to the nearest 10 and keep it in sync with `jest.config.ts`. Do not lower a threshold below its pre-PR value unless the coverage scope meaningfully expands, in which case reset to the new rounded baseline and call it out in the PR.
+
+## Dependency maintenance
+
+- The weekly maintenance job covers Chronote and chronote-ops, consolidates dependency PRs, checks compatible upgrades and leaves merging to a human.
+- Stripe 23 uses API `2026-09-30.endive`; billing-cycle anchor requests use `{ type: "now" }`. Langfuse 6 records trace input/output on the root observation.
+- Dependabot proposes one cross-ecosystem version-update PR each Monday at 09:00 UTC, including desktop npm and Rust dependencies. Security updates are grouped within each ecosystem and may arrive outside that schedule.
+- Consolidate outstanding dependency PRs on current master, retain intentional compatibility ignores and security resolutions, run the normal quality gates, and close superseded PRs only after the replacement is published with their links.
+- Audit both npm lockfiles and the desktop Cargo lockfile during maintenance; direct version bumps can leave stale security resolutions in place. Refresh fixed-version floors, verify compatibility, and report unresolved advisories rather than dismissing them. See `docs/engineering/dependency-security.md`.
 
 ## Agent Skills
 
@@ -323,7 +126,7 @@ When a shared workflow changes, keep all three skill mirrors in sync. Skills are
 
 - `pr-review-recycle`: agentic loop for processing Copilot/Greptile/Codex PR review threads until checks are green.
 - `docs-authoring`: workflow for creating and maintaining public product docs in `apps/docs-site/`.
-- `pr-post-push-sop`: post-push checklist for checks, AI review audit, and a 5 minute late-comment wait before merge-ready updates.
+- `pr-post-push-sop`: post-push checklist for checks and AI review audit before merge-ready updates.
 - `investigate-and-plan`: investigation and planning workflow for errors, incidents, product ideas, issues, and PRs.
 - `mcp-setup-and-debug`: MCP setup and debugging workflow for OpenCode, Codex CLI, and Claude Code.
 
@@ -358,68 +161,6 @@ Known Context7 IDs:
 # Testing Strategy
 
 Look for an appropriate spread of testing across our various different layers to determine the appropriate layer to add any new or modified features to. There are going to be lots of cases, especially in the back-end right now, where we don't have an appropriate level of unit testing and end-to-end integration testing, Playwright snapshot tests, etc., That we should consider adding if we don't already have for any given change. Really any file we modify, we should be able to back it up with some sort of automated testing. Keep in mind that when I make that consideration, I am also thinking about coverage. I'm thinking about making sure builds pass, making sure that a lot of our checks are in place to make sure that the code will truly work in practice, you know running the Docker build, running the TypeScript build, as well as complexity checks. We currently have a lot of ignoring in our complexity checks which we define for SCC and Lizard. We should strive if we make a change in a place that has complexity ignored, or has low coverage of tests that we should go in as part of that work to consider how we can at a minimum not make the problem worse but hopefully also rectify the deficiency while still primarily focusing on the goal at hand.
-
-## Clean Code Guidelines
-
-### Constants Over Magic Numbers
-
-- Replace hard-coded values with named constants
-- Use descriptive constant names that explain the value's purpose
-- Keep constants at the top of the file or in a dedicated constants file
-
-### Meaningful Names
-
-- Variables, functions, and classes should reveal their purpose
-- Names should explain why something exists and how it's used
-- Avoid abbreviations unless they're universally understood
-
-### Smart Comments
-
-- Don't comment on what the code does - make the code self-documenting
-- Use comments to explain why something is done a certain way
-- Document APIs, complex algorithms, and non-obvious side effects
-
-### Single Responsibility
-
-- Each function should do exactly one thing
-- Functions should be small and focused
-- If a function needs a comment to explain what it does, it should be split
-
-### DRY (Don't Repeat Yourself)
-
-- Extract repeated code into reusable functions
-- Share common logic through proper abstraction
-- Maintain single sources of truth
-
-### Clean Structure
-
-- Keep related code together
-- Organize code in a logical hierarchy
-- Use consistent file and folder naming conventions
-
-### Encapsulation
-
-- Hide implementation details
-- Expose clear interfaces
-- Move nested conditionals into well-named functions
-
-### Code Quality Maintenance
-
-- Refactor continuously
-- Fix technical debt early
-- Leave code cleaner than you found it
-
-### Testing
-
-- Write tests before fixing bugs
-- Keep tests readable and maintainable
-- Test edge cases and error conditions
-
-### Version Control
-
-- Write clear commit messages
-- Make small, focused commits
-- Use meaningful branch names
 
 ## Code Quality Guidelines
 
