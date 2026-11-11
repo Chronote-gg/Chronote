@@ -149,6 +149,8 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 
 ## Quick start (local)
 
+For dependency installation, native voice builds or CI changes, read [the native voice build prerequisites](../README.md#native-voice-build-prerequisites) before changing the pinned Rust build route.
+
 - `yarn install`
 - Copy `.env.example` to `.env`; set required tokens.
 - `yarn dev` to start local Dynamo + init tables + bot.

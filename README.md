@@ -34,7 +34,7 @@ of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts
 
 ## Run locally
 
-1. `yarn install`
+1. Set up the [native voice build prerequisites](#native-voice-build-prerequisites), then run `yarn install`.
 2. Install FFMPEG (e.g., `choco install ffmpeg` on Windows).
 3. Copy `.env.example` to `.env`; set required keys: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`. Optional: Stripe keys to enable checkout/portal endpoints; `USE_LOCAL_DYNAMODB=true` for local tables. For Langfuse prompt sync or tracing, set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`, `LANGFUSE_PROMPT_DICTIONARY_TEACHING`. For Notion export, set `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and `NOTION_REDIRECT_URI`.
    - For mock portal data + OAuth bypass, set `MOCK_MODE=true` (no Discord/Dynamo required), or run `yarn start:mock` / `yarn dev:mock` to toggle mock mode without editing `.env`.
@@ -68,6 +68,14 @@ of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts
 - `yarn llm-connections:check` compares local YAML with Langfuse (keys only, no secrets). It runs inside `yarn run check` and CI.
 - Production automatically syncs only the OpenAI connection after backend deployment. Staging shares Langfuse and checks drift without pushing; other providers remain explicitly managed.
 - Details and schema: `docs/langfuse-llm-connections.md`.
+
+### Native voice build prerequisites
+
+Install [rustup](https://rustup.rs/) and the native linker/build tools for your host before `yarn install` (MSVC C++ build tools on Windows, Xcode Command Line Tools on macOS, or a C/C++ toolchain on Linux). A cold install needs network access: postinstall installs Rust 1.88.0 with its minimal profile and builds Chronote's pinned Davey source with `Cargo.lock`. Later builds reuse the local Cargo target cache.
+
+The source and MIT license live in [`native/davey`](native/davey/UPSTREAM.md). `scripts/build-native-davey.mjs` installs the rebuilt N-API binding into the pinned JavaScript package; its loader requires that artifact instead of an unpatched prebuilt fallback. The build targets the host OS and architecture through Cargo. Native execution is verified on Windows x64 and glibc Linux x64; other upstream native targets, including macOS and arm64, are not qualified by those results.
+
+Docker compiles the same source in a Rust builder stage and installs the artifact during Node postinstall. CI's dependency installer builds it even with `--ignore-scripts`, and the unit-test job checks the native parser before Jest. Keep this build path when changing installation or CI settings.
 
 ## Checks
 

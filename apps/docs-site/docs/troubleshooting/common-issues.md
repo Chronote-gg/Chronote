@@ -72,6 +72,8 @@ Try `/startmeeting` again after a short wait. If the active-meeting message pers
 
 If you see "Some audio could not be transcribed. These notes may be incomplete," Chronote generated notes from the text it could recover. Review them for missing discussion before relying on them.
 
+Later audio does not fill an earlier recording gap. If part of the capture was unavailable, the meeting remains partial even when later speech is recorded successfully. Retrying saved audio can process what was recorded; it cannot reconstruct speech that was never captured.
+
 A processing-failure message is different from an empty recording. Any existing upload retries run before Chronote reports a terminal upload failure.
 
 #### Retry processing

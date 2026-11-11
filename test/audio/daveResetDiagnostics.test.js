@@ -2,9 +2,11 @@
 
 import { Buffer } from "node:buffer";
 import { EventEmitter } from "node:events";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, expect, jest, test } from "@jest/globals";
 import {
   DAVESession,
+  EndBehaviorType,
   Networking,
   NetworkingStatusCode,
   VoiceConnection,
@@ -13,6 +15,8 @@ import {
 import Davey from "@snazzah/davey";
 import { VoiceOpcodes } from "discord-api-types/voice/v8";
 import prism from "prism-media";
+import { OpusDiagnosticDecoder } from "../../src/utils/opusDiagnosticDecoder";
+import { generatedOpus } from "./fixtures/generatedOpus.mjs";
 import controls from "./fixtures/davePublicControls.cjs";
 import { offlineVoiceConnection } from "./fixtures/offlineVoiceConnection.mjs";
 
@@ -38,11 +42,14 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-function networkAt(code = NetworkingStatusCode.SelectingProtocol) {
+function networkAt(
+  code = NetworkingStatusCode.SelectingProtocol,
+  userId = controls.MY_USER_ID,
+) {
   const network = new OfflineNetworking(
     {
       endpoint: "unused.invalid",
-      userId: controls.MY_USER_ID,
+      userId,
       channelId: controls.CHANNEL_ID,
     },
     { decryptionFailureTolerance: 1 },
@@ -313,7 +320,7 @@ test("native activation and resume recovery retain the latest episode without re
     expect(ciphertext.equals(opus)).toBe(false);
     dave.prepareEpoch({ epoch: 1, protocol_version: 1 });
     expect(dave.session.ready).toBe(false);
-    expect(dave.decrypt(ciphertext, controls.OTHER_USER_ID)).toBe(ciphertext);
+    expect(dave.decrypt(ciphertext, controls.OTHER_USER_ID)).toBeNull();
     expect(dave.decrypt(opus, controls.OTHER_USER_ID)).toBe(opus);
     const epoch = dave.resetDiagnostics;
     activate(network);
@@ -368,3 +375,72 @@ test("native activation and resume recovery retain the latest episode without re
     connection.destroy();
   }
 });
+
+// Local encryption proves this input is ciphertext, not remote authentication.
+// This red regression is investigative only until the DAVE inclusion gate is met.
+test.each([false, true])(
+  "initial activation preserves plaintext and excludes native ciphertext from the decoder, encrypted=%s",
+  async (encrypted) => {
+    const senderNetwork = networkAt();
+    const sender = installDave(senderNetwork);
+    activate(senderNetwork);
+    const options = { rate: 48000, channels: 2, frameSize: 960 };
+    const opus = generatedOpus();
+    const input = encrypted ? sender.session.encryptOpus(opus) : opus;
+    if (encrypted) expect(input.equals(opus)).toBe(false);
+
+    const connection = offlineVoiceConnection(VoiceConnection);
+    const network = networkAt(
+      NetworkingStatusCode.SelectingProtocol,
+      controls.OTHER_USER_ID,
+    );
+    const dave = installDave(network);
+    network.state = { ...network.state, code: NetworkingStatusCode.Ready };
+    connection.state = {
+      ...connection.state,
+      status: VoiceConnectionStatus.Ready,
+      networking: network,
+    };
+    const receiver = connection.receiver;
+    // Only transport encryption is replaced; native DAVE and Opus stay real.
+    receiver.decrypt = () => input;
+    receiver.connectionData = {
+      encryptionMode: "aead_aes256_gcm_rtpsize",
+      nonceBuffer: Buffer.alloc(12),
+      secretKey: Buffer.alloc(32),
+    };
+    receiver.ssrcMap.update({ userId: controls.MY_USER_ID, audioSSRC: 123 });
+    const stream = receiver.subscribe(controls.MY_USER_ID, {
+      end: { behavior: EndBehaviorType.Manual },
+    });
+    const decoder = new OpusDiagnosticDecoder(receiver, options);
+    const transform = jest.spyOn(decoder, "_transform");
+    let decoded = 0;
+    decoder.on("data", () => decoded++);
+    // Ciphertext may either fail Opus decoding or be accepted as corrupt audio.
+    decoder.on("error", () => {});
+    stream.pipe(decoder);
+    const rtp = Buffer.alloc(16);
+    rtp[0] = 0x80;
+    rtp[1] = 0x78;
+    rtp.writeUInt32BE(123, 8);
+    try {
+      expect(dave.session.ready).toBe(false);
+      expect(dave.resetDiagnostics).toMatchObject({
+        reason: "initial",
+        keyPackageDisposition: "send-returned",
+      });
+      receiver.onUdpMessage(rtp);
+      await setImmediate();
+      const ciphertextReachedDecoder = transform.mock.calls.some(
+        ([packet]) => encrypted && packet.equals(input),
+      );
+      expect(ciphertextReachedDecoder).toBe(false);
+      expect(decoded).toBe(encrypted ? 0 : 1);
+    } finally {
+      stream.destroy();
+      decoder.destroy();
+      connection.destroy();
+    }
+  },
+);

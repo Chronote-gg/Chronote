@@ -153,10 +153,14 @@ const notesInput = (): MeetingNotesInput => ({
 const run = (history: MeetingHistory, retry = notesRetry) =>
   runProcessingRetryStages({ history, job: retry, signal, effect, reader });
 const mixedAudioKey = "p/g/c_m_t/audio.mp3";
-function unverifiableCheckpointWithNothingRetranscribed() {
-  jest
-    .mocked(readRecoveryContent)
-    .mockResolvedValue({ ...content, missing: [{}] } as RecoveryContent);
+function unverifiableCheckpointWithNothingRetranscribed(
+  captureIncomplete = false,
+) {
+  jest.mocked(readRecoveryContent).mockResolvedValue({
+    ...content,
+    context: { ...content.context, captureIncomplete },
+    missing: [{}],
+  } as RecoveryContent);
   jest.mocked(retranscribeOmittedRanges).mockResolvedValue({
     text: "",
     segments: [],
@@ -749,5 +753,14 @@ describe("mixed-audio cleanup", () => {
       kind: "succeeded",
       transcriptSource: "mixed",
     });
+  });
+});
+
+test("mixed audio remains partial when the capture context records unavailable input", async () => {
+  unverifiableCheckpointWithNothingRetranscribed(true);
+  expect(await runMixedFallback()).toMatchObject({
+    kind: "succeeded",
+    transcriptSource: "mixed",
+    changes: { processing: { transcription: "partial" } },
   });
 });

@@ -232,11 +232,13 @@ function transcriptionOutcome(
   content: RecoveryContent | undefined,
 ): TranscriptionOutcome {
   if (!transcript.text.trim()) return "empty";
-  if (history.capture?.kind === "interrupted") return "partial";
+  if (
+    history.capture?.kind === "interrupted" ||
+    content?.context.captureIncomplete
+  )
+    return "partial";
   if (transcript.source === "mixed") return "ready";
-  return !content || content.missing.length || content.context.captureIncomplete
-    ? "partial"
-    : "ready";
+  return !content || content.missing.length ? "partial" : "ready";
 }
 
 async function notesInputFor(

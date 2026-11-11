@@ -102,7 +102,7 @@
     "code:stats": "scc --ci && scc --ci --by-file --sort lines && python -m lizard -i -1 -l ts -l tsx -l js -l jsx src test",
     "markdownlint:check": "markdownlint-cli2 \"**/*.md\"",
     "markdownlint:fix": "markdownlint-cli2 --fix \"**/*.md\"",
-    "postinstall": "patch-package",
+    "postinstall": "patch-package && node scripts/build-native-davey.mjs",
     "check:quality": "node scripts/run-shared-quality.mjs",
     "test:quality": "node --test scripts/quality-workflow.test.mjs scripts/shared-quality.test.mjs scripts/lint-staged-win.test.cjs"
   },
@@ -141,7 +141,7 @@
     "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@protobufjs/utf8": "^1.1.1",
     "@smithy/util-retry": "^4.3.8",
-    "@snazzah/davey": "^0.1.12",
+    "@snazzah/davey": "0.1.12",
     "@tabler/icons-react": "^3.50.0",
     "@tanstack/react-query": "^5.105.2",
     "@tanstack/react-router": "^1.170.46",

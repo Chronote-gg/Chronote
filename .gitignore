@@ -65,3 +65,6 @@ __pycache__/
 .husky/_
 analysis/hallucination-audit/*/
 analysis/hallucination-audit/raw_traces_*.json
+
+# Rebuilt from the pinned vendored native source.
+native/davey/target/
