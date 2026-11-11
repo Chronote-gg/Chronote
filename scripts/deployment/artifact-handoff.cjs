@@ -236,19 +236,21 @@ function createArtifactHandoff(options) {
       ctl = await renew(ctl);
       await protectedTask(row.identity);
       if (row.state === "sealed") {
-        const time = now();
-        await write(
-          "consume",
-          row,
-          {
-            ...row,
-            revision: row.revision + 1,
-            state: "consumed",
-            consumedAt: time,
-          },
-          ctl,
-          time,
-        );
+        await retryHeartbeat(row, (current) => {
+          const time = now();
+          return write(
+            "consume",
+            current,
+            {
+              ...current,
+              revision: current.revision + 1,
+              state: "consumed",
+              consumedAt: time,
+            },
+            ctl,
+            time,
+          );
+        });
         const observed = await control();
         if (observed.deployment?.phase !== "warming")
           refuse("Atomic warming acknowledgment missing");
@@ -360,11 +362,17 @@ function createArtifactHandoff(options) {
     const row = await read(ctl.deployment.outgoing);
     binding(row, ctl);
     await protectedTask(row.identity);
-    return write(
-      "cancel",
-      row,
-      { ...base(row), state: "cancel_requested", request: row.request },
-      ctl,
+    return retryHeartbeat(row, (current) =>
+      write(
+        "cancel",
+        current,
+        {
+          ...base(current),
+          state: "cancel_requested",
+          request: current.request,
+        },
+        ctl,
+      ),
     );
   }
   /**

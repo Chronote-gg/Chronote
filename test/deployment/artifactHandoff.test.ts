@@ -302,3 +302,57 @@ test("an expired attestation refuses before any request is written", async () =>
     f.aws.mock.calls.some((call) => call[1] === "transact-write-items"),
   ).toBe(false);
 });
+
+describe.each(["consume", "cancel"])("%s heartbeat retry", (operation) => {
+  test.each(["heartbeat", "proof", "request", "control", "role", "exhausted"])(
+    "handles a concurrent %s change without runtime mutation",
+    async (change) => {
+      let attempts = 0;
+      const f = fixture(
+        () => 120,
+        () => {
+          attempts++;
+          if (attempts > 1 && change !== "exhausted") return;
+          const row = artifactTypes.artifactSafetyRecordSchema.parse({
+            ...f.expected,
+            revision: f.getRow()!.revision + 1,
+            heartbeatAt: 120,
+            freshUntil: 180,
+            ...(change === "proof"
+              ? { proof: { ...f.expected.proof, provenAt: 111 } }
+              : {}),
+            ...(change === "request"
+              ? { request: { ...f.expected.request, expiresAt: 301 } }
+              : {}),
+          });
+          f.setRow(row);
+          if (change === "control") f.ctl.coordinatorEpoch++;
+          if (change === "role") f.source.role = "draining";
+          throw new Error("TransactionCanceledException");
+        },
+      );
+      const result =
+        operation === "consume"
+          ? f.helper.prepare(f.ctl)
+          : f.helper.cancel(f.ctl);
+      if (change === "heartbeat") {
+        await result;
+        expect(attempts).toBe(2);
+        expect(f.getRow()?.state).toBe(
+          operation === "consume" ? "consumed" : "cancel_requested",
+        );
+      } else {
+        await expect(result).rejects.toThrow();
+        expect(attempts).toBe(change === "exhausted" ? 3 : 1);
+        expect(f.getRow()?.state).toBe("sealed");
+      }
+      expect(
+        f.aws.mock.calls.every(
+          ([service, action]) =>
+            service === "dynamodb" &&
+            ["get-item", "transact-write-items"].includes(action),
+        ),
+      ).toBe(true);
+    },
+  );
+});
