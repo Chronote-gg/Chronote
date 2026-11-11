@@ -99,56 +99,59 @@ test.each([
   expect(() => planCompatibleReplacement(input)).toThrow();
 });
 
-test("retained API proof is not manufactured and repeat replacement remains bound", () => {
-  const input = fixture();
-  input.members[0].readiness.runtimeMode = "bot";
-  input.candidate.readiness.runtimeMode = "bot";
-  input.control.deployment!.runtimeMode = "bot";
-  const api = runtime("api");
-  api.readiness.runtimeMode = "api";
-  input.members.push(api);
-  input.control.servingMembers.api = api.identity;
-  input.control.deployment!.originalMembers.push(api.identity);
-  const next = planCompatibleReplacement(input);
-  expect(
-    next.runtimes.find((row) => row.identity.instanceId === "api")?.readiness,
-  ).toEqual(api.readiness);
-  const replacement = next.runtimes.find(
-    (row) => row.identity.instanceId === "replacement",
-  )!;
-  replacement.readiness = {
-    ...replacement.readiness,
-    observedGeneration: 8,
-    expiresAt: 100,
-  };
-  const freshApi = next.runtimes.find(
-    (row) => row.identity.instanceId === "api",
-  )!;
-  freshApi.readiness.observedGeneration = 8;
-  const second: RuntimeRecord = structuredClone(input.candidate);
-  if (second.identity.kind !== "ecs") throw new Error("fixture");
-  second.identity = {
-    ...second.identity,
-    instanceId: "second",
-    taskArn: "fixture:second",
-  };
-  second.sk = "RUNTIME#second";
-  second.authorizedGeneration = 8;
-  second.readiness = {
-    ...second.readiness,
-    identity: second.identity,
-    observedGeneration: 8,
-  };
-  second.protection.identity = second.identity;
-  expect(
-    planCompatibleReplacement({
-      control: next.control,
-      candidate: second,
-      members: [replacement, freshApi],
-      now: 101,
-    }).control.servingGeneration,
-  ).toBe(9);
-});
+test.each([fixture, cancelledPreparation])(
+  "retained API proof and repeated replacement stay bound (%p)",
+  (makeInput) => {
+    const input = makeInput();
+    input.members[0].readiness.runtimeMode = "bot";
+    input.candidate.readiness.runtimeMode = "bot";
+    input.control.deployment!.runtimeMode = "bot";
+    const api = runtime("api");
+    api.readiness.runtimeMode = "api";
+    input.members.push(api);
+    input.control.servingMembers.api = api.identity;
+    input.control.deployment!.originalMembers.push(api.identity);
+    const next = planCompatibleReplacement(input);
+    expect(
+      next.runtimes.find((row) => row.identity.instanceId === "api")?.readiness,
+    ).toEqual(api.readiness);
+    const replacement = next.runtimes.find(
+      (row) => row.identity.instanceId === "replacement",
+    )!;
+    replacement.readiness = {
+      ...replacement.readiness,
+      observedGeneration: 8,
+      expiresAt: 100,
+    };
+    const freshApi = next.runtimes.find(
+      (row) => row.identity.instanceId === "api",
+    )!;
+    freshApi.readiness.observedGeneration = 8;
+    const second: RuntimeRecord = structuredClone(input.candidate);
+    if (second.identity.kind !== "ecs") throw new Error("fixture");
+    second.identity = {
+      ...second.identity,
+      instanceId: "second",
+      taskArn: "fixture:second",
+    };
+    second.sk = "RUNTIME#second";
+    second.authorizedGeneration = 8;
+    second.readiness = {
+      ...second.readiness,
+      identity: second.identity,
+      observedGeneration: 8,
+    };
+    second.protection.identity = second.identity;
+    expect(
+      planCompatibleReplacement({
+        control: next.control,
+        candidate: second,
+        members: [replacement, freshApi],
+        now: 101,
+      }).control.servingGeneration,
+    ).toBe(9);
+  },
+);
 
 test("a new deployment invalidates a repeated-replacement lineage receipt", () => {
   const input = fixture();
@@ -161,4 +164,69 @@ test("a new deployment invalidates a repeated-replacement lineage receipt", () =
   expect(() =>
     planCompatibleReplacement({ ...input, control: next.control }),
   ).toThrow();
+});
+
+function cancelledPreparation(): CompatibleReplacementInput {
+  const input = fixture();
+  input.control.compatibleReplacement = {
+    runToken: "earlier-replacement",
+    servingGeneration: input.control.servingGeneration,
+    servingMembers: structuredClone(input.control.servingMembers),
+  };
+  input.control.deployment = {
+    ...input.control.deployment!,
+    runToken: "cancelled-preparation",
+    candidate: undefined,
+    originalGeneration: input.control.servingGeneration,
+    originalMembers: Object.values(input.control.servingMembers),
+    outgoing: input.members[0].identity,
+  };
+  return input;
+}
+
+test("cancelled preparation preserves replacement authority for the unchanged serving snapshot", () => {
+  const input = cancelledPreparation();
+  const next = planCompatibleReplacement(input);
+  expect(next.control.servingGeneration).toBe(8);
+  expect(next.control.deployment).toEqual(input.control.deployment);
+  expect(next.control.compatibleReplacement?.runToken).toBe(
+    "cancelled-preparation",
+  );
+  expect(
+    next.runtimes.find((row) => row.identity.instanceId === "old"),
+  ).toEqual({
+    ...input.members[0],
+    role: "draining",
+  });
+});
+
+test.each([
+  "generation",
+  "members",
+  "outgoing",
+  "candidate",
+  "warming",
+  "coordinator",
+  "routing",
+])("cancelled preparation rejects changed %s authority", (kind) => {
+  const input = cancelledPreparation();
+  const deployment = input.control.deployment!;
+  if (kind === "generation") deployment.originalGeneration -= 1;
+  if (kind === "members")
+    deployment.originalMembers = [runtime("unrelated").identity];
+  if (kind === "outgoing") deployment.outgoing = runtime("unrelated").identity;
+  if (kind === "candidate") deployment.candidate = input.candidate.identity;
+  if (kind === "warming") deployment.phase = "warming";
+  if (kind === "coordinator") input.control.coordinatorExpiresAt = 101;
+  if (kind === "routing")
+    deployment.routing = {
+      listenerArn: "fixture",
+      sourceGroup: "source",
+      candidateGroup: "candidate",
+      containerName: "bot",
+      containerPort: 3000,
+      sourceRevision: "source",
+      state: "candidate",
+    };
+  expect(() => planCompatibleReplacement(input)).toThrow();
 });
