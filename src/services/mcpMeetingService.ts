@@ -730,7 +730,7 @@ function createBrowseAuthorizer({
             ? false
             : !input.restriction &&
               (await resolveAttendeeAccessEnabled(meeting.guildId)),
-          guildAuthorityOverrideEnabled: !personal && !input.restriction,
+          guildAuthorityOverrideEnabled: !input.restriction,
           accessContext: new Map(),
           sharedGuildIds,
         };
