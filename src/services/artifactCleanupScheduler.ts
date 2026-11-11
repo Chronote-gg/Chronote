@@ -3,14 +3,15 @@ import type { CleanupReceiptResult } from "./artifactCleanupReceipt";
 
 export type ArtifactCleanupStats = {
   pendingDirectories: number;
+  blockedDirectories: number;
   pendingFiles: number;
   pendingBytes: number;
   oldestAgeSeconds: number;
 };
 type Obligation = {
   attempts: number;
-  blocked: boolean;
-  result: Extract<CleanupReceiptResult, { kind: "pending" }>;
+  firstObservedAt: number;
+  result: Exclude<CleanupReceiptResult, { kind: "cleaned" }>;
 };
 
 export function createArtifactCleanupScheduler(dependencies: {
@@ -26,16 +27,24 @@ export function createArtifactCleanupScheduler(dependencies: {
     let pendingFiles = 0;
     let pendingBytes = 0;
     let oldestAgeSeconds = 0;
-    for (const { result } of obligations.values()) {
-      pendingFiles += result.remainingFiles;
-      pendingBytes += result.remainingBytes;
+    let blockedDirectories = 0;
+    for (const { result, firstObservedAt } of obligations.values()) {
+      if (result.kind === "pending") {
+        pendingFiles += result.remainingFiles;
+        pendingBytes += result.remainingBytes;
+      } else blockedDirectories++;
       oldestAgeSeconds = Math.max(
         oldestAgeSeconds,
-        (Date.now() - Date.parse(result.createdAt)) / 1000,
+        (Date.now() -
+          (result.kind === "pending"
+            ? Date.parse(result.createdAt)
+            : firstObservedAt)) /
+          1000,
       );
     }
     dependencies.observe({
       pendingDirectories: obligations.size,
+      blockedDirectories,
       pendingFiles,
       pendingBytes,
       oldestAgeSeconds,
@@ -46,14 +55,14 @@ export function createArtifactCleanupScheduler(dependencies: {
       sealed ||
       timer ||
       !Array.from(obligations.values()).some(
-        (entry) => !entry.blocked && entry.attempts < 3,
+        (entry) => entry.result.kind === "pending" && entry.attempts < 3,
       )
     )
       return;
     timer = setTimeout(() => {
       timer = undefined;
       const next = Array.from(obligations.entries()).find(
-        ([, entry]) => !entry.blocked && entry.attempts < 3,
+        ([, entry]) => entry.result.kind === "pending" && entry.attempts < 3,
       );
       if (!next) return;
       next[1].attempts++;
@@ -67,13 +76,12 @@ export function createArtifactCleanupScheduler(dependencies: {
     const result = await dependencies.reconcile(...args);
     const previous = obligations.get(args[0]);
     if (result.kind === "cleaned") obligations.delete(args[0]);
-    else if (result.kind === "pending")
+    else
       obligations.set(args[0], {
         attempts: previous?.attempts ?? 0,
-        blocked: false,
+        firstObservedAt: previous?.firstObservedAt ?? Date.now(),
         result,
       });
-    else if (previous) previous.blocked = true;
     observe();
     arm();
     return result;

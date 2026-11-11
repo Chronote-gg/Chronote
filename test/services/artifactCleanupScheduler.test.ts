@@ -26,6 +26,7 @@ test("safe cleanup failures retry a bounded number of times and expose only aggr
   await scheduler.enqueue("private-directory");
   expect(observe).toHaveBeenLastCalledWith({
     pendingDirectories: 1,
+    blockedDirectories: 0,
     pendingBytes: 128,
     pendingFiles: 2,
     oldestAgeSeconds: 60,
@@ -79,6 +80,30 @@ test("a blocked retry stops periodic deletion attempts and retains the obligatio
   expect(jest.getTimerCount()).toBe(0);
   expect(observe).toHaveBeenLastCalledWith(
     expect.objectContaining({ pendingDirectories: 1 }),
+  );
+  await scheduler.seal();
+});
+
+test("an initially blocked cleanup stays visible without automatic deletion retries", async () => {
+  const reconcile = jest
+    .fn<Promise<CleanupReceiptResult>, [string]>()
+    .mockResolvedValueOnce({
+      kind: "blocked",
+      error: new Error("Verification unavailable"),
+    })
+    .mockResolvedValue({ kind: "cleaned", removed: 1, byteLength: 128 });
+  const observe = jest.fn();
+  const scheduler = createArtifactCleanupScheduler({ reconcile, observe });
+  await scheduler.enqueue("directory");
+  expect(observe).toHaveBeenLastCalledWith(
+    expect.objectContaining({ pendingDirectories: 1, blockedDirectories: 1 }),
+  );
+  await jest.advanceTimersByTimeAsync(5 * 30_000);
+  expect(reconcile).toHaveBeenCalledTimes(1);
+  expect(jest.getTimerCount()).toBe(0);
+  expect((await scheduler.enqueue("directory")).kind).toBe("cleaned");
+  expect(observe).toHaveBeenLastCalledWith(
+    expect.objectContaining({ pendingDirectories: 0, blockedDirectories: 0 }),
   );
   await scheduler.seal();
 });
