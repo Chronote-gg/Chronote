@@ -51,6 +51,20 @@ of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts
 - `yarn db:init` – create tables locally
 - `yarn dev:clean` – wipe local Dynamo data and restart
 
+### Checkpoint finish/storage acceptance
+
+The deployment integration suite tests compiled capture and checkpoint code against isolated DynamoDB and MinIO services. It verifies that finish waits for a pending storage retry, reads saved audio back byte-for-byte, and retains local audio when retries are exhausted. It does not exercise Discord commands, voice capture, notes generation, AWS IAM or production routing.
+
+Build both images before running the suite, as CI does. MinIO is built from pinned official source because its prebuilt community images are no longer available.
+
+```sh
+docker build -t chronote-deployment-test:local .
+docker build -f test/deployment/fixtures/Minio.Dockerfile -t chronote-minio-test:source .
+DEPLOYMENT_TEST_IMAGE=chronote-deployment-test:local DEPLOYMENT_TEST_DYNAMODB_ENDPOINT=http://127.0.0.1:8000 yarn jest --config jest.deployment-integration.config.ts --runInBand --runTestsByPath test/deployment/checkpointFinishStorage.integration.test.ts
+```
+
+This targeted test creates and removes its own internal Docker network and generated-data containers without exposing ports or using host credentials. The complete deployment suite additionally needs DynamoDB Local at the configured loopback endpoint. Sandbox unit-test failures block deployment.
+
 ### Langfuse prompt sync
 
 - Prompts live in `prompts/` as Markdown with YAML front matter.

@@ -146,6 +146,8 @@ jobs:
         run: bash scripts/ci-install-dependencies.sh
       - name: Build application image for native deployment fixtures
         run: docker build -t "$DEPLOYMENT_TEST_IMAGE" .
+      - name: Build isolated object storage from pinned source
+        run: docker build -f test/deployment/fixtures/Minio.Dockerfile -t chronote-minio-test:source .
       - name: Run real deployment transactions
         run: yarn test:deployment:integration
 
