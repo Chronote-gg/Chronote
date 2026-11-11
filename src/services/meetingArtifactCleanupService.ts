@@ -24,7 +24,7 @@ import { recordLocalArtifactCleanup } from "../metrics";
 
 export type CleanupMeeting = Pick<
   MeetingData,
-  "meetingId" | "recordingCheckpoint"
+  "meetingId" | "recordingCheckpoint" | "cancelled"
 > & {
   reservation?: Pick<
     SessionReservation,
@@ -95,9 +95,6 @@ async function prepareCleanupReceipt(
     snapshot.owner.meetingId !== meeting.meetingId
   )
     throw new Error("Cleanup producer ownership differs");
-  const row = await getDeploymentControlRepository().getMeetingHistory(
-    reservation.historyKey,
-  );
   const receipt: ArtifactCleanupReceipt = {
     version: 1,
     owner: snapshot.owner,
@@ -107,9 +104,9 @@ async function prepareCleanupReceipt(
     producers: snapshot.files,
     storedArtifacts: getVerifiedMeetingArtifacts(meeting),
     checkpoint: meeting.recordingCheckpoint ?? null,
-    decision: row?.status === "cancelled" ? "cancel" : "complete",
+    decision: meeting.cancelled ? "cancel" : "complete",
   };
-  await createLocalArtifactCleanupAuthorization()(receipt);
+  // Retain closed provenance even when fresh remote verification must refuse deletion.
   await createCleanupReceipt(directory, receipt);
 }
 

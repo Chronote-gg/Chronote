@@ -18,7 +18,6 @@ import {
   type CleanupReceiptResult,
 } from "./artifactCleanupReceipt";
 import {
-  createLocalArtifactCleanupAuthorization,
   localArtifactCleanup,
   removeEmptyArtifactDirectories,
 } from "./meetingArtifactCleanupService";
@@ -75,7 +74,6 @@ export async function createRecoveryArtifactScope(
           })),
           decision: "scratch",
         };
-        await createLocalArtifactCleanupAuthorization()(receipt);
         await createCleanupReceipt(directory, receipt);
         return await localArtifactCleanup.enqueue(directory);
       } catch (error) {

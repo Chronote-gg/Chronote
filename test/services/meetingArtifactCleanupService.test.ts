@@ -167,6 +167,61 @@ test("a retry refuses a changed execution and leaves the retained payload intact
   expect(await fs.readFile(f.filename)).toEqual(bytes);
 });
 
+test("failed verification retains provenance for a fresh receipt-only retry", async () => {
+  const f = await setup();
+  jest
+    .mocked(verifyStoredArtifact)
+    .mockRejectedValueOnce(new Error("Provider unavailable"));
+  expect((await reconcileMeetingTempDirectory(directory, f.meeting)).kind).toBe(
+    "blocked",
+  );
+  await fs.access(path.join(directory, CLEANUP_RECEIPT_FILENAME));
+  expect(await fs.readFile(f.filename)).toEqual(bytes);
+  expect((await reconcileMeetingTempDirectory(directory)).kind).toBe("cleaned");
+  expect(f.row.status).toBe("complete");
+});
+
+test("an unavailable initial history read cannot erase closed cleanup provenance", async () => {
+  const f = await setup();
+  jest
+    .spyOn(f.repository, "getMeetingHistory")
+    .mockRejectedValueOnce(new Error("History unavailable"));
+  expect((await reconcileMeetingTempDirectory(directory, f.meeting)).kind).toBe(
+    "blocked",
+  );
+  await fs.access(path.join(directory, CLEANUP_RECEIPT_FILENAME));
+  expect(await fs.readFile(f.filename)).toEqual(bytes);
+  expect((await reconcileMeetingTempDirectory(directory)).kind).toBe("cleaned");
+});
+
+test("closed cancellation intent is not replaced by an unrelated complete history disposition", async () => {
+  const f = await setup();
+  const meeting = { ...f.meeting, cancelled: true };
+  expect((await reconcileMeetingTempDirectory(directory, meeting)).kind).toBe(
+    "blocked",
+  );
+  const receipt = JSON.parse(
+    await fs.readFile(path.join(directory, CLEANUP_RECEIPT_FILENAME), "utf8"),
+  );
+  expect(receipt.decision).toBe("cancel");
+  expect((await reconcileMeetingTempDirectory(directory)).kind).toBe("blocked");
+  expect(await fs.readFile(f.filename)).toEqual(bytes);
+});
+
+test("an initial ownership rejection retains original provenance without adopting the new owner", async () => {
+  const f = await setup();
+  f.row.executionVersion = 2;
+  expect((await reconcileMeetingTempDirectory(directory, f.meeting)).kind).toBe(
+    "blocked",
+  );
+  const receipt = JSON.parse(
+    await fs.readFile(path.join(directory, CLEANUP_RECEIPT_FILENAME), "utf8"),
+  );
+  expect(receipt.owner.executionVersion).toBe(1);
+  expect((await reconcileMeetingTempDirectory(directory)).kind).toBe("blocked");
+  expect(await fs.readFile(f.filename)).toEqual(bytes);
+});
+
 test.each([true, false])(
   "recovery scratch cleanup requires its stored source bytes (%s)",
   async (sourceAvailable) => {
@@ -200,6 +255,9 @@ test.each([true, false])(
     );
     expect(await fs.readFile(f.filename)).toEqual(bytes);
     if (sourceAvailable) await expect(fs.access(filename)).rejects.toThrow();
-    else expect(await fs.readFile(filename, "utf8")).toBe("derived audio");
+    else {
+      expect(await fs.readFile(filename, "utf8")).toBe("derived audio");
+      await fs.access(path.join(scope.directory, CLEANUP_RECEIPT_FILENAME));
+    }
   },
 );
