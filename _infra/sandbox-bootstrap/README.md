@@ -12,10 +12,13 @@ writes. The site session also constrains attachment by policy ARN so it cannot
 use the new artifact grant. State-lock and capture access remain unchanged.
 
 Reuse the existing policy-update validator with the reviewed previous-policy
-hash for any executor installation. Review and separately approve the exact
-bootstrap saved bytes before installing permissions, then produce and approve
-the protected application saved plan. Fresh policy version counts remain an
-execution prerequisite, five retained versions stops execution without pruning.
+hash for any executor installation. Review the exact bootstrap saved bytes before
+installing permissions, then produce and review the protected application saved
+plan. Necessary scoped Sandbox infrastructure, IAM, refresh-only state reconciliation and
+deployment use the [private standing authority](https://github.com/Chronote-gg/chronote-ops/blob/main/runbooks/dev-sandbox.md),
+without repeated business approval. Preserve native GitHub approval controls.
+Fresh policy version counts remain an execution prerequisite, five retained
+versions stops execution without pruning.
 Source fixtures and local policy-size checks are not installed IAM evidence.
 
 Use Terraform 1.16.0 and the checked AWS 6.69.1 lock. The backend has its own fixed key, `meeting-notes-terraform/sandbox-bootstrap/state`, and workspace prefix. Bootstrap uses only the default workspace. Never override its backend, import application resources, or migrate application state.
@@ -92,7 +95,7 @@ node _infra/sandbox-bootstrap/verify-plan.cjs PRIVATE_PLAN_JSON REVIEWED_BINDING
 
 The strict reviewed binding has `backendKey`, a complete `variables` map, and `policySha256` with `bucket`, `trust`, and `role` hashes of the exact independently reviewed policy strings. The guard accepts only eight creates plus the three approved existing metadata lookups. It rejects imports, moves, extra effects, drift, incomplete plans, unknown required controls, changed identities, foreign providers and changed policy contracts.
 
-Review policy bytes independently before recording hashes. Do not derive approval from an unreviewed plan. The JSON guard does not prove backend selection, source checkout, human approval or that JSON came from the binary being applied. The private native operator packet binds those separately.
+Review policy bytes independently before recording hashes. Do not derive authority from an unreviewed plan. The JSON guard does not prove backend selection, source checkout, applicable authority or that JSON came from the binary being applied. The private native operator packet binds those separately.
 
 ## Bounded existing-policy update
 
@@ -137,7 +140,8 @@ foreign or extra shadow controls and additional inline policies refuse.
    its canonical ID. Save a complete normal bootstrap plan without targeting.
    Render JSON privately,
    run update mode, and independently review the actual binary, source/input
-   fingerprints and before/after bytes. Apply only separately approved saved bytes.
+   fingerprints and before/after bytes. Apply only those reviewed saved bytes under
+   the applicable standing authority and native approval controls.
 3. Verify installed policy and unchanged role trust, capture bucket, encryption and
    backend. Retain this receipt separately. A source check or successful guard is
    not installation proof.
@@ -151,13 +155,14 @@ foreign or extra shadow controls and additional inline policies refuse.
 
 Changed source, locks, selectors, private bindings or saved bytes invalidate review
 and require a new plan. Conflicting owner activity or unknown acknowledgment stops
-the next mutation until reconciled. This procedure does not authorize a live Apply.
+the next mutation until reconciled. Apply requires the applicable standing authority
+and existing native approval controls.
 
 Native readback drift remains a refusal. Never clear `resource_drift`, rewrite a
-saved plan or edit state to pass this guard. If reconciliation is needed, review
-and approve exact refresh-only saved bytes separately. After any approved state
-or source change, regenerate and review a complete normal installation plan and
-its binding. Earlier installation approval no longer applies.
+saved plan or edit state to pass this guard. If reconciliation is needed, separately
+review exact refresh-only saved bytes and apply under the standing Sandbox authority.
+After any state or source change, regenerate and review a complete normal installation plan and
+its binding. Earlier installation review no longer applies.
 
 ## Offline verification
 
@@ -175,7 +180,7 @@ For native application target-graph verification, capture `terraform -chdir=_inf
 
 These are synthetic mocked-provider checks. The integration test combines the actual mock changes with a fixed reviewed synthetic envelope and policy hashes. It does not create an applyable saved binary or prove native installation.
 
-Actual installation, OIDC claim acceptance, capture/readback, individual approval, scoped Plan/Apply, deployment and hosted acceptance remain separate native checks. Use the existing authenticated workstation route and protected files. Do not bridge credentials into a cloud sandbox.
+Actual installation, OIDC claim acceptance, capture/readback, applicable authority, native approval controls, scoped Plan/Apply, deployment and hosted acceptance remain separate native checks. Use the existing authenticated workstation route and protected files. Do not bridge credentials into a cloud sandbox.
 
 ## Sandbox runtime channel prerequisite
 
@@ -195,9 +200,10 @@ It accepts one policy create, unchanged dependencies and outputs, and no drift,
 imports or moves. The target and enabled-identity checks must pass. Only the
 named unrelated checks excluded by targeting may remain unknown, with no
 instances. Cold-create installation guards accept the new flag
-only while false; they cannot authorize this additional policy. Installation needs
-BASIC's specific IAM approval. After Apply, read the exact policy back and retry the
-metadata-only ECS Exec probe. A running agent or IAM simulation alone is not proof
+only while false; they cannot validate this additional policy. Installation uses
+the standing Sandbox authority with the specific validator above. After Apply,
+read the exact policy back and retry the metadata-only ECS Exec probe. A running
+agent or IAM simulation alone is not proof
 that ECS Exec works. Do not restart the runtime to obtain that proof.
 
 After installation, retain `enable_sandbox_exec_channels=true` in the canonical
@@ -207,5 +213,5 @@ no-op, then checks the original bootstrap contract. Missing inputs, a missing
 policy, deletion, recreation, changed permissions and unknown values all refuse.
 The original thirteen-field inputs and any plan saved before installation are
 stale for this installed state. Reconcile the reviewed source, protected inputs
-and binding before preparing another plan; do not reuse an earlier approval or
+and binding before preparing another plan; do not reuse an earlier review or
 omit the resource to make an old guard pass.
