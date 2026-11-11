@@ -99,56 +99,59 @@ test.each([
   expect(() => planCompatibleReplacement(input)).toThrow();
 });
 
-test("retained API proof is not manufactured and repeat replacement remains bound", () => {
-  const input = fixture();
-  input.members[0].readiness.runtimeMode = "bot";
-  input.candidate.readiness.runtimeMode = "bot";
-  input.control.deployment!.runtimeMode = "bot";
-  const api = runtime("api");
-  api.readiness.runtimeMode = "api";
-  input.members.push(api);
-  input.control.servingMembers.api = api.identity;
-  input.control.deployment!.originalMembers.push(api.identity);
-  const next = planCompatibleReplacement(input);
-  expect(
-    next.runtimes.find((row) => row.identity.instanceId === "api")?.readiness,
-  ).toEqual(api.readiness);
-  const replacement = next.runtimes.find(
-    (row) => row.identity.instanceId === "replacement",
-  )!;
-  replacement.readiness = {
-    ...replacement.readiness,
-    observedGeneration: 8,
-    expiresAt: 100,
-  };
-  const freshApi = next.runtimes.find(
-    (row) => row.identity.instanceId === "api",
-  )!;
-  freshApi.readiness.observedGeneration = 8;
-  const second: RuntimeRecord = structuredClone(input.candidate);
-  if (second.identity.kind !== "ecs") throw new Error("fixture");
-  second.identity = {
-    ...second.identity,
-    instanceId: "second",
-    taskArn: "fixture:second",
-  };
-  second.sk = "RUNTIME#second";
-  second.authorizedGeneration = 8;
-  second.readiness = {
-    ...second.readiness,
-    identity: second.identity,
-    observedGeneration: 8,
-  };
-  second.protection.identity = second.identity;
-  expect(
-    planCompatibleReplacement({
-      control: next.control,
-      candidate: second,
-      members: [replacement, freshApi],
-      now: 101,
-    }).control.servingGeneration,
-  ).toBe(9);
-});
+test.each([fixture, cancelledPreparation])(
+  "retained API proof and repeated replacement stay bound (%p)",
+  (makeInput) => {
+    const input = makeInput();
+    input.members[0].readiness.runtimeMode = "bot";
+    input.candidate.readiness.runtimeMode = "bot";
+    input.control.deployment!.runtimeMode = "bot";
+    const api = runtime("api");
+    api.readiness.runtimeMode = "api";
+    input.members.push(api);
+    input.control.servingMembers.api = api.identity;
+    input.control.deployment!.originalMembers.push(api.identity);
+    const next = planCompatibleReplacement(input);
+    expect(
+      next.runtimes.find((row) => row.identity.instanceId === "api")?.readiness,
+    ).toEqual(api.readiness);
+    const replacement = next.runtimes.find(
+      (row) => row.identity.instanceId === "replacement",
+    )!;
+    replacement.readiness = {
+      ...replacement.readiness,
+      observedGeneration: 8,
+      expiresAt: 100,
+    };
+    const freshApi = next.runtimes.find(
+      (row) => row.identity.instanceId === "api",
+    )!;
+    freshApi.readiness.observedGeneration = 8;
+    const second: RuntimeRecord = structuredClone(input.candidate);
+    if (second.identity.kind !== "ecs") throw new Error("fixture");
+    second.identity = {
+      ...second.identity,
+      instanceId: "second",
+      taskArn: "fixture:second",
+    };
+    second.sk = "RUNTIME#second";
+    second.authorizedGeneration = 8;
+    second.readiness = {
+      ...second.readiness,
+      identity: second.identity,
+      observedGeneration: 8,
+    };
+    second.protection.identity = second.identity;
+    expect(
+      planCompatibleReplacement({
+        control: next.control,
+        candidate: second,
+        members: [replacement, freshApi],
+        now: 101,
+      }).control.servingGeneration,
+    ).toBe(9);
+  },
+);
 
 test("a new deployment invalidates a repeated-replacement lineage receipt", () => {
   const input = fixture();
@@ -195,30 +198,6 @@ test("cancelled preparation preserves replacement authority for the unchanged se
     ...input.members[0],
     role: "draining",
   });
-  const second = structuredClone(input.candidate);
-  if (second.identity.kind !== "ecs") throw new Error("fixture");
-  second.identity = {
-    ...second.identity,
-    instanceId: "second",
-    taskArn: "fixture:second",
-  };
-  second.sk = "RUNTIME#second";
-  second.readiness.identity = second.identity;
-  second.protection.identity = second.identity;
-  second.authorizedGeneration = 8;
-  second.readiness.observedGeneration = 8;
-  const previous = next.runtimes.find(
-    (row) => row.identity.instanceId === "replacement",
-  )!;
-  previous.readiness.expiresAt = 99;
-  expect(
-    planCompatibleReplacement({
-      control: next.control,
-      candidate: second,
-      members: [previous],
-      now: 100,
-    }).control.servingGeneration,
-  ).toBe(9);
 });
 
 test.each([
