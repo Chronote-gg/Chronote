@@ -58,6 +58,7 @@ import {
 } from "./meetingFinishFollowOns";
 import type { FinishInput } from "./meetingFinishInput";
 import {
+  MS_PER_SECOND,
   failedProcessing,
   processingOutcome,
   terminalPatch,
@@ -70,7 +71,6 @@ import {
 import { uploadVerifiedObjectToS3 } from "./storageService";
 import { claimSummaryUpgrade } from "./summaryUpgradeService";
 
-const MS_PER_SECOND = 1000;
 const TERMINAL_STATUSES: readonly MeetingStatus[] = [
   MEETING_STATUS.COMPLETE,
   MEETING_STATUS.INTERRUPTED,

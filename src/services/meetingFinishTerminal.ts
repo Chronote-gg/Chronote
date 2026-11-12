@@ -12,7 +12,7 @@ import { trimNotesForHistory } from "../utils/notesHistory";
 import { LIFECYCLE } from "./lifecycleTiming";
 import type { FinishInput } from "./meetingFinishInput";
 
-const MS_PER_SECOND = 1000;
+export const MS_PER_SECOND = 1000;
 
 const captureEndIso = (row: MeetingHistory) =>
   new Date(

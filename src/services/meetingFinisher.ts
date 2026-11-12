@@ -336,8 +336,10 @@ type Running = {
 };
 
 export function createMeetingFinisherLoop(deps: MeetingFinisherDeps) {
-  // Keyed by meeting row: a row this process works on is never claimed again
-  // by it, even after its claim lapsed because renewals kept failing.
+  // Keyed by meeting row: a row is not claimed again by this process while
+  // its attempt runs, even after its claim lapsed because renewals kept
+  // failing. An attempt abandoned after its abort frees the row; a later claim
+  // carries a new owner, which fences the abandoned work's writes.
   const running = new Map<string, Running>();
   let scanning: Promise<void> | undefined;
   let stopTimer: (() => void) | undefined;
