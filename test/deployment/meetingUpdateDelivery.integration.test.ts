@@ -1,4 +1,5 @@
 import { meetingUpdateDynamoFixture } from "./meetingUpdateDynamo.fixture";
+import { retriedAfterLostResponse } from "./lostResponseRetry.fixture";
 import {
   paginationPlan,
   deliveryRow,
@@ -40,25 +41,6 @@ const { tables, client, repository, put, createTables, read, dispose } =
   meetingUpdateDynamoFixture("meeting-updates");
 beforeAll(createTables);
 
-/** Lets the first write commit, then re-sends it as an SDK retry would after a lost response. */
-async function retriedAfterLostResponse<T>(operation: () => Promise<T>) {
-  const send = client.send.bind(client);
-  let retried = false;
-  const spy = jest
-    .spyOn(client, "send")
-    .mockImplementation(async (command, options) => {
-      if (retried || !(command instanceof UpdateItemCommand))
-        return send(command, options);
-      retried = true;
-      await send(command, options);
-      return send(command, options);
-    });
-  try {
-    return await operation();
-  } finally {
-    spy.mockRestore();
-  }
-}
 const claimPending = (revision: string, ownerInstanceId: string) =>
   repository.claim({
     key,
@@ -88,7 +70,7 @@ it("a claim retried after its lost response reports its own landed claim", async
   const delivery = pending();
   await put(tables.meetingHistory, deliveryRow(delivery));
   expect(
-    await retriedAfterLostResponse(() =>
+    await retriedAfterLostResponse(client, () =>
       claimPending(delivery.revision, "worker-a"),
     ),
   ).toBe("claimed");

@@ -1,4 +1,3 @@
-import { UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoProcessingRetryRepository } from "../../src/repositories/processingRetryRepository";
 import type { MeetingHistory } from "../../src/types/db";
 import {
@@ -15,6 +14,7 @@ import {
 } from "../repositories/processingRetryRepository.fixture";
 import { key, now } from "../types/meetingUpdateDelivery.fixture";
 import { meetingUpdateDynamoFixture } from "./meetingUpdateDynamo.fixture";
+import { retriedAfterLostResponse } from "./lostResponseRetry.fixture";
 
 const { tables, client, put, createTables, read, dispose } =
   meetingUpdateDynamoFixture("processing-retry");
@@ -119,24 +119,9 @@ it("two workers claiming one job at once: exactly one claim lands", async () => 
 
 it("a claim retried after its lost response reports its own landed claim", async () => {
   await seed(queuedRow());
-  const send = client.send.bind(client);
-  let retried = false;
-  const spy = jest
-    .spyOn(client, "send")
-    .mockImplementation(async (command, options) => {
-      if (retried || !(command instanceof UpdateItemCommand))
-        return send(command, options);
-      retried = true;
-      await send(command, options);
-      return send(command, options);
-    });
-  try {
-    expect(await claim("claim-retried")).toMatchObject({
-      claim: { claimId: "claim-retried" },
-    });
-  } finally {
-    spy.mockRestore();
-  }
+  expect(
+    await retriedAfterLostResponse(client, () => claim("claim-retried")),
+  ).toMatchObject({ claim: { claimId: "claim-retried" } });
 });
 
 it("renew requires the matching claimId", async () => {
