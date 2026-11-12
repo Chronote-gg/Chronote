@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createMockMeetingHistoryTransitionRepository } from "../../src/repositories/meetingHistoryTransitions";
+import { inMemoryCheckpointStore } from "../fixtures/checkpointStore";
 import { createRecordingCheckpointService } from "../../src/services/recordingCheckpointService";
 import { resolveMeetingRuntimeConfig } from "../../src/services/meetingConfigService";
 import {
@@ -105,11 +105,7 @@ export async function recoveryFixture(
       },
     ],
   ]);
-  const repository = createMockMeetingHistoryTransitionRepository(
-    histories,
-    leases,
-  );
-  const objects = new Map<string, Buffer>();
+  const { repository, objects } = inMemoryCheckpointStore(histories, leases);
   const upload = jest.fn(async (key: string, body: string | Uint8Array) => {
     objects.set(key, Buffer.from(body));
     return key;
