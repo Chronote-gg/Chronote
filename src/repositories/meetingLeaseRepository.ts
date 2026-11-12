@@ -13,10 +13,8 @@ import type { ActiveMeetingLease, MeetingHistory } from "../types/db";
 import type { DeploymentControlRecord } from "../types/deploymentControl";
 import type { SessionReservation } from "../types/meetingHistoryTransition";
 import { renewActiveMeetingLeaseWrite } from "./activeMeetingLeaseRenewal";
-import {
-  classifyDeploymentTransactionError,
-  completeConditionalCancellation,
-} from "./deploymentControlErrors";
+import { conditionalWrite } from "./conditionalWrite";
+import { completeConditionalCancellation } from "./deploymentControlErrors";
 import { dynamoDbClient, tableName } from "./dynamoClient";
 import { buildInitialMeetingHistoryPut } from "./meetingHistoryTransitions";
 import { getMockStore } from "./mockStore";
@@ -125,16 +123,6 @@ function retakeCondition(lease: ActiveMeetingLease): string {
   return `attribute_not_exists(guildId) OR ((leaseExpiresAt < :now OR (meetingId = :meeting AND ownerInstanceId = :owner)) AND (meetingId <> :meeting OR ${endRequestUnchanged}))`;
 }
 
-async function conditionHeld(write: () => Promise<unknown>): Promise<boolean> {
-  try {
-    await write();
-    return true;
-  } catch (error) {
-    if (classifyDeploymentTransactionError(error) === "stale") return false;
-    throw error;
-  }
-}
-
 export function createDynamoMeetingLeaseRepository(
   client: DynamoDBClient,
   tables: MeetingLeaseTables,
@@ -234,7 +222,7 @@ export function createDynamoMeetingLeaseRepository(
       );
     },
     retake(lease, now, signal) {
-      return conditionHeld(() =>
+      return conditionalWrite(() =>
         client.send(
           new PutItemCommand({
             TableName: tables.activeMeeting,
@@ -254,7 +242,7 @@ export function createDynamoMeetingLeaseRepository(
       );
     },
     release(ownership, signal) {
-      return conditionHeld(() =>
+      return conditionalWrite(() =>
         client.send(
           new DeleteItemCommand({
             TableName: tables.activeMeeting,
