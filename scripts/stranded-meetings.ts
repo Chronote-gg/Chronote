@@ -272,29 +272,26 @@ export async function finishStranded(
   if (!stranded(before)) return "not_stranded";
   if (await leaseHeld(before, deps.readLease, deps.nowMs(), signal))
     return "lease_held";
+  return finishAttempts(key, before, deliver, deps, signal);
+}
+
+/** Runs up to `OPERATOR_ATTEMPTS` finishes, then settles whatever is left unfinished. */
+async function finishAttempts(
+  key: HistoryKey,
+  before: MeetingHistory,
+  deliver: boolean,
+  deps: FinishStrandedDeps,
+  signal: AbortSignal,
+): Promise<FinishStrandedResult> {
   let current = before;
   let lastClaim: FinishClaim | undefined;
   for (let attempt = 1; attempt <= OPERATOR_ATTEMPTS; attempt++) {
-    try {
-      await waitForRetry(current, deps, signal);
-    } catch {
-      break;
-    }
+    if (!(await waitedForRetry(current, deps, signal))) break;
     if (signal.aborted) break;
     const claim = await take(current, deps, signal);
     if (!claim) break;
     lastClaim = claim;
-    try {
-      await deps.finish(
-        claim,
-        (loadSignal) => deps.loadRecovery(claim.history, loadSignal),
-        { deliver, signal },
-      );
-    } catch (error) {
-      console.error(
-        `Finish attempt ${attempt} failed (${error instanceof Error ? error.name : "unknown"})`,
-      );
-    }
+    await runFinishAttempt(claim, attempt, deliver, deps, signal);
     const after = await deps.repository.read(key);
     if (!after) return "not_found";
     current = after;
@@ -302,6 +299,51 @@ export async function finishStranded(
     if (result) return result;
     if (signal.aborted || after.finish?.nextAttemptAt === undefined) break;
   }
+  return settleUnfinished(current, before, lastClaim, deps, signal);
+}
+
+/** False when the wait was cut short, which ends the attempts. */
+async function waitedForRetry(
+  row: MeetingHistory,
+  deps: FinishStrandedDeps,
+  signal: AbortSignal,
+): Promise<boolean> {
+  try {
+    await waitForRetry(row, deps, signal);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+/** A failed attempt is logged by name only and left for the row to describe. */
+async function runFinishAttempt(
+  claim: FinishClaim,
+  attempt: number,
+  deliver: boolean,
+  deps: FinishStrandedDeps,
+  signal: AbortSignal,
+) {
+  try {
+    await deps.finish(
+      claim,
+      (loadSignal) => deps.loadRecovery(claim.history, loadSignal),
+      { deliver, signal },
+    );
+  } catch (error) {
+    console.error(
+      `Finish attempt ${attempt} failed (${error instanceof Error ? error.name : "unknown"})`,
+    );
+  }
+}
+
+async function settleUnfinished(
+  current: MeetingHistory,
+  before: MeetingHistory,
+  lastClaim: FinishClaim | undefined,
+  deps: FinishStrandedDeps,
+  signal: AbortSignal,
+): Promise<FinishStrandedResult> {
   if (!lastClaim) return signal.aborted ? "interrupted" : "not_claimable";
   const undone = await undo(current, before, lastClaim, deps);
   return signal.aborted && undone === "restored" ? "interrupted" : undone;
