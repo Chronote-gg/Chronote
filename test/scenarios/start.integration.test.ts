@@ -16,7 +16,11 @@ import {
 } from "../../src/meetings";
 import { createMeetingLeaseService } from "../../src/services/meetingLease";
 import { createMeetingStart } from "../../src/services/meetingStart";
-import { joinVoice, leaveVoice } from "../../src/services/voiceSession";
+import {
+  dropVoiceLocally,
+  joinVoice,
+  leaveVoice,
+} from "../../src/services/voiceSession";
 
 /**
  * The harness's FakeVoice connections are Ready on creation, so they cannot
@@ -99,6 +103,7 @@ describeLocalDynamo("start scenarios against local Dynamo", () => {
       releaseCaptureProtection: jest.fn(),
       joinVoice,
       leaveVoice,
+      dropVoiceLocally,
       buildMeetingSession: build,
       disposeFailedSession: disposeFailedInitialization,
       startDeadline: () => AbortSignal.timeout(SCENARIO_START_DEADLINE_MS),

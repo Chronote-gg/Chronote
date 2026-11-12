@@ -243,6 +243,7 @@ async function startThroughRealStart(
     joinVoice: async () =>
       ({ synthetic: "connection" }) as unknown as VoiceConnection,
     leaveVoice: () => undefined,
+    dropVoiceLocally: () => undefined,
     async buildMeetingSession(
       options,
       reservation,

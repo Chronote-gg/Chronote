@@ -37,7 +37,7 @@ import {
   releaseCaptureProtection,
   requestCaptureProtection,
 } from "./taskProtection";
-import { joinVoice, leaveVoice } from "./voiceSession";
+import { dropVoiceLocally, joinVoice, leaveVoice } from "./voiceSession";
 
 const MS_PER_SECOND = 1000;
 /** A failed start may already have written `in_progress`, so both are tried. */
@@ -69,6 +69,8 @@ export type MeetingStartDeps = {
   releaseCaptureProtection(): void;
   joinVoice: typeof joinVoice;
   leaveVoice(connection: VoiceConnection): void;
+  /** Without a voice state update, so a start that lost its lease cannot pull the new owner out. */
+  dropVoiceLocally(connection: VoiceConnection): void;
   buildMeetingSession: typeof buildMeetingSession;
   disposeFailedSession(initialization: MeetingInitialization): Promise<boolean>;
   /** Defaults to `LIFECYCLE.startDeadlineMs` from now. */
@@ -258,6 +260,8 @@ export function createMeetingStart(deps: MeetingStartDeps) {
       if (recording) await deps.requestCaptureProtection();
       // A join sent after the deadline would only be followed by an immediate leave.
       signal.throwIfAborted();
+      // The server's one voice state belongs to the meeting that took the lease.
+      ownership.signal.throwIfAborted();
       connection = await deps.joinVoice({
         voiceChannel: options.voiceChannel,
         guild: options.guild,
@@ -296,7 +300,10 @@ export function createMeetingStart(deps: MeetingStartDeps) {
       }
     } catch (error) {
       // Leave first: disposing can take seconds, and the bot should not linger in voice meanwhile.
-      if (connection) deps.leaveVoice(connection);
+      if (connection)
+        (ownership.signal.aborted ? deps.dropVoiceLocally : deps.leaveVoice)(
+          connection,
+        );
       const settled = await deps
         .disposeFailedSession(initialization)
         .catch(() => false);
@@ -365,6 +372,7 @@ function start() {
     releaseCaptureProtection,
     joinVoice,
     leaveVoice,
+    dropVoiceLocally,
     buildMeetingSession,
     disposeFailedSession: disposeFailedInitialization,
     startDeadline: () => AbortSignal.timeout(LIFECYCLE.startDeadlineMs),

@@ -113,6 +113,9 @@ function setup() {
     leaveVoice: jest.fn(() => {
       calls.push("leave");
     }),
+    dropVoiceLocally: jest.fn(() => {
+      calls.push("drop");
+    }),
     buildMeetingSession: jest.fn(
       async (
         _options: MeetingInitOptions,
@@ -517,4 +520,46 @@ test("a capped lease leaves the capture signal live", async () => {
   world.hooks()?.onCapReached();
 
   expect(world.ownershipSignal()?.aborted).toBe(false);
+});
+
+describe("a start whose lease another meeting took does nothing visible", () => {
+  test("a start that fails after the lease was lost drops the connection locally and sends no leave", async () => {
+    const world = setup();
+    world.deps.buildMeetingSession.mockImplementationOnce(async () => {
+      world.hooks()?.onLost();
+      throw new Error("synthetic build failure");
+    });
+
+    await expect(world.start()).rejects.toThrow("synthetic build failure");
+
+    expect(world.deps.dropVoiceLocally).toHaveBeenCalledWith(world.connection);
+    expect(world.deps.leaveVoice).not.toHaveBeenCalled();
+  });
+
+  test("a start that fails for another reason still leaves", async () => {
+    const world = setup();
+    world.deps.buildMeetingSession.mockRejectedValueOnce(
+      new Error("synthetic build failure"),
+    );
+
+    await expect(world.start()).rejects.toThrow("synthetic build failure");
+
+    expect(world.deps.leaveVoice).toHaveBeenCalledWith(world.connection);
+    expect(world.deps.dropVoiceLocally).not.toHaveBeenCalled();
+  });
+
+  test("a start whose lease is lost before the join does not join", async () => {
+    const world = setup();
+    world.deps.requestCaptureProtection.mockImplementationOnce(async () => {
+      world.hooks()?.onLost();
+    });
+
+    await expect(world.start()).rejects.toThrow(
+      "Meeting lease lost to another meeting",
+    );
+
+    expect(world.deps.joinVoice).not.toHaveBeenCalled();
+    expect(world.deps.leaveVoice).not.toHaveBeenCalled();
+    expect(world.deps.dropVoiceLocally).not.toHaveBeenCalled();
+  });
 });

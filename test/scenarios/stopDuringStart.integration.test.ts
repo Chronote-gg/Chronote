@@ -95,6 +95,7 @@ describeLocalDynamo("a stop pressed during a start", () => {
         return {} as VoiceConnection;
       },
       leaveVoice: () => undefined,
+      dropVoiceLocally: () => undefined,
       buildMeetingSession: async () => meeting,
       disposeFailedSession: async () => true,
       startDeadline: () => AbortSignal.timeout(START_DEADLINE_MS),
