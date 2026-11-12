@@ -33,14 +33,8 @@ jest.mock(
   "../../src/repositories/personalMediaUploadRepository",
   () => mockPollerModules().personalMediaUploadRepositoryModule,
 );
-jest.mock(
-  "../../src/services/meetingControlBotService",
-  () => mockPollerModules().meetingControlBotServiceModule,
-);
-jest.mock(
-  "../../src/services/personalMediaUploadProcessingService",
-  () => mockPollerModules().personalMediaUploadProcessingServiceModule,
-);
+jest.mock("../../src/services/meetingControlBotService");
+jest.mock("../../src/services/personalMediaUploadProcessingService");
 jest.mock("../../src/services/runtimeInstanceService", () => ({
   getRuntimeInstanceId: () => "synthetic-worker",
 }));

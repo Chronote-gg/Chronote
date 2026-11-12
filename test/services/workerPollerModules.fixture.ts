@@ -1,5 +1,5 @@
 /**
- * Mocked modules the worker poller suites share. Each suite keeps its own
+ * Mocked claim repositories the worker poller suites share. Each suite keeps its own
  * jest.mock call and returns one of these from the factory, because jest hoists
  * mocks per test file.
  */
@@ -22,13 +22,4 @@ export const personalMediaUploadRepositoryModule = {
     listClaimable: pollerRepository.personalList,
     claim: pollerRepository.personalClaim,
   }),
-};
-
-export const meetingControlBotServiceModule = {
-  executeMeetingControlCommand: jest.fn(),
-};
-
-export const personalMediaUploadProcessingServiceModule = {
-  createPersonalMediaProcessingMeeting: jest.fn(),
-  processPersonalMediaUpload: jest.fn(),
 };
