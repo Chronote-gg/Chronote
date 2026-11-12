@@ -6,6 +6,7 @@ import {
   type WorkerRegistryRepository,
 } from "../../src/repositories/workerRegistryRepository";
 import { createScratchTable } from "./localDynamo.fixture";
+import { deploymentControlKeySchema } from "../fixtures/deploymentControlKeySchema";
 
 export { describeLocalDynamo, localDynamoClient } from "./localDynamo.fixture";
 
@@ -18,16 +19,7 @@ export async function createRegistryTable(client: DynamoDBClient): Promise<{
   const { TableName, dispose } = await createScratchTable(
     client,
     "worker-registry",
-    {
-      AttributeDefinitions: [
-        { AttributeName: "pk", AttributeType: "S" },
-        { AttributeName: "sk", AttributeType: "S" },
-      ],
-      KeySchema: [
-        { AttributeName: "pk", KeyType: "HASH" },
-        { AttributeName: "sk", KeyType: "RANGE" },
-      ],
-    },
+    deploymentControlKeySchema,
   );
   return {
     repository: createDynamoWorkerRegistryRepository(client, TableName),

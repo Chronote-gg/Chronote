@@ -13,6 +13,7 @@ import { createDynamoDeploymentControlRepository } from "../../src/repositories/
 import { listUnpausedPersonalMediaUploadJobs } from "../../src/repositories/personalMediaUploadQueue";
 import { buildPersonalMediaClaimTransaction } from "../../src/services/personalUploadTransactions";
 import type { PersonalMediaUploadJobRecord } from "../../src/types/db";
+import { deploymentControlKeySchema } from "../fixtures/deploymentControlKeySchema";
 
 const prefix = "paused-queue-" + randomUUID();
 const tables = {
@@ -67,14 +68,7 @@ beforeAll(async () => {
     new CreateTableCommand({
       TableName: tables.deploymentControl,
       BillingMode: "PAY_PER_REQUEST",
-      AttributeDefinitions: [
-        { AttributeName: "pk", AttributeType: "S" },
-        { AttributeName: "sk", AttributeType: "S" },
-      ],
-      KeySchema: [
-        { AttributeName: "pk", KeyType: "HASH" },
-        { AttributeName: "sk", KeyType: "RANGE" },
-      ],
+      ...deploymentControlKeySchema,
     }),
   );
   await client.send(
