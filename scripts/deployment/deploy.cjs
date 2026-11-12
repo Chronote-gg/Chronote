@@ -245,17 +245,21 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
           `Older tasks still running after ${DRAIN_TIMEOUT_MS / MINUTE_MS} minutes`,
         );
       }
-      if (retire)
-        for (const task of draining) {
-          if (retired.has(task.taskArn)) continue;
-          await aws("ecs", "stop-task", {
-            cluster: cluster(),
-            task: task.taskArn,
-            reason: RETIRE_REASON,
-          });
-          retired.add(task.taskArn);
-        }
+      if (retire) await retireTasks(draining, retired);
       await sleep(DRAIN_POLL_MS);
+    }
+  }
+
+  /** Stops each draining task once; `retired` remembers stops across polls. */
+  async function retireTasks(draining, retired) {
+    for (const task of draining) {
+      if (retired.has(task.taskArn)) continue;
+      await aws("ecs", "stop-task", {
+        cluster: cluster(),
+        task: task.taskArn,
+        reason: RETIRE_REASON,
+      });
+      retired.add(task.taskArn);
     }
   }
 
