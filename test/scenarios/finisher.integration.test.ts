@@ -260,9 +260,11 @@ async function meetingWithCheckpoint(
     Date.now() - (options.startedMsAgo ?? MINUTES_AGO),
   ).toISOString();
   const bytes = PCM_BYTES_PER_MS * SAVED_AUDIO_MS;
-  // Imported fresh so its config reads this world's table prefix.
+  // Imported fresh, behind a worker's seams, so its config reads this world's
+  // table prefix and its DynamoDB client is the one the world's tables belong to.
   let fixtures: typeof RecoveryFixtures | undefined;
   await jest.isolateModulesAsync(async () => {
+    installWorkerSeams(world, { instanceId: "scenario-fixture", release: 1 });
     fixtures = await import("../services/meetingRecoveryFixtures");
   });
   if (!fixtures) throw new Error("expected the recovery fixtures");

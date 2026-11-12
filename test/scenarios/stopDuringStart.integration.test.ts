@@ -34,15 +34,18 @@ describeLocalDynamo("a stop pressed during a start", () => {
 
   beforeAll(async () => {
     harness = await createLeaseTables(client);
-    // The interaction side reads and writes the lease through db.ts; point it at the same table.
+    // The interaction side reads and writes the lease through db.ts; point it
+    // at the same table, through the client that created it: DynamoDB Local
+    // keeps a separate set of tables per region unless it is started shared.
     jest.spyOn(DynamoDBClient.prototype, "send").mockImplementation(function (
       this: DynamoDBClient,
       ...args: Parameters<DynamoDBClient["send"]>
     ) {
       const input: { TableName?: string } = args[0].input;
-      if (input.TableName?.endsWith("ActiveMeetingTable"))
-        input.TableName = harness.tables.activeMeeting;
-      return Reflect.apply(realSend, this, args);
+      if (!input.TableName?.endsWith("ActiveMeetingTable"))
+        return Reflect.apply(realSend, this, args);
+      input.TableName = harness.tables.activeMeeting;
+      return Reflect.apply(realSend, client, args);
     } as never);
   });
   afterAll(async () => {
