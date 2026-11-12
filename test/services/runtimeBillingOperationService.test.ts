@@ -252,6 +252,16 @@ test("a known rejection does not fence the operation", async () => {
     }),
   ).resolves.toBe("later");
 });
+/** Starts a drain and reports whether it has finished. */
+function startDrain() {
+  let finished = false;
+  const draining = drainBillingOperations(new AbortController().signal).then(
+    () => {
+      finished = true;
+    },
+  );
+  return { draining, finished: () => finished };
+}
 test("drain resolves after in-flight operations settle", async () => {
   let release!: () => void;
   const released = new Promise<void>((done) => {
@@ -266,17 +276,12 @@ test("drain resolves after in-flight operations settle", async () => {
     },
   );
   void failing.catch(() => undefined);
-  let drained = false;
-  const draining = drainBillingOperations(new AbortController().signal).then(
-    () => {
-      drained = true;
-    },
-  );
+  const drain = startDrain();
   await Promise.resolve();
-  expect(drained).toBe(false);
+  expect(drain.finished()).toBe(false);
   release();
-  await draining;
-  expect(drained).toBe(true);
+  await drain.draining;
+  expect(drain.finished()).toBe(true);
   await running;
   await expect(
     drainBillingOperations(new AbortController().signal),
@@ -305,16 +310,11 @@ test("drain waits for a webhook receipt that is still being admitted", async () 
   });
   const handler = jest.fn(async () => "handled");
   const receipt = runBillingReceiptOperation(() => admission, handler);
-  let drained = false;
-  const draining = drainBillingOperations(new AbortController().signal).then(
-    () => {
-      drained = true;
-    },
-  );
+  const drain = startDrain();
   await Promise.resolve();
-  expect(drained).toBe(false);
+  expect(drain.finished()).toBe(false);
   admit(true);
-  await draining;
+  await drain.draining;
   expect(handler).toHaveBeenCalledTimes(1);
   await expect(receipt).resolves.toBe("handled");
 });
