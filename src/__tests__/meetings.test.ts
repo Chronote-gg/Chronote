@@ -309,6 +309,19 @@ describe("voice connection errors", () => {
   });
 });
 
+/** The TTS-only session closed on its idle timeout and told the text channel why. */
+function expectClosedForTtsInactivity(
+  meeting: unknown,
+  textChannel: { send: unknown },
+) {
+  expect(closeMeeting).toHaveBeenCalledWith(meeting, {
+    endReason: "timeout",
+  });
+  expect(textChannel.send).toHaveBeenCalledWith(
+    expect.stringContaining("after 1 second without speech activity"),
+  );
+}
+
 describe("initializeMeeting", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -644,12 +657,7 @@ describe("initializeMeeting", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(closeMeeting).toHaveBeenCalledWith(meeting, {
-      endReason: "timeout",
-    });
-    expect(textChannel.send).toHaveBeenCalledWith(
-      expect.stringContaining("after 1 second without speech activity"),
-    );
+    expectClosedForTtsInactivity(meeting, textChannel);
   });
 
   it("resets the TTS-only inactivity timer when speech activity occurs", async () => {
@@ -684,12 +692,7 @@ describe("initializeMeeting", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(closeMeeting).toHaveBeenCalledWith(meeting, {
-      endReason: "timeout",
-    });
-    expect(textChannel.send).toHaveBeenCalledWith(
-      expect.stringContaining("after 1 second without speech activity"),
-    );
+    expectClosedForTtsInactivity(meeting, textChannel);
   });
 
   it("keeps capture and recording plumbing for normal meetings", async () => {
