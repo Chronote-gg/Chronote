@@ -1,12 +1,10 @@
 /** @jest-environment node */
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
-jest.mock("../../src/services/transcriptionService", () => ({
-  ...jest.requireActual("../../src/services/transcriptionService"),
-  transcribeContentSnippet: jest.fn(async () => ({
-    status: "succeeded",
-    text: "Recovered discussion.",
-  })),
-}));
+jest.mock("../../src/services/transcriptionService", () =>
+  jest
+    .requireActual("./recoveredDiscussionTranscription")
+    .transcriptionServiceMock(),
+);
 jest.mock("../../src/services/mixedPcmService", () => ({
   renderMixedPcmTracks: jest.fn(async (_tracks: unknown, output: string) => {
     await jest
@@ -680,6 +678,19 @@ describe("recovery evaluates auto-record cancellation", () => {
   };
   const decide = jest.mocked(decideAutoRecordCancellation);
 
+  /** No evaluation ran, nothing was cancelled, and the skipped check was logged. */
+  function expectProceededUnevaluatedAndLogged(
+    input: FinishInput,
+    warn: jest.SpiedFunction<typeof console.warn>,
+  ) {
+    expect(decide).not.toHaveBeenCalled();
+    expect(input.cancel).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      "Recovered auto-record cancellation check failed; proceeding",
+      expect.objectContaining({ meetingId: history.meetingId }),
+    );
+  }
+
   async function recover(overrides: Partial<MeetingHistory> = {}) {
     const f = await singleUntranscribedPiece();
     return track(
@@ -784,12 +795,7 @@ describe("recovery evaluates auto-record cancellation", () => {
           elapsedMilliseconds: undefined,
         },
       });
-      expect(decide).not.toHaveBeenCalled();
-      expect(input.cancel).toBeUndefined();
-      expect(warn).toHaveBeenCalledWith(
-        "Recovered auto-record cancellation check failed; proceeding",
-        expect.objectContaining({ meetingId: history.meetingId }),
-      );
+      expectProceededUnevaluatedAndLogged(input, warn);
     } finally {
       warn.mockRestore();
     }
@@ -861,13 +867,8 @@ describe("recovery evaluates auto-record cancellation", () => {
           1,
         ),
       );
-      expect(decide).not.toHaveBeenCalled();
-      expect(input.cancel).toBeUndefined();
+      expectProceededUnevaluatedAndLogged(input, warn);
       expect(input.notesInput.notesPrompt).toBeDefined();
-      expect(warn).toHaveBeenCalledWith(
-        "Recovered auto-record cancellation check failed; proceeding",
-        expect.objectContaining({ meetingId: history.meetingId }),
-      );
     } finally {
       warn.mockRestore();
     }
@@ -931,12 +932,7 @@ describe("recovery evaluates auto-record cancellation", () => {
           f.reader,
         ),
       );
-      expect(decide).not.toHaveBeenCalled();
-      expect(input.cancel).toBeUndefined();
-      expect(warn).toHaveBeenCalledWith(
-        "Recovered auto-record cancellation check failed; proceeding",
-        expect.objectContaining({ meetingId: history.meetingId }),
-      );
+      expectProceededUnevaluatedAndLogged(input, warn);
     } finally {
       warn.mockRestore();
     }

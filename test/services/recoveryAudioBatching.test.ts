@@ -1,12 +1,10 @@
 /** @jest-environment node */
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
-jest.mock("../../src/services/transcriptionService", () => ({
-  ...jest.requireActual("../../src/services/transcriptionService"),
-  transcribeContentSnippet: jest.fn(async () => ({
-    status: "succeeded",
-    text: "Recovered discussion.",
-  })),
-}));
+jest.mock("../../src/services/transcriptionService", () =>
+  jest
+    .requireActual("./recoveredDiscussionTranscription")
+    .transcriptionServiceMock(),
+);
 jest.mock("../../src/services/recoveryTranscriptionProcessing", () => ({
   processRecoveryTranscript: jest.fn(async () => "Recovered discussion."),
 }));
