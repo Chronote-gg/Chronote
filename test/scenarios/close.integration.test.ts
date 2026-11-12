@@ -1,11 +1,7 @@
 /** @jest-environment node */
 import type { VoiceConnection } from "@discordjs/voice";
-import { createLeaseTables } from "../repositories/meetingLeaseDynamo.fixture";
 import { historyRow } from "../repositories/meetingLeaseRepository.contract";
-import {
-  describeLocalDynamo,
-  localDynamoClient,
-} from "../repositories/workerRegistryDynamo.fixture";
+import { describeLocalDynamo } from "../repositories/workerRegistryDynamo.fixture";
 import { createDynamoMeetingFinishRepository } from "../../src/repositories/meetingFinishRepository";
 import { LIFECYCLE } from "../../src/services/lifecycleTiming";
 import {
@@ -15,6 +11,12 @@ import {
 import { createMeetingLeaseService } from "../../src/services/meetingLease";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { SessionReservation } from "../../src/types/meetingHistoryTransition";
+import {
+  type LeaseTables,
+  type LocalDynamoClient,
+  quietLocalDynamoClient,
+  withLeaseTables,
+} from "./harness/leaseTables";
 
 const MS_PER_SECOND = 1000;
 const START_SECONDS = 1_000_000;
@@ -27,12 +29,7 @@ const historyKey = (meetingId: string) => ({
   channelId_timestamp: `synthetic-voice#${meetingId}`,
 });
 
-type Tables = Awaited<ReturnType<typeof createLeaseTables>>;
-
-function simulatedWorkers(
-  tables: Tables,
-  client: ReturnType<typeof localDynamoClient>,
-) {
+function simulatedWorkers(tables: LeaseTables, client: LocalDynamoClient) {
   let nowMs = START_SECONDS * MS_PER_SECOND;
   const finish = createDynamoMeetingFinishRepository(client, tables.tables);
 
@@ -143,16 +140,10 @@ function simulatedWorkers(
 }
 
 describeLocalDynamo("close scenarios against local Dynamo", () => {
-  const client = localDynamoClient();
-  afterAll(() => client.destroy());
-  beforeEach(() => {
-    jest.spyOn(console, "warn").mockImplementation(() => undefined);
-  });
-  afterEach(() => jest.restoreAllMocks());
+  const client = quietLocalDynamoClient();
 
   test("scenario 11: a stalled worker saves an interrupted capture without a leave, a flush or a claim, and the new capture's lease is untouched", async () => {
-    const tables = await createLeaseTables(client);
-    try {
+    await withLeaseTables(client, async (tables) => {
       const clock = simulatedWorkers(tables, client);
       const a = clock.worker("synthetic-worker-a");
       const b = clock.worker("synthetic-worker-b");
@@ -183,14 +174,11 @@ describeLocalDynamo("close scenarios against local Dynamo", () => {
       expect(
         await tables.readHistory(historyKey("synthetic-meeting-b")),
       ).toMatchObject({ status: "starting" });
-    } finally {
-      await tables.dispose();
-    }
+    });
   });
 
   test("after a normal close the same server can start a new meeting while the first row is still processing", async () => {
-    const tables = await createLeaseTables(client);
-    try {
+    await withLeaseTables(client, async (tables) => {
       const clock = simulatedWorkers(tables, client);
       const a = clock.worker("synthetic-worker-a");
       const first = await a.start("synthetic-meeting-a");
@@ -217,8 +205,6 @@ describeLocalDynamo("close scenarios against local Dynamo", () => {
           phase: "process",
         },
       });
-    } finally {
-      await tables.dispose();
-    }
+    });
   });
 });
