@@ -1,11 +1,13 @@
 /** @jest-environment node */
-import { config } from "../../src/services/configService";
-import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
+import { getMockStore } from "../../src/repositories/mockStore";
 import { getRenewalRecoveryRepository } from "../../src/repositories/renewalRecoveryRepository";
 import * as stripeClient from "../../src/services/stripeClient";
 import { resolveRenewalAccess } from "../../src/services/renewalRecoveryAccess";
 import { getRenewalRecoveryView } from "../../src/services/renewalRecoveryView";
-import { renewalRecoveryFixture } from "../fixtures/renewalRecoveryService";
+import {
+  installRenewalRecoveryTestState,
+  renewalRecoveryFixture,
+} from "../fixtures/renewalRecoveryService";
 import { renewalSubscription } from "../fixtures/renewal";
 import { paidEndsAt } from "../fixtures/renewalStripe";
 
@@ -13,16 +15,8 @@ const ownedSubscription = {
   ...renewalSubscription,
   stripeCustomerId: "cus_renewal",
 };
-const original = {
-  mock: config.mock.enabled,
-  enabled: config.stripe.renewalGraceEnabled,
-  mode: config.subscription.stripeMode,
-};
+installRenewalRecoveryTestState();
 beforeEach(() => {
-  config.mock.enabled = true;
-  config.stripe.renewalGraceEnabled = true;
-  config.subscription.stripeMode = "test";
-  resetMockStore();
   getMockStore().subscriptions.set(
     renewalSubscription.guildId,
     structuredClone(ownedSubscription),
@@ -30,11 +24,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   jest.restoreAllMocks();
-});
-afterAll(() => {
-  config.mock.enabled = original.mock;
-  config.stripe.renewalGraceEnabled = original.enabled;
-  config.subscription.stripeMode = original.mode;
 });
 
 test.each(["access", "view"] as const)(
