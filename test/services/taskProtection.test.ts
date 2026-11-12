@@ -45,6 +45,19 @@ async function failureCount(): Promise<number> {
   );
 }
 
+/** Protection that retries through a sleep the test releases, under a fixed lease cap. */
+function retryingProtection(request: jest.Mock) {
+  const timer = manualSleep();
+  const protection = createTaskProtection({
+    agentUri: "http://agent",
+    request,
+    now: () => NOW_SECONDS,
+    sleep: timer.sleep,
+    latestLeaseCap: () => CAP_SECONDS,
+  });
+  return { timer, protection };
+}
+
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 /** A sleep that resolves only when the test lets it, so no real timer runs. */
@@ -230,19 +243,12 @@ test("no extension without an unexpired lease", async () => {
 });
 
 test("clear retries until success", async () => {
-  const timer = manualSleep();
   const request = jest
     .fn()
     .mockRejectedValueOnce(new Error("agent unreachable"))
     .mockResolvedValueOnce(Response.json({}, { status: 500 }))
     .mockResolvedValueOnce(Response.json(protectionBody(false)));
-  const protection = createTaskProtection({
-    agentUri: "http://agent",
-    request,
-    now: () => NOW_SECONDS,
-    sleep: timer.sleep,
-    latestLeaseCap: () => CAP_SECONDS,
-  });
+  const { timer, protection } = retryingProtection(request);
 
   const cleared = protection.clear();
   await timer.tick();
@@ -257,18 +263,11 @@ test("clear retries until success", async () => {
 });
 
 test("a live capture retries until protection succeeds", async () => {
-  const timer = manualSleep();
   const request = jest
     .fn()
     .mockRejectedValueOnce(new Error("agent unreachable"))
     .mockResolvedValueOnce(Response.json(protectionBody(true, CAP_SECONDS)));
-  const protection = createTaskProtection({
-    agentUri: "http://agent",
-    request,
-    now: () => NOW_SECONDS,
-    sleep: timer.sleep,
-    latestLeaseCap: () => CAP_SECONDS,
-  });
+  const { timer, protection } = retryingProtection(request);
 
   await protection.requestCapture();
   expect(protection.protectedUntil()).toBeUndefined();
@@ -280,18 +279,11 @@ test("a live capture retries until protection succeeds", async () => {
 });
 
 test("releasing the capture stops the retry and clears", async () => {
-  const timer = manualSleep();
   const request = jest
     .fn()
     .mockRejectedValueOnce(new Error("agent unreachable"))
     .mockResolvedValueOnce(Response.json(protectionBody(false)));
-  const protection = createTaskProtection({
-    agentUri: "http://agent",
-    request,
-    now: () => NOW_SECONDS,
-    sleep: timer.sleep,
-    latestLeaseCap: () => CAP_SECONDS,
-  });
+  const { timer, protection } = retryingProtection(request);
 
   await protection.requestCapture();
   await protection.releaseCapture();
