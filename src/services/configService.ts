@@ -41,6 +41,7 @@ class ConfigService {
     metadataUri: process.env.ECS_CONTAINER_METADATA_URI_V4?.trim() || "",
     agentUri: process.env.ECS_AGENT_URI?.trim() || "",
     candidateId: process.env.DEPLOYMENT_CANDIDATE_ID?.trim() || "",
+    release: parseOptionalNonNegativeInteger(process.env.WORKER_RELEASE) ?? 0,
   };
 
   // Discord Configuration

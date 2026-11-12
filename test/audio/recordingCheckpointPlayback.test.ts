@@ -55,9 +55,9 @@ test("actual playback prefix and producer retain byte duration across boundary j
     await import("../../src/services/recordingCheckpointCapture");
   const { createRecordingCheckpointService } =
     await import("../../src/services/recordingCheckpointService");
-  const { createMockDeploymentControlRepository } =
-    await import("../../src/repositories/deploymentControlRepository");
-  const { history } = await import("../deployment/controlFixtures");
+  const { createMockMeetingHistoryTransitionRepository } =
+    await import("../../src/repositories/meetingHistoryTransitions");
+  const { history } = await import("../fixtures/meetingHistory");
   const start = Date.parse(history.timestamp);
   const clock = jest.spyOn(Date, "now").mockReturnValue(start);
   const directory = mkdtempSync(path.join(tmpdir(), "playback-clock-"));
@@ -69,8 +69,7 @@ test("actual playback prefix and producer retain byte duration across boundary j
     voiceOperationAttemptId: "voice",
     sessionMode: "meeting" as const,
   };
-  const repository = createMockDeploymentControlRepository(
-    new Map(),
+  const repository = createMockMeetingHistoryTransitionRepository(
     new Map([[history.guildId, [{ ...history }]]]),
     new Map([
       [

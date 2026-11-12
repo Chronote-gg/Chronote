@@ -1,18 +1,14 @@
 /** @jest-environment node */
-jest.mock("../../src/services/runtimeApiOperationService", () => ({
-  runRuntimeApiOperation: jest.fn(
-    jest.requireActual("../fixtures/runtimeApiOperation").runTestApiOperation,
-  ),
-}));
 jest.mock("../../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
 }));
 import Stripe from "stripe";
-import { runRuntimeApiOperation } from "../../src/services/runtimeApiOperationService";
-import { UnresolvedBillingMutation } from "../../src/services/runtimeBillingOperationService";
+import {
+  runBillingOperation,
+  UnresolvedBillingMutation,
+} from "../../src/services/runtimeBillingOperationService";
 import { expirePurchaseAttempt } from "../../src/services/purchaseReconciliation";
 import * as purchaseRepository from "../../src/repositories/purchaseAttemptRepository";
-import { RuntimeAdmissionUnavailable } from "../../src/services/runtimeAdmissionError";
 import { createCheckoutSession } from "../../src/services/billingService";
 import { releaseExpiredPurchaseAttempt } from "../../src/services/initialPurchaseService";
 import { prepareBillingChange } from "../../src/services/billingChangeService";
@@ -163,16 +159,28 @@ test("billing read degrades when Stripe is unreachable", async () => {
   expect(await releases()).toEqual({ deferred_error: 1 });
 });
 
-test("billing read degrades when the runtime is not admitting billing work", async () => {
+test("an unknown outcome inside the release fences later mutations under the same owner", async () => {
   pastExpiry();
+  retrieve.mockResolvedValueOnce(providerExpired());
+  const repository = purchaseRepository.getPurchaseRepository();
   jest
-    .mocked(runRuntimeApiOperation)
-    .mockRejectedValueOnce(
-      new RuntimeAdmissionUnavailable("Runtime is not accepting work"),
-    );
-  await expect(release()).resolves.toBeUndefined();
-  expect(retrieve).not.toHaveBeenCalled();
-  expect(await releases()).toEqual({ deferred_admission: 1 });
+    .spyOn(purchaseRepository, "getPurchaseRepository")
+    .mockReturnValue(repository);
+  jest
+    .spyOn(repository, "compareAndWrite")
+    .mockRejectedValueOnce(new Error("release response lost"));
+  const later = jest.fn(async () => undefined);
+  await expect(
+    runBillingOperation(undefined, async (owner) => {
+      await releaseExpiredPurchaseAttempt({
+        stripe: client,
+        guildId: purchaseGuildId,
+        owner,
+      });
+      await expect(owner.effect(later)).rejects.toThrow();
+    }),
+  ).rejects.toBeInstanceOf(UnresolvedBillingMutation);
+  expect(later).not.toHaveBeenCalled();
 });
 
 test("billing read tolerates a concurrent writer winning the release", async () => {

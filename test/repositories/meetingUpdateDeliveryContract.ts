@@ -22,12 +22,8 @@ import {
   planDelivery,
   registerOperation,
 } from "../types/meetingUpdateDelivery.fixture";
-import { context } from "../deployment/controlFixtures";
-
-export const authority = {
-  kind: "serving",
-  context: { ...context, now },
-} as const;
+/** The claiming worker's identity and clock, which the claim writes onto the row. */
+export const claimOwner = { ownerInstanceId: "old", now } as const;
 export function write(
   row: MeetingHistory = history(),
   id = "save-1",
@@ -68,22 +64,20 @@ export interface Harness {
   repository: MeetingUpdateDeliveryRepository;
   seed(row: MeetingHistory): Promise<void>;
   read(): Promise<MeetingHistory | undefined>;
-  admit(allowed: boolean): Promise<void>;
 }
 export function deliveryContract(make: () => Harness) {
   let h: Harness;
-  planningContract(() => h, { authority, write });
+  planningContract(() => h, { claimOwner, write });
   const claimCurrent = (delivery: ReturnType<typeof pending>) =>
     h.repository.claim({
       key,
       expectedContentRevision: 1,
       expectedDeliveryRevision: delivery.revision,
       attempt: attempt(),
-      authority,
+      ...claimOwner,
     });
   beforeEach(async () => {
     h = make();
-    await h.admit(true);
     await h.seed(history());
   });
   it("saves legacy notes, audit and intent together without changing unrelated content", async () => {
@@ -240,27 +234,16 @@ export function deliveryContract(make: () => Harness) {
     );
     expect(await h.read()).toEqual(prior);
   });
-  it("requires exact work admission and claim identity", async () => {
+  it("requires exact claim identity", async () => {
     const row = deliveryRow(pending());
     await h.seed(row);
-    await h.admit(false);
     expect(
       await h.repository.claim({
         key,
         expectedContentRevision: 1,
         expectedDeliveryRevision: "delivery-1",
         attempt: attempt(),
-        authority,
-      }),
-    ).toBe("stale");
-    await h.admit(true);
-    expect(
-      await h.repository.claim({
-        key,
-        expectedContentRevision: 1,
-        expectedDeliveryRevision: "delivery-1",
-        attempt: attempt(),
-        authority,
+        ...claimOwner,
       }),
     ).toBe("claimed");
     const saved = await h.read();
@@ -279,7 +262,7 @@ export function deliveryContract(make: () => Harness) {
         expectedContentRevision: 1,
         expectedDeliveryRevision: "delivery-1",
         attempt: attempt(),
-        authority,
+        ...claimOwner,
       }),
     ).toBe("stale");
   });
@@ -299,7 +282,7 @@ export function deliveryContract(make: () => Harness) {
           expectedContentRevision: 1,
           expectedDeliveryRevision: "delivery-1",
           attempt: preparedMeetingUpdateAttemptSchema.parse(plan),
-          authority,
+          ...claimOwner,
         }),
       ).toBe("stale");
   });
@@ -683,29 +666,6 @@ export function deliveryContract(make: () => Harness) {
         attemptId: "attempt-1",
         expectedPointers: pointers,
         nextPointers: pointers,
-      }),
-    ).toBe("stale");
-  });
-
-  it("binds session admission to the exact meeting instead of another active lease", async () => {
-    await h.seed(deliveryRow(pending()));
-    expect(
-      await h.repository.claim({
-        key,
-        expectedContentRevision: 1,
-        expectedDeliveryRevision: "delivery-1",
-        attempt: attempt(),
-        authority: {
-          kind: "session",
-          now,
-          ownership: {
-            guildId: "other-guild",
-            meetingId: "other-meeting",
-            ownerInstanceId: "other-owner",
-            executionVersion: 1,
-            voiceOperationAttemptId: "other-attempt",
-          },
-        },
       }),
     ).toBe("stale");
   });

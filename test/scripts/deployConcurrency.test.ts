@@ -18,11 +18,8 @@ const deployment = parse(
 ) as { concurrency?: unknown; jobs: Record<string, Job> };
 
 const CI_JOB = "ci";
-// The break-glass gate is CI's alternative, not a deploy job: it holds no
-// production credentials and is pinned by deployBreakGlass.test.ts.
-const GATE_JOBS = [CI_JOB, "break-glass"];
 const deployJobs = Object.entries(deployment.jobs).filter(
-  ([id]) => !GATE_JOBS.includes(id),
+  ([id]) => id !== CI_JOB,
 );
 
 // A workflow-level group holds a newer run entirely pending, so its CI never
@@ -63,12 +60,11 @@ test("every deploy job has a group of its own", () => {
   for (const group of groups) expect(group).toBeTruthy();
 });
 
-// The backend swap is the dangerous mutation, and the two production
-// introduction workflows share this exact group name, so it has to stay shared
-// rather than becoming job-scoped like the others.
-test("the backend deploy keeps the shared production group", () => {
+// The backend holds the drain wait and the rollout under one lock, so no run
+// can roll out while another run's older task is still draining.
+test("the backend deploy holds the production rollout lock", () => {
   expect(deployment.jobs.deploybackend.concurrency?.group).toBe(
-    "chronote-deploy-production",
+    "backend-rollout-production",
   );
 });
 

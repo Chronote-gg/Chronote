@@ -43,7 +43,6 @@ test("actual worker/HTTP held PATCH retains newer save and a fresh worker discov
     updateDeliveryQueue: "meeting-update:v1",
     updateDeliveryDueAt: input.observedAt,
   });
-  await mockFixture.admit();
   const http = await publicationHttpFixture({
     botId: input.botId,
     guildId: input.history.guildId,

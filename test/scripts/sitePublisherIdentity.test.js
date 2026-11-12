@@ -17,7 +17,6 @@ function fixture(site) {
     AWS_ACCOUNT_ID: identity.outputs.account_id,
     AWS_REGION: "us-east-1",
     PRODUCTION_BACKEND_DEPLOY_ROLE_ARN: identity.outputs.role_arn,
-    DEPLOYMENT_CONTROL_TABLE: identity.outputs.control_table,
     [site.toUpperCase() + "_BUCKET"]:
       `meeting-notes-prod-${site}-${binding.accountId}`,
     [site.toUpperCase() + "_DISTRIBUTION_ID"]: "ESYNTHETIC12345",
@@ -62,16 +61,11 @@ test.each(["docs", "frontend"])(
     expect(statements[1].Resource).toBe(
       `arn:aws:cloudfront::${f.binding.accountId}:distribution/${f.variables[site.toUpperCase() + "_DISTRIBUTION_ID"]}`,
     );
-    expect(statements[3].Condition.StringLike).toEqual({
+    expect(statements[2].Condition.StringLike).toEqual({
       "kms:EncryptionContext:aws:s3:arn": `arn:aws:s3:::${bucket}/*`,
     });
-    expect(statements[4].Condition.StringEquals).toEqual({
-      "kms:CallerAccount": f.binding.accountId,
-      "kms:ViaService": "dynamodb.us-east-1.amazonaws.com",
-      "kms:EncryptionContext:aws:dynamodb:subscriberId": f.binding.accountId,
-      "kms:EncryptionContext:aws:dynamodb:tableName":
-        f.identity.outputs.control_table,
-    });
+    expect(statements).toHaveLength(3);
+    expect(result.policy).not.toContain("dynamodb");
     expect(result.masks).toContain(result.policy);
     expect(result.masks).toContain(
       f.variables[site.toUpperCase() + "_DISTRIBUTION_ID"],
@@ -81,7 +75,6 @@ test.each(["docs", "frontend"])(
 test.each([
   "AWS_ACCOUNT_ID",
   "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN",
-  "DEPLOYMENT_CONTROL_TABLE",
   "AWS_REGION",
   "DOCS_DISTRIBUTION_ID",
 ])(
@@ -176,7 +169,7 @@ test.each(["docs", "frontend"])(
     ]);
     expect(job.steps[coarse].env).toEqual({
       IDENTITY_MATCHES:
-        "${{ vars.AWS_ACCOUNT_ID == steps.publisher-identity.outputs.account_id && vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN == steps.publisher-identity.outputs.role_arn && vars.DEPLOYMENT_CONTROL_TABLE == steps.publisher-identity.outputs.control_table }}",
+        "${{ vars.AWS_ACCOUNT_ID == steps.publisher-identity.outputs.account_id && vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN == steps.publisher-identity.outputs.role_arn }}",
     });
     expect(job.steps[session].env.GITHUB_VARS_JSON).toBeUndefined();
     expect(Object.keys(job.steps[session].env).sort()).toEqual(
@@ -184,7 +177,6 @@ test.each(["docs", "frontend"])(
         "TERRAFORM_PRIVATE_STORAGE_JSON",
         "AWS_ACCOUNT_ID",
         "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN",
-        "DEPLOYMENT_CONTROL_TABLE",
         site.toUpperCase() + "_BUCKET",
         site.toUpperCase() + "_DISTRIBUTION_ID",
       ].sort(),

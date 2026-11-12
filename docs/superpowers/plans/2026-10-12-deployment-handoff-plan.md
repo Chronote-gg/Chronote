@@ -6,17 +6,17 @@ The approved change keeps existing recordings on their original owner while a re
 
 No new product decision is requested by this reconciliation. Hosted Sandbox acceptance, first activation, compatible live rollback and historical repair remain separate. This task does not authorize deployment even where a standing Sandbox permission exists. The private introduction packet retains UNKNOWN identities until an authorized refresh. Completed-object cleanup still lacks a live operating route.
 
-Read [Recording handoff and recovery](../../deployment-handoff.md) for the participant journey, final contracts and evidence limits. The task checklists below preserve the original verification obligations; they are not a claim that every named command ran on the final head. Task reports and the final PR audit provide that evidence.
+Read Recording handoff and recovery for the participant journey, final contracts and evidence limits. The task checklists below preserve the original verification obligations; they are not a claim that every named command ran on the final head. Task reports and the final PR audit provide that evidence.
 
 ## Participant experience during a deployment
 
 An existing meeting keeps recording on its original runtime while the replacement gets ready. New starts continue on the old runtime until promotion, then use the ready replacement. Stop controls still reach the meeting's original owner, and notes appear after finalization. A failed candidate leaves the serving runtime unchanged. If capture is interrupted, the recovery companion applies the original settings and shows the saved coverage.
 
-The participant keeps using the same Discord controls, portal or MCP entry point. Permissions and authentication stay unchanged. See the [participant journey](../../deployment-handoff.md) for entry paths and interrupted outcomes.
+The participant keeps using the same Discord controls, portal or MCP entry point. Permissions and authentication stay unchanged. See the participant journey for entry paths and interrupted outcomes.
 
 ## Final routing refinement
 
-Keep ordinary user traffic on the available old application during candidate protection and boot. One spare ALB target group separates early health from user traffic under the same rolling service. Exact admission promotion precedes acknowledged listener switching, and old retirement follows both. Unknown routing RPC settlement remains durably blocked even when a read shows intended weights. This adds listener permissions and explicit Terraform drift ownership, with separately approved introduction and hosted proof. The approved product outcome is unchanged. See the [complete routing contract and request flow](../../deployment-handoff.md#candidate-traffic-and-routing-ownership).
+Keep ordinary user traffic on the available old application during candidate protection and boot. One spare ALB target group separates early health from user traffic under the same rolling service. Exact admission promotion precedes acknowledged listener switching, and old retirement follows both. Unknown routing RPC settlement remains durably blocked even when a read shows intended weights. This adds listener permissions and explicit Terraform drift ownership, with separately approved introduction and hosted proof. The approved product outcome is unchanged. See the complete routing contract and request flow.
 
 ## Implementation reference
 
@@ -73,7 +73,7 @@ Do not release intermediate protocol pieces against a mixed legacy fleet. Indepe
 
 ## Accepted contract refinements
 
-The final membership, mode, local-bootstrap and retirement rules are in [the runtime contract](../../deployment-handoff.md#runtime-and-deployment-contract). `servingMembers` contains exact identities under one generation. Coordinator epoch changes alone do not seal healthy admission. Promotion pins the expected member map and candidate mode; selected disjoint bot/API members may be retained. Local bootstrap is limited to explicit mock or opted-in loopback local/dummy storage and preserves every lease/history/voice guard.
+The final membership, mode, local-bootstrap and retirement rules are in the runtime contract. `servingMembers` contains exact identities under one generation. Coordinator epoch changes alone do not seal healthy admission. Promotion pins the expected member map and candidate mode; selected disjoint bot/API members may be retained. Local bootstrap is limited to explicit mock or opted-in loopback local/dummy storage and preserves every lease/history/voice guard.
 
 Retirement is `draining -> releasing -> retired`, with durable ineligibility before native protection release. Voice settlement needs matching gateway session/sequence and settled transport proof. Compatible replacement requires completed lineage, exact image/candidate/protocol/mode proof and independent retained voice guards. No task absence or expired lease supplies those proofs.
 

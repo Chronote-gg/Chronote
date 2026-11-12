@@ -11,25 +11,30 @@ import {
   UpdateItemCommand,
   type ConditionCheck,
   type Put,
+  type TransactWriteItemsCommandInput,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import { randomUUID } from "node:crypto";
-import { renewActiveMeetingLeaseWrite } from "./repositories/activeMeetingLeaseRenewal";
+import { createHash, randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
+import { getRuntimeInstanceId } from "./services/runtimeInstanceService";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { completeConditionalCancellation } from "./repositories/deploymentControlErrors";
 import {
-  bindDeploymentControlRepository,
-  bindMeetingUpdateDeliveryRepository,
-} from "./repositories/deploymentRepositoryBindings";
+  createDynamoDeploymentControlRepository,
+  createMockDeploymentControlRepository,
+} from "./repositories/deploymentControlRepository";
+import { getMeetingHistoryTransitionRepository } from "./repositories/meetingHistoryTransitions";
+import { createDynamoMeetingUpdateDeliveryRepository } from "./repositories/meetingUpdateDeliveryRepository";
+import { createMockMeetingUpdateDeliveryRepository } from "./repositories/mockMeetingUpdateDeliveryRepository";
 import { readDynamoIndexStatus } from "./repositories/dynamoIndexStatus";
 import { parseMeetingUpdateHistory } from "./repositories/meetingUpdateDeliveryState";
 import { listUnpausedPersonalMediaUploadJobs } from "./repositories/personalMediaUploadQueue";
 import { createStripeWebhookDynamoRepository } from "./repositories/stripeWebhookDynamoRepository";
 import { config } from "./services/configService";
-import { transactPersonalAdmission } from "./services/personalAdmissionTransaction";
 import {
   buildPendingSegmentTransaction,
+  buildPersonalMediaClaimTransaction,
   buildPersonalSegmentTransitionTransaction,
   buildPersonalUploadSubmissionTransaction,
 } from "./services/personalUploadTransactions";
@@ -91,7 +96,6 @@ import {
 import type { IntroOfferAuthority } from "./types/introOfferAuthority";
 import { canonicalFieldsSupersededAfter } from "./types/meetingCanonicalContent";
 import { personalCanonicalWriter } from "./types/meetingCanonicalWriter";
-import type { MeetingStatus } from "./types/meetingLifecycle";
 import {
   publicationSnapshot,
   publicationSnapshotCondition,
@@ -116,22 +120,12 @@ import {
   type RenewalOperation,
 } from "./types/renewal";
 
-import {
-  classifyDeploymentTransactionError,
-  mockWorkAdmissionAllowed,
-} from "./repositories/deploymentControlRepository";
+import { classifyDeploymentTransactionError } from "./repositories/deploymentControlRepository";
 import { getMockStore } from "./repositories/mockStore";
 import { requireUnpausedDesktopDraft } from "./repositories/pausedDesktopDraft";
-import {
-  buildPersonalClaimCheck,
-  buildPersonalMediaClaimTransaction,
-  buildWorkAdmissionChecks,
-} from "./services/deploymentControlTransactions";
-import type {
-  AdmissionContext,
-  HistoryTransition,
-  WorkAdmissionAuthority,
-} from "./types/deploymentControl";
+import { buildPersonalClaimCheck } from "./services/personalUploadTransactions";
+import type { RuntimeIdentity } from "./types/deploymentControl";
+import type { HistoryTransition } from "./types/meetingHistoryTransition";
 
 import {
   RENEWAL_RECOVERY_DUE_INDEX,
@@ -147,11 +141,7 @@ import {
 
 const PERSONAL_MEDIA_UPLOAD_STATUS_UPDATED_AT_INDEX = "StatusUpdatedAtIndex";
 
-import {
-  dynamoDbClient,
-  tableName,
-  tablePrefix,
-} from "./repositories/dynamoClient";
+import { dynamoDbClient, tableName } from "./repositories/dynamoClient";
 export { dynamoDbClient } from "./repositories/dynamoClient";
 
 export {
@@ -213,19 +203,29 @@ export function controlTableNames() {
   };
 }
 export function getDeploymentControlRepository() {
-  return bindDeploymentControlRepository(dynamoDbClient, controlTableNames());
+  if (!config.mock.enabled)
+    return createDynamoDeploymentControlRepository(
+      dynamoDbClient,
+      controlTableNames(),
+    );
+  const store = getMockStore();
+  return createMockDeploymentControlRepository(store.deploymentControlRecords);
 }
 export function getMeetingUpdateDeliveryRepository() {
-  return bindMeetingUpdateDeliveryRepository(
-    dynamoDbClient,
-    controlTableNames(),
+  if (!config.mock.enabled)
+    return createDynamoMeetingUpdateDeliveryRepository(
+      dynamoDbClient,
+      controlTableNames(),
+    );
+  const store = getMockStore();
+  return createMockMeetingUpdateDeliveryRepository(
+    store.meetingHistoryByGuild,
+    store.personalMediaUploadsById,
   );
 }
 
-export const createInitialMeetingHistory = (history: MeetingHistory) =>
-  getDeploymentControlRepository().createInitialMeetingHistory(history);
 export const transitionMeetingHistory = (input: HistoryTransition) =>
-  getDeploymentControlRepository().transitionMeetingHistory(input);
+  getMeetingHistoryTransitionRepository().transitionMeetingHistory(input);
 const isConditionalCheckFailed = (error: unknown) =>
   (error as { name?: string }).name === "ConditionalCheckFailedException";
 
@@ -566,53 +566,104 @@ export async function getInteractionReceipt(
 }
 
 const runtimeInteractionReceipts = new Map<string, InteractionReceipt>();
+/** DynamoDB caps a ClientRequestToken at 36 characters. */
+const CLIENT_REQUEST_TOKEN_LENGTH = 36;
+/**
+ * One token per interaction, worker and attempt: the SDK's internal retries
+ * of an attempt replay it, while a new attempt after a cancellation is a new
+ * request rather than a possible replay of that cancellation.
+ */
+const receiptRequestToken = (interactionId: string, attempt: number) =>
+  createHash("sha256")
+    .update(`${interactionId}\n${getRuntimeInstanceId()}\n${attempt}`)
+    .digest("hex")
+    .slice(0, CLIENT_REQUEST_TOKEN_LENGTH);
+
+/** Two concurrent claims of one key cancel each other; a retry settles which one holds it. */
+const RECEIPT_CLAIM_ATTEMPTS = 3;
+const RECEIPT_CONFLICT_RETRY_MS = 20;
+const RECEIPT_CONFLICT_JITTER_MS = 30;
+
+/**
+ * Insert-only claims are a one-item transaction so the SDK's retry after a
+ * lost response replays as success instead of reading as someone else's
+ * claim. A conflict is retried as a new attempt, which lands as ours or
+ * fails the condition as theirs.
+ */
+async function claimInsertOnlyReceipt(
+  receipt: InteractionReceipt,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  // Tokens are derived before the first await, while this call's identity is current.
+  const commands = Array.from(
+    { length: RECEIPT_CLAIM_ATTEMPTS },
+    (_, index) =>
+      new TransactWriteItemsCommand({
+        ClientRequestToken: receiptRequestToken(
+          receipt.interactionId,
+          index + 1,
+        ),
+        TransactItems: [
+          {
+            Put: {
+              TableName: tableName("InteractionReceiptTable"),
+              Item: marshall(receipt, { removeUndefinedValues: true }),
+              ConditionExpression: "attribute_not_exists(interactionId)",
+            },
+          },
+        ],
+      }),
+  );
+  for (const [index, command] of commands.entries()) {
+    const attempt = index + 1;
+    try {
+      await dynamoDbClient.send(
+        command,
+        signal ? { abortSignal: signal } : undefined,
+      );
+      return true;
+    } catch (error) {
+      const outcome = classifyDeploymentTransactionError(error);
+      if (outcome === "stale") return false;
+      if (outcome !== "conflict") throw error;
+    }
+    if (attempt < RECEIPT_CLAIM_ATTEMPTS)
+      await sleep(
+        RECEIPT_CONFLICT_RETRY_MS + Math.random() * RECEIPT_CONFLICT_JITTER_MS,
+        undefined,
+        { signal },
+      );
+  }
+  // Still contested: this worker cannot show it holds the receipt, so it must not answer.
+  return false;
+}
+
 export async function tryCreateInteractionReceipt(
   receipt: InteractionReceipt,
   replaceExpiredBefore?: number,
-  authority?: WorkAdmissionAuthority,
+  signal?: AbortSignal,
 ): Promise<boolean> {
-  const params = {
-    TableName: tableName("InteractionReceiptTable"),
-    Item: marshall(receipt, { removeUndefinedValues: true }),
-    ConditionExpression:
-      replaceExpiredBefore === undefined
-        ? "attribute_not_exists(interactionId)"
-        : "attribute_not_exists(interactionId) OR expiresAt <= :now",
-    ...(replaceExpiredBefore === undefined
-      ? {}
-      : {
-          ExpressionAttributeValues: marshall({ ":now": replaceExpiredBefore }),
-        }),
-  };
-  if (authority && config.mock.enabled) {
-    const store = getMockStore();
-    if (
-      !mockWorkAdmissionAllowed(
-        authority,
-        store.deploymentControlRecords,
-        store.activeMeetingLeases,
-      )
-    )
-      return false;
+  // Opt-in cooldown receipts are read and released through DynamoDB, so only
+  // insert-only interaction claims use the in-process store in mock mode.
+  if (config.mock.enabled && replaceExpiredBefore === undefined) {
     if (runtimeInteractionReceipts.has(receipt.interactionId)) return false;
     runtimeInteractionReceipts.set(receipt.interactionId, receipt);
     return true;
   }
-  const transaction = authority
-    ? new TransactWriteItemsCommand({
-        TransactItems: [
-          ...buildWorkAdmissionChecks(authority, {
-            deploymentControl: tableName("DeploymentControlTable"),
-            meetingHistory: tableName("MeetingHistoryTable"),
-            activeMeeting: tableName("ActiveMeetingTable"),
-          }),
-          { Put: params },
-        ],
-      })
-    : undefined;
+  if (replaceExpiredBefore === undefined)
+    return claimInsertOnlyReceipt(receipt, signal);
   try {
-    if (transaction) await dynamoDbClient.send(transaction);
-    else await dynamoDbClient.send(new PutItemCommand(params));
+    await dynamoDbClient.send(
+      new PutItemCommand({
+        TableName: tableName("InteractionReceiptTable"),
+        Item: marshall(receipt, { removeUndefinedValues: true }),
+        ConditionExpression:
+          "attribute_not_exists(interactionId) OR expiresAt <= :now",
+        ExpressionAttributeValues: marshall({
+          ":now": replaceExpiredBefore,
+        }),
+      }),
+    );
     return true;
   } catch (error) {
     if (classifyDeploymentTransactionError(error) === "stale") {
@@ -641,224 +692,6 @@ export async function releaseInteractionReceipt(
     return true;
   } catch (error) {
     if (isConditionalCheckFailed(error)) return false;
-    throw error;
-  }
-}
-
-export async function tryAcquireActiveMeetingLease(
-  lease: ActiveMeetingLease,
-  nowEpochSeconds: number,
-): Promise<boolean> {
-  const sameOwnerSameMeetingCondition =
-    "#ownerInstanceId = :ownerInstanceId AND #meetingId = :meetingId";
-  const params = {
-    TableName: tableName("ActiveMeetingTable"),
-    Item: marshall(lease, { removeUndefinedValues: true }),
-    ConditionExpression: `attribute_not_exists(#guildId) OR #leaseExpiresAt < :now OR (${sameOwnerSameMeetingCondition})`,
-    ExpressionAttributeNames: {
-      "#guildId": "guildId",
-      "#leaseExpiresAt": "leaseExpiresAt",
-      "#ownerInstanceId": "ownerInstanceId",
-      "#meetingId": "meetingId",
-    },
-    ExpressionAttributeValues: marshall({
-      ":now": nowEpochSeconds,
-      ":ownerInstanceId": lease.ownerInstanceId,
-      ":meetingId": lease.meetingId,
-    }),
-  };
-  const command = new PutItemCommand(params);
-  try {
-    await dynamoDbClient.send(command);
-    return true;
-  } catch (error) {
-    if (
-      (error as { name?: string }).name === "ConditionalCheckFailedException"
-    ) {
-      return false;
-    }
-    throw error;
-  }
-}
-
-export async function renewActiveMeetingLease(
-  guildId: string,
-  meetingId: string,
-  ownerInstanceId: string,
-  leaseExpiresAt: number,
-  updatedAt: string,
-  expiresAt: number,
-  snapshot: {
-    status: ActiveMeetingLease["status"];
-    endReason?: ActiveMeetingLease["endReason"];
-    endTriggeredByUserId?: ActiveMeetingLease["endTriggeredByUserId"];
-    cancellationReason?: ActiveMeetingLease["cancellationReason"];
-    endedAt?: ActiveMeetingLease["endedAt"];
-  },
-  ownership?: { executionVersion: number; sessionMode: "meeting" | "tts_only" },
-  signal?: AbortSignal,
-): Promise<boolean> {
-  signal?.throwIfAborted();
-  const now = Math.floor(Date.now() / 1000);
-  if (config.mock.enabled) {
-    const lease = getMockStore().activeMeetingLeases.get(guildId);
-    if (
-      !lease ||
-      lease.leaseExpiresAt < now ||
-      lease.meetingId !== meetingId ||
-      lease.ownerInstanceId !== ownerInstanceId ||
-      lease.executionVersion !== ownership?.executionVersion ||
-      lease.sessionMode !== ownership?.sessionMode
-    )
-      return false;
-    Object.assign(lease, { leaseExpiresAt, updatedAt, expiresAt, ...snapshot });
-    return true;
-  }
-  const updateParts = [
-    "#leaseExpiresAt = :leaseExpiresAt",
-    "#updatedAt = :updatedAt",
-    "#expiresAt = :expiresAt",
-    "#status = :status",
-  ];
-  const expressionAttributeNames: Record<string, string> = {
-    "#leaseExpiresAt": "leaseExpiresAt",
-    "#updatedAt": "updatedAt",
-    "#expiresAt": "expiresAt",
-    "#status": "status",
-    "#meetingId": "meetingId",
-    "#ownerInstanceId": "ownerInstanceId",
-    "#executionVersion": "executionVersion",
-  };
-  const expressionAttributeValues: Record<string, unknown> = {
-    ":leaseExpiresAt": leaseExpiresAt,
-    ":updatedAt": updatedAt,
-    ":expiresAt": expiresAt,
-    ":status": snapshot.status,
-    ":now": now,
-    ":meetingId": meetingId,
-    ":ownerInstanceId": ownerInstanceId,
-  };
-
-  if (snapshot.endReason) {
-    updateParts.push("#endReason = :endReason");
-    expressionAttributeNames["#endReason"] = "endReason";
-    expressionAttributeValues[":endReason"] = snapshot.endReason;
-  }
-
-  if (snapshot.endTriggeredByUserId) {
-    updateParts.push("#endTriggeredByUserId = :endTriggeredByUserId");
-    expressionAttributeNames["#endTriggeredByUserId"] = "endTriggeredByUserId";
-    expressionAttributeValues[":endTriggeredByUserId"] =
-      snapshot.endTriggeredByUserId;
-  }
-
-  if (snapshot.cancellationReason) {
-    updateParts.push("#cancellationReason = :cancellationReason");
-    expressionAttributeNames["#cancellationReason"] = "cancellationReason";
-    expressionAttributeValues[":cancellationReason"] =
-      snapshot.cancellationReason;
-  }
-
-  if (snapshot.endedAt) {
-    updateParts.push("#endedAt = :endedAt");
-    expressionAttributeNames["#endedAt"] = "endedAt";
-    expressionAttributeValues[":endedAt"] = snapshot.endedAt;
-  }
-
-  const params: UpdateItemCommand["input"] = {
-    TableName: tableName("ActiveMeetingTable"),
-    Key: marshall({ guildId }),
-    UpdateExpression: `SET ${updateParts.join(", ")}`,
-    ConditionExpression:
-      "#leaseExpiresAt >= :now AND #meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId AND " +
-      (ownership
-        ? "#executionVersion = :executionVersion AND sessionMode = :sessionMode"
-        : "attribute_not_exists(#executionVersion)"),
-    ExpressionAttributeNames: expressionAttributeNames,
-    ExpressionAttributeValues: marshall(
-      {
-        ...expressionAttributeValues,
-        ...(ownership
-          ? {
-              ":executionVersion": ownership.executionVersion,
-              ":sessionMode": ownership.sessionMode,
-            }
-          : {}),
-      },
-      {
-        removeUndefinedValues: true,
-      },
-    ),
-  };
-  return renewActiveMeetingLeaseWrite(dynamoDbClient, params, signal);
-}
-
-export async function releaseActiveMeetingLease(
-  guildId: string,
-  meetingId: string,
-  ownerInstanceId: string,
-  ownership?: {
-    executionVersion: number;
-    sessionMode: "meeting" | "tts_only";
-    voiceOperationAttemptId?: string;
-  },
-  signal?: AbortSignal,
-): Promise<boolean> {
-  signal?.throwIfAborted();
-  if (config.mock.enabled) {
-    const lease = getMockStore().activeMeetingLeases.get(guildId);
-    if (
-      !lease ||
-      lease.meetingId !== meetingId ||
-      lease.ownerInstanceId !== ownerInstanceId ||
-      lease.executionVersion !== ownership?.executionVersion ||
-      lease.sessionMode !== ownership?.sessionMode ||
-      (ownership?.voiceOperationAttemptId !== undefined &&
-        lease.voiceOperationAttemptId !== ownership.voiceOperationAttemptId)
-    )
-      return false;
-    return getMockStore().activeMeetingLeases.delete(guildId);
-  }
-  const params: DeleteItemCommand["input"] = {
-    TableName: tableName("ActiveMeetingTable"),
-    Key: marshall({ guildId }),
-    ConditionExpression:
-      "#meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId AND " +
-      (ownership
-        ? "#executionVersion = :executionVersion AND sessionMode = :sessionMode"
-        : "attribute_not_exists(#executionVersion)") +
-      (ownership?.voiceOperationAttemptId
-        ? " AND voiceOperationAttemptId = :voiceAttempt"
-        : ""),
-    ExpressionAttributeNames: {
-      "#meetingId": "meetingId",
-      "#ownerInstanceId": "ownerInstanceId",
-      "#executionVersion": "executionVersion",
-    },
-    ExpressionAttributeValues: marshall({
-      ":meetingId": meetingId,
-      ":ownerInstanceId": ownerInstanceId,
-      ...(ownership?.voiceOperationAttemptId
-        ? { ":voiceAttempt": ownership.voiceOperationAttemptId }
-        : {}),
-      ...(ownership
-        ? {
-            ":executionVersion": ownership.executionVersion,
-            ":sessionMode": ownership.sessionMode,
-          }
-        : {}),
-    }),
-  };
-  const command = new DeleteItemCommand(params);
-  try {
-    await dynamoDbClient.send(command, { abortSignal: signal });
-    return true;
-  } catch (error) {
-    if (
-      (error as { name?: string }).name === "ConditionalCheckFailedException"
-    ) {
-      return false;
-    }
     throw error;
   }
 }
@@ -2170,20 +2003,41 @@ export {
 
 export async function writePersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
-  context: AdmissionContext,
 ): Promise<void> {
+  // A transaction, not a plain put, so the SDK's idempotency token makes a retried lost response succeed instead of reporting a committed intent as a duplicate.
   if (
-    !(await transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
-      {
-        Put: {
-          TableName: tableName("PersonalMediaUploadJobTable"),
-          Item: marshall(job, { removeUndefinedValues: true }),
-          ConditionExpression: "attribute_not_exists(uploadId)",
+    !(await sendPersonalTransaction({
+      TransactItems: [
+        {
+          Put: {
+            TableName: tableName("PersonalMediaUploadJobTable"),
+            Item: marshall(job, { removeUndefinedValues: true }),
+            ConditionExpression: "attribute_not_exists(uploadId)",
+          },
         },
-      },
-    ]))
+      ],
+    }))
   )
     throw new Error("Personal upload already exists");
+}
+
+/** True when committed, false when one of the transaction's own conditions refused it. */
+async function sendPersonalTransaction(
+  transaction: TransactWriteItemsCommandInput,
+): Promise<boolean> {
+  try {
+    await dynamoDbClient.send(new TransactWriteItemsCommand(transaction));
+    return true;
+  } catch (error) {
+    if (
+      completeConditionalCancellation(
+        error,
+        transaction.TransactItems?.length ?? 0,
+      )
+    )
+      return false;
+    throw error;
+  }
 }
 
 export async function getPersonalMediaUploadJob(
@@ -2203,14 +2057,13 @@ export async function getPersonalMediaUploadJob(
 
 export async function submitPersonalMediaUploadJob(
   job: PersonalMediaUploadJobRecord,
-  context: AdmissionContext,
 ): Promise<boolean> {
-  return transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
-    ...buildPersonalUploadSubmissionTransaction(job, {
+  return sendPersonalTransaction(
+    buildPersonalUploadSubmissionTransaction(job, {
       deploymentControl: tableName("DeploymentControlTable"),
       personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
-    }).TransactItems!,
-  ]);
+    }),
+  );
 }
 
 export function personalMediaClaimForJob(
@@ -2453,28 +2306,26 @@ export async function listPersonalRecordingSegments(
 export async function preparePersonalRecordingSegment(
   segment: PersonalRecordingSegmentRecord,
   expectedStatus: "pending_upload" | "failed" | undefined,
-  context: AdmissionContext,
 ): Promise<boolean> {
-  return transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
-    ...buildPendingSegmentTransaction(segment, expectedStatus, {
+  return sendPersonalTransaction(
+    buildPendingSegmentTransaction(segment, expectedStatus, {
       deploymentControl: tableName("DeploymentControlTable"),
       personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
       personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
-    }).TransactItems!,
-  ]);
+    }),
+  );
 }
 
 export async function transitionPersonalRecordingSegment(
   segment: PersonalRecordingSegmentRecord,
   expectedStatus: PersonalRecordingSegmentRecord["status"],
-  context: AdmissionContext,
 ): Promise<boolean> {
-  return transactPersonalAdmission(dynamoDbClient, context, tablePrefix, [
-    ...buildPersonalSegmentTransitionTransaction(segment, expectedStatus, {
+  return sendPersonalTransaction(
+    buildPersonalSegmentTransitionTransaction(segment, expectedStatus, {
       deploymentControl: tableName("DeploymentControlTable"),
       personalRecordingSegment: tableName("PersonalRecordingSegmentTable"),
-    }).TransactItems!,
-  ]);
+    }),
+  );
 }
 
 export async function listClaimablePersonalMediaUploadJobs(options: {
@@ -2501,7 +2352,6 @@ export async function claimPersonalMediaUploadJob(options: {
   claimExpiresAt: number;
   updatedAt: string;
   maxAttempts: number;
-  context: AdmissionContext;
   claimId: string;
   expectedAttempts: number;
 }): Promise<PersonalMediaUploadJobRecord | undefined> {
@@ -2538,27 +2388,13 @@ export async function claimPersonalMediaUploadJob(options: {
     },
   };
   const transaction = buildPersonalMediaClaimTransaction(
-    {
-      ...options,
-      job: next,
-      context: { ...options.context, now: options.nowEpochSeconds },
-    },
+    { ...options, job: next },
     {
       deploymentControl: tableName("DeploymentControlTable"),
-      meetingHistory: tableName("MeetingHistoryTable"),
       personalMediaUpload: tableName("PersonalMediaUploadJobTable"),
     },
   );
-  try {
-    await dynamoDbClient.send(new TransactWriteItemsCommand(transaction));
-    return next;
-  } catch (error) {
-    if (
-      completeConditionalCancellation(error, transaction.TransactItems!.length)
-    )
-      return undefined;
-    throw error;
-  }
+  return (await sendPersonalTransaction(transaction)) ? next : undefined;
 }
 
 export async function renewPersonalMediaUploadJobClaim(
@@ -2646,33 +2482,6 @@ export async function writeClaimedPersonalMediaUploadJob(
     if (isConditionalCheckFailed(error)) return false;
     throw error;
   }
-}
-
-export async function updateMeetingStatus(
-  guildId: string,
-  channelId_timestamp: string,
-  status: MeetingStatus,
-): Promise<void> {
-  const now = new Date().toISOString();
-  const params: UpdateItemCommand["input"] = {
-    TableName: tableName("MeetingHistoryTable"),
-    Key: marshall({ guildId, channelId_timestamp }),
-    UpdateExpression: "SET #status = :status, #updatedAt = :updatedAt",
-    ExpressionAttributeNames: {
-      "#status": "status",
-      "#updatedAt": "updatedAt",
-    },
-    ExpressionAttributeValues: marshall(
-      {
-        ":status": status,
-        ":updatedAt": now,
-      },
-      { removeUndefinedValues: true },
-    ),
-  };
-
-  const command = new UpdateItemCommand(params);
-  await dynamoDbClient.send(command);
 }
 
 // Contact Feedback Table
@@ -3274,10 +3083,6 @@ function stripeWebhookDynamoRepository() {
   return createStripeWebhookDynamoRepository(
     dynamoDbClient,
     tableName("StripeWebhookEventTable"),
-    {
-      deploymentControl: tableName("DeploymentControlTable"),
-      meetingHistory: tableName("MeetingHistoryTable"),
-    },
   );
 }
 export const claimStripeWebhookEvent = (event: StripeWebhookEvent) =>
@@ -3291,8 +3096,8 @@ export const admitStripeWebhookEvent = (
   eventId: string,
   token: string,
   attemptId: string,
-  context: AdmissionContext,
-) => stripeWebhookDynamoRepository().admit(eventId, token, attemptId, context);
+  runtime: RuntimeIdentity,
+) => stripeWebhookDynamoRepository().admit(eventId, token, attemptId, runtime);
 export const failStripeWebhookEvent = (eventId: string, token: string) =>
   stripeWebhookDynamoRepository().fail(eventId, token);
 

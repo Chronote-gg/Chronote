@@ -60,7 +60,6 @@ import {
   syncMeetingToNotionAutomation,
 } from "../../src/services/notionService";
 import {
-  autoExportRecoveredMeeting as actual_autoExportRecoveredMeeting,
   maybeAutoExportCompletedMeeting as actual_maybeAutoExportCompletedMeeting,
   maybeAutoSyncMeetingNotes as actual_maybeAutoSyncMeetingNotes,
   retryNotionAutomationExport,
@@ -428,18 +427,6 @@ describe("ordinary Notion callers during recovery", () => {
       expect(syncMeetingToNotionAutomation).toHaveBeenCalledTimes(2);
     },
   );
-  it("the recovery entrypoint accepts a claimed never-submitted export and refuses submitted uncertainty", async () => {
-    const row = recovering("interrupted", "pending");
-    row.recovery = { ...row.recovery!, disposition: "claimed" };
-    await expect(autoExportRecoveredMeeting(row)).resolves.toBe("acknowledged");
-    const unknown = recovering("complete", "submitted");
-    const before = structuredClone(unknown);
-    await expect(autoExportRecoveredMeeting(unknown)).rejects.toThrow(
-      "not pending",
-    );
-    expect(exportMeetingToNotionAutomation).toHaveBeenCalledTimes(1);
-    expect(unknown).toEqual(before);
-  });
 });
 
 function maybeAutoExportCompletedMeeting(
@@ -458,16 +445,6 @@ function maybeAutoSyncMeetingNotes(
 ) {
   return withTestNotionOwner(
     (owned) => actual_maybeAutoSyncMeetingNotes(meeting, owned),
-    signal,
-  );
-}
-
-function autoExportRecoveredMeeting(
-  meeting: MeetingHistory,
-  signal?: AbortSignal,
-) {
-  return withTestNotionOwner(
-    (owned) => actual_autoExportRecoveredMeeting(meeting, owned),
     signal,
   );
 }

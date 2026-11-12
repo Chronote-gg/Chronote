@@ -1,9 +1,6 @@
 import { convertToNative, marshall } from "@aws-sdk/util-dynamodb";
 import type { MeetingHistory } from "../types/db";
-import {
-  RECORDING_DELIVERY_FIELDS,
-  type HistoryTransition,
-} from "../types/deploymentControl";
+import type { HistoryTransition } from "../types/meetingHistoryTransition";
 import {
   matchesPublicationSnapshot,
   publicationSnapshot,
@@ -11,19 +8,6 @@ import {
 } from "../types/meetingPublication";
 import { MEETING_UPDATE_DELIVERY_QUEUE } from "../types/meetingUpdateDelivery";
 
-function matchesRecordingDelivery(
-  row: MeetingHistory | undefined,
-  input: HistoryTransition,
-): boolean {
-  return (
-    !input.recordingDelivery ||
-    RECORDING_DELIVERY_FIELDS.every(
-      (field) =>
-        JSON.stringify(row?.[field]) ===
-        JSON.stringify(input.recordingDelivery?.previous[field]),
-    )
-  );
-}
 function matchesExecution(
   row: MeetingHistory | undefined,
   input: HistoryTransition,
@@ -42,7 +26,6 @@ export function matchesOwnedHistoryTransition(
 ): row is MeetingHistory {
   return (
     matchesExecution(row, input) &&
-    matchesRecordingDelivery(row, input) &&
     (!input.expectedPublication ||
       matchesPublicationSnapshot(row, input.expectedPublication)) &&
     (input.expectedCheckpointRevision === undefined ||

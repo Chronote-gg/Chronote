@@ -1,6 +1,8 @@
 import type { MeetingData } from "../types/meeting-data";
 import { appendMeetingCheckpointArtifacts } from "./recordingCheckpointService";
-import { interruptOwnedMeeting } from "./ownedMeetingInterruption";
+import { MEETING_END_REASONS } from "../types/meetingLifecycle";
+
+const PRESERVATION_TIMEOUT_MS = 5000;
 
 function notifyCapturePreservationFailure(meeting: MeetingData): void {
   let complete!: () => void;
@@ -62,8 +64,8 @@ export function handleRecordingCaptureFailure(
     .then(async () => {
       await meeting.recordingCapture?.settled();
       const signal = AbortSignal.any([
-        meeting.ownershipSignal!,
-        AbortSignal.timeout(5000),
+        ...(meeting.ownershipSignal ? [meeting.ownershipSignal] : []),
+        AbortSignal.timeout(PRESERVATION_TIMEOUT_MS),
       ]);
       const result = await appendMeetingCheckpointArtifacts(
         meeting,
@@ -81,8 +83,12 @@ export function handleRecordingCaptureFailure(
     });
   if (reason === "storage_preservation")
     notifyCapturePreservationFailure(meeting);
-  void interruptOwnedMeeting(meeting, {
-    reason: "capture_failure",
-    deadline: Date.now() + 100_000,
-  });
+  // Close's flush awaits `recordingPreservationTask`, within its bound, and records an interrupted capture.
+  // Loaded on use: close imports the capture path, which imports this module.
+  void import("./meetingClose").then(({ closeMeeting }) =>
+    closeMeeting(meeting, {
+      endReason: MEETING_END_REASONS.UNKNOWN,
+      abnormal: true,
+    }),
+  );
 }

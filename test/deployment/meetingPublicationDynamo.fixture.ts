@@ -8,10 +8,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { createDynamoMeetingUpdateDeliveryRepository } from "../../src/repositories/meetingUpdateDeliveryRepository";
-import { createDynamoMeetingPublicationRepository } from "../../src/repositories/meetingPublicationRepository";
-import { createDynamoDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
 import { parseMeetingUpdateHistory } from "../../src/repositories/meetingUpdateDeliveryState";
-import { context, control, runtime } from "./controlFixtures";
 import type { MeetingUpdateKey } from "../../src/types/meetingUpdateDelivery";
 import { key } from "../types/meetingUpdateDelivery.fixture";
 
@@ -23,7 +20,7 @@ export async function publicationDynamoFixture(rowKey: MeetingUpdateKey = key) {
     activeMeeting: prefix + "-active",
   };
   const client = new DynamoDBClient({
-    endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
+    endpoint: process.env.TEST_DYNAMODB_ENDPOINT,
     region: "local",
     credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
     maxAttempts: 1,
@@ -94,29 +91,6 @@ export async function publicationDynamoFixture(rowKey: MeetingUpdateKey = key) {
       ? parseMeetingUpdateHistory(unmarshall(result.Item))
       : undefined;
   }
-  async function admit() {
-    const now = Math.floor(Date.now() / 1000);
-    const record = runtime("old");
-    await put(tables.deploymentControl, {
-      ...control,
-      coordinatorExpiresAt: now + 3600,
-    });
-    await put(tables.deploymentControl, {
-      ...record,
-      heartbeatAt: now,
-      readiness: {
-        ...record.readiness,
-        provenAt: now - 1,
-        expiresAt: now + 3600,
-      },
-      protection: {
-        ...record.protection,
-        provenAt: now - 1,
-        expiresAt: now + 3600,
-      },
-    });
-    return { kind: "serving" as const, context: { ...context, now } };
-  }
   try {
     await create(
       tables.meetingHistory,
@@ -136,13 +110,7 @@ export async function publicationDynamoFixture(rowKey: MeetingUpdateKey = key) {
     tables,
     put,
     read,
-    admit,
     updates: createDynamoMeetingUpdateDeliveryRepository(client, tables),
-    publication: createDynamoMeetingPublicationRepository(
-      client,
-      tables.meetingHistory,
-    ),
-    original: createDynamoDeploymentControlRepository(client, tables),
     async close() {
       for (const TableName of created)
         await client.send(new DeleteTableCommand({ TableName }));

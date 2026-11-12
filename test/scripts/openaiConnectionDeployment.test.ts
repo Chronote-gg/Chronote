@@ -45,16 +45,6 @@ test.each(["ci.yml", "ci-core.yml", "deploy-staging.yml"])(
 );
 
 const mockShell = `
-node() {
-  if [ "$1" = scripts/deployment/production-writer-guard.cjs ]; then
-    printf '%s\\n' guard >> guard-calls.txt
-    [ "$FIXTURE_FAILURE" != held ] || return 1
-    if [ "$FIXTURE_FAILURE" = held-before-push ] && [ "$(wc -l < guard-calls.txt)" = 2 ]; then return 1; fi
-  else
-    command node "$@"
-  fi
-}
-
 aws() {
   printf '%s\\n' "$1 $2" >> aws-calls.txt
   case "$1 $2" in
@@ -248,16 +238,5 @@ test.each([
     const result = runSync(failure);
     expect(result.status).not.toBe(0);
     expect(result.yarn).toHaveLength(calls);
-  },
-);
-
-test.each(["held", "held-before-push"])(
-  "hold at %s prevents live connection publication",
-  (failure) => {
-    const result = runSync(failure);
-    expect(result.status).not.toBe(0);
-    expect(result.yarn).toEqual(
-      failure === "held" ? [] : [["llm-connections:push", "--dry-run"]],
-    );
   },
 );

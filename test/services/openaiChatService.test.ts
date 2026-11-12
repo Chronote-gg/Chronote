@@ -104,14 +104,12 @@ describe("openaiChatService", () => {
   });
 });
 
-test("records every continuation response with actual model and resolved prompt metadata", async () => {
+test("joins every continuation response", async () => {
   const { module } = await loadModule([
     { content: "one", truncated: true },
     { content: "two" },
   ]);
-  const acknowledged = jest.fn();
-  const observeGeneration = jest.fn(() => acknowledged);
-  const meeting = { ...buildMeeting(), observeGeneration };
+  const meeting = buildMeeting();
   const prompt = { name: "notes-template", version: 8, isFallback: false };
   expect(
     await module.chat(
@@ -120,12 +118,4 @@ test("records every continuation response with actual model and resolved prompt 
       { langfusePrompt: prompt },
     ),
   ).toBe("onetwo");
-  expect(observeGeneration.mock.calls).toEqual([
-    ["notes", "gpt-test", prompt],
-    ["notes", "gpt-test", prompt],
-  ]);
-  expect(acknowledged.mock.calls).toEqual([
-    ["provider-model-7"],
-    ["provider-model-7"],
-  ]);
 });

@@ -1,18 +1,8 @@
 /** @jest-environment node */
-jest.mock("../../src/services/ownedMeetingInterruption", () => ({
-  interruptOwnedMeeting: jest.fn(async () => ({ kind: "unresolved" })),
+jest.mock("../../src/services/meetingClose", () => ({
+  closeMeeting: jest.fn(async () => undefined),
 }));
-import { fixtureGrantIdentity } from "../fixtures/productionIntroduction";
-import * as leases from "../../src/services/activeMeetingLeaseService";
-import * as db from "../../src/db";
-import { fixtureScopeForGrant } from "../../src/services/deploymentFixtureAdmission";
-import {
-  verifyFixtureReservation,
-  armFixtureObservation,
-  fixtureInputSnapshot,
-} from "../../src/services/fixtureInputService";
-import type { FixtureGrant } from "../../src/types/productionIntroduction";
-import { interruptOwnedMeeting } from "../../src/services/ownedMeetingInterruption";
+import { closeMeeting } from "../../src/services/meetingClose";
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,8 +10,8 @@ import path from "node:path";
 import { mockMeetingTempDirectory } from "../fixtures/meetingTemp";
 import * as checkpoints from "../../src/services/recordingCheckpointService";
 import { checkpointRecordingContext } from "../../src/services/recordingContentService";
-import { createMockDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
-import { history } from "../deployment/controlFixtures";
+import { createMockMeetingHistoryTransitionRepository } from "../../src/repositories/meetingHistoryTransitions";
+import { history } from "../fixtures/meetingHistory";
 jest.mock("../../src/services/recordingContentService", () => ({
   startRecordingContentCheckpoint: jest.fn(),
   checkpointRecordingContext: jest.fn(),
@@ -38,7 +28,6 @@ import {
   userStopTalking,
 } from "../../src/audio";
 import { createMeeting } from "./fixtures/voiceSubscriptionMeeting";
-import type { MeetingData } from "../../src/types/meeting-data";
 import { stopMeetingProcessing } from "../../src/services/meetingProcessingLifetime";
 
 const mockDecoders: PassThrough[] = [];
@@ -542,8 +531,7 @@ describe("actual capture preservation cutoff handoff", () => {
       const directory = mkdtempSync(path.join(tmpdir(), "capture-cutoff-"));
       const restoreDirectory = mockMeetingTempDirectory(directory);
       const row = { ...history, status: "in_progress" as const };
-      const repo = createMockDeploymentControlRepository(
-        new Map(),
+      const repo = createMockMeetingHistoryTransitionRepository(
         new Map([[history.guildId, [row]]]),
         new Map([
           [
@@ -623,7 +611,6 @@ describe("actual capture preservation cutoff handoff", () => {
             guildId: history.guildId,
             channelId_timestamp: history.channelId_timestamp,
           },
-          workHandle: { settle: jest.fn(), transition: jest.fn() },
         },
       });
       const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -632,9 +619,9 @@ describe("actual capture preservation cutoff handoff", () => {
         streams[0].write(Buffer.alloc(3840));
         await jest.advanceTimersByTimeAsync(60000);
         await meeting.recordingPreservationTask;
-        expect(interruptOwnedMeeting).toHaveBeenCalledWith(
+        expect(closeMeeting).toHaveBeenCalledWith(
           meeting,
-          expect.objectContaining({ reason: "capture_failure" }),
+          expect.objectContaining({ endReason: "unknown", abnormal: true }),
         );
         expect(receiver.subscriptions.size).toBe(0);
         const subscriptionsBefore = receiver.subscribe.mock.calls.length;
@@ -648,7 +635,6 @@ describe("actual capture preservation cutoff handoff", () => {
           kind: "interrupted",
           endedAt: "2026-01-01T00:01:02.000Z",
         });
-        expect(meeting.reservation?.workHandle.settle).not.toHaveBeenCalled();
         expect(owner.signal.aborted).toBe(false);
         expect(
           meeting.recordingCapture
@@ -808,151 +794,4 @@ test("failed decoder construction retains its partial receiver until actual clos
     mockFailDecoderConstruction = false;
     jest.restoreAllMocks();
   }
-});
-
-async function bindManualFixture(meeting: MeetingData) {
-  const ownership = {
-    guildId: meeting.guildId,
-    meetingId: meeting.meetingId,
-    ownerInstanceId: "owner",
-    executionVersion: 1,
-    voiceOperationAttemptId: "attempt",
-    sessionMode: "meeting",
-  } as const;
-  const historyKey = {
-    guildId: meeting.guildId,
-    channelId_timestamp: "voice#start",
-  };
-  const grant: FixtureGrant = {
-    ...fixtureGrantIdentity,
-    state: "consumed",
-    meetingId: meeting.meetingId,
-    guildId: meeting.guildId,
-    voiceChannelId: "voice",
-    textChannelId: "text",
-    actorUserId: "user-1",
-    sessionMode: "meeting",
-    inputProfile: "manual_script_v1",
-    scriptSha256: "a".repeat(64),
-    checklistSha256: "b".repeat(64),
-    ownership,
-    historyKey,
-  };
-  meeting.reservation = {
-    ...ownership,
-    historyKey,
-    reservedAt: Date.now(),
-    workHandle: { settle: jest.fn(), transition: jest.fn() },
-  } as never;
-  jest
-    .spyOn(leases, "originalFixtureScope")
-    .mockImplementation((value) =>
-      value === meeting.reservation ? fixtureScopeForGrant(grant) : undefined,
-    );
-  jest
-    .spyOn(db, "getDeploymentControlRepository")
-    .mockReturnValue({ getRecord: async () => grant } as never);
-  await verifyFixtureReservation(meeting.reservation!);
-  armFixtureObservation(meeting, () => {});
-  meeting.recordingCapture = { push: jest.fn(() => true) } as never;
-}
-
-describe("manual fixture receiver boundaries", () => {
-  afterEach(() => {
-    jest.restoreAllMocks();
-    jest.useRealTimers();
-  });
-  test.each([
-    ["start", userStartTalking],
-    ["end", userStopTalking],
-  ] as const)(
-    "late speaking %s leaves closed fixture evidence unchanged",
-    async (_event, handleSpeaking) => {
-      jest.useFakeTimers();
-      const { meeting } = createMeeting([]);
-      await bindManualFixture(meeting);
-      await subscribeToUserVoice(meeting, "user-1");
-      stopRecordingCapture(meeting);
-      const closed = fixtureInputSnapshot(meeting);
-      expect(closed).toMatchObject({ state: "closed", failureReasons: [] });
-
-      handleSpeaking(meeting, "user-1");
-      expect(fixtureInputSnapshot(meeting)).toEqual(closed);
-      handleSpeaking(meeting, "foreign");
-
-      expect(fixtureInputSnapshot(meeting)).toEqual(closed);
-      expect(meeting.audioData.speakerStates).toBeUndefined();
-      await jest.advanceTimersByTimeAsync(1000);
-      await waitForCaptureStreamSettlement(meeting);
-    },
-  );
-  test.each([
-    ["start", userStartTalking],
-    ["end", userStopTalking],
-  ] as const)(
-    "active speaking %s rejects a foreign fixture actor",
-    async (_event, handleSpeaking) => {
-      const { meeting } = createMeeting([]);
-      await bindManualFixture(meeting);
-
-      handleSpeaking(meeting, "foreign");
-
-      expect(fixtureInputSnapshot(meeting)).toMatchObject({
-        state: "contaminated",
-        unexpectedSourceAttempts: 1,
-        failureReasons: ["unbound_audio"],
-      });
-      expect(meeting.audioData.speakerStates).toBeUndefined();
-    },
-  );
-  test("active fixture speaking updates the bound actor's turn", async () => {
-    jest.useFakeTimers();
-    const { meeting } = createMeeting([]);
-    await bindManualFixture(meeting);
-
-    userStartTalking(meeting, "user-1");
-    expect(meeting.audioData.speakerStates?.get("user-1")?.active).toBe(true);
-    userStopTalking(meeting, "user-1");
-    expect(meeting.audioData.speakerStates?.get("user-1")?.active).toBe(false);
-    expect(fixtureInputSnapshot(meeting)).toMatchObject({
-      state: "observing",
-      unexpectedSourceAttempts: 0,
-      failureReasons: [],
-    });
-  });
-  test("manual silence segmentation keeps observation while foreign subscriptions are rejected", async () => {
-    jest.useFakeTimers();
-    const streams: PassThrough[] = [];
-    const { meeting, receiver } = createMeeting(streams);
-    await bindManualFixture(meeting);
-    await subscribeToUserVoice(meeting, "user-1");
-    expect(receiver.subscribe.mock.calls[0]).toEqual([
-      "user-1",
-      { end: { behavior: 0 } },
-    ]);
-    userStopTalking(meeting, "user-1");
-    await jest.advanceTimersByTimeAsync(1000);
-    expect(fixtureInputSnapshot(meeting)?.state).toBe("observing");
-    expect(receiver.subscribe).toHaveBeenCalledTimes(1);
-    await subscribeToUserVoice(meeting, "foreign");
-    expect(receiver.subscribe).toHaveBeenCalledTimes(1);
-    stopRecordingCapture(meeting);
-    expect(fixtureInputSnapshot(meeting)).toMatchObject({
-      state: "contaminated",
-      unexpectedSourceAttempts: 1,
-    });
-  });
-  test("explicit stream end remains incomplete after actual receiver closure", async () => {
-    jest.useFakeTimers();
-    const streams: PassThrough[] = [];
-    const { meeting } = createMeeting(streams);
-    await bindManualFixture(meeting);
-    await subscribeToUserVoice(meeting, "user-1");
-    streams[0].emit("end");
-    stopRecordingCapture(meeting);
-    expect(fixtureInputSnapshot(meeting)).toMatchObject({
-      state: "incomplete",
-      failureReasons: ["observer_gap"],
-    });
-  });
 });

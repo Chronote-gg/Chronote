@@ -7,9 +7,9 @@ import type {
   CheckpointArtifactInput,
   RecordingCoverage,
 } from "../types/recordingCheckpoint";
+import { LIFECYCLE } from "./lifecycleTiming";
 
 const RATE = 48000 * 2 * 2;
-const SEGMENT_MS = 30_000;
 const UNSAVED_MS = 60_000;
 const LIMIT = 64 * 1024 * 1024;
 const PRESSURE = LIMIT / 2;
@@ -59,12 +59,6 @@ type Input = {
     signal: AbortSignal,
   ): Promise<boolean>;
   stopCapture(reason: "storage_preservation" | "ownership_lost"): void;
-  beginWrite?(
-    filename: string,
-    artifact: CheckpointArtifactInput,
-  ): {
-    settle(result: "known" | "uncertain"): void;
-  };
 };
 
 /** One bounded publisher per recording. Failed PCM remains owned until explicit settled handoff. */
@@ -84,14 +78,10 @@ export function createRecordingCheckpointCapture(input: Input) {
   const signal = AbortSignal.any([input.signal, controller.signal]);
 
   function writeArtifact(file: string, artifact: CheckpointArtifactInput) {
-    let write: ReturnType<NonNullable<Input["beginWrite"]>> | undefined;
     try {
-      write = input.beginWrite?.(file, artifact);
       writeFileSync(file, artifact.bytes, { flag: "wx" });
-      write?.settle("known");
       return true;
     } catch {
-      write?.settle("uncertain");
       interrupt();
       return false;
     }
@@ -157,7 +147,10 @@ export function createRecordingCheckpointCapture(input: Input) {
     const next = Math.min(
       oldest() + UNSAVED_MS,
       retryAt,
-      ...Array.from(open.values(), (item) => item.receivedAt + SEGMENT_MS),
+      ...Array.from(
+        open.values(),
+        (item) => item.receivedAt + LIFECYCLE.checkpointSegmentMs,
+      ),
     );
     if (!Number.isFinite(next)) return;
     timer = setTimeout(tick, Math.max(0, next - Date.now()));
@@ -168,7 +161,8 @@ export function createRecordingCheckpointCapture(input: Input) {
       return;
     }
     for (const item of open.values()) {
-      if (Date.now() >= item.receivedAt + SEGMENT_MS) close(item.sourceId);
+      if (Date.now() >= item.receivedAt + LIFECYCLE.checkpointSegmentMs)
+        close(item.sourceId);
     }
     if (Date.now() >= retryAt) retryAt = Infinity;
     startWorker();
@@ -326,6 +320,22 @@ export function createRecordingCheckpointCapture(input: Input) {
     closed.length = 0;
     open.clear();
   }
+  /**
+   * The meeting has closed and freed the server: publication needs the lease,
+   * so nothing more is published, retried or reported as lost from here on.
+   */
+  function retire() {
+    stopped = true;
+    intakeStopped = true;
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    controller.abort(new Error("Recording capture retired"));
+    input.signal.removeEventListener("abort", ownershipLost);
+    releaseCheckpointPcm(queuedBytes);
+    queuedBytes = 0;
+    closed.length = 0;
+    open.clear();
+  }
   mkdirSync(input.directory, { recursive: true });
   const ownershipLost = () => interrupt("ownership_lost");
   input.signal.addEventListener("abort", ownershipLost, { once: true });
@@ -385,6 +395,7 @@ export function createRecordingCheckpointCapture(input: Input) {
     drainContent,
     interrupt,
     fence,
+    retire,
     releaseSettledBuffers,
     pending: () =>
       closed.map((item) => ({ artifact: item.artifact, file: item.file })),

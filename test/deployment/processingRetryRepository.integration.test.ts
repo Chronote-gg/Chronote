@@ -1,3 +1,4 @@
+import { UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { createDynamoProcessingRetryRepository } from "../../src/repositories/processingRetryRepository";
 import type { MeetingHistory } from "../../src/types/db";
 import {
@@ -5,7 +6,6 @@ import {
   type ProcessingRetryJob,
 } from "../../src/types/meetingProcessingRetry";
 import type { MeetingUpdateKey } from "../../src/types/meetingUpdateDelivery";
-import { authority } from "../repositories/meetingUpdateDeliveryContract";
 import {
   expectedOf,
   failedJob,
@@ -16,7 +16,7 @@ import {
 import { key, now } from "../types/meetingUpdateDelivery.fixture";
 import { meetingUpdateDynamoFixture } from "./meetingUpdateDynamo.fixture";
 
-const { tables, client, put, createTables, read, admit, dispose } =
+const { tables, client, put, createTables, read, dispose } =
   meetingUpdateDynamoFixture("processing-retry");
 const repository = createDynamoProcessingRetryRepository(client, tables);
 
@@ -45,7 +45,6 @@ const claim = (claimId: string) =>
     ownerInstanceId: "instance-b",
     now,
     leaseExpiresAt: now + 300,
-    authority,
   });
 
 /** Seeds the row, then queues a second job over the one it was shown. */
@@ -62,7 +61,6 @@ async function queueNextOver(row: MeetingHistory) {
 }
 
 beforeAll(createTables);
-beforeEach(() => admit(true));
 afterAll(dispose);
 
 it.each([
@@ -105,13 +103,40 @@ it.each([
   });
 });
 
-it("claim refuses a live lease and a fenced runtime", async () => {
+it("claim refuses a live lease", async () => {
   await seed(runningRow());
   expect(await claim("claim-b")).toBeUndefined();
+  expect(await read()).toEqual(runningRow());
+});
+
+it("two workers claiming one job at once: exactly one claim lands", async () => {
   await seed(queuedRow());
-  await admit(false);
-  expect(await claim("claim-b")).toBeUndefined();
-  expect(await read()).toEqual(queuedRow());
+  const results = await Promise.all([claim("claim-x"), claim("claim-y")]);
+  const won = results.filter((job) => job !== undefined);
+  expect(won).toHaveLength(1);
+  expect((await read())?.processingRetry?.claim).toEqual(won[0]?.claim);
+});
+
+it("a claim retried after its lost response reports its own landed claim", async () => {
+  await seed(queuedRow());
+  const send = client.send.bind(client);
+  let retried = false;
+  const spy = jest
+    .spyOn(client, "send")
+    .mockImplementation(async (command, options) => {
+      if (retried || !(command instanceof UpdateItemCommand))
+        return send(command, options);
+      retried = true;
+      await send(command, options);
+      return send(command, options);
+    });
+  try {
+    expect(await claim("claim-retried")).toMatchObject({
+      claim: { claimId: "claim-retried" },
+    });
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 it("renew requires the matching claimId", async () => {

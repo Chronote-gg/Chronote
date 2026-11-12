@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { rm } from "node:fs/promises";
 import { fixture } from "../helpers/recordingContentFixture";
 import {
   recordSpeechRejection,
@@ -155,9 +156,9 @@ test.each(["fast", "slow"] as const)(
       expect(payload.speechRejections?.[0].phase).toBe(phase);
     } finally {
       consume.mockRestore();
-      await (
-        await import("../../src/services/tempFileService")
-      ).cleanupMeetingTempDir(meeting);
+      const { getMeetingTempDir } =
+        await import("../../src/services/tempFileService");
+      await rm(getMeetingTempDir(meeting), { recursive: true, force: true });
     }
   },
 );

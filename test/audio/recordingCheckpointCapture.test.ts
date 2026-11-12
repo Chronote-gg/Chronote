@@ -1,11 +1,12 @@
 /** @jest-environment node */
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   createRecordingCheckpointCapture,
   getCheckpointPcmBudget,
 } from "../../src/services/recordingCheckpointCapture";
+import type * as LifecycleTiming from "../../src/services/lifecycleTiming";
 import type { CheckpointArtifactInput } from "../../src/types/recordingCheckpoint";
 
 let directory: string;
@@ -112,22 +113,55 @@ test("ownership loss cancels a stop waiting for its save retry", async () => {
   f.capture.releaseSettledBuffers();
 });
 
-test("a sealed artifact producer refuses local writes before file creation", async () => {
+test("a retired capture publishes, retries and reports nothing more and frees its buffers", async () => {
+  let commitSignal: AbortSignal | undefined;
+  const commit = jest.fn(
+    (_artifacts: readonly CheckpointArtifactInput[], signal: AbortSignal) => {
+      commitSignal = signal;
+      return new Promise<boolean>((resolve) =>
+        signal.addEventListener("abort", () => resolve(false), { once: true }),
+      );
+    },
+  );
+  const f = fixture(commit);
+  const before = getCheckpointPcmBudget().reservedBytes;
+  f.capture.push("user", pcm(), 0);
+  f.capture.queueContent(contextSnapshot(1));
+  await jest.advanceTimersByTimeAsync(30_000);
+  expect(commit).toHaveBeenCalled();
+
+  f.capture.retire();
+
+  expect(commitSignal?.aborted).toBe(true);
+  expect(getCheckpointPcmBudget().reservedBytes).toBe(before);
+  expect(f.capture.push("user", pcm(), 31_000)).toBe(false);
+  expect(f.capture.queueContent(contextSnapshot(2))).toBe(false);
+  const calls = commit.mock.calls.length;
+  await jest.advanceTimersByTimeAsync(120_000);
+  expect(commit).toHaveBeenCalledTimes(calls);
+  expect(f.stopped).not.toHaveBeenCalled();
+  f.controller.abort();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(f.stopped).not.toHaveBeenCalled();
+  expect(f.capture.pending()).toEqual([]);
+});
+
+test("a failed local write stops the capture", async () => {
   const stopped = jest.fn();
-  const beginWrite = jest.fn(() => {
-    throw new Error("Producer is closed");
-  });
+  const snapshot = contextSnapshot(1);
+  // The capture writes exclusively, so an existing file makes the write fail.
+  writeFileSync(
+    path.join(directory, `${snapshot.kind}-${snapshot.sequence}.json`),
+    "",
+  );
   const capture = createRecordingCheckpointCapture({
     directory,
     startedAt: 0,
     signal: new AbortController().signal,
     commit: async () => true,
     stopCapture: stopped,
-    beginWrite,
   });
-  expect(capture.queueContent(contextSnapshot(1))).toBe(false);
-  expect(beginWrite).toHaveBeenCalled();
-  expect(readdirSync(directory)).toEqual([]);
+  expect(capture.queueContent(snapshot)).toBe(false);
   expect(stopped).toHaveBeenCalledWith("storage_preservation");
   await capture.settled();
 });
@@ -217,6 +251,37 @@ test("longOpenSnippetStillCheckpointsAtThirtySeconds", async () => {
   });
   expect(f.capture.snapshot().queuedBytes).toBe(0);
   await f.capture.finish();
+});
+
+test("a piece is sealed after the lifecycle's checkpoint segment period", async () => {
+  const segmentMs = 5_000;
+  await jest.isolateModulesAsync(async () => {
+    jest.doMock("../../src/services/lifecycleTiming", () => {
+      const actual = jest.requireActual<typeof LifecycleTiming>(
+        "../../src/services/lifecycleTiming",
+      );
+      return {
+        ...actual,
+        LIFECYCLE: { ...actual.LIFECYCLE, checkpointSegmentMs: segmentMs },
+      };
+    });
+    const capture =
+      await import("../../src/services/recordingCheckpointCapture");
+    const commit = jest.fn(async () => true);
+    const recording = capture.createRecordingCheckpointCapture({
+      directory,
+      startedAt: 0,
+      signal: new AbortController().signal,
+      commit,
+      stopCapture: jest.fn(),
+    });
+    recording.push("user", pcm(), 0);
+    await jest.advanceTimersByTimeAsync(segmentMs - 1);
+    expect(commit).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1);
+    expect(commit).toHaveBeenCalledTimes(1);
+    await recording.finish();
+  });
 });
 
 test("botAudioUsesSameDurableCoverage", async () => {

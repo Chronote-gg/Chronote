@@ -1,19 +1,17 @@
 import { createHash } from "node:crypto";
-import { createMockDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
+import { createMockMeetingHistoryTransitionRepository } from "../../src/repositories/meetingHistoryTransitions";
 import { createRecordingCheckpointService } from "../../src/services/recordingCheckpointService";
 import { resolveMeetingRuntimeConfig } from "../../src/services/meetingConfigService";
 import {
   generationContextSchema,
   completedTranscriptionSchema,
 } from "../../src/types/recordingContent";
-import {
-  history,
-  control,
-  context,
-  runtime,
-} from "../deployment/controlFixtures";
+import { history } from "../fixtures/meetingHistory";
 import type { MeetingHistory, ActiveMeetingLease } from "../../src/types/db";
-import type { CheckpointArtifactInput } from "../../src/types/recordingCheckpoint";
+import type {
+  CheckpointArtifactInput,
+  RecordingCaptureState,
+} from "../../src/types/recordingCheckpoint";
 /** A 48 kHz stereo PCM checkpoint piece whose intervals all bind `sourceId`. */
 export function pcmArtifact(
   sourceId: string,
@@ -57,6 +55,8 @@ export async function recoveryFixture(
     nowMs?: number;
     timestamp?: string;
     requested?: { transcribeMeeting: boolean; generateNotes: boolean };
+    /** The capture state the manifest records; still capturing by default. */
+    captureState?: RecordingCaptureState;
     artifacts?: CheckpointArtifactInput[];
     context?: (
       context: ReturnType<typeof generationContextSchema.parse>,
@@ -105,18 +105,10 @@ export async function recoveryFixture(
       },
     ],
   ]);
-  const records = new Map();
-  const repository = createMockDeploymentControlRepository(
-    records,
+  const repository = createMockMeetingHistoryTransitionRepository(
     histories,
     leases,
   );
-  const current = { ...control, coordinatorExpiresAt: now + 100 };
-  await repository.initializeControl(current);
-  const member = runtime("old");
-  member.readiness!.expiresAt = now + 100;
-  member.protection!.expiresAt = now + 100;
-  await repository.writeRuntime(member);
   const objects = new Map<string, Buffer>();
   const upload = jest.fn(async (key: string, body: string | Uint8Array) => {
     objects.set(key, Buffer.from(body));
@@ -261,7 +253,10 @@ export async function recoveryFixture(
     signal: new AbortController().signal,
     ownership,
     capture,
-    captureState: { kind: "capturing", startedAt: row.timestamp },
+    captureState: options.captureState ?? {
+      kind: "capturing",
+      startedAt: row.timestamp,
+    },
     expectedStatus: "starting",
     previous: undefined,
     artifacts: [
@@ -273,15 +268,11 @@ export async function recoveryFixture(
   if (result.kind !== "committed")
     throw new Error("Fixture checkpoint was not committed");
   leases.delete(row.guildId);
-  const claim = await repository.claimRecordingRecovery({
-    history: (await repository.getMeetingHistory(row))!,
-    lease: undefined,
-    context: { ...context, now },
-    attemptId: "generated-recovery",
-  });
-  if (!claim) throw new Error("Fixture recovery claim failed");
+  // The finisher reads the row as the capture left it; nothing claims it first.
+  const saved = await repository.getMeetingHistory(row);
+  if (!saved) throw new Error("Fixture history row is missing");
+  const claim = { history: saved };
   return {
-    records,
     repository,
     reader,
     objects,
@@ -292,7 +283,6 @@ export async function recoveryFixture(
     leases,
     now,
     nowMs,
-    context: { ...context, now },
     histories,
   };
 }

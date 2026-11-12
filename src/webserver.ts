@@ -1,4 +1,3 @@
-import { startMeetingRecoveryWorker } from "./services/meetingRecoveryWorkerService";
 import { discordInstallStateStore } from "./services/discordInstallStateStore";
 import {
   discordCallbackAuthentication,
@@ -49,12 +48,7 @@ import {
   buildDiscordAuthProfile,
   ensureDiscordAccessToken,
 } from "./services/discordAuthService";
-import { startPersonalMediaUploadWorker } from "./services/personalMediaUploadWorkerService";
-import { startProcessingRetryWorker } from "./services/processingRetryWorkerService";
-import {
-  getRuntimeReadiness,
-  whenRuntimeServing,
-} from "./services/runtimeLifecycleService";
+import { hasBeenReady } from "./services/workerRegistry";
 import { MOCK_STORAGE_UPLOAD_PATH } from "./constants";
 import type { RuntimeHealthServer } from "./services/runtimeHealthServer";
 
@@ -85,7 +79,7 @@ const getFrontendFallback = () =>
     : "/";
 
 export function setupWebServer(
-  healthServer?: RuntimeHealthServer,
+  healthServer?: Pick<RuntimeHealthServer, "activate">,
 ): Promise<void> {
   const app = express();
   const PORT = config.server.port;
@@ -137,29 +131,17 @@ export function setupWebServer(
   // Metrics middleware (must come before routes)
   app.use(metricsMiddleware);
 
-  // Health check endpoint
+  // Fails until the first ready registry write, then stays healthy for the life of the process.
   app.get("/health", (_, res) => {
+    const healthy = hasBeenReady();
     const healthCheck = {
-      status: "healthy",
+      status: healthy ? "healthy" : "starting",
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       environment: config.server.nodeEnv,
       version: config.server.npmPackageVersion,
     };
-    res.status(200).json(healthCheck);
-  });
-
-  // Readiness is warm dependency proof. Admission still requires a serving generation.
-  app.get("/ready", (_, res) => {
-    const readiness = getRuntimeReadiness();
-    const ready = Boolean(
-      readiness &&
-      readiness.expiresAt > Math.floor(Date.now() / 1000) &&
-      (readiness.runtimeMode === "api" || readiness.gatewayReady) &&
-      readiness.cacheReady &&
-      readiness.dependenciesReady,
-    );
-    res.status(ready ? 200 : 503).json({ status: ready ? "ready" : "warming" });
+    res.status(healthy ? 200 : 503).json(healthCheck);
   });
 
   // Prometheus metrics
@@ -538,9 +520,6 @@ export function setupWebServer(
   registerGuildRoutes(app);
   registerLiveMeetingRoutes(app);
 
-  whenRuntimeServing(() => startPersonalMediaUploadWorker());
-  whenRuntimeServing(() => startMeetingRecoveryWorker());
-  whenRuntimeServing(() => startProcessingRetryWorker());
   if (healthServer) {
     healthServer.activate(app);
     return Promise.resolve();

@@ -1,13 +1,10 @@
 import type { Client } from "discord.js";
 import type { MeetingData } from "../types/meeting-data";
 import { formatParticipantLabel } from "../utils/participants";
-import { isFixture, fixtureParticipant } from "./fixtureInputService";
 export function resolveSpeakerLabel(
   meeting: MeetingData,
   userId: string,
 ): string {
-  const fixture = fixtureParticipant(meeting, userId);
-  if (fixture) return fixture.displayName!;
   const participant = meeting.participants?.get(userId);
   if (!participant) return userId;
   return formatParticipantLabel(participant, {
@@ -21,7 +18,6 @@ export function finalTranscriptSpeakerLabel(
   meeting: MeetingData,
   userId: string,
 ): string {
-  if (isFixture(meeting)) return "Fixture speaker";
   const participant = meeting.participants.get(userId);
   const member = meeting.guild.members.cache.get(userId);
   const user = client.users.cache.get(userId);

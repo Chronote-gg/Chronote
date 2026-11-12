@@ -1,23 +1,15 @@
 import {
-  getMeetingProcessingSignal,
-  runMeetingProcessingEffect,
-  runMeetingNoticeMutation,
-} from "./services/meetingProcessingLifetime";
-import { recordNotesAcknowledgement } from "./observability/meetingNotesLatency";
-import {
-  beginRecordingDelivery,
-  acknowledgeRecordingDeliveryMessage,
-  finishRecordingDeliveryMutations,
-} from "./services/recordingDeliveryService";
-import {
-  DiscordAPIError,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
-  Message,
 } from "discord.js";
 import { MeetingData } from "./types/meeting-data";
+import type { MeetingHistory } from "./types/db";
+import type { MeetingProcessingOutcome } from "./types/meetingProcessing";
+import type { RecordingCaptureState } from "./types/meetingLifecycle";
+import type { CaptureCoverageSummary } from "./types/recordingCheckpoint";
+import { formatUserMention } from "./utils/participants";
 import { withMeetingCaptureNotice } from "./utils/meetingCaptureNotice";
 import { config } from "./services/configService";
 import { buildPortalMeetingUrl } from "./utils/portalLinks";
@@ -29,9 +21,8 @@ import {
   batchMeetingNotesEmbeds,
   buildMeetingNotesEmbeds,
 } from "./utils/meetingNotes";
-import { claimSummaryUpgrade } from "./services/summaryUpgradeService";
-import { captureEvent } from "./services/analyticsService";
-import { resolveMeetingActorId } from "./utils/meetingLifecycle";
+import { describeAutoRecordRule } from "./utils/meetingLifecycle";
+import { MEETING_END_REASONS } from "./types/meetingLifecycle";
 import {
   buildSummaryUpgradeBody,
   SUMMARY_UPGRADE,
@@ -41,14 +32,147 @@ const PROCESSING_COLOR = 0x3498db;
 const SUMMARY_COLOR = 0x00ae86;
 const DEFAULT_TITLE = "Meeting Summary";
 const MAX_FIELD_VALUE = 1024;
+const MS_PER_SECOND = 1000;
+const CANCELLED_COLOR = 0x6c757d;
+const CANCELLED_REASON_MAX_LENGTH = 700;
+const DEFAULT_CANCELLED_REASON =
+  "Not enough content detected to keep this meeting.";
 
-type MeetingMessagePayload = {
+export type MeetingMessagePayload = {
   embeds: EmbedBuilder[];
   components?: ActionRowBuilder<ButtonBuilder>[];
 };
 
-function buildMeetingHistoryKey(meeting: MeetingData): string {
-  return `${meeting.voiceChannel.id}#${meeting.startTime.toISOString()}`;
+export type SummaryUpgradeOffer = { url: string; recordedSeconds: number };
+
+/** Plain data every meeting embed renders from, whether the source is live or saved. */
+export type MeetingPresentation = {
+  guildId: string;
+  historyKey: string;
+  startTime: Date;
+  /** Actual end of capture; undefined when unknown or not yet ended. */
+  endTime?: Date;
+  /** Embed timestamp; undefined stamps the posting time. */
+  timestamp?: Date;
+  attendees: string[];
+  voiceChannel: string;
+  tags?: string[];
+  meetingName?: string;
+  summaryLabel?: string;
+  summarySentence?: string;
+  notes?: string;
+  generateNotes: boolean;
+  processing?: MeetingProcessingOutcome;
+  capture?: RecordingCaptureState;
+  /** Saved audio an interrupted meeting's notice reports; a live meeting has none yet. */
+  captureCoverage?: CaptureCoverageSummary;
+};
+
+function captureEnd(capture: RecordingCaptureState | undefined, end?: Date) {
+  if (capture?.kind !== "interrupted") return end;
+  return capture.endedAt ? new Date(capture.endedAt) : undefined;
+}
+
+export function presentationFromMeeting(
+  meeting: MeetingData,
+): MeetingPresentation {
+  const capture = meeting.recordingCaptureState;
+  return {
+    guildId: meeting.guildId,
+    historyKey: `${meeting.voiceChannel.id}#${meeting.startTime.toISOString()}`,
+    startTime: meeting.startTime,
+    endTime: captureEnd(capture, meeting.endTime),
+    attendees: Array.from(meeting.attendance),
+    voiceChannel: meeting.voiceChannel.name,
+    tags: meeting.tags,
+    meetingName: meeting.meetingName,
+    summaryLabel: meeting.summaryLabel,
+    summarySentence: meeting.summarySentence,
+    notes: meeting.notesText,
+    generateNotes: meeting.generateNotes,
+    processing: meeting.processing,
+    capture,
+  };
+}
+
+/**
+ * A saved row has no channel object, so the voice channel renders as a mention,
+ * and attendance comes from the participant snapshot rather than live presence.
+ * The embed timestamp is the meeting start, which delivery reads back as its marker.
+ */
+export function presentationFromHistory(
+  history: MeetingHistory,
+): MeetingPresentation {
+  const startTime = new Date(history.timestamp);
+  return {
+    guildId: history.guildId,
+    historyKey: history.channelId_timestamp,
+    startTime,
+    endTime: captureEnd(
+      history.capture,
+      new Date(startTime.getTime() + history.duration * MS_PER_SECOND),
+    ),
+    timestamp: startTime,
+    attendees: history.participants.map((participant) =>
+      formatUserMention(participant.id),
+    ),
+    voiceChannel: `<#${history.channelId}>`,
+    tags: history.tags,
+    meetingName: history.meetingName,
+    summaryLabel: history.summaryLabel,
+    summarySentence: history.summarySentence,
+    notes: history.notes,
+    generateNotes: history.generateNotes,
+    processing: history.processing,
+    capture: history.capture,
+    captureCoverage: history.captureCoverage,
+  };
+}
+
+/** What the auto-record cancellation message shows, from a live meeting or a saved row. */
+export type AutoRecordCancellation = Pick<
+  MeetingHistory,
+  | "startTriggeredByUserId"
+  | "autoRecordRule"
+  | "cancellationReason"
+  | "endReason"
+> & { voiceChannelName?: string };
+
+/** The embed that replaces the start message when an auto-recording is cancelled or stopped. */
+export function buildAutoRecordCancelledEmbed(
+  cancellation: AutoRecordCancellation,
+): EmbedBuilder {
+  const reason = cancellation.cancellationReason ?? DEFAULT_CANCELLED_REASON;
+  const trimmedReason =
+    reason.length > CANCELLED_REASON_MAX_LENGTH
+      ? `${reason.slice(0, CANCELLED_REASON_MAX_LENGTH - 3)}...`
+      : reason;
+  const dismissed = cancellation.endReason === MEETING_END_REASONS.DISMISSED;
+  return new EmbedBuilder()
+    .setTitle(dismissed ? "Auto-Recording Stopped" : "Auto-Recording Cancelled")
+    .setDescription(
+      dismissed
+        ? "Auto-recording was stopped before the meeting finished."
+        : "Auto-recording started and was cancelled.",
+    )
+    .addFields(
+      {
+        name: "Triggered by",
+        value: cancellation.startTriggeredByUserId
+          ? `<@${cancellation.startTriggeredByUserId}>`
+          : "Unknown",
+      },
+      {
+        name: "Rule",
+        value: describeAutoRecordRule(
+          cancellation.autoRecordRule,
+          cancellation.voiceChannelName,
+        ),
+      },
+      { name: "Reason", value: trimmedReason },
+    )
+    .setColor(CANCELLED_COLOR)
+    .setTimestamp();
 }
 
 function formatTimestamp(date: Date): string {
@@ -68,19 +192,14 @@ function truncateFieldValue(value: string, max = MAX_FIELD_VALUE): string {
   return `${value.slice(0, Math.max(0, max - 3))}...`;
 }
 
-function buildMeetingFields(meeting: MeetingData) {
-  const attendanceList = Array.from(meeting.attendance).join("\n");
+function buildMeetingFields(meeting: MeetingPresentation) {
+  const attendanceList = meeting.attendees.join("\n");
   const startLabel = formatTimestamp(meeting.startTime);
-  const actualEnd =
-    meeting.recordingCaptureState?.kind === "interrupted"
-      ? meeting.recordingCaptureState.endedAt
-        ? new Date(meeting.recordingCaptureState.endedAt)
-        : undefined
-      : meeting.endTime;
+  const actualEnd = meeting.endTime;
   const endLabel = actualEnd ? formatTimestamp(actualEnd) : "Unknown";
   const durationLabel = actualEnd
     ? formatDurationMinutes(meeting.startTime, actualEnd)
-    : meeting.recordingCaptureState?.kind === "interrupted"
+    : meeting.capture?.kind === "interrupted"
       ? "Unknown"
       : formatDurationMinutes(meeting.startTime, new Date());
 
@@ -92,7 +211,7 @@ function buildMeetingFields(meeting: MeetingData) {
       name: "Attendees",
       value: truncateFieldValue(attendanceList || "No members recorded."),
     },
-    { name: "Voice Channel", value: meeting.voiceChannel.name },
+    { name: "Voice Channel", value: meeting.voiceChannel },
   ];
 
   if (meeting.tags && meeting.tags.length) {
@@ -106,7 +225,7 @@ function buildMeetingFields(meeting: MeetingData) {
   return fields;
 }
 
-function resolveMeetingTitle(meeting: MeetingData): string {
+function resolveMeetingTitle(meeting: MeetingPresentation): string {
   const name = meeting.meetingName?.trim();
   if (name) return name;
   const label = meeting.summaryLabel?.trim();
@@ -114,7 +233,7 @@ function resolveMeetingTitle(meeting: MeetingData): string {
   return DEFAULT_TITLE;
 }
 
-function buildProcessingEmbed(meeting: MeetingData): EmbedBuilder {
+function buildProcessingEmbed(meeting: MeetingPresentation): EmbedBuilder {
   return new EmbedBuilder()
     .setTitle(`${resolveMeetingTitle(meeting)} (processing)`)
     .setColor(PROCESSING_COLOR)
@@ -125,7 +244,7 @@ function buildProcessingEmbed(meeting: MeetingData): EmbedBuilder {
     .setTimestamp();
 }
 
-function buildSummaryEmbed(meeting: MeetingData): EmbedBuilder {
+function buildSummaryEmbed(meeting: MeetingPresentation): EmbedBuilder {
   const summary =
     meeting.summarySentence?.trim() ?? meeting.summaryLabel?.trim();
   return new EmbedBuilder()
@@ -135,40 +254,42 @@ function buildSummaryEmbed(meeting: MeetingData): EmbedBuilder {
       withMeetingCaptureNotice(
         summary && summary.length > 0 ? summary : "Summary unavailable.",
         {
-          capture: meeting.recordingCaptureState,
+          capture: meeting.capture,
+          captureCoverage: meeting.captureCoverage,
           processing: meeting.processing,
-          notes: meeting.notesText,
+          notes: meeting.notes,
         },
       ),
     )
     .addFields(buildMeetingFields(meeting))
-    .setTimestamp();
+    .setTimestamp(meeting.timestamp);
 }
 
-function buildNotesEmbeds(meeting: MeetingData): EmbedBuilder[] {
+function buildNotesEmbeds(meeting: MeetingPresentation): EmbedBuilder[] {
   if (!meeting.generateNotes) return [];
-  const notes = meeting.notesText?.trim();
+  const notes = meeting.notes?.trim();
   const notesBody = notes || (meeting.processing ? "" : "Notes unavailable.");
   return buildMeetingNotesEmbeds({
     notesBody,
     color: SUMMARY_COLOR,
     processing: meeting.processing,
-    capture: meeting.recordingCaptureState,
-  }).map((embed) => embed.setTimestamp());
+    capture: meeting.capture,
+    captureCoverage: meeting.captureCoverage,
+  }).map((embed) => embed.setTimestamp(meeting.timestamp));
 }
 
-function buildMeetingPortalUrl(meeting: MeetingData): string {
+function buildMeetingPortalUrl(meeting: MeetingPresentation): string {
   const base = config.frontend.siteUrl.replace(/\/$/, "");
   return buildPortalMeetingUrl({
     baseUrl: base,
     guildId: meeting.guildId,
-    meetingId: buildMeetingHistoryKey(meeting),
+    meetingId: meeting.historyKey,
     fullScreen: true,
   });
 }
 
 function buildResultRow(
-  meeting: MeetingData,
+  meeting: MeetingPresentation,
   portalUrl: string,
   upgradeUrl?: string,
 ): ActionRowBuilder<ButtonBuilder> {
@@ -198,11 +319,11 @@ function buildResultRow(
 }
 
 function buildSummaryComponents(
-  meeting: MeetingData,
+  meeting: MeetingPresentation,
   portalUrl: string,
   upgradeUrl?: string,
 ): ActionRowBuilder<ButtonBuilder>[] {
-  const channelIdTimestamp = buildMeetingHistoryKey(meeting);
+  const channelIdTimestamp = meeting.historyKey;
   const encodedKey = Buffer.from(channelIdTimestamp).toString("base64");
   const feedbackIds = buildSummaryFeedbackButtonIds(channelIdTimestamp);
   const actionButtons: ButtonBuilder[] = [
@@ -242,157 +363,66 @@ function buildSummaryComponents(
   }
   return rows;
 }
-export function updateMeetingMessage(
+async function updateMeetingMessage(
   meeting: MeetingData,
   payload: MeetingMessagePayload,
   phase: Exclude<DeliveryPhase, "notes">,
-  finalization = false,
-): Promise<{ message?: Message; delivery: DeliveryResult }> {
-  const ownedNotice = Boolean(meeting.finalization) && !finalization;
-  const run = () =>
-    deliverMeetingMessage(meeting, payload, phase, finalization, ownedNotice);
-  return ownedNotice ? runMeetingProcessingEffect(meeting, run) : run();
-}
-function missingMeetingMessage(error: unknown): boolean {
-  return (
-    error instanceof DiscordAPIError &&
-    error.code === 10008 &&
-    error.status === 404
-  );
-}
-function rejectedMeetingMessage(error: unknown): boolean {
-  return (
-    error instanceof DiscordAPIError &&
-    error.status >= 400 &&
-    error.status < 500
-  );
-}
-function fallbackDiagnostics(
-  error: unknown,
-  finalization: boolean,
-): Pick<
-  Extract<DeliveryResult, { outcome: "sent_fallback" }>,
-  "errors" | "recoveredMissingMessage"
-> {
-  return finalization && missingMeetingMessage(error)
-    ? { errors: [], recoveredMissingMessage: { code: 10008, status: 404 } }
-    : { errors: [deliveryError(error)] };
-}
-async function deliverMeetingMessage(
-  meeting: MeetingData,
-  payload: MeetingMessagePayload,
-  phase: Exclude<DeliveryPhase, "notes">,
-  finalization: boolean,
-  ownedNotice: boolean,
-): Promise<{ message?: Message; delivery: DeliveryResult }> {
-  const signal =
-    finalization || ownedNotice
-      ? getMeetingProcessingSignal(meeting)
-      : undefined;
-  signal?.throwIfAborted();
+): Promise<DeliveryResult> {
   const channel = meeting.textChannel;
-  let fallback: ReturnType<typeof fallbackDiagnostics> = { errors: [] };
+  const errors: DeliveryResult["errors"] = [];
   if (meeting.startMessageId) {
     try {
       const message = await channel.messages.fetch(meeting.startMessageId);
-      signal?.throwIfAborted();
-      if (ownedNotice)
-        await runMeetingNoticeMutation(
-          meeting,
-          () => message.edit(payload),
-          rejectedMeetingMessage,
-        );
-      else await message.edit(payload);
-      if (finalization)
-        await acknowledgeRecordingDeliveryMessage(
-          meeting,
-          "summary",
-          message.id,
-        );
-      return {
-        message,
-        delivery: recordDelivery(meeting, phase, {
-          outcome: "edited_existing",
-          intended: 1,
-          sent: 1,
-          errors: [],
-        }),
-      };
+      await message.edit(payload);
+      return recordDelivery(meeting, phase, {
+        outcome: "edited_existing",
+        intended: 1,
+        sent: 1,
+        errors: [],
+      });
     } catch (error) {
-      signal?.throwIfAborted();
-      if ((finalization || ownedNotice) && !missingMeetingMessage(error))
-        throw error;
-      fallback = fallbackDiagnostics(error, finalization);
+      errors.push(deliveryError(error));
     }
   }
 
   try {
-    signal?.throwIfAborted();
-    const message = ownedNotice
-      ? await runMeetingNoticeMutation(
-          meeting,
-          () => channel.send(payload),
-          rejectedMeetingMessage,
-        )
-      : await channel.send(payload);
-    if (finalization)
-      await acknowledgeRecordingDeliveryMessage(meeting, "summary", message.id);
+    const message = await channel.send(payload);
     meeting.startMessageId = message.id;
-    return {
-      message,
-      delivery: recordDelivery(meeting, phase, {
-        outcome: "sent_fallback",
-        intended: 1,
-        sent: 1,
-        ...fallback,
-      }),
-    };
+    return recordDelivery(meeting, phase, {
+      outcome: "sent_fallback",
+      intended: 1,
+      sent: 1,
+      errors,
+    });
   } catch (error) {
-    if (finalization || ownedNotice) throw error;
-    return {
-      delivery: recordDelivery(meeting, phase, {
-        outcome: "failed",
-        intended: 1,
-        sent: 0,
-        errors: [...fallback.errors, deliveryError(error)],
-      }),
-    };
+    return recordDelivery(meeting, phase, {
+      outcome: "failed",
+      intended: 1,
+      sent: 0,
+      errors: [...errors, deliveryError(error)],
+    });
   }
 }
 
 export async function updateMeetingProcessingMessage(
   meeting: MeetingData,
 ): Promise<DeliveryResult> {
-  const { delivery } = await updateMeetingMessage(
+  return updateMeetingMessage(
     meeting,
     {
-      embeds: [buildProcessingEmbed(meeting)],
+      embeds: [buildProcessingEmbed(presentationFromMeeting(meeting))],
       components: [],
     },
     "processing",
   );
-  return delivery;
 }
 
-export function updateMeetingSummaryMessage(
-  meeting: MeetingData,
-  options?: { finalization: boolean },
-) {
-  return options?.finalization
-    ? runMeetingProcessingEffect(meeting, async () => {
-        await beginRecordingDelivery(meeting);
-        const result = await deliverMeetingSummary(meeting, true);
-        finishRecordingDeliveryMutations(meeting);
-        return result;
-      })
-    : deliverMeetingSummary(meeting, false);
-}
-async function deliverMeetingSummary(
-  meeting: MeetingData,
-  finalization: boolean,
-): Promise<{ summary: DeliveryResult; notes: DeliveryResult }> {
+/** The summary and notes messages for a finished meeting; the one renderer for every delivery path. */
+export function buildMeetingResultMessages(
+  meeting: MeetingPresentation,
+  upgrade?: SummaryUpgradeOffer,
+): { summary: MeetingMessagePayload; notes: MeetingMessagePayload[] } {
   const portalUrl = buildMeetingPortalUrl(meeting);
-  const upgrade = await claimSummaryUpgrade(meeting);
   const notesUpgradeUrl = upgrade ? new URL(upgrade.url) : undefined;
   notesUpgradeUrl?.searchParams.set("source", "discord_notes");
   const upgradeField = upgrade
@@ -403,130 +433,20 @@ async function deliverMeetingSummary(
     : undefined;
   const summaryEmbed = buildSummaryEmbed(meeting);
   if (upgradeField) summaryEmbed.addFields(upgradeField);
-  const summaryPayload: MeetingMessagePayload = {
-    embeds: [summaryEmbed],
-    components: buildSummaryComponents(meeting, portalUrl, upgrade?.url),
-  };
-  const { message: summaryMessage, delivery: summary } =
-    await updateMeetingMessage(
-      meeting,
-      summaryPayload,
-      "summary",
-      finalization,
-    );
-  if (summaryMessage) {
-    meeting.summaryMessageId = summaryMessage.id;
-  }
-  if (
-    upgrade &&
-    (summary.outcome === "edited_existing" ||
-      summary.outcome === "sent_fallback")
-  ) {
-    captureEvent("upgrade_offer_delivered", {
-      userId: resolveMeetingActorId(meeting),
-      guildId: meeting.guildId,
-      properties: { surface: "discord_summary", event_version: 1 },
-    });
-  }
-
   const noteEmbeds = buildNotesEmbeds(meeting);
   if (upgradeField) noteEmbeds.at(-1)?.addFields(upgradeField);
-  const notes = await sendMeetingNotes(
-    meeting,
-    noteEmbeds,
-    notesUpgradeUrl,
-    finalization,
-  );
-  return { summary, notes };
-}
-
-async function acknowledgeMeetingNotes(
-  meeting: MeetingData,
-  messageId: string,
-  complete: boolean,
-): Promise<void> {
-  const timing = meeting.notesText?.trim()
-    ? recordNotesAcknowledgement(meeting.notesDeliveryTiming, {
-        acknowledgedAt: new Date().toISOString(),
-        complete,
-        path: "live",
-      })
-    : undefined;
-  await acknowledgeRecordingDeliveryMessage(
-    meeting,
-    "notes",
-    messageId,
-    timing,
-  );
-}
-
-async function sendMeetingNotes(
-  meeting: MeetingData,
-  noteEmbeds: EmbedBuilder[],
-  upgradeUrl: URL | undefined,
-  finalization: boolean,
-): Promise<DeliveryResult> {
-  const noteEmbedBatches = batchMeetingNotesEmbeds(noteEmbeds);
-  const noteMessages: Message[] = [];
-  const errors: DeliveryResult["errors"] = [];
-  for (const embeds of noteEmbedBatches) {
-    const payload: MeetingMessagePayload = {
+  const batches = batchMeetingNotesEmbeds(noteEmbeds);
+  return {
+    summary: {
+      embeds: [summaryEmbed],
+      components: buildSummaryComponents(meeting, portalUrl, upgrade?.url),
+    },
+    notes: batches.map((embeds, index) => ({
       embeds,
       components:
-        embeds === noteEmbedBatches.at(-1)
-          ? [
-              buildResultRow(
-                meeting,
-                buildMeetingPortalUrl(meeting),
-                upgradeUrl?.toString(),
-              ),
-            ]
+        index === batches.length - 1
+          ? [buildResultRow(meeting, portalUrl, notesUpgradeUrl?.toString())]
           : [],
-    };
-    try {
-      if (finalization) getMeetingProcessingSignal(meeting).throwIfAborted();
-      const message = await meeting.textChannel.send(payload);
-      if (finalization) {
-        await acknowledgeMeetingNotes(
-          meeting,
-          message.id,
-          embeds === noteEmbedBatches.at(-1),
-        );
-      }
-      noteMessages.push(message);
-      if (upgradeUrl && embeds === noteEmbedBatches.at(-1)) {
-        captureEvent("upgrade_offer_delivered", {
-          userId: resolveMeetingActorId(meeting),
-          guildId: meeting.guildId,
-          properties: { surface: "discord_notes", event_version: 1 },
-        });
-      }
-    } catch (error) {
-      if (finalization) throw error;
-      errors.push(deliveryError(error));
-    }
-  }
-
-  if (noteMessages.length) {
-    meeting.notesMessageIds = noteMessages.map((note) => note.id);
-    meeting.notesChannelId = meeting.textChannel.id;
-  } else {
-    meeting.notesMessageIds = undefined;
-    meeting.notesChannelId = undefined;
-  }
-  const intended = noteEmbedBatches.length;
-  const sent = noteMessages.length;
-  return recordDelivery(meeting, "notes", {
-    outcome:
-      intended === 0
-        ? "not_applicable"
-        : sent === intended
-          ? "complete"
-          : sent > 0
-            ? "partial"
-            : "failed",
-    intended,
-    sent,
-    errors,
-  });
+    })),
+  };
 }

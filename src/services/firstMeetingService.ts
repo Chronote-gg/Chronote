@@ -116,13 +116,8 @@ async function verifiedLiveKind(
 ): Promise<"recording" | "processing" | null> {
   const lease = await getActiveMeetingLease(history.guildId);
   if (!lease || !matchesActiveLease(lease, history)) return null;
-  if (history.status === "interrupted" && lease.sessionMode !== "recovery")
-    return null;
   if (lease.status === "processing") return "processing";
-  if (
-    lease.sessionMode !== "recovery" &&
-    (lease.status === "starting" || lease.status === "in_progress")
-  ) {
+  if (lease.status === "starting" || lease.status === "in_progress") {
     return "recording";
   }
   return null;
@@ -150,11 +145,11 @@ async function deriveState(
     history.status === "starting" ||
     history.status === "in_progress" ||
     history.status === "processing";
-  if (active || history.status === "interrupted") {
+  if (active) {
     const kind = await verifiedLiveKind(history);
     if (kind) return { kind, meeting };
+    return { kind: "attention", reason: "status_unknown", meeting };
   }
-  if (active) return { kind: "attention", reason: "status_unknown", meeting };
   return terminalState(history, meeting);
 }
 

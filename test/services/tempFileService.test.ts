@@ -1,3 +1,4 @@
+/** @jest-environment node */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -33,153 +34,106 @@ describe("tempFileService", () => {
     jest.resetModules();
   });
 
-  it("keeps a crashed retention lock outside the scanned roots", async () => {
-    const root = await fs.promises.mkdtemp(
-      path.join(os.tmpdir(), "chronote-lock-"),
+  it("creates the meeting directory under the meeting root", async () => {
+    const baseDir = await fs.promises.mkdtemp(
+      path.join(os.tmpdir(), "chronote-clean-"),
     );
-    const service = await loadService(path.join(root, "working"));
+    const service = await loadService(baseDir);
     const meeting = buildMeeting();
-    await service.ensureMeetingTempDir(meeting);
-    const open = jest.spyOn(fs.promises, "open");
     try {
-      await service.retainMeetingTempDir(meeting, "fixture");
-      const lockPath = String(
-        open.mock.calls.find((call) => call[1] === "wx")?.[0],
+      const dir = await service.ensureMeetingTempDir(meeting);
+      expect(dir).toBe(service.getMeetingTempDir(meeting));
+      expect(fs.existsSync(dir)).toBe(true);
+    } finally {
+      await removeTestDirectory(baseDir, "chronote-clean-");
+    }
+  });
+
+  async function sweepFixture(prefix: string) {
+    const baseDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), prefix));
+    const service = await loadService(baseDir);
+    const { LIFECYCLE } = await import("../../src/services/lifecycleTiming");
+    const old = (nowMs: number) =>
+      new Date(nowMs - LIFECYCLE.localSweepAgeMs - 1000);
+    const make = async (relative: string, mtime?: Date) => {
+      const dir = path.join(service.getTempBaseDir(), relative);
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.writeFile(path.join(dir, "piece.pcm"), "audio");
+      if (mtime) await fs.promises.utimes(dir, mtime, mtime);
+      return dir;
+    };
+    return { baseDir, service, LIFECYCLE, old, make };
+  }
+
+  it("the sweep removes old per-meeting directories that nothing in this process holds", async () => {
+    const f = await sweepFixture("chronote-sweep-");
+    const nowMs = Date.now();
+    try {
+      const removed = [
+        await f.make("m/synthetic-abandoned", f.old(nowMs)),
+        await f.make("recovery-mix-synthetic-abandoned-abc123", f.old(nowMs)),
+        await f.make("r/0123456789abcdef-abc123", f.old(nowMs)),
+        await f.make("processing-retry-abc123", f.old(nowMs)),
+      ];
+      const kept = [
+        await f.make("m/synthetic-live", f.old(nowMs)),
+        await f.make("recovery-mix-synthetic-live-abc123", f.old(nowMs)),
+        await f.make("m/synthetic-recent"),
+        await f.make("r/fedcba9876543210-abc123"),
+        await f.make("personal-upload/synthetic-upload", f.old(nowMs)),
+      ];
+      await f.service.sweepLocalMeetingDirs(
+        (meetingId) => meetingId === "synthetic-live",
+        nowMs,
       );
-      expect(path.dirname(lockPath)).not.toBe(service.getRetainedTempBaseDir());
-      // Simulate the lock left behind when the process dies before unlink.
-      await fs.promises.writeFile(lockPath, "", { flag: "wx" });
-      await fs.promises.rm(service.getRetainedMeetingTempDir(meeting), {
-        recursive: true,
-      });
-      const { createRuntimeArtifactStorage } =
-        await import("../../src/services/runtimeArtifactStorage");
-      const { createArtifactProducerRegistry } =
-        await import("../../src/services/artifactProducerRegistry");
-      const storage = createRuntimeArtifactStorage({
-        roots: {
-          working: service.getTempBaseDir(),
-          retained: service.getRetainedTempBaseDir(),
-        },
-        producers: createArtifactProducerRegistry(),
-        cleanup: { seal: async () => {}, resume: () => {} },
-        authorize: async () => {
-          throw new Error("No artifacts expected");
-        },
-      });
-      await expect(storage.seal()).resolves.toMatchObject({ authorities: [] });
+      for (const dir of removed) expect(fs.existsSync(dir)).toBe(false);
+      for (const dir of kept) expect(fs.existsSync(dir)).toBe(true);
     } finally {
-      open.mockRestore();
-      await removeTestDirectory(root, "chronote-lock-");
+      await removeTestDirectory(f.baseDir, "chronote-sweep-");
     }
   });
 
-  it("creates and cleans meeting temp directories", async () => {
-    const baseDir = path.join(os.tmpdir(), `chronote-test-${Date.now()}`);
-    const service = await loadService(baseDir);
-    const meeting = buildMeeting();
-
-    const dir = await service.ensureMeetingTempDir(meeting);
-    expect(dir).toBe(service.getMeetingTempDir(meeting));
-    expect(fs.existsSync(dir)).toBe(true);
-
-    await service.cleanupMeetingTempDir(meeting);
-    expect(fs.existsSync(dir)).toBe(false);
-  });
-
-  it("cleans the base temp directory", async () => {
-    const baseDir = path.join(os.tmpdir(), `chronote-test-${Date.now()}`);
-    const service = await loadService(baseDir);
-
-    const dir = await service.ensureTempBaseDir();
-    expect(dir).toBe(service.getTempBaseDir());
-    expect(fs.existsSync(dir)).toBe(true);
-
-    await service.cleanupTempBaseDir();
-    expect(fs.existsSync(dir)).toBe(false);
-  });
-
-  it("startup and meeting cleanup preserve unknown files", async () => {
-    const baseDir = await fs.promises.mkdtemp(
-      path.join(os.tmpdir(), "chronote-unknown-"),
-    );
-    const service = await loadService(baseDir);
-    const meeting = buildMeeting();
-    const dir = await service.ensureMeetingTempDir(meeting);
-    const filename = path.join(dir, "unverified.pcm");
-    await fs.promises.writeFile(filename, "original");
+  it("a sweep root that is not a real directory is skipped and the others are still swept", async () => {
+    const f = await sweepFixture("chronote-sweep-root-");
+    const nowMs = Date.now();
     try {
-      await service.cleanupMeetingTempDir(meeting);
-      expect(await fs.promises.readFile(filename, "utf8")).toBe("original");
-      await service.cleanupTempBaseDir();
-      expect(await fs.promises.readFile(filename, "utf8")).toBe("original");
+      await fs.promises.mkdir(f.service.getTempBaseDir(), { recursive: true });
+      await fs.promises.writeFile(
+        path.join(f.service.getTempBaseDir(), "r"),
+        "not a directory",
+      );
+      const abandoned = await f.make("m/synthetic-abandoned", f.old(nowMs));
+      await f.service.sweepLocalMeetingDirs(() => false, nowMs);
+      expect(fs.existsSync(abandoned)).toBe(false);
+      expect(
+        fs.statSync(path.join(f.service.getTempBaseDir(), "r")).isFile(),
+      ).toBe(true);
     } finally {
-      await removeTestDirectory(baseDir, "chronote-unknown-");
+      await removeTestDirectory(f.baseDir, "chronote-sweep-root-");
     }
   });
 
-  it("retains meeting temp directories outside the cleanup base", async () => {
-    const baseDir = path.join(os.tmpdir(), `chronote-test-${Date.now()}`);
-    const service = await loadService(baseDir);
-    const meeting = buildMeeting();
-    const dir = await service.ensureMeetingTempDir(meeting);
-    const recordingPath = path.join(dir, "recording.mp3");
-    await fs.promises.writeFile(recordingPath, Buffer.from([1, 2, 3]));
-
-    const retainedDir = await service.retainMeetingTempDir(
-      meeting,
-      "audio_upload_failed",
-    );
-
-    expect(retainedDir).toBe(service.getRetainedMeetingTempDir(meeting));
-    expect(fs.existsSync(dir)).toBe(false);
-    expect(fs.existsSync(path.join(retainedDir!, "recording.mp3"))).toBe(true);
-    await service.cleanupTempBaseDir();
-    expect(fs.existsSync(retainedDir!)).toBe(true);
-
-    const retention = JSON.parse(
-      await fs.promises.readFile(
-        path.join(retainedDir!, "retention.json"),
-        "utf8",
-      ),
-    ) as { reason: string; meetingId: string };
-    expect(retention).toEqual(
-      expect.objectContaining({
-        reason: "audio_upload_failed",
-        meetingId: meeting.meetingId,
-      }),
-    );
-
-    await fs.promises.rm(retainedDir!, {
-      recursive: true,
-      force: true,
-    });
-  });
-
-  it("never replaces an earlier retained meeting", async () => {
-    const baseDir = await fs.promises.mkdtemp(
-      path.join(os.tmpdir(), "chronote-retain-"),
-    );
-    const service = await loadService(baseDir);
-    const meeting = { ...buildMeeting(), meetingId: path.basename(baseDir) };
-    const source = await service.ensureMeetingTempDir(meeting);
-    const retained = service.getRetainedMeetingTempDir(meeting);
-    await fs.promises.mkdir(retained, { recursive: true });
-    await fs.promises.writeFile(path.join(retained, "earlier"), "earlier");
-    await fs.promises.writeFile(path.join(source, "later"), "later");
+  it("the sweep runs every hour until it is stopped", async () => {
+    const f = await sweepFixture("chronote-sweep-timer-");
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+    // The sweep's file system calls are real, so wait out a bounded number of turns for them.
+    const removal = async (dir: string) => {
+      for (let turn = 0; turn < 200 && fs.existsSync(dir); turn += 1)
+        await new Promise((resolve) => setImmediate(resolve));
+    };
     try {
-      expect(
-        await service.retainMeetingTempDir(meeting, "failed"),
-      ).toBeUndefined();
-      expect(
-        await fs.promises.readFile(path.join(source, "later"), "utf8"),
-      ).toBe("later");
-      expect(
-        await fs.promises.readFile(path.join(retained, "earlier"), "utf8"),
-      ).toBe("earlier");
+      const stop = f.service.startLocalSweep(() => false);
+      // Let the immediate sweep finish first, so only the hourly one can remove this.
+      await f.service.sweepLocalMeetingDirs(() => false, Date.now());
+      const dir = await f.make("m/synthetic-later", f.old(Date.now()));
+      await jest.advanceTimersByTimeAsync(f.LIFECYCLE.localSweepMs);
+      await removal(dir);
+      expect(fs.existsSync(dir)).toBe(false);
+      stop();
+      expect(jest.getTimerCount()).toBe(0);
     } finally {
-      await removeTestDirectory(baseDir, "chronote-retain-");
-      await fs.promises.rm(retained, { recursive: true, force: true });
+      jest.useRealTimers();
+      await removeTestDirectory(f.baseDir, "chronote-sweep-timer-");
     }
   });
 });

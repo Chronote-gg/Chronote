@@ -90,6 +90,9 @@ function lifecycleBlock(
   if (isPersonalMeeting(history)) return "personal_meeting";
   if (originalPublicationUnsettled(publicationSnapshot(history)))
     return "processing_in_progress";
+  // A lifecycle version 2 row is terminal while its finish pipeline still owns it.
+  if (history.lifecycleVersion === 2 && history.finish)
+    return "processing_in_progress";
   if (!history.processing) return "no_processing_record";
   const status = history.processingRetry?.status;
   if (status === "queued" || status === "running") return "job_active";

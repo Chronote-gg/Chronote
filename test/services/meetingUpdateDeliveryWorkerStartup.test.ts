@@ -1,4 +1,8 @@
 /** @jest-environment node */
+// These suites exercise the pollers themselves; eligibility gating has its own suite.
+jest.mock("../../src/services/workerRegistry", () => ({
+  isEligible: () => true,
+}));
 import "./meetingUpdateDeliveryRuntime";
 import { createMockMeetingUpdateDeliveryRepository } from "../../src/repositories/mockMeetingUpdateDeliveryRepository";
 jest.mock("../../src/db", () => ({
@@ -15,10 +19,7 @@ async function startup() {
   const worker =
     await import("../../src/services/meetingUpdateDeliveryWorkerService");
   const db = await import("../../src/db");
-  const repository = createMockMeetingUpdateDeliveryRepository(
-    new Map(),
-    () => false,
-  );
+  const repository = createMockMeetingUpdateDeliveryRepository(new Map());
   jest
     .mocked(db.getMeetingUpdateDeliveryRepository)
     .mockReturnValue(repository);

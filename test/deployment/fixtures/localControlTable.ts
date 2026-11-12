@@ -29,7 +29,7 @@ export const createLocalControlTable = (
 export function localControlTable() {
   const client = new DynamoDBClient({
     region: "local",
-    endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
+    endpoint: process.env.TEST_DYNAMODB_ENDPOINT,
     credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
   });
   const createTable = (TableName: string) =>

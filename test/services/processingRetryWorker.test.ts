@@ -3,23 +3,14 @@ jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 jest.mock("../../src/services/analyticsService", () => ({
   captureEvent: jest.fn(),
 }));
-jest.mock("../../src/services/runtimeLifecycleService", () => ({
-  beginRuntimeWork: () => ({ settle: jest.fn(), transition: jest.fn() }),
-  getRuntimeAdmissionContext: jest.fn(),
-}));
-import { PROCESSING_RETRY_CLAIM_SECONDS } from "../../src/constants";
+import { PROCESSING_RETRY_CLAIM_RENEWAL_MS } from "../../src/constants";
 import { processingRetryJobs } from "../../src/metrics";
 import { createMockMeetingUpdateDeliveryRepository } from "../../src/repositories/mockMeetingUpdateDeliveryRepository";
 import { createMockProcessingRetryRepository } from "../../src/repositories/processingRetryRepository";
 import { captureEvent } from "../../src/services/analyticsService";
 import { createMeetingUpdateService } from "../../src/services/meetingUpdateService";
-import { getRuntimeAdmissionContext } from "../../src/services/runtimeLifecycleService";
 import { runNotionMutation } from "../../src/services/notionOperationLifetime";
-import {
-  beginRuntimeWorkClaim,
-  fenceRuntimeWorkAdmissions,
-  getRuntimeWorkAdmissionCheckpoints,
-} from "../../src/services/runtimeWorkAdmissionService";
+import { beginShutdown } from "../../src/services/shutdownSignal";
 import type { ProcessingRetryRun } from "../../src/services/processingRetryStages";
 import {
   createProcessingRetryWorker,
@@ -30,13 +21,11 @@ import type { MeetingHistory } from "../../src/types/db";
 import type { ProcessingRetryJob } from "../../src/types/meetingProcessingRetry";
 import type { MeetingUpdateKey } from "../../src/types/meetingUpdateDelivery";
 import { key, now } from "../types/meetingUpdateDelivery.fixture";
-import { authority } from "../repositories/meetingUpdateDeliveryContract";
 import {
   regenerationRow,
   runningJob,
 } from "../repositories/meetingRegenerationContract";
 
-type RetryWork = ReturnType<ProcessingRetryWorkerDependencies["begin"]>;
 const REQUESTER = "111111111111111111";
 const queuedJob: ProcessingRetryJob = {
   ...runningJob,
@@ -63,7 +52,6 @@ const succeeded: ProcessingRetryRun = {
 
 let histories: Map<string, MeetingHistory[]>;
 let rows: ReturnType<typeof createMockMeetingUpdateDeliveryRepository>;
-let works: (RetryWork & { acknowledgeTerminal: jest.Mock })[];
 let deps: ProcessingRetryWorkerDependencies & {
   run: jest.Mock;
   save: jest.Mock;
@@ -86,35 +74,12 @@ const stored = (at = key) =>
     .get(at.guildId)!
     .find((row) => row.channelId_timestamp === at.channelId_timestamp)!;
 
-function stubWork() {
-  const controller = new AbortController();
-  const work = {
-    signal: controller.signal,
-    trackPromise: <T>(run: () => Promise<T>) => run(),
-    trackEffect: <T>(run: () => Promise<T>) => {
-      controller.signal.throwIfAborted();
-      return run();
-    },
-    authority: async () => authority,
-    recordClaim: jest.fn(),
-    claimed: jest.fn(),
-    acknowledgeTerminal: jest.fn(),
-    acknowledgeReadOnlyRecoveryPoll: jest.fn(),
-    fence: jest.fn(() => controller.abort()),
-    settle: jest.fn(async () => {}),
-  };
-  works.push(work);
-  return work;
-}
-
 beforeEach(() => {
   histories = new Map();
-  works = [];
-  rows = createMockMeetingUpdateDeliveryRepository(histories, () => true);
+  rows = createMockMeetingUpdateDeliveryRepository(histories);
   deps = {
-    repository: createMockProcessingRetryRepository(histories, () => true),
+    repository: createMockProcessingRetryRepository(histories),
     rows,
-    begin: jest.fn(() => stubWork()),
     run: jest.fn(async () => succeeded),
     save: jest.fn(
       createMeetingUpdateService({
@@ -127,6 +92,7 @@ beforeEach(() => {
     reader: () => ({ read: jest.fn(), readVerifiedObject: jest.fn() }),
     now: () => now,
     instanceId: () => "instance-a",
+    isEligible: () => true,
   };
   jest.mocked(captureEvent).mockClear();
 });
@@ -196,7 +162,6 @@ it("claims a queued job and saves its result with processing_retry provenance", 
       },
     }),
   );
-  expect(works[0].acknowledgeTerminal).toHaveBeenCalled();
   expect(stored()).toMatchObject({
     notes: "Regenerated",
     processingRetry: { status: "succeeded", countedAttempts: 1 },
@@ -207,17 +172,19 @@ it("claims a queued job and saves its result with processing_retry provenance", 
 
 it("never runs more than two jobs at once", async () => {
   for (const index of [1, 2, 3]) seed({}, keyAt(index));
-  deps.run.mockImplementation(
-    ({ signal }: { signal: AbortSignal }) =>
-      new Promise((_, reject) =>
-        signal.addEventListener("abort", () => reject(signal.reason)),
-      ),
-  );
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  deps.run.mockImplementation(async () => {
+    await held;
+    return succeeded;
+  });
   const worker = createProcessingRetryWorker(deps);
   await worker.poll();
   await worker.poll();
   expect(deps.run).toHaveBeenCalledTimes(2);
-  for (const work of works) work.fence();
+  release();
   await worker.drain();
 });
 
@@ -242,7 +209,43 @@ it("a failed stage writes only the failed job and removes it from the queue", as
     countedAttempts: 1,
   });
   expect(after.processingRetryQueue).toBeUndefined();
-  expect(works[0].acknowledgeTerminal).toHaveBeenCalled();
+});
+
+describe("a meeting the finish pipeline gave up on", () => {
+  const pipelineFailed: Partial<MeetingHistory> = {
+    lifecycleVersion: 2,
+    status: "failed",
+    capture: {
+      kind: "complete",
+      startedAt: "2026-10-22T11:00:00.000Z",
+      endedAt: "2026-10-22T11:30:00.000Z",
+    },
+  };
+
+  it("is complete once a retry stores its notes", async () => {
+    seed(pipelineFailed);
+    await pollOnce();
+    expect(stored()).toMatchObject({
+      status: "complete",
+      notes: "Regenerated",
+      processingRetry: { status: "succeeded" },
+    });
+  });
+
+  it("stays failed when the retry fails", async () => {
+    seed(pipelineFailed);
+    deps.run.mockResolvedValue({
+      kind: "failed",
+      reason: "stage_failed",
+      settingsSource: "current",
+      transcriptSource: "existing",
+    });
+    await pollOnce();
+    expect(stored()).toMatchObject({
+      status: "failed",
+      processingRetry: { status: "failed" },
+    });
+  });
 });
 
 it("notes edited during the run fail the job with notes_changed and write no content", async () => {
@@ -290,7 +293,6 @@ it("a lost claim stops without any terminal write", async () => {
     claim: { ownerInstanceId: "instance-b" },
   });
   expect(stored().notes).toBe("Original synthetic notes");
-  expect(works[0].acknowledgeTerminal).not.toHaveBeenCalled();
 });
 
 it("re-claims a running job whose lease lapsed", async () => {
@@ -343,14 +345,57 @@ it("an unexpected error fails the job as unknown and logs the alarm line", async
   expectFailedUnknownWithAlarm(error);
 });
 
-it("a fenced run leaves the job running for its lease to lapse", async () => {
+it("a lost lease renewal aborts the job's signal and no later write is attempted", async () => {
+  jest.useFakeTimers({ doNotFake: ["setImmediate", "queueMicrotask"] });
+  try {
+    seed();
+    const renew = jest.spyOn(deps.repository, "renew").mockResolvedValue(false);
+    const fail = jest.spyOn(deps.repository, "fail");
+    let signal: AbortSignal | undefined;
+    deps.run.mockImplementation(
+      (input: { signal: AbortSignal }) =>
+        new Promise((_, reject) => {
+          signal = input.signal;
+          input.signal.addEventListener("abort", () =>
+            reject(input.signal.reason),
+          );
+        }),
+    );
+    const worker = createProcessingRetryWorker(deps);
+    await worker.poll();
+    expect(signal?.aborted).toBe(false);
+    await jest.advanceTimersByTimeAsync(PROCESSING_RETRY_CLAIM_RENEWAL_MS);
+    await worker.drain();
+    expect(renew).toHaveBeenCalledTimes(1);
+    expect(signal?.aborted).toBe(true);
+    expect(deps.save).not.toHaveBeenCalled();
+    expect(fail).not.toHaveBeenCalled();
+    expect(stored().processingRetry).toMatchObject({ status: "running" });
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+it("two workers claim the same job: exactly one runs it", async () => {
   seed();
-  deps.run.mockImplementation(async () => {
-    works[0].fence();
-    throw new Error("aborted");
+  const other = { ...deps, instanceId: () => "instance-b" };
+  const first = createProcessingRetryWorker(deps);
+  const second = createProcessingRetryWorker(other);
+  const claim = jest.spyOn(deps.repository, "claim");
+  await Promise.all([first.poll(), second.poll()]);
+  await Promise.all([first.drain(), second.drain()]);
+  expect(claim).toHaveBeenCalledTimes(2);
+  expect(deps.run).toHaveBeenCalledTimes(1);
+  expect(stored().processingRetry).toMatchObject({
+    status: "succeeded",
+    countedAttempts: 1,
   });
+});
+
+it("runs a job with no deployment control record present", async () => {
+  seed();
   await pollOnce();
-  expect(stored().processingRetry).toMatchObject({ status: "running" });
+  expect(stored().processingRetry).toMatchObject({ status: "succeeded" });
 });
 
 it("a save that committed but reported a conflict counts as saved", async () => {
@@ -363,7 +408,6 @@ it("a save that committed but reported a conflict counts as saved", async () => 
   await pollOnce();
   expect(deps.save).toHaveBeenCalledTimes(1);
   expect(stored().processingRetry).toMatchObject({ status: "succeeded" });
-  expect(works[0].acknowledgeTerminal).toHaveBeenCalled();
 });
 
 it("a save that keeps conflicting under a held claim fails unknown after three attempts", async () => {
@@ -383,53 +427,10 @@ it("a throwing claim is logged and the key skipped", async () => {
     .mockRejectedValue(new Error("unknown outcome"));
   await pollOnce();
   expect(deps.run).not.toHaveBeenCalled();
-  const [submitted] = jest.mocked(deps.repository.claim).mock.calls[0];
-  expect(works[0].recordClaim).toHaveBeenCalledWith({
-    claimId: submitted.claimId,
-    instanceId: "instance-a",
-    expiresAt: now + 300,
-  });
-  expect(works[0].fence).toHaveBeenCalled();
   expect(error).toHaveBeenCalledWith(
     PROCESSING_RETRY_WORKER_FAILED_LOG,
     expect.anything(),
   );
-});
-
-it("a refused work admission warns once without paging", async () => {
-  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-  const error = jest.spyOn(console, "error").mockImplementation(() => {});
-  seed();
-  deps.begin = jest.fn(() => {
-    throw new Error("Runtime is not accepting work");
-  });
-  const worker = createProcessingRetryWorker(deps);
-  await worker.poll();
-  await worker.poll();
-  expect(deps.begin).toHaveBeenCalledTimes(2);
-  expect(warn).toHaveBeenCalledTimes(1);
-  expect(error).not.toHaveBeenCalled();
-});
-
-it("claims nothing without serving authority", async () => {
-  seed();
-  deps.begin = jest.fn(() => ({
-    ...stubWork(),
-    authority: async () => ({
-      kind: "session" as const,
-      ownership: {
-        guildId: key.guildId,
-        meetingId: "synthetic-meeting",
-        ownerInstanceId: "instance-a",
-        executionVersion: 1,
-        voiceOperationAttemptId: "attempt-1",
-      },
-      now,
-    }),
-  }));
-  await pollOnce();
-  expect(deps.run).not.toHaveBeenCalled();
-  expect(stored().processingRetry).toMatchObject({ status: "queued" });
 });
 
 it("a save that commits and then throws still counts as saved", async () => {
@@ -442,7 +443,6 @@ it("a save that commits and then throws still counts as saved", async () => {
   });
   await pollOnce();
   expect(stored().processingRetry).toMatchObject({ status: "succeeded" });
-  expect(works[0].acknowledgeTerminal).toHaveBeenCalled();
   expect(captureEvent).toHaveBeenCalledWith(
     "meeting_processing_retry_completed",
     expect.objectContaining({
@@ -533,16 +533,17 @@ describe("Notion auto-sync after the save", () => {
       }),
     );
 
-  it("runs under the job's work, so the mutation is admitted", async () => {
+  it("runs under the job's signal, so the mutation is admitted", async () => {
     const error = jest.spyOn(console, "error").mockImplementation(() => {});
     seed();
     const exported = jest.fn(async () => "exported");
     saveWithSync((signal) => runNotionMutation(signal, exported));
     await pollOnce();
-    expect(deps.save.mock.calls[0][0].signal).toBe(works[0].signal);
+    expect(deps.save.mock.calls[0][0].signal).toBe(
+      deps.run.mock.calls[0][0].signal,
+    );
     expect(exported).toHaveBeenCalled();
     expect(stored().processingRetry).toMatchObject({ status: "succeeded" });
-    expect(works[0].acknowledgeTerminal).toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
   });
 
@@ -566,79 +567,16 @@ describe("Notion auto-sync after the save", () => {
   });
 });
 
-describe("with real runtime work admission", () => {
-  beforeEach(() => {
-    jest
-      .mocked(getRuntimeAdmissionContext)
-      .mockResolvedValue(authority.context);
-    deps.begin = beginRuntimeWorkClaim;
+// Shutdown is process-wide and cannot be undone, so this runs last.
+it("a worker shut down before it claims anything logs no failure line", async () => {
+  const error = jest.spyOn(console, "error").mockImplementation(() => {});
+  seed();
+  jest.spyOn(deps.rows, "getStrong").mockImplementation(async () => {
+    beginShutdown();
+    throw new Error("aborted");
   });
-  afterEach(() => {
-    fenceRuntimeWorkAdmissions();
-  });
-
-  it("releases a work handle fenced before its claim was sent, without paging", async () => {
-    const error = jest.spyOn(console, "error").mockImplementation(() => {});
-    seed();
-    jest.spyOn(deps.rows, "getStrong").mockImplementation(async () => {
-      fenceRuntimeWorkAdmissions();
-      throw new Error("aborted");
-    });
-    await pollOnce();
-    expect(getRuntimeWorkAdmissionCheckpoints()).toEqual([]);
-    expect(error).not.toHaveBeenCalled();
-    expect(stored().processingRetry).toMatchObject({ status: "queued" });
-  });
-
-  it("skips a key without paging when admission closes before the claim", async () => {
-    const error = jest.spyOn(console, "error").mockImplementation(() => {});
-    seed();
-    jest
-      .mocked(getRuntimeAdmissionContext)
-      .mockRejectedValue(new Error("Runtime is not serving"));
-    await pollOnce();
-    expect(error).not.toHaveBeenCalled();
-    expect(getRuntimeWorkAdmissionCheckpoints()).toEqual([]);
-    expect(stored().processingRetry).toMatchObject({ status: "queued" });
-  });
-
-  it("releases the work handle after a success", async () => {
-    seed();
-    await pollOnce();
-    expect(stored().processingRetry).toMatchObject({ status: "succeeded" });
-    expect(getRuntimeWorkAdmissionCheckpoints()).toEqual([]);
-  });
-
-  it("releases the work handle after a failure", async () => {
-    seed();
-    deps.run.mockResolvedValue({
-      kind: "failed",
-      reason: "stage_failed",
-      settingsSource: "current",
-      transcriptSource: "existing",
-    });
-    await pollOnce();
-    expect(stored().processingRetry).toMatchObject({ status: "failed" });
-    expect(getRuntimeWorkAdmissionCheckpoints()).toEqual([]);
-  });
-
-  // Leaves its fenced handle registered, so it runs last.
-  it("claims a key again after its lease lapses while a fenced handle stays registered", async () => {
-    let clock = now;
-    deps.now = () => clock;
-    seed();
-    deps.run.mockImplementationOnce(async () => {
-      fenceRuntimeWorkAdmissions();
-      throw new Error("lease lost");
-    });
-    await pollOnce();
-    expect(stored().processingRetry).toMatchObject({ status: "running" });
-    clock += PROCESSING_RETRY_CLAIM_SECONDS + 1;
-    await pollOnce();
-    expect(deps.run).toHaveBeenCalledTimes(2);
-    expect(stored().processingRetry).toMatchObject({ status: "succeeded" });
-    expect(getRuntimeWorkAdmissionCheckpoints()).toEqual([
-      expect.objectContaining({ fenced: true, stage: "unresolved" }),
-    ]);
-  });
+  await pollOnce();
+  expect(error).not.toHaveBeenCalled();
+  expect(deps.run).not.toHaveBeenCalled();
+  expect(stored().processingRetry).toMatchObject({ status: "queued" });
 });

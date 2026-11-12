@@ -1,7 +1,4 @@
-import { assertFixtureCommandMatches } from "./productionFixtureCommandService";
-import type { NewWorkScope } from "../types/productionIntroduction";
-import { interruptOwnedMeeting } from "./ownedMeetingInterruption";
-import { initiatingStopInterruption } from "./meetingStopInterruption";
+import { closeMeeting } from "./meetingClose";
 import {
   PermissionFlagsBits,
   type Client,
@@ -11,7 +8,10 @@ import {
   type VoiceBasedChannel,
   type VoiceState,
 } from "discord.js";
-import { persistExplicitMeetingStop } from "../commands/endMeeting";
+import {
+  persistExplicitMeetingStop,
+  runEndMeetingFlow,
+} from "../commands/endMeeting";
 import { getMeeting } from "../meetings";
 import {
   publishManualMeetingStartedMessage,
@@ -21,7 +21,7 @@ import {
   getActiveMeetingLeaseForGuild,
   isLeaseActive,
   requestMeetingEndViaLease,
-} from "./activeMeetingLeaseService";
+} from "./meetingLease";
 import { resolveMeetingNotesChannel } from "./meetingNotesDestinationService";
 import { buildLiveMeetingTimelineEvents } from "./meetingTimelineService";
 import {
@@ -38,7 +38,7 @@ import {
   MEETING_STATUS,
   resolveMeetingStatus,
 } from "../types/meetingLifecycle";
-import { canGuildMemberEndMeeting } from "../utils/meetingPermissions";
+import { canMemberEndLease } from "../utils/meetingPermissions";
 import type { ActiveMeetingLease } from "../types/db";
 import type { MeetingData } from "../types/meeting-data";
 import { resolveServerMeetingArtifactAccess } from "./meetingArtifactAccessService";
@@ -196,7 +196,6 @@ const executeStartMeeting = async (
   input: StartMeetingCommandInput,
   assertOwned: () => Promise<void>,
   signal?: AbortSignal,
-  scope?: NewWorkScope,
 ): Promise<MeetingControlCommandResult> => {
   const state = await resolveUserVoiceState(client, userId, input);
   const guild = state.guild;
@@ -215,20 +214,11 @@ const executeStartMeeting = async (
           guild,
           voiceChannelId: voiceChannel.id,
         });
-  if (
-    scope?.kind === "fixture" &&
-    (scope.guildId !== guild.id ||
-      scope.voiceChannelId !== voiceChannel.id ||
-      scope.textChannelId !== textChannel.id)
-  )
-    throw new MeetingControlExecutionError("Fixture destination changed");
   const member = await fetchMember(guild, userId);
   assertMemberCanUseTextChannel(member, textChannel);
   const creator = await client.users.fetch(userId);
   await assertOwned();
   const startResult = await startManualMeetingFromChannels({
-    scope,
-    assertStartAllowed: assertOwned,
     startSignal: signal,
     client,
     guild,
@@ -247,9 +237,9 @@ const executeStartMeeting = async (
   try {
     await assertOwned();
   } catch (error) {
-    await interruptOwnedMeeting(startResult.meeting, {
-      reason: "processing_failure",
-      deadline: Date.now() + 100_000,
+    await closeMeeting(startResult.meeting, {
+      endReason: MEETING_END_REASONS.UNKNOWN,
+      abnormal: true,
     });
     throw error;
   }
@@ -269,12 +259,6 @@ const executeStartMeeting = async (
     liveUrl: startResult.liveMeetingUrl ?? undefined,
   };
 };
-
-const canMemberEndLease = (
-  member: GuildMember | null,
-  userId: string,
-  startTriggeredByUserId?: string,
-) => startTriggeredByUserId === userId || canGuildMemberEndMeeting(member);
 
 const executeStopLocalMeeting = async (
   guild: Guild,
@@ -308,23 +292,7 @@ const executeStopLocalMeeting = async (
   await assertOwned();
   meeting.endReason = MEETING_END_REASONS.MCP;
   meeting.endTriggeredByUserId = userId;
-  if (!meeting.onEndMeeting) {
-    throw new MeetingControlExecutionError("End meeting handler unavailable.");
-  }
-  const original = meeting.reservation
-    ? {
-        guildId: meeting.reservation.guildId,
-        meetingId: meeting.reservation.meetingId,
-        ownerInstanceId: meeting.reservation.ownerInstanceId,
-        executionVersion: meeting.reservation.executionVersion,
-        voiceOperationAttemptId: meeting.reservation.voiceOperationAttemptId,
-      }
-    : undefined;
-  try {
-    await meeting.onEndMeeting(meeting);
-  } catch (error) {
-    throw initiatingStopInterruption(meeting, original, error);
-  }
+  await runEndMeetingFlow({ meeting, suppressionPersisted: true });
   return { status: "ended", serverId: guildId, meetingId: meeting.meetingId };
 };
 
@@ -520,20 +488,16 @@ export async function executeMeetingControlCommand(
   command: MeetingControlCommand,
   assertOwned: () => Promise<void> = async () => undefined,
   signal?: AbortSignal,
-  scope?: NewWorkScope,
 ): Promise<MeetingControlCommandResult> {
   await assertOwned();
   switch (command.commandType) {
     case MEETING_CONTROL_COMMAND_TYPES.START_MEETING:
-      if (scope?.kind === "fixture")
-        assertFixtureCommandMatches(command, scope);
       return executeStartMeeting(
         client,
         command.userId,
         command.input as StartMeetingCommandInput,
         assertOwned,
         signal,
-        scope,
       );
     case MEETING_CONTROL_COMMAND_TYPES.STOP_MEETING:
       return executeStopMeeting(

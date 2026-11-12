@@ -393,7 +393,7 @@ Source anchors:
 - [Existing due-query worker pattern](../../../src/services/renewalRecoveryWorkerService.ts)
 - [Runtime ownership and settlement](../../../src/services/runtimeWorkAdmissionService.ts)
 - [Existing initial delivery outcomes](../../discord-delivery-outcomes.md)
-- [Existing recovery publication operations](../../operations/recovery-discord-publication.md)
+- Existing recovery publication operations
 
 Provider contracts:
 

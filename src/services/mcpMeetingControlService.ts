@@ -1,7 +1,7 @@
 import {
   getMeetingControlCommandForUser,
   queueMeetingControlCommand,
-  resolveTargetOwnerForGuild,
+  resolveLiveMeetingTarget,
   type MeetingControlCommandSnapshot,
 } from "./meetingControlQueueService";
 import {
@@ -24,17 +24,19 @@ export class McpMeetingControlError extends Error {
 const queueForGuildOwner = async (
   userId: string,
   commandType: (typeof MEETING_CONTROL_COMMAND_TYPES)[keyof typeof MEETING_CONTROL_COMMAND_TYPES],
-  input:
-    | StartMeetingCommandInput
-    | StopMeetingCommandInput
-    | LiveMeetingCommandInput,
-) =>
-  queueMeetingControlCommand({
+  input: StopMeetingCommandInput | LiveMeetingCommandInput,
+) => {
+  const live = await resolveLiveMeetingTarget(input.serverId);
+  return queueMeetingControlCommand({
     commandType,
     userId,
-    input,
-    targetOwnerInstanceId: await resolveTargetOwnerForGuild(input.serverId),
+    input:
+      live && !input.meetingId
+        ? { ...input, meetingId: live.meetingId }
+        : input,
+    targetOwnerInstanceId: live?.ownerInstanceId,
   });
+};
 
 export async function startMcpMeetingControl(input: {
   userId: string;

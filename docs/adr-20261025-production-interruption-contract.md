@@ -1,12 +1,12 @@
 # ADR-20261025: Keep interruption acceptance separate from staged introduction
 
-Status: Accepted for source preparation; production execution blocked.
+Status: Superseded by adr-20261111-lifecycle-simplification
 
 ## Decision
 
 Prepare A as an attended legacy interruption followed by isolated fixture acceptance, ordinary-admission reopening and a separate deployment release. Preserve the upstream staged protocol under separate module names and strict schemas. Its unavailable-authority refusal remains in place.
 
-The [production interruption contract](production-interruption-contract.md) defines admission, retained ownership, direct acknowledgment, finite capacity, private Terraform and launcher evidence. The [earlier staged ADR](adr-20261020-production-legacy-introduction.md) continues to describe its separate protocol.
+The production interruption contract defines admission, retained ownership, direct acknowledgment, finite capacity, private Terraform and launcher evidence. The [earlier staged ADR](adr-20261020-production-legacy-introduction.md) continues to describe its separate protocol.
 
 ## Consequences
 

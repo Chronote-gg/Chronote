@@ -1,9 +1,5 @@
 /** @jest-environment node */
 import {
-  seedServingRuntime,
-  stopServingRuntime,
-} from "../fixtures/servingRuntime";
-import {
   changeServiceFingerprint,
   changeSourceFingerprint,
 } from "../../src/services/billingChangeProvider";
@@ -30,7 +26,6 @@ beforeEach(async () => {
   config.mock.enabled = true;
   config.stripe.subscriptionTransitionsEnabled = false;
   resetMockStore();
-  await seedServingRuntime();
   getMockStore().subscriptions.set(
     changeOperation.guildId,
     structuredClone(changePointer),
@@ -219,5 +214,3 @@ test.each([
     expect(f.requests.every((request) => request.method === "GET")).toBe(true);
   },
 );
-
-afterAll(stopServingRuntime);

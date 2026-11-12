@@ -1,4 +1,3 @@
-import { context, control, promotion, runtime } from "./controlFixtures";
 import {
   CreateTableCommand,
   DeleteTableCommand,
@@ -7,10 +6,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
 import type { MeetingHistory, PersonalMediaClaim } from "../../src/types/db";
-import {
-  buildPromotionTransaction,
-  buildPersonalClaimCheck,
-} from "../../src/services/deploymentControlTransactions";
+import { buildPersonalClaimCheck } from "../../src/services/personalUploadTransactions";
 import { createDynamoMeetingUpdateDeliveryRepository } from "../../src/repositories/meetingUpdateDeliveryRepository";
 import { publicationDynamoFixture } from "./meetingPublicationDynamo.fixture";
 import { history, key } from "../types/meetingUpdateDelivery.fixture";
@@ -193,75 +189,6 @@ export function featurePersonalRow(claim: PersonalMediaClaim) {
     },
   };
 }
-export async function promoteWithRetainedPeer(
-  fixture: MixedVersionFixture,
-  now: number,
-  capable: boolean,
-) {
-  const fresh = (id: string, role: "serving" | "candidate" = "serving") => {
-    const row = runtime(id, role);
-    return {
-      ...row,
-      heartbeatAt: now,
-      readiness: { ...row.readiness, provenAt: now - 1, expiresAt: now + 3600 },
-      protection: {
-        ...row.protection,
-        provenAt: now - 1,
-        expiresAt: now + 3600,
-      },
-    };
-  };
-  const old = fresh("old"),
-    retained = fresh("retained"),
-    candidate = fresh("new", "candidate");
-  const before = {
-    ...control,
-    coordinatorExpiresAt: now + 3600,
-    servingMembers: { old: old.identity, retained: retained.identity },
-  };
-  await fixture.put(fixture.tables.deploymentControl, before);
-  await fixture.put(fixture.tables.deploymentControl, old);
-  await fixture.put(fixture.tables.deploymentControl, {
-    ...retained,
-    ...(capable ? { canonicalContentWriter: 1 } : {}),
-  });
-  await fixture.put(fixture.tables.deploymentControl, {
-    ...candidate,
-    canonicalContentWriter: 1,
-  });
-  await fixture.client.send(
-    new TransactWriteItemsCommand(
-      buildPromotionTransaction({
-        ...promotion,
-        tables: fixture.tables,
-        now,
-        expectedServingMembers: Object.values(before.servingMembers),
-        candidate: candidate.identity,
-        retainedMembers: [retained.identity],
-      }),
-    ),
-  );
-  return {
-    retainedContext: {
-      ...context,
-      instanceId: "retained",
-      identity: retained.identity,
-      authorizedGeneration: 8,
-      now,
-    },
-    promotedControl: {
-      ...before,
-      servingGeneration: 8,
-      servingMembers: { new: candidate.identity, retained: retained.identity },
-    },
-    retainedWithoutCapability: {
-      ...retained,
-      authorizedGeneration: 8,
-      readiness: { ...retained.readiness, observedGeneration: 8 },
-    },
-  };
-}
-
 export function beforeCanonicalWrite(
   fixture: MixedVersionFixture,
   name: string,

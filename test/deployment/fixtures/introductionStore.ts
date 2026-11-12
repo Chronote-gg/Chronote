@@ -9,7 +9,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 export const introductionClient = new DynamoDBClient({
-  endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
+  endpoint: process.env.TEST_DYNAMODB_ENDPOINT,
   region: "local",
   credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
   maxAttempts: 1,

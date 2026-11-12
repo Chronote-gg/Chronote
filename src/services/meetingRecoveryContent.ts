@@ -3,7 +3,6 @@ import {
   releaseCheckpointPcm,
 } from "./recordingCheckpointCapture";
 import { processRecoveryTranscript } from "./recoveryTranscriptionProcessing";
-import { artifactOwnerSchema } from "../types/artifactCleanup";
 import {
   createRecoveryArtifactScope,
   type RecoveryArtifactScope,
@@ -124,27 +123,12 @@ export async function readRecoveryContent(
     omitted = transcript.omitted;
   }
   signal.throwIfAborted();
-  const owner = artifactOwnerSchema.safeParse({
-    guildId: history.guildId,
-    meetingId: history.meetingId,
-    ownerInstanceId: history.ownerInstanceId,
-    executionVersion: history.executionVersion,
-  });
   return {
     ...verified,
     context,
     entries,
     processing,
     omitted,
-    ...(owner.success
-      ? {
-          cleanupBinding: {
-            owner: owner.data,
-            historyKey: history.channelId_timestamp,
-            checkpoint: pointer,
-          },
-        }
-      : {}),
   };
 }
 export type RecoveryContent = Awaited<ReturnType<typeof readRecoveryContent>>;
@@ -216,7 +200,6 @@ export function transcriptionInput(
   if (typeof compiled !== "string")
     throw new InvalidRecoveryContent("Transcription prompt type changed");
   return {
-    beginArtifactWrite: artifacts?.beginWrite,
     tempDirectory: artifacts?.directory,
     meetingId: context.capture.meetingId,
     creator: { id: context.creatorId },
@@ -616,13 +599,9 @@ async function composeRecoveredTranscript(
   covered: readonly PcmSpan[],
   retry: boolean,
 ) {
-  const sources = content.verified
-    .filter((item) => item.kind === "audio")
-    .map((item) => item.object);
-  const artifacts =
-    content.cleanupBinding && sources.length
-      ? await createRecoveryArtifactScope(content.cleanupBinding, sources)
-      : undefined;
+  const artifacts = content.verified.some((item) => item.kind === "audio")
+    ? await createRecoveryArtifactScope(content.manifest.capture.meetingId)
+    : undefined;
   try {
     return await composeOwnedRecoveredTranscript(
       content,
@@ -634,11 +613,7 @@ async function composeRecoveredTranscript(
       artifacts,
     );
   } finally {
-    const cleanup = await artifacts?.close();
-    if (cleanup && cleanup.kind !== "cleaned")
-      console.warn("Recovery scratch retained for verified cleanup", {
-        kind: cleanup.kind,
-      });
+    await artifacts?.close();
   }
 }
 
@@ -728,6 +703,34 @@ async function composeOwnedRecoveredTranscript(
     retranscribedRanges,
   };
 }
+/** Saved content is partial when the capture or any of its pieces is incomplete. */
+export function recoveredTranscriptionOutcome(
+  content: RecoveryContent,
+  interrupted: boolean,
+): "partial" | "ready" {
+  return interrupted ||
+    content.missing.length ||
+    content.context.captureIncomplete
+    ? "partial"
+    : "ready";
+}
+/**
+ * Generation from saved content for a capture that is not being recovered as
+ * such: it is named like a live run, and only an interrupted capture keeps
+ * the notice, because a completed capture has no gaps for it to describe.
+ */
+export function liveShapedNotesInput(
+  input: MeetingNotesInput,
+  history: Pick<MeetingHistory, "meetingName">,
+  interrupted: boolean,
+): MeetingNotesInput {
+  return {
+    ...input,
+    meetingName: history.meetingName,
+    recovered: undefined,
+    captureNotice: interrupted ? input.captureNotice : undefined,
+  };
+}
 export function recoveryNotesInput(
   history: MeetingHistory,
   content: RecoveryContent,
@@ -788,12 +791,7 @@ export function recoveryNotesInput(
         ? history.summaryLabel
         : undefined,
     processing: {
-      transcription:
-        interrupted ||
-        content.missing.length ||
-        content.context.captureIncomplete
-          ? "partial"
-          : "ready",
+      transcription: recoveredTranscriptionOutcome(content, interrupted),
       ...(history.processing?.notes === "generated"
         ? { notes: "generated" as const }
         : {}),

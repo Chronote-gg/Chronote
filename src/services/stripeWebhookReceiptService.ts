@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { getDeploymentControlRepository } from "../db";
 import { getStripeWebhookRepository } from "../repositories/stripeWebhookRepository";
-import { getRuntimeReadiness } from "./runtimeLifecycleService";
-import { sameRuntimeIdentity } from "../types/deploymentControl";
-import { introductionHoldSchema } from "../types/productionIntroduction";
+import type { RuntimeIdentity } from "../types/deploymentControl";
+import {
+  getRuntimeInstanceId,
+  getWorkerIdentity,
+} from "./runtimeInstanceService";
 import {
   stripeReceiptBirthSchema,
   STRIPE_RECEIPT_BOUNDARY,
@@ -16,44 +17,25 @@ import {
   UnresolvedBillingMutation,
   type RuntimeBillingOwner,
 } from "./runtimeBillingOperationService";
-/** Lookup failure preserves the authenticated raw receipt without manufacturing authority. */
+/** The stored receipt schema predates the worker registry; its local identity form is the one that needs no deployment proof. */
+function workerRuntimeIdentity(instanceId: string): RuntimeIdentity {
+  return { kind: "local", localId: instanceId, instanceId, protocolVersion: 1 };
+}
+/** An unresolved worker identity preserves the authenticated raw receipt without manufacturing a writer. */
 export async function receiptBirth(): Promise<StripeReceiptBirth | undefined> {
   try {
-    const readiness = getRuntimeReadiness();
-    if (!readiness) return undefined;
-    const repo = getDeploymentControlRepository();
-    const runtime = await repo.getRecord(
-      "ENV",
-      "RUNTIME#" + readiness.identity.instanceId,
-    );
-    const control = await repo.getRecord("ENV", "CONTROL");
-    if (
-      runtime?.recordType !== "runtime" ||
-      !sameRuntimeIdentity(runtime.identity, readiness.identity) ||
-      control?.recordType !== "control"
-    )
-      return undefined;
-    const hold = control.maintenance;
-    if (hold) {
-      const intro = introductionHoldSchema.parse(
-        await repo.getRecord("ENV", "INTRODUCTION"),
-      );
-      if (
-        intro.holdId !== hold.holdId ||
-        intro.introductionId !== hold.introductionId ||
-        intro.revision !== hold.revision ||
-        intro.admission.state !== "held"
-      )
-        return undefined;
-    }
+    const { instanceId } = await getWorkerIdentity();
     return stripeReceiptBirthSchema.parse({
       version: STRIPE_RECEIPT_BOUNDARY,
-      writer: readiness.identity,
-      ...(hold ? { hold } : {}),
+      writer: workerRuntimeIdentity(instanceId),
     });
   } catch {
     return undefined;
   }
+}
+/** The identity a receipt admission records: the worker running it. */
+function receiptAdmissionRuntime(): RuntimeIdentity {
+  return workerRuntimeIdentity(getRuntimeInstanceId());
 }
 export async function continueStripeReceipt(
   eventId: string,
@@ -67,8 +49,7 @@ export async function continueStripeReceipt(
   )
     throw new RuntimeAdmissionUnavailable("Webhook birth is unproven");
   const outcome = await runBillingReceiptOperation(
-    "stripe:" + eventId + ":" + token,
-    (context) => repo.admit(eventId, token, randomUUID(), context),
+    () => repo.admit(eventId, token, randomUUID(), receiptAdmissionRuntime()),
     async (owner) => {
       try {
         await handler(owner);

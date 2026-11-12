@@ -5,22 +5,10 @@ run-name: Meeting Notes Bot Deploy ${{ github.actor }}
 on:
   workflow_dispatch:
     inputs:
-      handoff_quiet_override:
-        description: Launch even if the serving runtime reports recording, finalization or voice work (use only for a leaked counter, see docs/deployment-handoff.md)
+      retire_older_tasks:
+        description: Stop tasks on older revisions instead of waiting for them to drain. Their live meetings end at their last saved piece and are finished by an eligible worker.
         type: boolean
         default: false
-      break_glass:
-        description: Break-glass deploy (BASIC only, see docs/deployment-handoff.md). Skips CI, Docs, the quiet wait and the runtime seal; needs a reason and the attested backup manifest hash
-        type: boolean
-        default: false
-      break_glass_reason:
-        description: Why the standard path cannot be used (public in the run summary; no user data)
-        type: string
-        default: ""
-      backup_manifest_sha256:
-        description: SHA-256 of the attested backup manifest for the outgoing task (from attest-preservation)
-        type: string
-        default: ""
   push:
     branches:
       - master
@@ -35,8 +23,7 @@ permissions:
 
 jobs:
   ci:
-    # A break-glass dispatch relies on the merged pull request's CI instead.
-    if: github.ref == 'refs/heads/master' && !(github.event_name == 'workflow_dispatch' && inputs.break_glass)
+    if: github.ref == 'refs/heads/master'
     name: CI
     # One group across both events, so at most one master CI is ever alive and
     # the newest run wins. A merge therefore cancels a manual dispatch's CI as
@@ -52,18 +39,32 @@ jobs:
     uses: ./.github/workflows/ci-core.yml
     secrets: inherit
 
-  # Admits a break-glass dispatch before any production job starts: only
-  # BASIC-BIT may dispatch it, and the commit must be the merge of a master pull
-  # request whose CI is green. It holds no AWS credentials.
-  break-glass:
-    name: Break-glass Gate
-    if: github.event_name == 'workflow_dispatch' && inputs.break_glass
+  deploybackend:
+    name: Deploy Backend
+    # Wait-drain and rollout share this one job and one lock, so no other run
+    # can roll out between this run's drain wait and its rollout. GitHub keeps
+    # at most one pending job per group and cancels the older pending one, so
+    # when several runs queue the newest commit is the one that deploys.
+    # The drain wait alone can take 160 minutes.
+    concurrency:
+      group: backend-rollout-production
+      cancel-in-progress: false
+    timeout-minutes: 240
+    # Publish privacy/What's New notices before expanded capture goes live.
+    needs: [ci, deploy-docs]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    environment: production
     permissions:
       contents: read
-      checks: read
-      pull-requests: read
+      id-token: write
+    env:
+      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+      DEPLOYMENT_LISTENER_ARN: ${{ vars.DEPLOYMENT_LISTENER_ARN }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -72,71 +73,11 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
-
-      - name: Verify dispatcher and merged pull request checks
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          BREAK_GLASS_REASON: ${{ inputs.break_glass_reason }}
-          BREAK_GLASS_MANIFEST_SHA256: ${{ inputs.backup_manifest_sha256 }}
-        run: node scripts/deployment/break-glass-guard.cjs
-
-  deploybackend:
-    name: Deploy Backend
-    # Keeps the original shared group. This is the job that swaps the serving
-    # runtime, and introduce-production.yml and production-introduction.yml sit
-    # in the same group, so holding it here preserves the mutual exclusion the
-    # workflow-level group used to provide for that mutation. It is alone in its
-    # stage, so nothing contends with it for the group.
-    concurrency:
-      group: chronote-deploy-production
-      cancel-in-progress: false
-    timeout-minutes: 180
-    # Publish privacy/What's New notices before expanded capture goes live.
-    # A break-glass run replaces CI and Docs with the break-glass gate.
-    needs: [ci, deploy-docs, break-glass]
-    if: >-
-      ${{ !cancelled() && (
-        (needs.ci.result == 'success' && needs.deploy-docs.result == 'success' && needs.break-glass.result == 'skipped')
-        || (needs.break-glass.result == 'success' && needs.ci.result == 'skipped' && needs.deploy-docs.result == 'skipped')
-      ) }}
-    runs-on: ubuntu-latest
-    environment: production
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      BREAK_GLASS: ${{ needs.break-glass.result == 'success' && '1' || '' }}
-      BREAK_GLASS_REASON: ${{ inputs.break_glass_reason }}
-      BREAK_GLASS_MANIFEST_SHA256: ${{ inputs.backup_manifest_sha256 }}
-      DEPLOYMENT_ENVIRONMENT: production
-      DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
-      DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
-      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
-      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
-      ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
-      DEPLOYMENT_LISTENER_ARN: ${{ vars.DEPLOYMENT_LISTENER_ARN }}
-      DEPLOYMENT_TARGET_GROUP_A: ${{ vars.DEPLOYMENT_TARGET_GROUP_A }}
-      DEPLOYMENT_TARGET_GROUP_B: ${{ vars.DEPLOYMENT_TARGET_GROUP_B }}
-      ECS_LOG_GROUP: ${{ vars.ECS_LOG_GROUP }}
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup coordinator Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
 
-      - name: Install coordinator dependencies
+      - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
-
-      - name: Build backend protocol builders
-        run: yarn build
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -157,9 +98,48 @@ jobs:
           set -euo pipefail
           aws sts get-caller-identity --output json 2>/dev/null | node scripts/deployment/assert-production-identity.cjs
 
-      - name: Refuse held production deployment
-        id: hold-guard
-        run: node scripts/deployment/production-writer-guard.cjs
+      - name: Resolve deployment names
+        run: |
+          set -euo pipefail
+          prefix="${SECRETS_PREFIX:-${ECS_TASK_FAMILY%-bot-task}}"
+          if [ -z "$prefix" ]; then
+            echo "ERROR: SECRETS_PREFIX is not set and could not be derived."
+            exit 1
+          fi
+          echo "SECRETS_PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo "DEPLOYMENT_CONTROL_TABLE=${DEPLOYMENT_CONTROL_TABLE:-${prefix}-DeploymentControlTable}" >> "$GITHUB_ENV"
+
+      - name: Wait for older tasks to drain
+        env:
+          RETIRE_OLDER_TASKS: ${{ github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks && '1' || '' }}
+        run: |
+          set -euo pipefail
+          if [ "$RETIRE_OLDER_TASKS" = "1" ]; then
+            node scripts/deployment/deploy.cjs wait-drain --retire
+          else
+            node scripts/deployment/deploy.cjs wait-drain
+          fi
+
+      # The wait can outlast most of a role session, so the rollout starts on a
+      # fresh one.
+      - name: Refresh AWS credentials for the rollout
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-production-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 10800
+          unset-current-credentials: true
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Verify refreshed production role session
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
+          EXPECTED_SESSION_NAME: chronote-production-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json 2>/dev/null | node scripts/deployment/assert-production-identity.cjs
 
       - name: Preflight Secrets Manager values
         env:
@@ -239,11 +219,10 @@ jobs:
             exit 1
           }
 
-          node scripts/deployment/production-writer-guard.cjs
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
-      - name: Pin candidate image and deployment identity
+      - name: Pin candidate image
         env:
           IMAGE: ${{ steps.build-image.outputs.image }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
@@ -251,41 +230,36 @@ jobs:
           set -euo pipefail
           digest=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="${IMAGE##*:}" --query 'imageDetails[0].imageDigest' --output text)
           echo "CANDIDATE_IMAGE=${IMAGE%:*}@$digest" >> "$GITHUB_ENV"
-          echo "DEPLOYMENT_RUN_TOKEN=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
-          echo "DEPLOYMENT_CANDIDATE_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
 
-      - name: Package supported publication release metadata
-        run: node scripts/operator/build-publication-release.cjs
+      - name: Preflight service and listener
+        run: node scripts/deployment/deploy.cjs preflight
 
-      - name: Save operator release metadata
-        uses: actions/upload-artifact@v4
-        with:
-          name: recovery-publication-release-${{ github.run_id }}-${{ github.run_attempt }}
-          path: scripts/operator/recovery-publication-releases.json
-          retention-days: 90
+      # The script prints the previous image before it updates the service, so
+      # the outputs are captured even when the rollout itself fails.
+      - name: Roll out candidate revision
+        id: rollout
+        run: |
+          set -uo pipefail
+          output="$RUNNER_TEMP/rollout.jsonl"
+          set +e
+          node scripts/deployment/deploy.cjs rollout --image "$CANDIDATE_IMAGE" > "$output"
+          status=$?
+          set -e
+          echo "previous_image=$(jq -rs 'map(.previousImage // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"
+          echo "revision=$(jq -rs 'map(.revision // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
-      - name: Protect serving runtime and warm candidate
-        id: prepare
+      - name: Wait for a ready worker on the new revision
+        id: wait-ready
         env:
-          HANDOFF_QUIET_OVERRIDE: ${{ ((github.event_name == 'workflow_dispatch' && inputs.handoff_quiet_override) || env.BREAK_GLASS == '1') && '1' || '' }}
-          BREAK_GLASS_RECORD_PATH: ${{ runner.temp }}/break-glass-record.json
-        run: node scripts/deployment/coordinator.cjs prepare
+          RELEASE: ${{ steps.rollout.outputs.revision }}
+        run: node scripts/deployment/deploy.cjs wait-ready --release "$RELEASE"
 
-      - name: Promote exact ready candidate
-        id: promote
-        run: node scripts/deployment/coordinator.cjs promote
-
-      - name: Request guarded cancellation of failed preparation
-        if: failure() && steps.hold-guard.outcome == 'success' && steps.prepare.outcome == 'failure'
-        run: node scripts/deployment/coordinator.cjs cancel-preparation
-
-      - name: Wait for runtime-owned retirement acknowledgment
-        id: retire
-        run: node scripts/deployment/coordinator.cjs retire
-
-      - name: Reconcile failed deployment without terminating work
-        if: failure() && steps.hold-guard.outcome == 'success' && steps.prepare.outcome == 'success'
-        run: node scripts/deployment/coordinator.cjs reconcile
+      - name: Roll back to the previous image
+        if: failure() && (steps.rollout.outcome == 'failure' || steps.wait-ready.outcome == 'failure') && steps.rollout.outputs.previous_image != ''
+        env:
+          PREVIOUS_IMAGE: ${{ steps.rollout.outputs.previous_image }}
+        run: node scripts/deployment/deploy.cjs rollback --image "$PREVIOUS_IMAGE"
 
       - name: Create deployment summary
         if: always()
@@ -294,26 +268,7 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           REF_NAME: ${{ github.ref_name }}
           ACTOR: ${{ github.actor }}
-          BREAK_GLASS_RECORD_PATH: ${{ runner.temp }}/break-glass-record.json
         run: |
-          if [ "$BREAK_GLASS" = "1" ]; then
-            {
-              echo "## Break-glass deployment"
-              echo ""
-              if [ -s "$BREAK_GLASS_RECORD_PATH" ]; then
-                echo "Audit record written to DeploymentControl before any service mutation (public fields; the full item stays in DynamoDB):"
-                echo ""
-                echo '```json'
-                cat "$BREAK_GLASS_RECORD_PATH"
-                echo '```'
-                echo ""
-                echo "Follow-up: re-run the full deploy path within seven days and open an \`operations\` issue to track it. This run could not email the critical-alerts topic or open the issue itself."
-              else
-                echo "Requested, but no audit record was written, so the coordinator neither took Control nor changed the service."
-              fi
-              echo ""
-            } >> $GITHUB_STEP_SUMMARY
-          fi
           if [ "$JOB_STATUS" == "success" ]; then
             echo "## ✅ Deployment Successful!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -338,7 +293,7 @@ jobs:
       group: chronote-deploy-production-frontend
       cancel-in-progress: false
     needs: [ci, deploy-docs, deploybackend]
-    # The backend job already required CI and Docs, or the break-glass gate.
+    # The backend job already required CI and Docs.
     if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
     environment: production
@@ -368,9 +323,6 @@ jobs:
       - name: Build frontend (Vite)
         run: yarn build:web
 
-      - name: Build hold schema
-        run: yarn build
-
       - name: Mask site publisher identity
         id: publisher-identity
         env:
@@ -379,7 +331,7 @@ jobs:
 
       - name: Validate site publisher bindings
         env:
-          IDENTITY_MATCHES: ${{ vars.AWS_ACCOUNT_ID == steps.publisher-identity.outputs.account_id && vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN == steps.publisher-identity.outputs.role_arn && vars.DEPLOYMENT_CONTROL_TABLE == steps.publisher-identity.outputs.control_table }}
+          IDENTITY_MATCHES: ${{ vars.AWS_ACCOUNT_ID == steps.publisher-identity.outputs.account_id && vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN == steps.publisher-identity.outputs.role_arn }}
         run: test "$IDENTITY_MATCHES" = true
 
       - name: Prepare site publisher session
@@ -387,7 +339,6 @@ jobs:
           TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
           PRODUCTION_BACKEND_DEPLOY_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
-          DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
           FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
           FRONTEND_DISTRIBUTION_ID: ${{ vars.FRONTEND_DISTRIBUTION_ID }}
         run: node scripts/deployment/site-publisher-identity.cjs session frontend
@@ -402,7 +353,7 @@ jobs:
           unset-current-credentials: true
           mask-aws-account-id: true
           aws-region: ${{ vars.AWS_REGION }}
-          inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload"],"Resource":["arn:aws:s3:::${{ vars.FRONTEND_BUCKET }}","arn:aws:s3:::${{ vars.FRONTEND_BUCKET }}/*"]},{"Effect":"Allow","Action":["cloudfront:CreateInvalidation"],"Resource":"arn:aws:cloudfront::${{ vars.AWS_ACCOUNT_ID }}:distribution/${{ vars.FRONTEND_DISTRIBUTION_ID }}"},{"Effect":"Allow","Action":["dynamodb:GetItem"],"Resource":"arn:aws:dynamodb:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:table/${{ vars.DEPLOYMENT_CONTROL_TABLE }}","Condition":{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["ENV"]}}},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"],"Resource":"arn:aws:kms:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:key/*","Condition":{"StringEquals":{"kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}","kms:ViaService":"s3.${{ vars.AWS_REGION }}.amazonaws.com"},"StringLike":{"kms:EncryptionContext:aws:s3:arn":"arn:aws:s3:::${{ vars.FRONTEND_BUCKET }}/*"}}},{"Effect":"Allow","Action":["kms:Decrypt"],"Resource":"arn:aws:kms:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:key/*","Condition":{"StringEquals":{"kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}","kms:ViaService":"dynamodb.${{ vars.AWS_REGION }}.amazonaws.com","kms:EncryptionContext:aws:dynamodb:subscriberId":"${{ vars.AWS_ACCOUNT_ID }}","kms:EncryptionContext:aws:dynamodb:tableName":"${{ vars.DEPLOYMENT_CONTROL_TABLE }}"}}}]}'
+          inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload"],"Resource":["arn:aws:s3:::${{ vars.FRONTEND_BUCKET }}","arn:aws:s3:::${{ vars.FRONTEND_BUCKET }}/*"]},{"Effect":"Allow","Action":["cloudfront:CreateInvalidation"],"Resource":"arn:aws:cloudfront::${{ vars.AWS_ACCOUNT_ID }}:distribution/${{ vars.FRONTEND_DISTRIBUTION_ID }}"},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"],"Resource":"arn:aws:kms:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:key/*","Condition":{"StringEquals":{"kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}","kms:ViaService":"s3.${{ vars.AWS_REGION }}.amazonaws.com"},"StringLike":{"kms:EncryptionContext:aws:s3:arn":"arn:aws:s3:::${{ vars.FRONTEND_BUCKET }}/*"}}}]}'
 
       - name: Verify exact site publisher identity
         env:
@@ -412,14 +363,6 @@ jobs:
         run: |
           set -euo pipefail
           aws sts get-caller-identity --output json 2>/dev/null | node scripts/deployment/assert-production-identity.cjs
-
-      - name: Check production hold before frontend publication
-        env:
-          DEPLOYMENT_ENVIRONMENT: production
-          DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-          DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
-          DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
-        run: node scripts/deployment/production-writer-guard.cjs
 
       - name: Sync frontend to S3 and invalidate CloudFront
         uses: ./.github/actions/sync-frontend
@@ -488,10 +431,6 @@ jobs:
         if: steps.docs-config.outputs.enabled == 'true'
         run: test -d build/docs-site
 
-      - name: Build hold schema
-        if: steps.docs-config.outputs.enabled == 'true'
-        run: yarn build
-
       - name: Mask site publisher identity
         id: publisher-identity
         if: steps.docs-config.outputs.enabled == 'true'
@@ -502,7 +441,7 @@ jobs:
       - name: Validate site publisher bindings
         if: steps.docs-config.outputs.enabled == 'true'
         env:
-          IDENTITY_MATCHES: ${{ vars.AWS_ACCOUNT_ID == steps.publisher-identity.outputs.account_id && vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN == steps.publisher-identity.outputs.role_arn && vars.DEPLOYMENT_CONTROL_TABLE == steps.publisher-identity.outputs.control_table }}
+          IDENTITY_MATCHES: ${{ vars.AWS_ACCOUNT_ID == steps.publisher-identity.outputs.account_id && vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN == steps.publisher-identity.outputs.role_arn }}
         run: test "$IDENTITY_MATCHES" = true
 
       - name: Prepare site publisher session
@@ -511,7 +450,6 @@ jobs:
           TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
           PRODUCTION_BACKEND_DEPLOY_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
-          DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
           DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
           DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
         run: node scripts/deployment/site-publisher-identity.cjs session docs
@@ -527,7 +465,7 @@ jobs:
           unset-current-credentials: true
           mask-aws-account-id: true
           aws-region: ${{ vars.AWS_REGION }}
-          inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload"],"Resource":["arn:aws:s3:::${{ vars.DOCS_BUCKET }}","arn:aws:s3:::${{ vars.DOCS_BUCKET }}/*"]},{"Effect":"Allow","Action":["cloudfront:CreateInvalidation","cloudfront:GetDistribution","cloudfront:GetInvalidation"],"Resource":"arn:aws:cloudfront::${{ vars.AWS_ACCOUNT_ID }}:distribution/${{ vars.DOCS_DISTRIBUTION_ID }}"},{"Effect":"Allow","Action":["dynamodb:GetItem"],"Resource":"arn:aws:dynamodb:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:table/${{ vars.DEPLOYMENT_CONTROL_TABLE }}","Condition":{"ForAllValues:StringEquals":{"dynamodb:LeadingKeys":["ENV"]}}},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"],"Resource":"arn:aws:kms:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:key/*","Condition":{"StringEquals":{"kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}","kms:ViaService":"s3.${{ vars.AWS_REGION }}.amazonaws.com"},"StringLike":{"kms:EncryptionContext:aws:s3:arn":"arn:aws:s3:::${{ vars.DOCS_BUCKET }}/*"}}},{"Effect":"Allow","Action":["kms:Decrypt"],"Resource":"arn:aws:kms:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:key/*","Condition":{"StringEquals":{"kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}","kms:ViaService":"dynamodb.${{ vars.AWS_REGION }}.amazonaws.com","kms:EncryptionContext:aws:dynamodb:subscriberId":"${{ vars.AWS_ACCOUNT_ID }}","kms:EncryptionContext:aws:dynamodb:tableName":"${{ vars.DEPLOYMENT_CONTROL_TABLE }}"}}}]}'
+          inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload"],"Resource":["arn:aws:s3:::${{ vars.DOCS_BUCKET }}","arn:aws:s3:::${{ vars.DOCS_BUCKET }}/*"]},{"Effect":"Allow","Action":["cloudfront:CreateInvalidation","cloudfront:GetDistribution","cloudfront:GetInvalidation"],"Resource":"arn:aws:cloudfront::${{ vars.AWS_ACCOUNT_ID }}:distribution/${{ vars.DOCS_DISTRIBUTION_ID }}"},{"Effect":"Allow","Action":["kms:GenerateDataKey","kms:Decrypt"],"Resource":"arn:aws:kms:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:key/*","Condition":{"StringEquals":{"kms:CallerAccount":"${{ vars.AWS_ACCOUNT_ID }}","kms:ViaService":"s3.${{ vars.AWS_REGION }}.amazonaws.com"},"StringLike":{"kms:EncryptionContext:aws:s3:arn":"arn:aws:s3:::${{ vars.DOCS_BUCKET }}/*"}}}]}'
 
       - name: Verify exact site publisher identity
         if: steps.docs-config.outputs.enabled == 'true'
@@ -570,10 +508,6 @@ jobs:
       - name: Sync docs to S3
         if: steps.docs-config.outputs.enabled == 'true'
         env:
-          DEPLOYMENT_ENVIRONMENT: production
-          DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-          DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
-          DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
           DOCS_BUCKET: ${{ vars.DOCS_BUCKET }}
         run: |
           set -euo pipefail
@@ -582,21 +516,15 @@ jobs:
             exit 1
           fi
 
-          node scripts/deployment/production-writer-guard.cjs
           aws s3 sync build/docs-site s3://$DOCS_BUCKET --delete --exclude "assets/*" --cache-control "public,max-age=600"
 
           if [ -d build/docs-site/assets ]; then
-            node scripts/deployment/production-writer-guard.cjs
             aws s3 sync build/docs-site/assets s3://$DOCS_BUCKET/assets --delete --cache-control "public,max-age=31536000,immutable"
           fi
 
       - name: Invalidate docs CloudFront
         if: steps.docs-config.outputs.enabled == 'true'
         env:
-          DEPLOYMENT_ENVIRONMENT: production
-          DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-          DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
-          DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN }}
           DOCS_DISTRIBUTION_ID: ${{ vars.DOCS_DISTRIBUTION_ID }}
         run: |
           set -euo pipefail
@@ -605,7 +533,6 @@ jobs:
             exit 1
           fi
 
-          node scripts/deployment/production-writer-guard.cjs
           INVALIDATION_ID=$(aws cloudfront create-invalidation --distribution-id "$DOCS_DISTRIBUTION_ID" --paths "/*" --query 'Invalidation.Id' --output text)
           aws cloudfront wait invalidation-completed --distribution-id "$DOCS_DISTRIBUTION_ID" --id "$INVALIDATION_ID"
 
@@ -621,19 +548,12 @@ jobs:
       group: chronote-deploy-production-promote-prompts
       cancel-in-progress: false
     needs: [deploybackend]
-    # Explicit, because a break-glass run skips CI upstream of the backend.
     if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
     environment: production
     permissions:
       contents: read
       id-token: write
-    env:
-      DEPLOYMENT_ENVIRONMENT: production
-      DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
-      DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_PROMPT_GUARD_ROLE_ARN }}
-      AWS_REGION: ${{ vars.AWS_REGION }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -647,19 +567,6 @@ jobs:
 
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
-
-      - name: Build hold schema
-        run: yarn build
-
-      - name: Configure read-only production hold identity
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ vars.PRODUCTION_PROMPT_GUARD_ROLE_ARN }}
-          role-session-name: prompt-${{ github.run_id }}-${{ github.run_attempt }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Check production hold
-        run: node scripts/deployment/production-writer-guard.cjs
 
       - name: Show pending prompt changes
         env:
@@ -675,9 +582,7 @@ jobs:
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
           LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
           LANGFUSE_PROMPT_LABEL: ${{ vars.LANGFUSE_PROMPT_LABEL }}
-        run: |
-          node scripts/deployment/production-writer-guard.cjs
-          yarn prompts:push
+        run: yarn prompts:push
 
       - name: Verify repo and Langfuse agree
         env:
@@ -694,7 +599,6 @@ jobs:
       group: chronote-deploy-production-sync-openai
       cancel-in-progress: false
     needs: [deploybackend]
-    # Explicit, because a break-glass run skips CI upstream of the backend.
     if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
     environment: production
@@ -703,10 +607,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      DEPLOYMENT_ENVIRONMENT: production
       DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
-      DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_PROMPT_GUARD_ROLE_ARN }}
       AWS_REGION: ${{ vars.AWS_REGION }}
     steps:
       - name: Checkout
@@ -721,9 +622,6 @@ jobs:
 
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
-
-      - name: Build hold schema
-        run: yarn build
 
       - name: Configure reviewed connection-sync identity
         uses: aws-actions/configure-aws-credentials@v6
@@ -783,7 +681,7 @@ jobs:
             exit 1
           fi
           export SERVING_TASK_DEFINITION_ARN="$task_definition_arn"
-          # Match the app container exactly as the deployment coordinator does.
+          # Match the app container exactly as the deploy script does.
           if ! OPENAI_PROJECT_ID=$(aws ecs describe-task-definition \
             --task-definition "$task_definition_arn" --output json 2>/dev/null | node -e '
               const { readFileSync } = require("node:fs");
@@ -805,7 +703,6 @@ jobs:
             exit 1
           fi
           echo "::add-mask::$OPENAI_PROJECT_ID"
-          node scripts/deployment/production-writer-guard.cjs
           if ! OPENAI_API_KEY=$(aws secretsmanager get-secret-value \
             --secret-id "${SECRETS_PREFIX}/openai-api-key" --version-stage AWSCURRENT \
             --query SecretString --output text 2>/dev/null) \
@@ -820,6 +717,5 @@ jobs:
           trap 'rm -rf "$connections_dir"' EXIT
           cp langfuse/llm-connections/openai.yml "$connections_dir/openai.yml"
           yarn llm-connections:push --dir "$connections_dir" --dry-run
-          node scripts/deployment/production-writer-guard.cjs
           yarn llm-connections:push --dir "$connections_dir"
           yarn llm-connections:check --dir "$connections_dir"

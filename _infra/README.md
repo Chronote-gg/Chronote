@@ -13,9 +13,10 @@ Task reservations and container limits use the same values. Recording buffer
 limits remain independent of the task size.
 
 A Terraform apply registers the new task definition. The service ignores task
-definition changes from Terraform, so a protected backend deployment is also
-required to move the running worker to the new size. Keep the intended image
-and active-work protections when deploying a capacity change.
+definition changes from Terraform, so a backend deploy is also required to move
+the running worker to the new size. See
+[changing a Terraform-managed environment variable](../docs/deployment.md#changing-a-terraform-managed-environment-variable),
+which follows the same three steps.
 
 ## Terraform state bootstrap
 
@@ -31,6 +32,12 @@ The ECR lifecycle policy keeps the last two untagged images and retains tagged
 release images until a separately reviewed retirement. Tagged releases accumulate,
 so storage use can grow. Merging this source change does not update ECR. The policy
 takes effect only after a separate reviewed Terraform apply.
+
+## Transcript bucket retention
+
+The transcript bucket's lifecycle rule aborts incomplete multipart uploads seven
+days after they start. Nothing deletes completed objects: there is no retention
+period or expiry rule for meeting artifacts, including recording checkpoints.
 
 ## Observability (AMP + AMG)
 
@@ -131,14 +138,22 @@ that address.
 | Processing retry worker       | `Processing retry worker failed` log line      | 5 min x 1 |
 | Voice settlement unresolved   | Unreleased voice session or lease log line     | 5 min x 1 |
 | Voice admission blocked       | Recording refused for uncertain voice state    | 5 min x 1 |
+| Meeting lifecycle stuck       | `Meeting lifecycle stuck` or `abandoned` line  | 5 min x 1 |
+| Meeting finish failed         | Finish or delivery failed after retries        | 5 min x 1 |
+| Task protection failing       | 3+ `Task protection failed` lines in 5 min     | 5 min x 1 |
+| No eligible worker            | No `Worker eligible heartbeat` line in 5 min   | 5 min x 1 |
+| Finisher scan missing         | No `Meeting finisher scan completed` in 10 min | 5 min x 2 |
+| Renewal recovery stalled      | Lease-error skip line in each of 3 periods     | 5 min x 3 |
+| Deploy drain timeout          | Deploy `DrainWaitTimedOut` metric published    | 5 min x 1 |
 
 All alarms also send an OK notification when the condition clears.
 
-The two unhealthy-host alarms cover both halves of the blue/green target group
-pair, one alarm each, because a generation swap moves serving traffic between
-them and a single hardcoded dimension is wrong again after the next swap. An idle
-group publishes no `UnHealthyHostCount` datapoints, so with `notBreaching` its
-alarm sits OK until it starts serving, and coverage follows traffic on its own.
+The two unhealthy-host alarms cover both target groups of the pair, one alarm
+each. Deployments do not move traffic between them: `deploy.cjs preflight`
+refuses unless the listener sends full weight to the group the service is bound
+to. The spare group and its alarm stay until the unused deployment
+infrastructure is removed. An idle group publishes no `UnHealthyHostCount`
+datapoints, so with `notBreaching` its alarm sits OK.
 
 `HTTPCode_ELB_5XX_Count` is separate from the target 5xx alarm on purpose. The
 load balancer answers 502, 503 or 504 itself when it has no healthy target to
@@ -161,6 +176,19 @@ throughout: the 14 crosses the hourly threshold, so that incident would have
 paged. A burst big enough to trip the fast alarm will usually trip the slow one
 too, so expect one real outage to notify twice.
 
+The lifecycle alarms in `alerts-lifecycle.tf` match the fixed `*_LOG` lines in
+`src/metrics.ts` as quoted substrings (what each one means and what to do is in
+[the deployment document](../docs/deployment.md#alarms)); `test/scripts/lifecycleAlarms.test.ts`
+fails if a filter and its constant drift apart. **No eligible worker alarms on
+silence** (missing data is breaching), so it fires wherever alerting is enabled
+and no worker is eligible, including the window before the first deployment of
+the worker registry finishes its cutover. **Finisher scan missing alarms on
+silence the same way**: it fires when no eligible worker completed a finisher
+scan for ten minutes, so it also fires whenever no worker is eligible. A parked
+environment (`ECS_DESIRED_COUNT = 0`) gets neither alarm. The drain alarm
+watches the dimensionless `<name_prefix>/Deploy` `DrainWaitTimedOut` metric that
+`scripts/deployment/deploy.cjs wait-drain` publishes when it gives up.
+
 The two voice alarms match single app log lines, each a thrown error message:
 `Meeting voice or lease release remains unresolved` for a meeting that finished
 without releasing its voice session or lease, and
@@ -168,7 +196,9 @@ without releasing its voice session or lease, and
 because a previous runtime's voice state is still uncertain. Neither moves an
 ECS, ALB or OpenAI metric, so without these filters the only symptom is one
 meeting that never finishes or never starts. Both fire on a single occurrence,
-because one is already worth looking at.
+because one is already worth looking at. The worker design keeps no durable
+voice record, so these lines belong to the old runtime; both alarms stay in
+place with the rest of the unused deployment infrastructure until it is removed.
 
 **The two ephemeral storage alarms exist because a task with a full disk is
 still running.** It passes its health check and keeps answering the load
@@ -476,7 +506,8 @@ Encrypted CloudWatch log groups and the critical-alert SNS topic explicitly wait
 for the policy's service grants during cold creation.
 
 `deployment-runtime` carries what production needs after the prerequisites and
-before a cold cutover and the first ordinary deploy of `master`. It targets exactly:
+before the first ordinary deploy of `master`, including the deploy role's
+lifecycle grants. It targets exactly:
 
 1. `aws_iam_role.production_deploy[0]`, `aws_iam_role_policy.production_deploy[0]`
    and `aws_iam_role_policy_attachment.production_deploy_routing[0]`
@@ -691,86 +722,29 @@ The same ordering applies in reverse, and it is the general rule from the root
 `AGENTS.md`: changing a Terraform-managed ECS environment variable takes three
 steps, and the deploy is the one people miss.
 
-## Recording-safe backend replacement
+## Backend deployment
 
-Production and Sandbox use `scripts/deployment/coordinator.cjs` after installing
-runner dependencies and building the backend protocol builders. Both workflows
-serialize deployments per environment and leave running deployments uncancelled.
-The coordinator requires the reviewed ECS rolling service with desired count one;
-it does not change that count or create another service.
+Production and Sandbox deploy the backend with `scripts/deployment/deploy.cjs`
+from `deploy.yml` and `deploy-staging.yml`. The backend job waits for any
+older task still recording a meeting (`wait-drain`, up to 160 minutes), checks
+the service and listener (`preflight`), registers a new task definition
+revision and updates the service (`rollout`), waits for a ready worker on that
+revision (`wait-ready`, up to 15 minutes) and rolls back on failure. It never
+changes the listener, the load balancer binding or the desired count. Workers
+register themselves in the deployment control table under the `WORKERS`
+partition, and the newest ready release takes new meetings.
 
-The CLI takes `prepare`, `promote`, `retire`, or `reconcile`. Its environment
-inputs are `ECS_CLUSTER`, `ECS_SERVICE`, `ECS_TASK_FAMILY`, `SECRETS_PREFIX`,
-`DEPLOYMENT_RUN_TOKEN`, `DEPLOYMENT_CANDIDATE_ID`, and `CANDIDATE_IMAGE` pinned
-to an image digest. It derives `DDB_TABLE_PREFIX` as `SECRETS_PREFIX` plus `-`,
-checks any explicit override, and verifies the task definition's table route.
-It does not retrieve secret values. AWS CLI calls use argument arrays and the
-compiled shared DynamoDB transaction builders.
-
-1. **Prepare:** verify the exact compatible serving task, its fresh application
-   readiness, and native protection before requesting replacement. Persist the
-   coordinator token, epoch, original membership, task/image identity, and phase
-   under compare-and-set conditions in the existing control row. Register a
-   digest-pinned task definition while preserving unrelated fields.
-2. **Promote:** let the old runtime keep serving while the candidate warms.
-   Require a fresh proof for the intended `all`, `bot`, or `api` mode, dependencies,
-   current epoch/generation, exact task/image identity, and native protection.
-   Atomically select the candidate under a new serving generation. An ECS health
-   result alone cannot select a runtime or authorize recording work.
-3. **Retire:** write an identity, original generation, token, and epoch-bound
-   request to the outgoing runtime row. Its heartbeat enters the single local
-   retirement barrier. Only that runtime can disable native protection after all
-   owned work and voice operations settle. The coordinator requires its exact
-   durable retired acknowledgment and subsequent ECS convergence to complete.
-   A 7,500-second reporting timeout preserves unfinished work.
-4. **Reconcile:** read back ambiguous writes and preserve the old membership on
-   pre-promotion failure. Before any retirement request, a still-ready compatible
-   prior owner can be selected with another new generation. A candidate that has
-   started work remains protected. After retirement starts, or without a safe
-   rollback target, report recovery required; never stop busy tasks, delete
-   leases, or disable protection to create capacity. Unfinished phases prevent
-   another rollout from accumulating protected revisions.
-
-Minimum health remains 100%, maximum 200%, and the application container's stop
-timeout is 120 seconds. The coordinator also requests
+The update keeps minimum health at 100% and maximum at 200%, turns the
+deployment circuit breaker off so ECS never moves the service to a lower revision
+by itself, sets the 300 second health check grace period, and requests
 `earlySuccessCriteria = { enable: true, healthyPercent: 100,
-sourceServiceRevisionCleanup: "DEFERRED" }`, preserving unrelated deployment
-configuration. AWS documents `DEPLOYMENT_BLOCKED` when protected tasks prevent a
-deployment reaching steady state, and recommends deferred source cleanup for
-protected tasks. These settings remove that documented cleanup dependency;
-simultaneous old/candidate protection and renewal acceptance remain **UNKNOWN**
-until an authorized native test proves them. Actual protection acknowledgments
-remain mandatory. See [AWS early-success criteria](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/early-success-criteria.html)
-and [API failure messages](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/api_failures_messages.html).
+sourceServiceRevisionCleanup: "DEFERRED" }`, which AWS recommends when old
+tasks are protected. See
+[AWS early-success criteria](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/early-success-criteria.html).
 
-The runner validates its UpdateService CLI input model with an output skeleton
-before any coordinator mutation. AWS provider 6.64.0 has no matching Terraform
-field, so this setting is owned by the shared coordinator. Unsupported runner
-models fail before replacement; a supported local model is not proof of service
-acceptance. The native update and its configuration are checked before promotion.
-
-ECS startup opens one health-only listener on the existing port before initial
-protection. `/health` reports liveness; `/ready` stays unready and other requests
-receive retryable 503 responses until protection permits full application boot.
-Only exact-task initial `DEPLOYMENT_BLOCKED` receives bounded retries within the
-15-minute warmup allowance, with cancellation and finite request timeouts. Full
-API routes reuse that listener. Source protection keeps its existing minute
-renewal and two-minute safety margin; a positive disabled/unsafe proof invalidates
-an older cached confirmation immediately.
-
-Early ECS success ends provider automatic rollback monitoring sooner. The
-coordinator therefore continues checking application readiness, owns the later
-rollback decision, and waits for runtime retirement. Early `SUCCESSFUL`, a quiet
-lease table, and a task-count snapshot are not recording-safe completion proof.
-
-The completed protocol branch is the first compatible ECS release. Intermediate
-implementation revisions have incompatible strict record schemas and cannot be
-treated as deployed warm-replacement targets. First activation requires its own
-reviewed compatible task/image and control-row evidence. The coordinator refuses
-missing or incompatible control state instead of silently enrolling legacy
-tasks. Qualifying readiness also requires the complete runtime safety handler;
-an incomplete composition must remain unready. No deployment is implied by the
-local fixture tests or these infrastructure definitions.
+How it works, the alarms, the one-time first deployment from the old protocol
+and the operator commands for stranded meetings are in
+[the deployment document](../docs/deployment.md).
 
 The new deployment-control table retains top-level `hash_key` and `range_key`:
 the pinned provider requires them and rejects a top-level `key_schema` block.
@@ -795,11 +769,12 @@ it. Three variables park it instead:
   blocks the group's own deletion with a `DependencyViolation`. Expect an
   unattached security group in a parked environment; it is not leftover cruft.
 - `ECS_DESIRED_COUNT=0` stops the task without touching the service definition.
-  This bypasses the backend coordinator's runtime retirement acknowledgment.
-  A quiet lease scan is not proof that owned work or voice operations have settled.
-  Parking requires a separately reviewed shutdown with actual runtime retirement
-  evidence; do not use a count change to force unfinished work to stop.
-  A variable validation refuses this outright when `environment` is `prod`.
+  A meeting still recording ends at its last saved piece, and no worker finishes
+  it until the environment runs again; a meeting still open 24 hours after its
+  capture began is then marked failed without a post. Park when nothing is
+  recording or processing. A parked environment gets no `no_eligible_worker`
+  or `finisher_scan_missing` alarm. A variable validation refuses this
+  outright when `environment` is `prod`.
 - `ENABLE_ELASTICACHE=false` drops the cache cluster.
 
 **`ENABLE_API_ALB_DELETION_PROTECTION` has to be false before `ENABLE_API_ALB`
@@ -891,7 +866,12 @@ private operations workspace described in the repository's `AGENTS.md`.
      --container "$ECS_CONTAINER_NAME" --image "$API_IMAGE_DIGEST"
    ```
 
-5. With enforcement still disabled, repeat the command with `--apply` to write
+5. Standalone `--apply` is currently disabled: the script refuses before any
+   domain or provider write (`STANDALONE_COVERAGE_APPLY_REFUSAL` in
+   `src/services/renewalRecoveryCoverage.ts`), and restoring it needs a
+   separately reviewed executor. The audit stays read-only and cannot register or
+   refresh recovery records. Once apply is restored: with enforcement still
+   disabled, repeat the command with `--apply` to write
    owned DynamoDB coverage records. It does not edit Stripe or enable grace.
    Require a successful exit and a private report with `coverageReady=true`,
    `enumeration=complete`, `indexActive=true`, `writerVerified=true`, and only
@@ -911,8 +891,7 @@ private operations workspace described in the repository's `AGENTS.md`.
    before exercising an authorized renewal failure. Check the saved deadline,
    original-payer retry/cancel flow, preserved unrelated charges and hosted expiry.
    Native test clocks or local DynamoDB do not replace signed-in hosted
-   acceptance. Sandbox's first activation also follows
-   [the controlled bootstrap procedure](../docs/sandbox-bootstrap.md).
+   acceptance.
 
 To stop new grace adoption, set the variable back to `false`, apply and deploy.
 Already accepted recoveries continue through their original deadline and durable
@@ -927,10 +906,9 @@ branch. Terraform creates `SANDBOX_BACKEND_DEPLOY_ROLE_ARN` and `AWS_ACCOUNT_ID`
 environment variables and attaches the existing deployment-routing policy. The shared
 OIDC provider is read as data and remains owned by its existing configuration.
 
-Use the manual `Sandbox Deployment Identity` workflow for the first identity check.
-Its session permits only the Sandbox service metadata read. Both the canary and backend
-verify the exact account, role and run session before proceeding. The backend uses a
-three-hour session to cover bounded warmup and retirement; it has no static-key fallback.
+The backend job verifies the exact account, role and run session before proceeding.
+It uses a three-hour session and assumes the role again after the drain wait, so the
+rollout starts on a fresh session; it has no static-key fallback.
 
 The Sandbox task-role AppConfig policy is scoped to its application, profile,
 environment, configuration and deployment strategy. Production retains its existing
@@ -981,49 +959,23 @@ Terraform producer only after every static caller has migrated and the replaceme
 has succeeded; a later Terraform apply must not recreate a retired binding.
 
 Run the mocked policy checks with `terraform -chdir=_infra init -backend=false` and
-`terraform -chdir=_infra test`. Live introduction still requires a reviewed full saved
-plan, the existing Apply gate, the identity canary and the guarded bootstrap described
-in [sandbox-bootstrap.md](../docs/sandbox-bootstrap.md).
+`terraform -chdir=_infra test`.
 
-### First Sandbox activation
+## Backend deploy role and service settings
 
-The manual Sandbox Deployment Identity workflow still defaults to a read-only
-identity check. Optional bootstrap phases are explicit:
-
-- `prepare` publishes a source-pinned image and registers a candidate definition
-  using the scoped Sandbox role. It does not replace the running service.
-- `activate` requires the reviewed manifest in the Sandbox environment secret
-  `SANDBOX_BOOTSTRAP_MANIFEST`, its checksum, and the same operation UUID. The
-  manifest source must match the workflow source. Its exact STS session is
-  `chronote-sandbox-<decimal value of the UUID without hyphens>-1`.
-  The job refuses reruns and verifies the actual identity before writes.
-- `repair` requires a new prepared candidate UUID and the reviewed old/new manifest
-  envelope in `SANDBOX_BOOTSTRAP_MANIFEST`. Supply the checksum of the entire
-  parsed envelope. It accepts only the exact acknowledged, unserved first
-  activation after its coordinator lease expires. See the linked bootstrap
-  runbook for settlement, conditional supersession, and no-replay requirements.
-- `probe_without_environment` runs a separate read-only trust probe with no
-  GitHub environment. Its job should fail at assumption. Verify AWS AccessDenied
-  after OIDC token retrieval; configuration failures or timeouts are not trust
-  evidence. A dispatch from a tag can separately verify the disallowed-ref case.
-
-Preparation, activation, and repair are serialized with normal Sandbox deployments. A
-durable INTRODUCTION receipt fences the one-time stop and listener writes.
-Initialization accepts only its exact acknowledged operation, principal and
-manifest checksum. Unknown provider acknowledgments stop the operation; do not
-rerun it or clear the receipt. Candidate readiness, native protection and a fresh
-serving heartbeat remain required.
-
-This first-activation route conservatively requires empty lease, command and
-personal-job tables and terminal complete/cancelled history status. These checks
-do not establish maintenance input isolation. Record that proof separately in
-the private activation packet before creating the executable manifest. Never
-derive it from a quiet scan. Keep manifest contents and provider receipts out of
-public logs and artifacts. Normal compatible deployments use the coordinator.
+Both deploy roles may publish `cloudwatch:PutMetricData` only to the
+`<name_prefix>/Deploy` namespace. `ecs:StopTask` on this cluster's tasks is
+granted only when `ENABLE_DEPLOY_RETIRE` is true (GitHub Actions variable
+`TFVAR_ENABLE_DEPLOY_RETIRE`); without it, a dispatched deploy with
+`retire_older_tasks` fails at its first stop and an operator stops the older
+task instead. The service's `health_check_grace_period_seconds` is 300, the same
+value `deploy.cjs rollout` sets on every update. It is not in `ignore_changes`,
+so after the first rollout the refreshed state already matches and Terraform plans
+no change; it needs no separate apply.
 
 ## Production backend deployment identity
 
-The production role is source preparation for a separately approved introduction.
+The production role is the identity the `deploy.yml` jobs assume.
 Terraform selects it with `environment = "prod"`; GitHub must use `production`.
 Its OIDC trust binds the account's existing provider, immutable repository and owner
 IDs, the exact production environment subject, and `refs/heads/master`. Topic
@@ -1031,7 +983,12 @@ branches and tags cannot assume it. The role output is
 `production_backend_deploy_role_arn`; Actions receives
 `PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` and `AWS_ACCOUNT_ID`.
 
-An environment name is not an approval gate. Before any mutating introduction job,
+No workflow assumes the introduction and acceptance-collector roles described
+below. They stay in Terraform until the unused deployment
+infrastructure is removed; the prompt-guard role is still assumed by the OpenAI
+connection sync.
+
+An environment name is not an approval gate. Before any mutating production job,
 verify that production has the reviewed human approval protections, permitted
 branch policy and bypass controls. The workflow
 must fail closed when required environment protection is absent.

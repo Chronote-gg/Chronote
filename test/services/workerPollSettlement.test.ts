@@ -1,4 +1,8 @@
 /** @jest-environment node */
+// These suites exercise the pollers themselves; eligibility gating has its own suite.
+jest.mock("../../src/services/workerRegistry", () => ({
+  isEligible: () => true,
+}));
 import type { Client } from "discord.js";
 import {
   startMeetingControlCommandWorker,
@@ -9,21 +13,20 @@ import {
   stopPersonalMediaUploadWorker,
 } from "../../src/services/personalMediaUploadWorkerService";
 const mockControlList = jest.fn();
+const mockControlClaim = jest.fn();
 const mockPersonalList = jest.fn();
-const mockBeginClaim = jest.fn();
+const mockPersonalClaim = jest.fn();
 jest.mock("../../src/repositories/meetingControlCommandRepository", () => ({
   getMeetingControlCommandRepository: () => ({
     listClaimablePendingCommands: mockControlList,
+    claimCommand: mockControlClaim,
   }),
 }));
 jest.mock("../../src/repositories/personalMediaUploadRepository", () => ({
-  getPersonalMediaUploadRepository: () => ({ listClaimable: mockPersonalList }),
-}));
-jest.mock("../../src/services/runtimeWorkAdmissionService", () => ({
-  beginRuntimeWorkClaim: (...args: unknown[]) => mockBeginClaim(...args),
-}));
-jest.mock("../../src/services/activeMeetingLeaseService", () => ({
-  getOwnedSessionReservations: () => [],
+  getPersonalMediaUploadRepository: () => ({
+    listClaimable: mockPersonalList,
+    claim: mockPersonalClaim,
+  }),
 }));
 jest.mock("../../src/services/meetingControlBotService", () => ({
   executeMeetingControlCommand: jest.fn(),
@@ -76,7 +79,8 @@ test.each(["control", "personal"] as const)(
         },
       ]);
       await stopping;
-      expect(mockBeginClaim).not.toHaveBeenCalled();
+      expect(mockPersonalClaim).not.toHaveBeenCalled();
+      expect(mockControlClaim).not.toHaveBeenCalled();
       start();
       await jest.advanceTimersByTimeAsync(10_000);
       expect(listMock).toHaveBeenCalledTimes(1);

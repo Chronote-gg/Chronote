@@ -4,17 +4,27 @@ import { createHTTPHandler } from "@trpc/server/adapters/standalone";
 import type { Request, Response } from "express";
 import type { appRouter } from "../../src/trpc/router";
 import { getMockUser } from "../../src/repositories/mockStore";
-import {
-  fenceRuntimeWorkAdmissions,
-  getRuntimeWorkAdmissionCheckpoints,
-} from "../../src/services/runtimeWorkAdmissionService";
+import * as apiOperation from "../../src/services/runtimeApiOperationService";
 
+/** A response socket is not the owner of the handler: closing it must not cancel the correction. */
 export async function verifyCorrectionDisconnect(input: {
   router: typeof appRouter;
   started: Promise<void>;
-  settled: jest.Mock;
   release: (value: unknown) => void;
 }) {
+  const actual = apiOperation.runRuntimeApiOperation;
+  const operations: Promise<unknown>[] = [];
+  const signals: AbortSignal[] = [];
+  const spy = jest
+    .spyOn(apiOperation, "runRuntimeApiOperation")
+    .mockImplementation((id, run) => {
+      const operation = actual(id, (handle) => {
+        signals.push(handle.signal);
+        return run(handle);
+      });
+      operations.push(operation);
+      return operation;
+    });
   const server = createServer(
     createHTTPHandler({
       router: input.router,
@@ -47,25 +57,14 @@ export async function verifyCorrectionDisconnect(input: {
     await response;
     server.closeAllConnections();
     server.close();
-    expect(
-      getRuntimeWorkAdmissionCheckpoints().filter(
-        (entry) => entry.domain === "api_correction",
-      ),
-    ).toHaveLength(1);
-    fenceRuntimeWorkAdmissions();
-    expect(input.settled).not.toHaveBeenCalled();
-    const checkpoints = getRuntimeWorkAdmissionCheckpoints();
+    expect(operations).toHaveLength(1);
+    expect(signals.map((signal) => signal.aborted)).toEqual([false]);
     input.release(completedTextResponse("Late correction"));
-    await Promise.allSettled(checkpoints.map((entry) => entry.ownedPromise));
-    expect(input.settled).toHaveBeenCalledTimes(1);
-    expect(
-      getRuntimeWorkAdmissionCheckpoints().filter(
-        (entry) => entry.domain === "api_correction",
-      ),
-    ).toHaveLength(0);
+    await expect(operations[0]).resolves.toMatchObject({ ok: true });
   } finally {
     input.release(completedTextResponse(""));
     server.closeAllConnections();
     server.close();
+    spy.mockRestore();
   }
 }

@@ -2,7 +2,6 @@ import { isDeepStrictEqual } from "node:util";
 import {
   QueryCommand,
   ScanCommand,
-  TransactWriteItemsCommand,
   UpdateItemCommand,
   type DynamoDBClient,
 } from "@aws-sdk/client-dynamodb";
@@ -10,12 +9,8 @@ import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { z } from "zod";
 import { controlTableNames, dynamoDbClient } from "../db";
 import { config } from "../services/configService";
-import { buildWorkAdmissionChecks } from "../services/deploymentControlTransactions";
 import type { MeetingHistory } from "../types/db";
-import type {
-  ControlTableNames,
-  WorkAdmissionAuthority,
-} from "../types/deploymentControl";
+import type { ControlTableNames } from "../types/deploymentControl";
 import {
   PROCESSING_RETRY_DUE_INDEX,
   PROCESSING_RETRY_QUEUE,
@@ -27,7 +22,6 @@ import {
   type MeetingUpdateKey,
 } from "../types/meetingUpdateDelivery";
 import { classifyDeploymentTransactionError } from "./deploymentControlErrors";
-import { mockWorkAdmissionAllowed } from "./deploymentControlRepository";
 import { readDynamoIndexStatus } from "./dynamoIndexStatus";
 import {
   createDynamoMeetingUpdateDeliveryRepository,
@@ -64,7 +58,6 @@ export type ProcessingRetryClaimInput = {
   ownerInstanceId: string;
   now: number;
   leaseExpiresAt: number;
-  authority: WorkAdmissionAuthority;
   signal?: AbortSignal;
 };
 export type ProcessingRetryFailInput = {
@@ -116,7 +109,6 @@ type RetryStore = {
   write(
     before: MeetingHistory,
     change: RetryWrite,
-    authority?: WorkAdmissionAuthority,
     signal?: AbortSignal,
   ): Promise<boolean>;
   listDue(input: ProcessingRetryDueInput): Promise<MeetingUpdateKey[]>;
@@ -252,15 +244,12 @@ function repositoryOver(store: RetryStore): ProcessingRetryRepository {
   async function apply(
     key: MeetingUpdateKey,
     plan: (row: MeetingHistory) => RetryWrite | undefined,
-    authority?: WorkAdmissionAuthority,
     signal?: AbortSignal,
   ): Promise<RetryFields | undefined> {
     const row = await store.read(key, signal);
     const change = row && plan(row);
     if (!row || !change) return undefined;
-    return (await store.write(row, change, authority, signal))
-      ? change.next
-      : undefined;
+    return (await store.write(row, change, signal)) ? change.next : undefined;
   }
   return {
     async queue(input) {
@@ -273,7 +262,6 @@ function repositoryOver(store: RetryStore): ProcessingRetryRepository {
       const saved = await apply(
         input.key,
         (row) => claimWrite(row, input),
-        input.authority,
         input.signal,
       );
       return saved?.processingRetry;
@@ -319,14 +307,12 @@ const keyOf = (row: MeetingHistory): MeetingUpdateKey => ({
 
 export function createMockProcessingRetryRepository(
   histories: Map<string, MeetingHistory[]>,
-  admit: (authority: WorkAdmissionAuthority) => boolean,
 ): ProcessingRetryRepository {
-  const rows = createMockMeetingUpdateDeliveryRepository(histories, admit);
+  const rows = createMockMeetingUpdateDeliveryRepository(histories);
   const all = () => [...histories.values()].flat();
   return repositoryOver({
     read: (key, signal) => rows.getStrong(key, signal),
-    async write(before, change, authority) {
-      if (authority && !admit(authority)) return false;
+    async write(before, change) {
       const list = histories.get(before.guildId) ?? [];
       const index = list.findIndex(
         (row) => row.channelId_timestamp === before.channelId_timestamp,
@@ -418,44 +404,39 @@ export function createDynamoProcessingRetryRepository(
   tables: ControlTableNames,
 ): ProcessingRetryRepository {
   const rows = createDynamoMeetingUpdateDeliveryRepository(client, tables);
-  async function send(
-    update: ReturnType<typeof retryUpdate>,
-    authority?: WorkAdmissionAuthority,
-    signal?: AbortSignal,
-  ) {
-    if (!authority)
-      return client.send(new UpdateItemCommand(update), {
-        abortSignal: signal,
-      });
-    return client.send(
-      new TransactWriteItemsCommand({
-        TransactItems: [
-          ...buildWorkAdmissionChecks(authority, tables),
-          { Update: update },
-        ],
-      }),
-      { abortSignal: signal },
+  const committed = async (before: MeetingHistory, change: RetryWrite) => {
+    const actual = await rows.getStrong(keyOf(before));
+    return Boolean(
+      actual &&
+      RETRY_FIELDS.every((field) => same(actual[field], change.next[field])),
     );
-  }
+  };
   return repositoryOver({
     read: (key, signal) => rows.getStrong(key, signal),
-    async write(before, change, authority, signal) {
+    /**
+     * Every next value carries a fresh claim id or timestamp, so reading it back
+     * proves this write landed: an SDK retry of a write whose response was lost
+     * fails its condition against its own result and still reports success.
+     */
+    async write(before, change, signal) {
       try {
-        await send(
-          retryUpdate(tables.meetingHistory, before, change),
-          authority,
-          signal,
+        await client.send(
+          new UpdateItemCommand(
+            retryUpdate(tables.meetingHistory, before, change),
+          ),
+          { abortSignal: signal },
         );
         return true;
       } catch (error) {
-        if (classifyDeploymentTransactionError(error) === "stale") return false;
+        if (classifyDeploymentTransactionError(error) === "stale")
+          // A refused write we cannot read back is treated as lost: if it had in
+          // fact landed, its lease lapses and the job is claimed again.
+          return committed(before, change).catch((readError: unknown) => {
+            console.warn("Processing retry read-back failed", readError);
+            return false;
+          });
         if (!mayHaveCommitted(error)) throw error;
-        const actual = await rows.getStrong(keyOf(before));
-        if (
-          actual &&
-          RETRY_FIELDS.every((field) => same(actual[field], change.next[field]))
-        )
-          return true;
+        if (await committed(before, change)) return true;
         throw error;
       }
     },
@@ -527,15 +508,7 @@ export function getProcessingRetryRepository(): ProcessingRetryRepository {
       controlTableNames(),
     );
   const store = getMockStore();
-  return createMockProcessingRetryRepository(
-    store.meetingHistoryByGuild,
-    (authority) =>
-      mockWorkAdmissionAllowed(
-        authority,
-        store.deploymentControlRecords,
-        store.activeMeetingLeases,
-      ),
-  );
+  return createMockProcessingRetryRepository(store.meetingHistoryByGuild);
 }
 export const getProcessingRetryIndexStatus = () =>
   readDynamoIndexStatus(dynamoDbClient, {

@@ -20,7 +20,7 @@ The `/startmeeting` response is private, even when the recording is posted in th
 
 An unavailable or inaccessible configured destination blocks the start without fallback. Chronote fixes the destination when recording starts: its controls, processing updates and final notes stay there even if an administrator changes settings during capture.
 
-**Constraints**: Only one meeting can be active per server at a time. The user who starts the meeting must be in a voice channel. The server must have available meeting minutes on its plan.
+**Constraints**: Only one meeting can record per server at a time. A meeting whose recording has stopped does not count, so the next meeting can start while the previous notes are still processing. The user who starts the meeting must be in a voice channel. The server must have available meeting minutes on its plan.
 
 ## Stage 2: Capture
 
@@ -62,13 +62,15 @@ If Notion automation is enabled, Chronote exports completed meeting notes after 
 
 ## Interrupted recordings
 
-If recording is interrupted, Chronote can recover verified saved audio or text without joining the voice channel again. Recovery follows the meeting's original transcription and notes settings. It does not generate notes when notes were disabled, and it does not invent notes when no usable saved speech remains.
+Chronote saves audio in short pieces while it records. If the Chronote process recording a meeting stops unexpectedly, for example during a restart, Chronote finishes the meeting automatically from the audio saved before the interruption. It does not join the voice channel again. Processing follows the meeting's original transcription and notes settings. It does not generate notes when notes were disabled, and it does not invent notes when no usable saved speech remains. A meeting with no saved audio at all ends as failed without a notice.
 
-Recovered partial notes keep an **Interrupted** status. A warning explains that they cover only the saved recording. The warning remains after notes edits and corrections, and appears in Discord, the library, shared meetings, copied or downloaded notes, Remote MCP, and Notion exports. Known transcription gaps still carry a warning even when recording itself finished.
+Partial notes from an interrupted recording keep an **Interrupted** status and say that the recording was interrupted. They show when it ended where Chronote knows that time, and say so when it does not. A warning explains that they cover only the saved recording. The warning remains after notes edits and corrections, and appears in Discord, the library, shared meetings, copied or downloaded notes, Remote MCP, and Notion exports. Known transcription gaps still carry a warning even when recording itself finished.
 
-Once recovered summary and notes posts are confirmed, later notes edits and meeting renames update those same Discord posts. Existing links to the meeting and interruption warnings stay in place.
+The server can start a new meeting within about a minute of the interruption. It does not wait for the interrupted meeting to finish processing.
 
-The library shows recovery progress or when processing or delivery needs review. If saved text and audio cannot be combined safely, Chronote retains the content, marks recovery as needing review, and pauses automatic notes delivery and export. Confirmed saved audio duration describes preserved audio, which may contain gaps. It does not prove the full meeting was recorded. If the recording's exact end time is unknown, Chronote leaves it unknown.
+If processing keeps failing, Chronote retries a few times with growing pauses, then marks the meeting as failed, posts one notice and keeps the saved audio. Use **Retry processing** on the meeting page once the cause is fixed. If Discord rejects the notes post temporarily, Chronote keeps retrying for up to a day while the meeting and its notes stay available in the portal. If Chronote has lost access to the channel, it stops trying. In rare cases a meeting interrupted while its notes were being posted can show part of its notes twice.
+
+Once the summary and notes are posted, later notes edits and meeting renames update those same Discord posts. Existing links to the meeting and interruption warnings stay in place.
 
 If the live page cannot confirm the recording status, it shows **Status unavailable** instead of Complete. Use **Retry** to check again, or open the meeting library for saved content and recovery status.
 

@@ -5,8 +5,8 @@ run-name: Sandbox Deploy ${{ github.actor }}
 on:
   workflow_dispatch:
     inputs:
-      handoff_quiet_override:
-        description: Launch even if the serving runtime reports recording, finalization or voice work (use only for a leaked counter, see docs/deployment-handoff.md)
+      retire_older_tasks:
+        description: Stop tasks on older revisions instead of waiting for them to drain. Their live meetings end at their last saved piece and are finished by an eligible worker.
         type: boolean
         default: false
 
@@ -321,26 +321,42 @@ jobs:
   # target variables do not need to be passed through job outputs.
   deploybackend:
     name: Deploy Backend (Sandbox)
-    needs: [deploy-target-preflight]
+    # Wait-drain and rollout share this one job and one lock, so no other run
+    # can roll out between this run's drain wait and its rollout. GitHub keeps
+    # at most one pending job per group and cancels the older pending one, so
+    # when several runs queue the newest commit is the one that deploys.
+    # The drain wait alone can take 160 minutes.
+    concurrency:
+      group: backend-rollout-sandbox
+      cancel-in-progress: false
+    needs: [deploy-target-preflight, deploy-docs]
     runs-on: ubuntu-latest
     environment: sandbox
-    timeout-minutes: 180
+    timeout-minutes: 240
     permissions:
       contents: read
       id-token: write
     env:
+      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.ECS_SERVICE }}
       ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
       DEPLOYMENT_LISTENER_ARN: ${{ vars.DEPLOYMENT_LISTENER_ARN }}
-      DEPLOYMENT_TARGET_GROUP_A: ${{ vars.DEPLOYMENT_TARGET_GROUP_A }}
-      DEPLOYMENT_TARGET_GROUP_B: ${{ vars.DEPLOYMENT_TARGET_GROUP_B }}
-      ECS_LOG_GROUP: ${{ vars.ECS_LOG_GROUP }}
       AWS_REGION: ${{ vars.AWS_REGION }}
       SECRETS_PREFIX: ${{ vars.SECRETS_PREFIX }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ".nvmrc"
+          cache: "yarn"
+          cache-dependency-path: "yarn.lock"
+
+      - name: Install dependencies
+        run: bash scripts/ci-install-dependencies.sh
 
       - name: Configure Sandbox backend credentials with OIDC
         uses: aws-actions/configure-aws-credentials@v6
@@ -354,6 +370,50 @@ jobs:
           mask-aws-account-id: true
 
       - name: Verify exact Sandbox deployment identity
+        env:
+          EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          EXPECTED_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          EXPECTED_SESSION_NAME: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity --output json | node scripts/deployment/assert-sandbox-identity.cjs
+
+      - name: Resolve deployment names
+        run: |
+          set -euo pipefail
+          prefix="${SECRETS_PREFIX:-${ECS_TASK_FAMILY%-bot-task}}"
+          if [ -z "$prefix" ]; then
+            echo "ERROR: SECRETS_PREFIX is not set and could not be derived."
+            exit 1
+          fi
+          echo "SECRETS_PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo "DEPLOYMENT_CONTROL_TABLE=${DEPLOYMENT_CONTROL_TABLE:-${prefix}-DeploymentControlTable}" >> "$GITHUB_ENV"
+
+      - name: Wait for older tasks to drain
+        env:
+          RETIRE_OLDER_TASKS: ${{ github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks && '1' || '' }}
+        run: |
+          set -euo pipefail
+          if [ "$RETIRE_OLDER_TASKS" = "1" ]; then
+            node scripts/deployment/deploy.cjs wait-drain --retire
+          else
+            node scripts/deployment/deploy.cjs wait-drain
+          fi
+
+      # The wait can outlast most of a role session, so the rollout starts on a
+      # fresh one.
+      - name: Refresh Sandbox backend credentials for the rollout
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: chronote-sandbox-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 10800
+          aws-region: ${{ vars.AWS_REGION }}
+          unset-current-credentials: true
+          mask-aws-account-id: true
+
+      - name: Verify refreshed Sandbox deployment identity
         env:
           EXPECTED_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
           EXPECTED_ROLE_ARN: ${{ vars.SANDBOX_BACKEND_DEPLOY_ROLE_ARN }}
@@ -436,20 +496,7 @@ jobs:
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
-      - name: Setup coordinator Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version-file: ".nvmrc"
-          cache: "yarn"
-          cache-dependency-path: "yarn.lock"
-
-      - name: Install coordinator dependencies
-        run: bash scripts/ci-install-dependencies.sh
-
-      - name: Build backend protocol builders
-        run: yarn build
-
-      - name: Pin candidate image and deployment identity
+      - name: Pin candidate image
         env:
           IMAGE: ${{ steps.build-image.outputs.image }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
@@ -457,40 +504,36 @@ jobs:
           set -euo pipefail
           digest=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="${IMAGE##*:}" --query 'imageDetails[0].imageDigest' --output text)
           echo "CANDIDATE_IMAGE=${IMAGE%:*}@$digest" >> "$GITHUB_ENV"
-          echo "DEPLOYMENT_RUN_TOKEN=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
-          echo "DEPLOYMENT_CANDIDATE_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
 
-      - name: Package supported publication release metadata
-        run: node scripts/operator/build-publication-release.cjs
+      - name: Preflight service and listener
+        run: node scripts/deployment/deploy.cjs preflight
 
-      - name: Save operator release metadata
-        uses: actions/upload-artifact@v4
-        with:
-          name: recovery-publication-release-${{ github.run_id }}-${{ github.run_attempt }}
-          path: scripts/operator/recovery-publication-releases.json
-          retention-days: 90
+      # The script prints the previous image before it updates the service, so
+      # the outputs are captured even when the rollout itself fails.
+      - name: Roll out candidate revision
+        id: rollout
+        run: |
+          set -uo pipefail
+          output="$RUNNER_TEMP/rollout.jsonl"
+          set +e
+          node scripts/deployment/deploy.cjs rollout --image "$CANDIDATE_IMAGE" > "$output"
+          status=$?
+          set -e
+          echo "previous_image=$(jq -rs 'map(.previousImage // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"
+          echo "revision=$(jq -rs 'map(.revision // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"
+          exit "$status"
 
-      - name: Protect serving runtime and warm candidate
-        id: prepare
+      - name: Wait for a ready worker on the new revision
+        id: wait-ready
         env:
-          HANDOFF_QUIET_OVERRIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.handoff_quiet_override && '1' || '' }}
-        run: node scripts/deployment/coordinator.cjs prepare
+          RELEASE: ${{ steps.rollout.outputs.revision }}
+        run: node scripts/deployment/deploy.cjs wait-ready --release "$RELEASE"
 
-      - name: Promote exact ready candidate
-        id: promote
-        run: node scripts/deployment/coordinator.cjs promote
-
-      - name: Request guarded cancellation of failed preparation
-        if: failure() && steps.prepare.outcome == 'failure'
-        run: node scripts/deployment/coordinator.cjs cancel-preparation
-
-      - name: Wait for runtime-owned retirement acknowledgment
-        id: retire
-        run: node scripts/deployment/coordinator.cjs retire
-
-      - name: Reconcile failed deployment without terminating work
-        if: failure() && steps.prepare.outcome != 'skipped'
-        run: node scripts/deployment/coordinator.cjs reconcile
+      - name: Roll back to the previous image
+        if: failure() && (steps.rollout.outcome == 'failure' || steps.wait-ready.outcome == 'failure') && steps.rollout.outputs.previous_image != ''
+        env:
+          PREVIOUS_IMAGE: ${{ steps.rollout.outputs.previous_image }}
+        run: node scripts/deployment/deploy.cjs rollback --image "$PREVIOUS_IMAGE"
 
       - name: Create deployment summary
         if: always()
@@ -520,7 +563,7 @@ jobs:
 
   deploy-frontend:
     name: Deploy Frontend (Sandbox)
-    needs: [deploy-target-preflight]
+    needs: [deploybackend]
     runs-on: ubuntu-latest
     environment: sandbox
     permissions:

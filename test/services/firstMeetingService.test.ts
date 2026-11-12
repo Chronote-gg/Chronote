@@ -413,30 +413,6 @@ test.each([
   ).toBe("saved");
 });
 
-test("matching_recovery_lease_verifies_offline_processing", async () => {
-  jest.mocked(getMeetingHistoryService).mockResolvedValue(
-    history({
-      status: "interrupted",
-      ownerInstanceId: "worker",
-      executionVersion: 2,
-    }),
-  );
-  jest.mocked(getActiveMeetingLease).mockResolvedValue({
-    ...liveLease(),
-    status: "processing",
-    sessionMode: "recovery",
-    recoveryAttemptId: "recovery-attempt",
-  });
-  expect(
-    await getFirstMeetingState({ guildId, userId, historyId }),
-  ).toMatchObject({
-    kind: "processing",
-    meeting: {
-      captureNotice: expect.stringContaining("recording was interrupted"),
-    },
-  });
-});
-
 test("saved_notes_take_priority_over_active_or_failed_processing", async () => {
   jest.mocked(getMeetingHistoryService).mockResolvedValue(
     history({

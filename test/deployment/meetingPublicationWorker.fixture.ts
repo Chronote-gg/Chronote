@@ -2,7 +2,6 @@ import type { MeetingUpdateDeliveryRepository } from "../../src/repositories/mee
 import { createMeetingUpdateDeliveryService } from "../../src/services/meetingUpdateDeliveryService";
 import { createMeetingUpdateDeliveryWorker } from "../../src/services/meetingUpdateDeliveryWorkerService";
 import { createDiscordMeetingUpdateTransport } from "../../src/services/discordMeetingUpdateTransport";
-import { beginRuntimeWorkClaim } from "../../src/services/runtimeWorkAdmissionService";
 export function publicationWorker(input: {
   repository: MeetingUpdateDeliveryRepository;
   fetchImpl: typeof fetch;
@@ -19,9 +18,9 @@ export function publicationWorker(input: {
   });
   return createMeetingUpdateDeliveryWorker({
     repository: input.repository,
-    begin: beginRuntimeWorkClaim,
     deliver: service.deliverMeetingUpdate,
     reconcile: service.reconcileMeetingUpdate,
     now: () => Math.floor(Date.now() / 1000),
+    isEligible: () => true,
   });
 }

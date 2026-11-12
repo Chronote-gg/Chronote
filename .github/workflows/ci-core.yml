@@ -125,7 +125,7 @@ jobs:
       - name: Run Jest
         run: yarn test
 
-  deployment-integration:
+  integration:
     name: Deployment Integration
     runs-on: ubuntu-latest
     services:
@@ -134,7 +134,7 @@ jobs:
         ports:
           - 8000:8000
     env:
-      DEPLOYMENT_TEST_DYNAMODB_ENDPOINT: http://127.0.0.1:8000
+      TEST_DYNAMODB_ENDPOINT: http://127.0.0.1:8000
       DEPLOYMENT_TEST_IMAGE: chronote-deployment-test:${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7
@@ -144,12 +144,14 @@ jobs:
           cache: yarn
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
+      - name: Install FFmpeg for scenario audio
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Build application image for native deployment fixtures
         run: docker build -t "$DEPLOYMENT_TEST_IMAGE" .
       - name: Build isolated object storage from pinned source
         run: docker build -f test/deployment/fixtures/Minio.Dockerfile -t chronote-minio-test:source .
-      - name: Run real deployment transactions
-        run: yarn test:deployment:integration
+      - name: Run integration tests
+        run: yarn test:integration
 
   build:
     name: Build

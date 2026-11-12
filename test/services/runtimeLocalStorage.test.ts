@@ -20,21 +20,15 @@ test("actual app factory uses local client credentials and region independently 
   const { config } = await import("../../src/services/configService");
   expect(config.database.useLocalDynamoDB).toBe(true);
   expect(config.mock.enabled).toBe(false);
-  const { getDeploymentControlRepository } = await import("../../src/db");
-  expect(await getDeploymentControlRepository().supportsLocalBootstrap()).toBe(
-    true,
-  );
+  const { dynamoDbClient } = await import("../../src/db");
+  const endpoint = await dynamoDbClient.config.endpoint?.();
+  const credentials = await dynamoDbClient.config.credentials();
+  expect(endpoint?.hostname).toBe("localhost");
+  expect(await dynamoDbClient.config.region()).toBe("local");
+  expect(credentials).toMatchObject({
+    accessKeyId: "dummy",
+    secretAccessKey: "dummy",
+  });
   expect(process.env.AWS_REGION).toBe("us-east-1");
   expect(process.env.AWS_ACCESS_KEY_ID).toBe("unused-global-test-key");
 });
-test.each(["remote", "ecs"])(
-  "actual app factory cannot grant local capability for %s",
-  async (mode) => {
-    if (mode === "remote") process.env.USE_LOCAL_DYNAMODB = "false";
-    else process.env.AWS_EXECUTION_ENV = "AWS_ECS_FARGATE";
-    const { getDeploymentControlRepository } = await import("../../src/db");
-    expect(
-      await getDeploymentControlRepository().supportsLocalBootstrap(),
-    ).toBe(false);
-  },
-);

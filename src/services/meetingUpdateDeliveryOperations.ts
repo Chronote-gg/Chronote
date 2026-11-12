@@ -106,7 +106,6 @@ async function register(
     let applied: "applied" | "stale" | undefined;
     try {
       applied = await ctx.effect((signal) => {
-        ctx.invokedWrite();
         return ctx.deps.repository.registerNotesPointers({
           key: ctx.input.key,
           expectedContentRevision: ctx.own(row).attempt.contentRevision,

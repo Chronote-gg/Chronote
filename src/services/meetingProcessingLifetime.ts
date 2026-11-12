@@ -19,13 +19,12 @@ function lifetime(meeting: object): Lifetime {
   return value;
 }
 export function getMeetingProcessingSignal(
-  meeting: Pick<MeetingData, "ownershipSignal" | "finalization">,
+  meeting: Pick<MeetingData, "ownershipSignal">,
 ): AbortSignal {
   const signal = lifetime(meeting).controller.signal;
   return AbortSignal.any([
     signal,
     ...(meeting.ownershipSignal ? [meeting.ownershipSignal] : []),
-    ...(meeting.finalization ? [meeting.finalization.controller.signal] : []),
   ]);
 }
 /** Register before invoking a provider or any reentrant callback. Include the complete effect chain. */

@@ -1,6 +1,5 @@
 import type { VoiceState } from "discord.js";
 import type { MeetingData } from "../types/meeting-data";
-import { allowFixtureActor, fixtureParticipant } from "./fixtureInputService";
 import {
   fromMember,
   formatParticipantLabel,
@@ -11,9 +10,7 @@ export function recordMeetingParticipantEvent(
   state: VoiceState,
   kind: "join" | "leave",
 ): boolean {
-  if (!allowFixtureActor(meeting, state.id)) return false;
-  const participant =
-    fixtureParticipant(meeting, state.id) ?? fromMember(state.member!);
+  const participant = fromMember(state.member!);
   const userLabel = formatParticipantLabel(participant, {
     includeUsername: false,
     fallbackName: participant.username,

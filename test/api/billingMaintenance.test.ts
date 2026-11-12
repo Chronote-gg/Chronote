@@ -1,5 +1,4 @@
 /** @jest-environment node */
-import { seedBillingRuntime } from "../fixtures/billingRuntime";
 import {
   createServer,
   postWebhook,
@@ -21,7 +20,6 @@ function createStripe(event: StripeEvent): StripeClient {
 describe("maintenance billing continuation receipts", () => {
   beforeEach(() => {
     resetMockStore();
-    seedBillingRuntime();
     clearGuildSubscriptionCache();
     Object.assign(config.stripe, {
       secretKey: "sk_test_billing",

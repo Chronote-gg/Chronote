@@ -39,7 +39,7 @@ The front matter `id` is the idempotency key. Use a new id for new text. Each te
 
 ## Preview and review
 
-Choose a new output directory outside all Git checkouts and shared folders. The command refuses an existing path and writes owner-only files, like the [recovery publication command](recovery-discord-publication.md). All names below are placeholders:
+Choose a new output directory outside all Git checkouts and shared folders. The command refuses an existing path and writes owner-only files through `scripts/privateOutput.ts`. All names below are placeholders:
 
 ```text
 yarn ts-node scripts/announce.ts preview --announcement FILE --account-id ACCOUNT --region REGION --config-table CONFIG_TABLE --delivery-table DELIVERY_TABLE --out NEW_PRIVATE_DIRECTORY

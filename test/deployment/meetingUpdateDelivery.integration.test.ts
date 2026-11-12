@@ -14,7 +14,7 @@ import type { MeetingHistory } from "../../src/types/db";
 import {
   deliveryContract,
   numericHeavyWrite,
-  authority,
+  claimOwner,
   write,
   type Harness,
 } from "../repositories/meetingUpdateDeliveryContract";
@@ -35,56 +35,69 @@ import {
   planDelivery,
   registerOperation,
 } from "../types/meetingUpdateDelivery.fixture";
-import { control, runtime } from "./controlFixtures";
 
-const { tables, client, repository, put, createTables, read, admit, dispose } =
+const { tables, client, repository, put, createTables, read, dispose } =
   meetingUpdateDynamoFixture("meeting-updates");
 beforeAll(createTables);
 
-it.each([false, true])(
-  "maintenance blocks actual new delivery claim including retained takeover=%s",
-  async (takeover) => {
-    const delivery = takeover ? running() : pending();
-    const row = {
-      ...history(),
-      ...pointers,
-      contentRevision: 1,
-      updateDelivery: delivery,
-    };
-    await put(tables.meetingHistory, row);
-    const proof = runtime("old");
-    await put(tables.deploymentControl, {
-      ...proof,
-      heartbeatAt: now,
-      readiness: {
-        ...proof.readiness,
-        provenAt: now - 1,
-        expiresAt: now + 200,
-      },
-      protection: {
-        ...proof.protection!,
-        provenAt: now - 1,
-        expiresAt: now + 200,
-      },
+/** Lets the first write commit, then re-sends it as an SDK retry would after a lost response. */
+async function retriedAfterLostResponse<T>(operation: () => Promise<T>) {
+  const send = client.send.bind(client);
+  let retried = false;
+  const spy = jest
+    .spyOn(client, "send")
+    .mockImplementation(async (command, options) => {
+      if (retried || !(command instanceof UpdateItemCommand))
+        return send(command, options);
+      retried = true;
+      await send(command, options);
+      return send(command, options);
     });
-    await put(tables.deploymentControl, {
-      ...control,
-      maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
-    });
-    expect(
-      await repository.claim({
-        key,
-        expectedContentRevision: 1,
-        expectedDeliveryRevision: delivery.revision,
-        attempt: attempt(),
-        authority,
-      }),
-    ).toBe("stale");
-    expect(await read()).toEqual(row);
-  },
-);
+  try {
+    return await operation();
+  } finally {
+    spy.mockRestore();
+  }
+}
+const claimPending = (revision: string, ownerInstanceId: string) =>
+  repository.claim({
+    key,
+    expectedContentRevision: 1,
+    expectedDeliveryRevision: revision,
+    attempt: attempt(),
+    ownerInstanceId,
+    now,
+  });
 
-it("maintenance permits exact owned renewal and completion while foreign ownership remains fenced", async () => {
+it("two workers claiming one delivery at once: exactly one claim lands", async () => {
+  const delivery = pending();
+  await put(tables.meetingHistory, deliveryRow(delivery));
+  const results = await Promise.all([
+    claimPending(delivery.revision, "worker-a"),
+    claimPending(delivery.revision, "worker-b"),
+  ]);
+  expect([...results].sort()).toEqual(["claimed", "stale"]);
+  const winner = results[0] === "claimed" ? "worker-a" : "worker-b";
+  expect((await read())?.updateDelivery?.progress).toMatchObject({
+    kind: "running",
+    claim: { ownerInstanceId: winner },
+  });
+});
+
+it("a claim retried after its lost response reports its own landed claim", async () => {
+  const delivery = pending();
+  await put(tables.meetingHistory, deliveryRow(delivery));
+  expect(
+    await retriedAfterLostResponse(() =>
+      claimPending(delivery.revision, "worker-a"),
+    ),
+  ).toBe("claimed");
+  expect((await read())?.updateDelivery?.progress).toMatchObject({
+    claim: { ownerInstanceId: "worker-a" },
+  });
+});
+
+it("exact owned renewal and completion apply while foreign ownership remains fenced", async () => {
   const delivery = running("verified");
   if (delivery.progress.kind !== "running")
     throw new Error("Expected running fixture");
@@ -93,10 +106,6 @@ it("maintenance permits exact owned renewal and completion while foreign ownersh
     ...pointers,
     contentRevision: 1,
     updateDelivery: delivery,
-  });
-  await put(tables.deploymentControl, {
-    ...control,
-    maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
   });
   const renewal = {
     key,
@@ -144,7 +153,6 @@ describe("real Dynamo atomic persistence", () => {
       await put(tables.meetingHistory, row);
     },
     read,
-    admit,
   });
   deliveryContract(harness);
   regenerationContract(harness);
@@ -260,18 +268,6 @@ it("strongly recognizes a committed claim and completion after lost acknowledgme
     updateDelivery: pending(),
   };
   await put(tables.meetingHistory, row);
-  await put(tables.deploymentControl, control);
-  const proof = runtime("old");
-  await put(tables.deploymentControl, {
-    ...proof,
-    heartbeatAt: now,
-    readiness: { ...proof.readiness, provenAt: now - 1, expiresAt: now + 200 },
-    protection: {
-      ...proof.protection!,
-      provenAt: now - 1,
-      expiresAt: now + 200,
-    },
-  });
   expect(
     await lostAcknowledgment(() =>
       repository.claim({
@@ -279,7 +275,7 @@ it("strongly recognizes a committed claim and completion after lost acknowledgme
         expectedContentRevision: 1,
         expectedDeliveryRevision: "delivery-1",
         attempt: attempt(),
-        authority,
+        ...claimOwner,
       }),
     ),
   ).toBe("claimed");

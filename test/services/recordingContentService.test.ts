@@ -59,7 +59,6 @@ test("completedTranscriptionCheckpointSurvivesWithoutFinalization", async () => 
     transcribeMeeting: true,
     generateNotes: true,
   });
-  expect(meeting.finalization).toBeUndefined();
 });
 
 test("later model/context changes cannot rewrite original generation settings", async () => {
@@ -130,9 +129,9 @@ test("late usable transcript caller publishes after PCM completion without chang
     await import("../../src/services/recordingCheckpointCapture");
   const { createRecordingCheckpointService } =
     await import("../../src/services/recordingCheckpointService");
-  const { createMockDeploymentControlRepository } =
-    await import("../../src/repositories/deploymentControlRepository");
-  const { history } = await import("../deployment/controlFixtures");
+  const { createMockMeetingHistoryTransitionRepository } =
+    await import("../../src/repositories/meetingHistoryTransitions");
+  const { history } = await import("../fixtures/meetingHistory");
   const { meeting } = await fixture();
   const directory = mkdtempSync(path.join(tmpdir(), "late-content-"));
   const controller = new AbortController();
@@ -148,8 +147,7 @@ test("late usable transcript caller publishes after PCM completion without chang
     executionVersion: 1,
     status: "in_progress" as const,
   };
-  const repository = createMockDeploymentControlRepository(
-    new Map(),
+  const repository = createMockMeetingHistoryTransitionRepository(
     new Map([[meeting.guildId, [row]]]),
     new Map([
       [
@@ -258,7 +256,6 @@ test("late usable transcript caller publishes after PCM completion without chang
     checkpointCompletedTranscription(meeting);
     await meeting.recordingCapture.settled();
     expect(meeting.recordingCheckpoint).toBe(finalPointer);
-    expect(meeting.finalization).toBeUndefined();
     meeting.recordingCapture.releaseSettledBuffers();
   } finally {
     meeting.recordingCapture.fence();

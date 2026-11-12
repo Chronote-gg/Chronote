@@ -36,4 +36,4 @@ In-request fan-out leaves a gap after saving. A separate outbox table adds trans
 
 ## Notes
 
-See [delivery outcomes](discord-delivery-outcomes.md) and [exceptional publication repair](operations/recovery-discord-publication.md). Code validation does not establish hosted Sandbox acceptance or authorize production deployment or live hold release.
+See [delivery outcomes](discord-delivery-outcomes.md). Code validation does not establish hosted Sandbox acceptance or authorize production deployment or live hold release.

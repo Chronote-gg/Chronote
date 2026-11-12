@@ -6,13 +6,13 @@ The approved change keeps existing recordings on their original owner while a re
 
 No new product decision is requested by this reconciliation. Hosted Sandbox acceptance, first activation, compatible live rollback and historical repair remain separate. This task does not authorize deployment even where a standing Sandbox permission exists. The private introduction packet retains UNKNOWN identities until an authorized refresh. Completed-object cleanup still lacks a live operating route.
 
-Read [Recording handoff and recovery](../../deployment-handoff.md) for the participant journey, final contracts and evidence limits. The task checklists below preserve the original verification obligations; they are not a claim that every named command ran on the final head. Task reports and the final PR audit provide that evidence.
+Read Recording handoff and recovery for the participant journey, final contracts and evidence limits. The task checklists below preserve the original verification obligations; they are not a claim that every named command ran on the final head. Task reports and the final PR audit provide that evidence.
 
 ## Participant experience after interruption
 
 Participants can return to the meeting in Discord or the Library and see that capture was interrupted. When verified saved speech and the original settings permit it, Chronote generates clearly partial notes. With no usable saved speech, it sends the deterministic Discord interruption notice after durable delivery intent, records its acknowledgment and skips notes, summary generation and Notion export. An unknown send or acknowledgment remains review-required and is never automatically resent. Without a first checkpoint, coverage remains UNKNOWN or unavailable. Recovery never rejoins voice automatically.
 
-Existing access rules still govern direct links, the Library and MCP reads. An uncertain delivery requires reconciliation instead of an automatic resend. See the [participant journey](../../deployment-handoff.md) for entry paths and the original cancellation and recovery rules.
+Existing access rules still govern direct links, the Library and MCP reads. An uncertain delivery requires reconciliation instead of an automatic resend. See the participant journey for entry paths and the original cancellation and recovery rules.
 
 ## Implementation reference
 

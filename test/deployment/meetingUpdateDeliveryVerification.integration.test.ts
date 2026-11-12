@@ -5,17 +5,12 @@ import { publicationHttpFixture } from "./meetingPublicationHttp.fixture";
 import { fixture } from "../services/meetingUpdatePlan.fixture";
 import { createMeetingUpdateDeliveryService } from "../../src/services/meetingUpdateDeliveryService";
 import { createDiscordMeetingUpdateTransport } from "../../src/services/discordMeetingUpdateTransport";
-import {
-  beginRuntimeWorkClaim,
-  getRuntimeWorkAdmissionCheckpoints,
-} from "../../src/services/runtimeWorkAdmissionService";
 import { key, now } from "../types/meetingUpdateDelivery.fixture";
 let db: Awaited<ReturnType<typeof publicationDynamoFixture>>;
 let http: Awaited<ReturnType<typeof publicationHttpFixture>>;
 beforeEach(async () => {
   jest.spyOn(Date, "now").mockReturnValue(now * 1000);
   db = await publicationDynamoFixture();
-  await db.admit();
 });
 afterEach(async () => {
   try {
@@ -53,10 +48,6 @@ async function setup(protectedFinal = false) {
   return input;
 }
 async function run() {
-  const work = beginRuntimeWorkClaim(
-    "meeting_update_delivery",
-    crypto.randomUUID(),
-  );
   const service = createMeetingUpdateDeliveryService({
     repository: db.updates,
     discord: createDiscordMeetingUpdateTransport({
@@ -66,19 +57,7 @@ async function run() {
     now: () => Math.floor(Date.now() / 1000),
     random: () => 0,
   });
-  try {
-    return await work.trackPromise(() =>
-      service.deliverMeetingUpdate({ key, work, signal: work.signal }),
-    );
-  } finally {
-    if (
-      getRuntimeWorkAdmissionCheckpoints().some(
-        (item) => item.signal === work.signal && item.claim,
-      )
-    )
-      work.acknowledgeTerminal();
-    await work.settle();
-  }
+  return service.deliverMeetingUpdate({ key });
 }
 test("accepted DELETE survives real Dynamo restart and Retry-After with one cleanup mutation", async () => {
   const input = await setup();

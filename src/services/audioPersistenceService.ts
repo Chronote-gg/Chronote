@@ -17,7 +17,6 @@ import {
   getMeetingTempDir,
 } from "./tempFileService";
 import { renderMixedPcmTracks } from "./mixedPcmService";
-import { getMeetingArtifactProducer } from "./meetingArtifactProducer";
 
 function generateSilentBuffer(
   durationMs: number,
@@ -109,13 +108,6 @@ export async function persistSnippetSpeakerTrack(
 
   const offsetMs = Math.max(0, snippet.timestamp - meeting.startTime.getTime());
   const track = getOrCreateSpeakerTrack(meeting, snippet.userId);
-  const write = getMeetingArtifactProducer(meeting)?.beginWrite(
-    track.filePath,
-    {
-      kind: "captured_audio",
-      producer: "speaker_track",
-    },
-  );
   const writeTask = async () => {
     await fs.promises.mkdir(getSpeakerTrackDir(meeting), { recursive: true });
     const outputStream = fs.createWriteStream(track.filePath, { flags: "a" });
@@ -159,15 +151,7 @@ export async function persistSnippetSpeakerTrack(
       return undefined;
     })
     .then(writeTask);
-  track.writePromise = chained.then(
-    () => {
-      write?.settle(track.writeFailed ? "uncertain" : "known");
-    },
-    (error: unknown) => {
-      write?.settle("uncertain");
-      throw error;
-    },
-  );
+  track.writePromise = chained;
   await track.writePromise;
 }
 
@@ -180,13 +164,6 @@ export function openOutputFile(meeting: MeetingData) {
   meeting.audioData.outputFileName = outputFileName;
 
   meeting.audioData.audioPassThrough = new PassThrough();
-  const write = getMeetingArtifactProducer(meeting)?.beginWrite(
-    outputFileName,
-    {
-      kind: "captured_audio",
-      producer: "live_encode",
-    },
-  );
 
   let complete: (result: OutputCompletion) => void = () => {};
   let started = false;
@@ -195,7 +172,6 @@ export function openOutputFile(meeting: MeetingData) {
   let resolveCompletion: (result: OutputCompletion) => void = () => {};
   function finishClosedOutput() {
     if (!terminal || (started && !childClosed)) return;
-    write?.settle(terminal.kind === "closed" ? "known" : "uncertain");
     resolveCompletion(terminal);
   }
   outputCompletions.set(
@@ -327,18 +303,7 @@ async function buildOwnedMixedAudio(
   if (usable.length === 0) return undefined;
 
   const filename = path.join(getMeetingTempDir(meeting), "recording_mixed.mp3");
-  const write = getMeetingArtifactProducer(meeting)?.beginWrite(filename, {
-    kind: "captured_audio",
-    producer: "mixed_encode",
-  });
-  try {
-    const output = await renderMixedPcmTracks(usable, filename, signal);
-    write?.settle("known");
-    return output;
-  } catch (error) {
-    write?.settle("uncertain");
-    throw error;
-  }
+  return await renderMixedPcmTracks(usable, filename, signal);
 }
 
 export async function cleanupSpeakerTracks(

@@ -61,6 +61,12 @@ variable "ECS_DESIRED_COUNT" {
   }
 }
 
+variable "ENABLE_DEPLOY_RETIRE" {
+  description = "Grant the backend deploy role ecs:StopTask on this cluster's tasks, so a dispatched deploy with retire_older_tasks can stop older tasks instead of waiting for them to drain. Set through the GitHub Actions variable TFVAR_ENABLE_DEPLOY_RETIRE."
+  type        = bool
+  default     = false
+}
+
 variable "github_environment" {
   description = "GitHub Actions environment name to populate with deploy variables"
   type        = string
@@ -2121,6 +2127,10 @@ resource "aws_ecs_service" "app_service" {
 
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
+  # Must equal HEALTH_CHECK_GRACE_PERIOD_SECONDS in scripts/deployment/deploy.cjs,
+  # which sets it on every rollout, or each apply and deploy would undo the other.
+  # ECS accepts a grace period only on a service bound to a load balancer.
+  health_check_grace_period_seconds = var.ENABLE_API_ALB ? 300 : null
 
   network_configuration {
     subnets          = [aws_subnet.app_public_subnet_1.id, aws_subnet.app_public_subnet_2.id]

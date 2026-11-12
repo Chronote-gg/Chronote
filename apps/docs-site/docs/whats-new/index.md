@@ -7,6 +7,12 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Start meetings during updates (November 11)
+
+- We are rolling out a change so that routine Chronote updates normally no longer block new starts. A recording that is already running continues until it ends, and new meetings can usually start while an update is in progress. Switching to this change includes one short pause of a few minutes in which meetings cannot start.
+- Once the change is live and a recording stops, the server can start its next meeting right away, even while the previous notes are still processing.
+- If Chronote stops unexpectedly during a recording, it finishes the meeting automatically from the audio saved so far. The notes are marked **Interrupted** and show when the recording ended where that time is known. See [Interrupted recordings](/core-concepts/meeting-lifecycle/#interrupted-recordings).
+
 ### API request logging notice (November 4)
 
 - We are turning on request-level logging for the Chronote API so we can diagnose errors and availability problems. A log line records the caller's IP address and port, the requested path and query string, the response status, the time of the request, the user agent and the connection's security details.

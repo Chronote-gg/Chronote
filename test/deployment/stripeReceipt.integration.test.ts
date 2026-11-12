@@ -1,36 +1,34 @@
 import { randomUUID } from "node:crypto";
 import { TransactWriteItemsCommand } from "@aws-sdk/client-dynamodb";
-import { marshall } from "@aws-sdk/util-dynamodb";
-import { context, control, runtime } from "./controlFixtures";
-import { introductionFixture } from "../fixtures/productionIntroduction";
+import type { RuntimeIdentity } from "../../src/types/deploymentControl";
 import {
   createIntroductionTable,
   introductionClient as client,
   putIntroductionDocument as put,
-  readIntroductionDocument as read,
 } from "./fixtures/introductionStore";
 import { createStripeWebhookDynamoRepository } from "../../src/repositories/stripeWebhookDynamoRepository";
 import { STRIPE_RECEIPT_BOUNDARY } from "../../src/types/stripeWebhookReceipt";
 import { continueStripeReceipt } from "../../src/services/stripeWebhookReceiptService";
+import { config } from "../../src/services/configService";
+import { getRuntimeInstanceId } from "../../src/services/runtimeInstanceService";
 import type { StripeWebhookEvent } from "../../src/types/db";
-const controlTable = "receipt-control-" + randomUUID();
+const runtime: RuntimeIdentity = {
+  kind: "ecs",
+  instanceId: "old",
+  taskArn: "arn:aws:ecs:us-east-1:123456789012:task/fixture/old",
+  imageDigest: "sha256:fixture",
+  candidateId: "old",
+  protocolVersion: 1,
+};
 const receiptTable = "receipt-events-" + randomUUID();
-const repo = createStripeWebhookDynamoRepository(client, receiptTable, {
-  deploymentControl: controlTable,
-  meetingHistory: "unused",
-});
+const repo = createStripeWebhookDynamoRepository(client, receiptTable);
 const hold = {
   holdId: "fixture-hold",
   introductionId: "fixture-introduction",
   revision: 1,
 };
-let activeContext = context;
 jest.mock("../../src/repositories/stripeWebhookRepository", () => ({
   getStripeWebhookRepository: () => repo,
-}));
-jest.mock("../../src/services/runtimeLifecycleService", () => ({
-  beginRuntimeWork: () => ({ settle: jest.fn(), transition: jest.fn() }),
-  getRuntimeAdmissionContext: async () => activeContext,
 }));
 const fresh = (): StripeWebhookEvent => ({
   eventId: randomUUID(),
@@ -38,71 +36,128 @@ const fresh = (): StripeWebhookEvent => ({
   state: "processing",
   leaseToken: "token",
   leaseUntil: Date.now() + 60000,
-  birth: { version: STRIPE_RECEIPT_BOUNDARY, writer: context.identity, hold },
+  birth: { version: STRIPE_RECEIPT_BOUNDARY, writer: runtime, hold },
   continuation: "not_admitted",
 });
 beforeAll(async () => {
-  await createIntroductionTable(controlTable);
   await createIntroductionTable(receiptTable, ["eventId"]);
 });
-beforeEach(async () => {
+beforeEach(() => {
   jest.restoreAllMocks();
-  activeContext = context;
-  await put(controlTable, control);
-  await put(controlTable, runtime("old"));
-  await put(controlTable, introductionFixture(hold));
 });
-const heldControl = () =>
-  put(controlTable, { ...control, maintenance: hold, coordinatorExpiresAt: 0 });
-async function reopen() {
-  await client.send(
-    new TransactWriteItemsCommand({
-      TransactItems: [
-        {
-          Update: {
-            TableName: controlTable,
-            Key: marshall({ pk: "ENV", sk: "CONTROL" }),
-            ConditionExpression: "maintenance = :hold",
-            UpdateExpression: "REMOVE maintenance",
-            ExpressionAttributeValues: marshall({ ":hold": hold }),
-          },
-        },
-      ],
-    }),
-  );
-}
-test.each(["before scan", "after scan", "after reopen"])(
-  "native receipt arrives %s: admission orders with the hold",
-  async (timing) => {
-    const row = fresh();
-    const handler = jest.fn(async () => undefined);
-    await heldControl();
-    if (timing === "before scan") await repo.claim(row);
-    // A final metadata observation cannot prevent later raw receipt insertion.
-    await read(controlTable, { pk: "ENV", sk: "CONTROL" });
-    if (timing === "after scan") await repo.claim(row);
-    if (timing !== "after reopen") {
-      await expect(
-        continueStripeReceipt(row.eventId, "token", handler),
-      ).rejects.toThrow();
-      expect(handler).not.toHaveBeenCalled();
-      expect((await repo.get(row.eventId))?.firstAdmission).toBeUndefined();
-    }
-    await reopen();
-    if (timing === "after reopen") await repo.claim(row);
-    await continueStripeReceipt(row.eventId, "token", handler);
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect((await repo.get(row.eventId))?.state).toBe("completed");
-  },
-);
-test("admitted owner survives a later hold and saves its terminal receipt", async () => {
+test("native admission writes only the receipt's own state with no deployment control table", async () => {
   const row = fresh();
   await repo.claim(row);
+  const attemptId = randomUUID();
+  expect(await repo.admit(row.eventId, "token", attemptId, runtime)).toBe(true);
+  const admission = {
+    attemptId,
+    leaseToken: "token",
+    runtime,
+    generation: config.runtime.release,
+    admittedAt: expect.any(Number),
+  };
+  expect(await repo.get(row.eventId)).toEqual({
+    eventId: row.eventId,
+    receivedAt: row.receivedAt,
+    state: "processing",
+    leaseToken: "token",
+    leaseUntil: row.leaseUntil,
+    birth: row.birth,
+    continuation: "admitted",
+    firstAdmission: admission,
+    admission: { ...admission, status: "running" },
+  });
+});
+test("an admitted receipt completes its handler and records a local identity without a readiness proof", async () => {
+  const row = fresh();
+  await repo.claim(row);
+  const handler = jest.fn(async () => undefined);
   await continueStripeReceipt(row.eventId, "token", async (owner) => {
-    await heldControl();
+    await handler();
     await owner.effect(async () => "domain ACK");
   });
-  expect((await repo.get(row.eventId))?.state).toBe("completed");
+  expect(handler).toHaveBeenCalledTimes(1);
+  const stored = await repo.get(row.eventId);
+  expect(stored?.state).toBe("completed");
+  const instanceId = getRuntimeInstanceId();
+  expect(stored?.firstAdmission?.runtime).toEqual({
+    kind: "local",
+    localId: instanceId,
+    instanceId,
+    protocolVersion: 1,
+  });
+});
+/** Runs the next admit transaction, then hands its committed result to `retry`, as a lost response would. */
+function loseNextAdmitResponse(
+  retry: (
+    command: TransactWriteItemsCommand,
+    send: typeof client.send,
+  ) => Promise<unknown>,
+) {
+  const send = client.send.bind(client);
+  const spy = jest.spyOn(client, "send");
+  spy.mockImplementation(async (command) => {
+    if (!(command instanceof TransactWriteItemsCommand)) return send(command);
+    spy.mockRestore();
+    await send(command);
+    return retry(command, send);
+  });
+}
+test.each(["the same request token", "a stored attempt read"])(
+  "a retried admit whose first write committed is reported as admitted: %s",
+  async (mechanism) => {
+    const row = fresh();
+    await repo.claim(row);
+    const attemptId = randomUUID();
+    loseNextAdmitResponse((command, send) =>
+      send(
+        mechanism === "the same request token"
+          ? command
+          : new TransactWriteItemsCommand({
+              ...command.input,
+              ClientRequestToken: undefined,
+            }),
+      ),
+    );
+    expect(await repo.admit(row.eventId, "token", attemptId, runtime)).toBe(
+      true,
+    );
+    expect((await repo.get(row.eventId))?.admission).toMatchObject({
+      attemptId,
+      status: "running",
+    });
+  },
+);
+test("a condition failure with another attempt's admission is refused", async () => {
+  const row = fresh();
+  await repo.claim(row);
+  const other = randomUUID();
+  const send = client.send.bind(client);
+  const spy = jest.spyOn(client, "send");
+  spy.mockImplementation(async (command) => {
+    if (!(command instanceof TransactWriteItemsCommand)) return send(command);
+    spy.mockRestore();
+    // Another worker's admission lands between this attempt's read and its write.
+    await repo.admit(row.eventId, "token", other, runtime);
+    return send(command);
+  });
+  expect(await repo.admit(row.eventId, "token", randomUUID(), runtime)).toBe(
+    false,
+  );
+  expect((await repo.get(row.eventId))?.admission?.attemptId).toBe(other);
+});
+test("native admission still refuses another lease token and an expired lease", async () => {
+  const row = fresh();
+  await repo.claim(row);
+  expect(await repo.admit(row.eventId, "other", randomUUID(), runtime)).toBe(
+    false,
+  );
+  await put(receiptTable, { ...(await repo.get(row.eventId))!, leaseUntil: 0 });
+  expect(await repo.admit(row.eventId, "token", randomUUID(), runtime)).toBe(
+    false,
+  );
+  expect((await repo.get(row.eventId))?.continuation).toBe("not_admitted");
 });
 test.each([
   "legacy",
@@ -124,7 +179,7 @@ test.each([
     await repo.claim(row);
     if (!["legacy", "unproven", "unadmitted"].includes(kind)) {
       expect(
-        await repo.admit(row.eventId, "token", randomUUID(), context),
+        await repo.admit(row.eventId, "token", randomUUID(), runtime),
       ).toBe(true);
       if (kind !== "running")
         expect(await repo.fail(row.eventId, "token")).toBe(true);
@@ -149,58 +204,37 @@ test.each([
     expect(after.firstAdmission).toEqual(before.firstAdmission);
     expect(after.receivedAt).toBe(before.receivedAt);
     expect(after.expiresAt).toBeUndefined();
-    expect(await repo.admit(row.eventId, "token", randomUUID(), context)).toBe(
+    expect(await repo.admit(row.eventId, "token", randomUUID(), runtime)).toBe(
       false,
     );
     expect(await repo.finish(row.eventId, "token")).toBe(false);
-    expect(await repo.admit(row.eventId, "next", randomUUID(), context)).toBe(
+    expect(await repo.admit(row.eventId, "next", randomUUID(), runtime)).toBe(
       ["failed", "unadmitted"].includes(kind),
     );
   },
 );
-test.each(["draining", "wrong generation", "wrong identity", "expired proof"])(
-  "native %s receiver persists but cannot admit",
-  async (mismatch) => {
-    const row = fresh();
-    await repo.claim(row);
-    if (mismatch === "draining")
-      await put(controlTable, { ...runtime("old"), role: "draining" });
-    if (mismatch === "wrong generation")
-      activeContext = { ...context, authorizedGeneration: 8 };
-    if (mismatch === "wrong identity")
-      activeContext = { ...context, identity: runtime("other").identity };
-    if (mismatch === "expired proof") activeContext = { ...context, now: 201 };
-    const handler = jest.fn();
-    await expect(
-      continueStripeReceipt(row.eventId, "token", handler),
-    ).rejects.toThrow();
-    expect(handler).not.toHaveBeenCalled();
-    expect((await repo.get(row.eventId))?.continuation).toBe("not_admitted");
-  },
-);
-test("compatible handoff denies the stale receiver and admits only the new serving generation", async () => {
+test("a stored receipt admitted under the deployment authority still continues", async () => {
   const row = fresh();
-  await repo.claim(row);
-  const next = runtime("new");
-  next.authorizedGeneration = 8;
-  next.readiness.observedGeneration = 8;
-  await put(controlTable, {
-    ...control,
-    servingGeneration: 8,
-    servingMembers: { new: next.identity },
+  const legacy = {
+    attemptId: randomUUID(),
+    leaseToken: "token",
+    runtime,
+    generation: 7,
+    admittedAt: 100,
+  };
+  await put(receiptTable, {
+    ...row,
+    leaseToken: "next",
+    continuation: "admitted",
+    firstAdmission: legacy,
+    admission: { ...legacy, status: "failed" },
   });
-  await put(controlTable, next);
-  expect(await repo.admit(row.eventId, "token", randomUUID(), context)).toBe(
-    false,
-  );
-  expect(
-    await repo.admit(row.eventId, "token", randomUUID(), {
-      ...context,
-      instanceId: "new",
-      identity: next.identity,
-      authorizedGeneration: 8,
-    }),
-  ).toBe(true);
+  const handler = jest.fn(async () => undefined);
+  await continueStripeReceipt(row.eventId, "next", handler);
+  expect(handler).toHaveBeenCalledTimes(1);
+  const stored = (await repo.get(row.eventId))!;
+  expect(stored.firstAdmission).toEqual(legacy);
+  expect(stored.state).toBe("completed");
 });
 test.each(["admission", "finish"])(
   "lost native %s ACK returns failure without handler replay",
