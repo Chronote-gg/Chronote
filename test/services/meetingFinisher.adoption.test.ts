@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { LIFECYCLE } from "../../src/services/lifecycleTiming";
 import type { RecordingCheckpoint } from "../../src/types/recordingCheckpoint";
 import {
   BRIEF_LAPSE_SECONDS,
@@ -10,6 +11,7 @@ import {
   START,
   START_SECONDS,
   flush,
+  hung,
   isoAt,
   lease,
   manifestWith,
@@ -184,4 +186,89 @@ test("a meeting this process is still capturing is never adopted", async () => {
   expect(world.deps.readLease).not.toHaveBeenCalled();
   expect(world.current(own)).toEqual(own);
   expect(world.deps.finish).not.toHaveBeenCalled();
+});
+
+describe("work a slot does before it holds a claim", () => {
+  const BOUND_LOG = "Meeting finish took no claim within its bound";
+  const stalled = (id: string) =>
+    row(id, {
+      status: "in_progress",
+      updatedAt: isoAt(NOW - GRACE - 1),
+      capture: { kind: "capturing", startedAt: START },
+      checkpoint: { revision: 1 } as RecordingCheckpoint,
+    });
+  const boundLogged = (meetingId: string) =>
+    expect(console.warn).toHaveBeenCalledWith(
+      BOUND_LOG,
+      expect.objectContaining({ meetingId }),
+    );
+  beforeEach(() => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate"] });
+  });
+  afterEach(() => jest.useRealTimers());
+
+  test("two adoptions whose manifest reads never settle free their slots at the bound, and a later scan takes another row", async () => {
+    const [a, b] = [stalled("a"), stalled("b")];
+    const waiting = row("c");
+    const world = setup([a, b, waiting]);
+    jest.mocked(world.deps.readCoverage).mockImplementation(hung);
+    await world.scan();
+    expect(world.loop.activeFinishCount()).toBe(
+      LIFECYCLE.maxConcurrentFinishes,
+    );
+    expect(world.current(waiting).finish).toBeUndefined();
+
+    await jest.advanceTimersByTimeAsync(LIFECYCLE.adoptionMs);
+    expect(world.loop.activeFinishCount()).toBe(0);
+    boundLogged(a.meetingId);
+    boundLogged(b.meetingId);
+    // Their own workers came back, so the next pass leaves them alone.
+    for (const stale of [a, b])
+      world.leases.set(stale.guildId, lease(stale.meetingId, NOW + GRACE));
+    await world.scan();
+    await flush();
+    expect(world.current(waiting).finish?.owner).toMatch(
+      /^synthetic-worker-b:/,
+    );
+    expect(world.current(a)).toEqual(a);
+    await world.settle();
+  });
+
+  test("a manifest read that settles after the bound writes no adoption", async () => {
+    const late = stalled("a");
+    const world = setup([late]);
+    let settle: (timing: ReturnType<typeof verifiedUntil>) => void = () =>
+      undefined;
+    jest
+      .mocked(world.deps.readCoverage)
+      .mockImplementation(() => new Promise((resolve) => (settle = resolve)));
+    await world.scan();
+    await jest.advanceTimersByTimeAsync(LIFECYCLE.adoptionMs);
+    settle(verifiedUntil(START_SECONDS + SAVED_MINUTES * SECONDS_PER_MINUTE));
+    await flush();
+    expect(world.current(late)).toEqual(late);
+    expect(world.deps.finish).not.toHaveBeenCalled();
+    boundLogged(late.meetingId);
+  });
+
+  test("a claim write that never settles frees its slot at the bound", async () => {
+    const waiting = row("a");
+    const world = setup([waiting]);
+    jest.spyOn(world.deps.repository, "claim").mockImplementation(hung);
+    await world.scan();
+    expect(world.loop.activeFinishCount()).toBe(1);
+    await jest.advanceTimersByTimeAsync(LIFECYCLE.adoptionMs);
+    expect(world.loop.activeFinishCount()).toBe(0);
+    boundLogged(waiting.meetingId);
+  });
+
+  test("a prompt adoption logs nothing about the bound", async () => {
+    const prompt = stalled("a");
+    const world = setup([prompt]);
+    await world.scan();
+    await flush();
+    expect(world.current(prompt).status).toBe("processing");
+    expect(console.warn).not.toHaveBeenCalledWith(BOUND_LOG, expect.anything());
+    await world.settle();
+  });
 });

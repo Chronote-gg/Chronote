@@ -399,6 +399,7 @@ export function createMeetingFinisherLoop(deps: MeetingFinisherDeps) {
 
   async function adopt(row: FinisherRow, signal: AbortSignal) {
     const history = await deps.repository.read(row);
+    signal.throwIfAborted();
     if (!history) return undefined;
     const end = await readAdoptedCaptureEnd(
       history,
@@ -406,6 +407,8 @@ export function createMeetingFinisherLoop(deps: MeetingFinisherDeps) {
       signal,
       deps.nowMs(),
     );
+    // A read that outlived the slot's bound must not adopt a row nothing will finish.
+    signal.throwIfAborted();
     const now = nowSeconds();
     if (now - lastActivity(history, end) <= LIFECYCLE.abandonedGraceSeconds)
       return undefined;
@@ -417,15 +420,47 @@ export function createMeetingFinisherLoop(deps: MeetingFinisherDeps) {
     );
   }
 
+  /**
+   * Takes the row's claim, bounded: no attempt cap covers this work yet, and
+   * the storage clients set no deadline, so a stalled call would hold the
+   * slot for good. At the bound the slot is freed even if the call never
+   * settles; a claim it still writes lapses like any unrenewed claim.
+   * Shutdown does not cut the wait short, as before: a claim that lands after
+   * shutdown began is handed back by `attempt`.
+   */
+  async function claimWithin(
+    row: FinisherRow,
+    action: "adopt" | "claim",
+    signal: AbortSignal,
+  ): Promise<FinishClaim | undefined> {
+    let deadline: AbortSignal | undefined;
+    try {
+      return await within(
+        LIFECYCLE.adoptionMs,
+        new AbortController().signal,
+        (bound) => {
+          deadline = bound;
+          return action === "adopt"
+            ? adopt(row, AbortSignal.any([bound, signal]))
+            : deps.repository.claim(row, newOwner(), nowSeconds());
+        },
+      );
+    } catch (error) {
+      if (!deadline?.aborted) throw error;
+      console.warn("Meeting finish took no claim within its bound", {
+        ...logContext(row),
+        action,
+      });
+      return undefined;
+    }
+  }
+
   /** Whether an attempt for the row started. */
   function take(row: FinisherRow, action: "adopt" | "claim"): boolean {
     if (stopping || running.size >= LIFECYCLE.maxConcurrentFinishes)
       return false;
     const slot = track(rowId(row), row.meetingId, async (slot) => {
-      const claim =
-        action === "adopt"
-          ? await adopt(row, slot.controller.signal)
-          : await deps.repository.claim(row, newOwner(), nowSeconds());
+      const claim = await claimWithin(row, action, slot.controller.signal);
       if (claim)
         await attempt(slot, claim, (signal) =>
           deps.loadRecovery(claim.history, signal),

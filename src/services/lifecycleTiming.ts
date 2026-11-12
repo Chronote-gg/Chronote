@@ -73,6 +73,8 @@ export const LIFECYCLE = {
   finishAbortGraceMs: 5_000,
   // How long the local finish waits for the processing state on the recording message before delivering.
   processingMessageWaitMs: 5_000,
+  // Bounds a finisher slot's work before it holds a claim, which no attempt cap covers yet.
+  adoptionMs: 30_000,
 } as const;
 
 export function leaseCapEpochSeconds(
