@@ -166,6 +166,37 @@ function carriedEndRequest(
   };
 }
 
+function isOurLease(
+  current: ActiveMeetingLease | undefined,
+  ownership: LeaseOwnership,
+): current is ActiveMeetingLease {
+  return (
+    current?.meetingId === ownership.meetingId &&
+    current.ownerInstanceId === ownership.ownerInstanceId
+  );
+}
+
+/** When the lease last ran out, taking the later of the item and this worker's confirmation. */
+function leaseLapsedAt(
+  current: ActiveMeetingLease | undefined,
+  ownership: LeaseOwnership,
+  confirmedUntil: number,
+): number {
+  return isOurLease(current, ownership)
+    ? Math.max(current.leaseExpiresAt, confirmedUntil)
+    : confirmedUntil;
+}
+
+function carriedEndRequestFor(
+  current: ActiveMeetingLease | undefined,
+  ownership: LeaseOwnership,
+  snapshot: LeaseSnapshot,
+) {
+  return current?.meetingId === ownership.meetingId
+    ? carriedEndRequest(current, snapshot)
+    : {};
+}
+
 export function createMeetingLeaseService(deps: MeetingLeaseDeps) {
   const requestSignal =
     deps.requestSignal ??
@@ -375,25 +406,18 @@ export function createMeetingLeaseService(deps: MeetingLeaseDeps) {
       const current = await bounded((signal) =>
         deps.repository.read(ownership.guildId, signal),
       );
-      const ours =
-        current?.meetingId === ownership.meetingId &&
-        current.ownerInstanceId === ownership.ownerInstanceId;
+      const ours = isOurLease(current, ownership);
       if (current && current.leaseExpiresAt >= now && !ours)
         return markLost(entry, "Meeting lease names another meeting");
       // Past the grace the finisher may already have adopted the recording.
       // Measured when the read returns, since the renewal and the read each take time.
-      const lapsedAt = ours
-        ? Math.max(current.leaseExpiresAt, entry.confirmedUntil)
-        : entry.confirmedUntil;
+      const lapsedAt = leaseLapsedAt(current, ownership, entry.confirmedUntil);
       if (
         epochSeconds(deps.nowMs()) - lapsedAt >=
         LIFECYCLE.abandonedGraceSeconds
       )
         return markLost(entry, "Meeting lease lapsed past the adoption grace");
-      const carried =
-        current?.meetingId === ownership.meetingId
-          ? carriedEndRequest(current, snapshot)
-          : {};
+      const carried = carriedEndRequestFor(current, ownership, snapshot);
       const retaken = await bounded((signal) =>
         deps.repository.retake(
           { ...entry.lease, ...snapshot, ...carried, ...timing },
