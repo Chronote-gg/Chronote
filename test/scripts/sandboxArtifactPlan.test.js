@@ -432,6 +432,11 @@ test.each(["plan", "apply"])(
       readFileSync(`.github/workflows/terraform-${phase}.yml`, "utf8"),
     );
     const steps = workflow.jobs[phase].steps;
+    const terraform = steps.filter((s) =>
+      s.uses?.startsWith("hashicorp/setup-terraform@"),
+    );
+    expect(terraform).toHaveLength(1);
+    expect(terraform[0].with.terraform_version).toBe("1.17.1");
     const prepared = steps.findIndex((s) => s.id === "artifact-session");
     const credential = steps.findIndex(
       (s) =>
