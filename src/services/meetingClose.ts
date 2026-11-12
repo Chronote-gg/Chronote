@@ -93,6 +93,15 @@ const ABNORMAL_END: CloseCause = {
 };
 const CAP_END: CloseCause = { endReason: MEETING_END_REASONS.TIMEOUT };
 
+function closeDisposition(lost: boolean, interrupted: boolean): Disposition {
+  return lost ? "lost" : interrupted ? "interrupted" : "complete";
+}
+
+/** A shutdown deadline leaves time for one write; otherwise retry the bounded count. */
+function captureEndAttempts(cause: CloseCause): number {
+  return cause.deadlineMs === undefined ? LIFECYCLE.closeWriteAttempts : 1;
+}
+
 export type MeetingCloseDeps = {
   lease: Pick<
     MeetingLeaseService,
@@ -403,6 +412,13 @@ export function createMeetingClose(deps: MeetingCloseDeps) {
     });
   }
 
+  /** The claim owner a local finish would run under, when this worker may finish here. */
+  function localFinishOwner(lost: boolean): string | undefined {
+    return !lost && deps.isEligible() && !deps.isShuttingDown()
+      ? `${deps.instanceId()}:${randomUUID()}`
+      : undefined;
+  }
+
   /**
    * A lost lease saves nothing more: saving a checkpoint needs the lease, so
    * unsaved pieces are dropped and the row records an interrupted capture.
@@ -418,11 +434,7 @@ export function createMeetingClose(deps: MeetingCloseDeps) {
       const ownership = await confirmOwnership(reservation);
       lost = ownership === "lost";
       const interrupted = lost || cause.abnormal === true;
-      const disposition: Disposition = lost
-        ? "lost"
-        : interrupted
-          ? "interrupted"
-          : "complete";
+      const disposition = closeDisposition(lost, interrupted);
       await stopReceiving(
         meeting,
         lost ? ABNORMAL_END : cause,
@@ -431,14 +443,10 @@ export function createMeetingClose(deps: MeetingCloseDeps) {
       await departVoice(meeting, ownership);
       if (reservation.sessionMode !== "meeting") return;
       const flushed = !lost && (await flush(meeting, cause.deadlineMs));
-      const owner =
-        !lost && deps.isEligible() && !deps.isShuttingDown()
-          ? `${deps.instanceId()}:${randomUUID()}`
-          : undefined;
+      const owner = localFinishOwner(lost);
       // The completion decision still follows how the capture was ended.
       if (!lost && !flushed && !owner) unsavedTail(meeting);
-      const attempts =
-        cause.deadlineMs === undefined ? LIFECYCLE.closeWriteAttempts : 1;
+      const attempts = captureEndAttempts(cause);
       if (
         await recordCaptureEnd(
           meeting,
