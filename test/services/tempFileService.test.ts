@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import type { MeetingData } from "../../src/types/meeting-data";
 
+/** Ten seconds of real time for a removal that normally takes milliseconds. */
+const REMOVAL_WAIT_NS = 10_000_000_000n;
+
 const buildMeeting = (): MeetingData =>
   ({
     guildId: "guild-1",
@@ -115,10 +118,12 @@ describe("tempFileService", () => {
 
   it("the sweep runs every hour until it is stopped", async () => {
     const f = await sweepFixture("chronote-sweep-timer-");
-    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
-    // The sweep's file system calls are real, so wait out a bounded number of turns for them.
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick", "hrtime"] });
+    // The sweep's file system calls are real and take real time on a busy
+    // machine, so wait for them against the real clock, not a count of turns.
     const removal = async (dir: string) => {
-      for (let turn = 0; turn < 200 && fs.existsSync(dir); turn += 1)
+      const deadline = process.hrtime.bigint() + REMOVAL_WAIT_NS;
+      while (fs.existsSync(dir) && process.hrtime.bigint() < deadline)
         await new Promise((resolve) => setImmediate(resolve));
     };
     try {
