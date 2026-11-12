@@ -3,6 +3,7 @@ import {
   type GuildMember,
   type RepliableInteraction,
 } from "discord.js";
+import { replyRecordingEnded } from "./botInteractionScope";
 import { autoRecordStopRefusal } from "./commands/dismissAutoRecord";
 import { LEAVE_CONFIRM_PROMPT } from "./commands/leave";
 import { getActiveMeetingLease } from "./db";
@@ -79,6 +80,12 @@ export async function stopStartingSession(
   guildId: string,
   meetingId: string,
 ): Promise<void> {
+  // A start publishes its End button only after the meeting is live, so a
+  // press reaching here is on an earlier meeting's message.
+  if (interaction.isButton()) {
+    await replyRecordingEnded(interaction);
+    return;
+  }
   await interaction.deferReply({ ephemeral: true });
   const lease = await getActiveMeetingLease(
     guildId,

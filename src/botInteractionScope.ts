@@ -24,6 +24,19 @@ export const SESSION_SCOPED = {
   chatInputCommands: ["say", "tts"],
 } as const;
 
+const ENDED_RECORDING_REPLY = "The recording has ended. Notes will follow.";
+
+/** What an owner control gets when the recording it belongs to is no longer live. */
+export async function replyRecordingEnded(
+  interaction: RepliableInteraction,
+): Promise<void> {
+  await interaction.reply({
+    content: ENDED_RECORDING_REPLY,
+    ephemeral: true,
+    allowedMentions: { parse: [] },
+  });
+}
+
 export type InteractionScope = "owner" | "session" | "general";
 
 const includes = (list: readonly string[], value: string) =>

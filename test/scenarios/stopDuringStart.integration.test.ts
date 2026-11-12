@@ -24,6 +24,9 @@ const MEETING = "synthetic-start-stop-meeting";
 const USER = "synthetic-start-stop-user";
 const AUTO_GUILD = "synthetic-start-dismiss-guild";
 const AUTO_MEETING = "synthetic-start-dismiss-meeting";
+const BUTTON_GUILD = "synthetic-start-button-guild";
+const BUTTON_MEETING = "synthetic-start-button-meeting";
+const ENDED_REPLY = "The recording has ended. Notes will follow.";
 const VOICE = "synthetic-voice";
 const START_DEADLINE_MS = 30_000;
 
@@ -129,6 +132,7 @@ describeLocalDynamo("a stop pressed during a start", () => {
       user: { id: USER },
       guild: { members: { fetch: async () => null } },
       options: { getBoolean: () => true },
+      isButton: () => false,
       isChatInputCommand: () => true,
       isUserContextMenuCommand: () => false,
       ...responses(),
@@ -152,6 +156,39 @@ describeLocalDynamo("a stop pressed during a start", () => {
     expect(meeting.cancelled).toBeUndefined();
   });
 
+  test("an earlier meeting's End button pressed during a start queues no stop and gets the ended reply", async () => {
+    const press = {
+      user: { id: USER },
+      guild: { members: { fetch: async () => null } },
+      isButton: () => true,
+      isChatInputCommand: () => false,
+      isUserContextMenuCommand: () => false,
+      reply: jest.fn(async () => undefined),
+      ...responses(),
+    };
+    const { endMeeting } = await startInterruptedBy(
+      (guildId, meetingId) =>
+        stopStartingSession(
+          press as unknown as RepliableInteraction,
+          guildId,
+          meetingId,
+        ),
+      {
+        guildId: BUTTON_GUILD,
+        meetingId: BUTTON_MEETING,
+        isAutoRecording: false,
+      },
+    );
+
+    expect(press.reply).toHaveBeenCalledWith({
+      content: ENDED_REPLY,
+      ephemeral: true,
+      allowedMentions: { parse: [] },
+    });
+    expect(press.deferReply).not.toHaveBeenCalled();
+    expect(endMeeting).not.toHaveBeenCalled();
+  });
+
   test("Stop recording during an auto-recording's start cancels it as a live dismissal does", async () => {
     const voiceMembers = new Collection([
       [USER, { id: USER, user: { id: USER, bot: false } }],
@@ -167,6 +204,7 @@ describeLocalDynamo("a stop pressed during a start", () => {
           ]),
         },
       },
+      isButton: () => false,
       isChatInputCommand: () => false,
       isUserContextMenuCommand: () => true,
       ...responses(),

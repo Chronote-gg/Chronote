@@ -38,6 +38,7 @@ import { stopStartingSession } from "./botStartingSessionStop";
 import {
   END_MEETING_BUTTON_ID,
   GENERATE_IMAGE_BUTTON_ID,
+  replyRecordingEnded,
   resolveInteractionScope,
 } from "./botInteractionScope";
 import { getRuntimeInstanceId } from "./services/runtimeInstanceService";
@@ -627,8 +628,6 @@ export async function setupBot() {
   await client.login(TOKEN);
 }
 
-const ENDED_RECORDING_REPLY = "The recording has ended. Notes will follow.";
-
 /**
  * Every worker receives every interaction. The worker holding a live session
  * answers its controls, an eligible worker answers everything else, and the
@@ -660,13 +659,9 @@ async function routeInteraction(interaction: RepliableInteraction) {
   )
     return;
   if (scope === "session") return executeInteractionWork(interaction, handle);
-  await executeInteractionWork(interaction, async () => {
-    await interaction.reply({
-      content: ENDED_RECORDING_REPLY,
-      ephemeral: true,
-      allowedMentions: { parse: [] },
-    });
-  });
+  await executeInteractionWork(interaction, () =>
+    replyRecordingEnded(interaction),
+  );
 }
 
 /** Bounded, so a slow read cannot spend the three seconds the holder, if any, needs. */

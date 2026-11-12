@@ -44,6 +44,19 @@ describe("interaction routing", () => {
     );
   });
 
+  test("an End button during a start belongs to an earlier meeting: no stop is queued and it gets the ended reply", async () => {
+    workerA.starting = MEETING;
+    mockWorld.lease = async () => liveLease();
+    const end = interaction(workerA, "end");
+    await listener(workerA, "interactionCreate")(end);
+    expect(mockWorld.endRequests).toEqual([]);
+    expect(end.reply).toHaveBeenCalledWith({
+      content: ENDED_REPLY,
+      ephemeral: true,
+      allowedMentions: { parse: [] },
+    });
+  });
+
   test("a non-eligible worker with no live session ignores a start and writes no receipt", async () => {
     workerA.eligible = false;
     const start = interaction(workerA, "start");
