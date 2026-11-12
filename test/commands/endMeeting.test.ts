@@ -132,7 +132,7 @@ const entryPoints: EntryPoint[] = [
     cause: { endReason: "leave_command", endTriggeredByUserId: CREATOR },
   },
   // The two reasons below are chosen by the bot's voice-state handlers, tested
-  // by bot.interactionRouting "an emptied channel ends the meeting with the
+  // by bot.interactionRouting.voiceState "an emptied channel ends the meeting with the
   // channel-empty reason" and "the bot leaving the meeting channel ends it
   // with the bot-disconnect reason".
   {
