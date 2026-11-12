@@ -29,6 +29,7 @@ import {
   FINISH_VOICE_CHANNEL_ID,
   onlyRow,
 } from "./harness/finisher";
+import { SPEECH_SECONDS, spokenPcm } from "./harness/scenario";
 import {
   createWorld,
   installWorkerSeams,
@@ -220,13 +221,19 @@ async function recordingMeeting(
   return meeting;
 }
 
-/** Starts a recording through the real start and attaches the production checkpoint capture. */
-async function startRecording(
+/** Stands in for the voice session build once the start has reserved the meeting. */
+type BuildSession = (
+  options: MeetingInitOptions,
+  reservation: MeetingData["reservation"],
+  ownershipSignal: AbortSignal | undefined,
+) => MeetingData | Promise<MeetingData>;
+
+/** Starts `meetingId` through the real start with voice stubbed and `build` as the session build. */
+async function startThroughRealStart(
   w: Modules,
-  textChannel: { send: jest.Mock },
+  meetingId: string,
+  build: BuildSession,
 ): Promise<MeetingData> {
-  const meetingId = `generated-${randomUUID()}`;
-  generated.push({ meetingId });
   let meeting: MeetingData | undefined;
   const { startMeetingSession } = w.start.createMeetingStart({
     lease: w.lease,
@@ -243,13 +250,7 @@ async function startRecording(
       _signal,
       hooks,
     ) {
-      meeting = await recordingMeeting(
-        w,
-        options,
-        reservation,
-        hooks?.ownershipSignal,
-        textChannel,
-      );
+      meeting = await build(options, reservation, hooks?.ownershipSignal);
       hooks?.onReceiving?.();
       return meeting;
     },
@@ -263,7 +264,6 @@ async function startRecording(
     indexMeeting: async () => undefined,
     nowMs: Date.now,
   });
-
   await w.seams.run(() =>
     startMeetingSession({
       meetingId,
@@ -275,8 +275,23 @@ async function startRecording(
       generateNotes: true,
     } as unknown as MeetingInitOptions),
   );
-  const live = meeting;
-  if (!live) throw new Error("expected a live meeting");
+  if (!meeting) throw new Error("expected a live meeting");
+  return meeting;
+}
+
+/** Starts a recording through the real start and attaches the production checkpoint capture. */
+async function startRecording(
+  w: Modules,
+  textChannel: { send: jest.Mock },
+): Promise<MeetingData> {
+  const meetingId = `generated-${randomUUID()}`;
+  generated.push({ meetingId });
+  const live = await startThroughRealStart(
+    w,
+    meetingId,
+    (options, reservation, ownershipSignal) =>
+      recordingMeeting(w, options, reservation, ownershipSignal, textChannel),
+  );
   expect(await onlyRow(world)).toMatchObject({
     status: "in_progress",
     lifecycleVersion: 2,
@@ -432,25 +447,6 @@ test("a recording with speech closes and finishes through the normal loader, and
 });
 
 const FINAL_WORDS = "One more thing before we stop: the release notes.";
-const SAMPLE_RATE = 48_000;
-const CHANNELS = 2;
-const SPEECH_SECONDS = 2;
-const TONE_HZ = 220;
-const TONE_AMPLITUDE = 8_000;
-
-/** A loud tone, so the snippet passes the silence and loudness gates as speech would. */
-function spokenPcm(): Buffer {
-  const samples = SAMPLE_RATE * SPEECH_SECONDS;
-  const pcm = Buffer.alloc(samples * CHANNELS * 2);
-  for (let index = 0; index < samples; index += 1) {
-    const value = Math.round(
-      TONE_AMPLITUDE * Math.sin((2 * Math.PI * TONE_HZ * index) / SAMPLE_RATE),
-    );
-    pcm.writeInt16LE(value, index * 4);
-    pcm.writeInt16LE(value, index * 4 + 2);
-  }
-  return pcm;
-}
 
 test("speech still open when stop is pressed reaches the transcript the notes input carries", async () => {
   scriptNotes();
@@ -509,23 +505,11 @@ test("close waits for a capture-failure save, so the pieces pending at the failu
 
 test("checkpoints are saved during a recording started through the new path", async () => {
   const w = await loadWorker(world);
-  let meeting: MeetingData | undefined;
-  const { startMeetingSession } = w.start.createMeetingStart({
-    lease: w.lease,
-    history: w.bindings.getMeetingHistoryTransitionRepository(),
-    requestCaptureProtection: async () => undefined,
-    releaseCaptureProtection: () => undefined,
-    joinVoice: async () =>
-      ({ synthetic: "connection" }) as unknown as VoiceConnection,
-    leaveVoice: () => undefined,
-    async buildMeetingSession(
-      options,
-      reservation,
-      _connection,
-      _signal,
-      hooks,
-    ) {
-      meeting = liveMeeting(options, reservation, hooks?.ownershipSignal);
+  const live = await startThroughRealStart(
+    w,
+    MEETING,
+    (options, reservation, ownershipSignal) => {
+      const meeting = liveMeeting(options, reservation, ownershipSignal);
       Object.assign(meeting, {
         channelId: FINISH_TEXT_CHANNEL_ID,
         voiceChannel: { id: FINISH_VOICE_CHANNEL_ID },
@@ -533,32 +517,10 @@ test("checkpoints are saved during a recording started through the new path", as
         transcribeMeeting: true,
         generateNotes: true,
       });
-      hooks?.onReceiving?.();
       return meeting;
     },
-    disposeFailedSession: async () => true,
-    startDeadline: () => new AbortController().signal,
-    captureEndHandlers: () => ({
-      onLost: () => undefined,
-      onCapReached: () => undefined,
-    }),
-    endMeeting: () => undefined,
-    indexMeeting: async () => undefined,
-    nowMs: Date.now,
-  });
-  await w.seams.run(() =>
-    startMeetingSession({
-      meetingId: MEETING,
-      guild: { id: FINISH_GUILD_ID },
-      voiceChannel: { id: FINISH_VOICE_CHANNEL_ID, name: "Voice" },
-      textChannel: { id: FINISH_TEXT_CHANNEL_ID },
-      creator: { id: FINISH_SPEAKER.id },
-      transcribeMeeting: true,
-      generateNotes: true,
-    } as unknown as MeetingInitOptions),
   );
-  const live = meeting;
-  if (!live?.ownershipSignal) throw new Error("expected a capture signal");
+  if (!live.ownershipSignal) throw new Error("expected a capture signal");
   const startedAt = live.startTime.getTime();
   live.recordingCapture = w.capture.createRecordingCheckpointCapture({
     directory: mkdtempSync(path.join(os.tmpdir(), "scenario-capture-")),

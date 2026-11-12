@@ -9,6 +9,7 @@ import {
   FINISH_TEXT_CHANNEL_ID,
   FINISH_VOICE_CHANNEL_ID,
 } from "./harness/finisher";
+import { spokenPcm } from "./harness/scenario";
 import {
   createWorld,
   SCENARIO_LIFECYCLE_OVERRIDES,
@@ -19,25 +20,6 @@ import {
 const POLL_MS = 50;
 const SNIPPET_TRANSCRIPTIONS = 2;
 const WAIT_MS = 30_000;
-const SAMPLE_RATE = 48_000;
-const CHANNELS = 2;
-const SPEECH_SECONDS = 2;
-const TONE_HZ = 220;
-const TONE_AMPLITUDE = 8_000;
-
-/** A loud tone, so the snippet passes the silence and loudness gates as speech would. */
-function spokenPcm(): Buffer {
-  const samples = SAMPLE_RATE * SPEECH_SECONDS;
-  const pcm = Buffer.alloc(samples * CHANNELS * 2);
-  for (let index = 0; index < samples; index += 1) {
-    const value = Math.round(
-      TONE_AMPLITUDE * Math.sin((2 * Math.PI * TONE_HZ * index) / SAMPLE_RATE),
-    );
-    pcm.writeInt16LE(value, index * 4);
-    pcm.writeInt16LE(value, index * 4 + 2);
-  }
-  return pcm;
-}
 
 async function until<T>(
   read: () => Promise<T | undefined>,
