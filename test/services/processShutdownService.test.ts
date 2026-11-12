@@ -4,17 +4,10 @@ import { createProcessShutdownOwner } from "../../src/services/processShutdownSe
 import { LIFECYCLE } from "../../src/services/lifecycleTiming";
 
 const START_MS = 1_000;
-function held<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 function fixture() {
   const processSignals = new EventEmitter();
   const exit = jest.fn();
-  const pending = held<boolean>();
+  const pending = Promise.withResolvers<boolean>();
   const closeAdmission = jest.fn();
   const preserve = jest.fn(() => pending.promise);
   const flush = jest.fn(async () => {});
@@ -71,7 +64,7 @@ test("oneDeadlineAcrossConcurrentMeetings and a later signal cannot renew protec
 });
 test("pendingInitializationSettlesBeforeExit including a held startup operation", async () => {
   const f = fixture();
-  const startup = held<void>();
+  const startup = Promise.withResolvers<void>();
   const actualStartup = f.owner.runStartup(() => startup.promise);
   const stopping = f.owner.request("signal");
   f.pending.resolve(true);
@@ -110,7 +103,7 @@ test("protection loss alone preserves without exit; later startup failure joins 
 });
 test("a held telemetry flush consumes the same budget and is retained after expiry", async () => {
   const f = fixture();
-  const telemetry = held<void>();
+  const telemetry = Promise.withResolvers<void>();
   f.flush.mockImplementation(() => telemetry.promise);
   const stopping = f.owner.request("signal");
   f.pending.resolve(true);

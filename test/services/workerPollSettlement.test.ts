@@ -12,45 +12,44 @@ import {
   startPersonalMediaUploadWorker,
   stopPersonalMediaUploadWorker,
 } from "../../src/services/personalMediaUploadWorkerService";
-const mockControlList = jest.fn();
-const mockControlClaim = jest.fn();
-const mockPersonalList = jest.fn();
-const mockPersonalClaim = jest.fn();
-jest.mock("../../src/repositories/meetingControlCommandRepository", () => ({
-  getMeetingControlCommandRepository: () => ({
-    listClaimablePendingCommands: mockControlList,
-    claimCommand: mockControlClaim,
-  }),
-}));
-jest.mock("../../src/repositories/personalMediaUploadRepository", () => ({
-  getPersonalMediaUploadRepository: () => ({
-    listClaimable: mockPersonalList,
-    claim: mockPersonalClaim,
-  }),
-}));
-jest.mock("../../src/services/meetingControlBotService", () => ({
-  executeMeetingControlCommand: jest.fn(),
-}));
-jest.mock("../../src/services/personalMediaUploadProcessingService", () => ({
-  createPersonalMediaProcessingMeeting: jest.fn(),
-  processPersonalMediaUpload: jest.fn(),
-}));
+import { pollerRepository } from "./workerPollerModules.fixture";
+
+const {
+  controlList: mockControlList,
+  controlClaim: mockControlClaim,
+  personalList: mockPersonalList,
+  personalClaim: mockPersonalClaim,
+} = pollerRepository;
+function mockPollerModules() {
+  return jest.requireActual<typeof import("./workerPollerModules.fixture")>(
+    "./workerPollerModules.fixture",
+  );
+}
+jest.mock(
+  "../../src/repositories/meetingControlCommandRepository",
+  () => mockPollerModules().meetingControlCommandRepositoryModule,
+);
+jest.mock(
+  "../../src/repositories/personalMediaUploadRepository",
+  () => mockPollerModules().personalMediaUploadRepositoryModule,
+);
+jest.mock(
+  "../../src/services/meetingControlBotService",
+  () => mockPollerModules().meetingControlBotServiceModule,
+);
+jest.mock(
+  "../../src/services/personalMediaUploadProcessingService",
+  () => mockPollerModules().personalMediaUploadProcessingServiceModule,
+);
 jest.mock("../../src/services/runtimeInstanceService", () => ({
   getRuntimeInstanceId: () => "synthetic-worker",
 }));
 jest.mock("../../src/db", () => ({ personalMediaClaimForJob: jest.fn() }));
-function held<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 test.each(["control", "personal"] as const)(
   "%s worker stop owns held list completion and prevents late claims or restart",
   async (domain) => {
     jest.useFakeTimers();
-    const list = held<unknown[]>();
+    const list = Promise.withResolvers<unknown[]>();
     const listMock = domain === "control" ? mockControlList : mockPersonalList;
     listMock.mockReturnValue(list.promise);
     const start = () =>

@@ -10,14 +10,6 @@ jest.mock("../src/audio", () => ({
 /** Bound by the disposal's own five-second allowance. */
 const ALLOWANCE_MS = 5_000;
 
-function held<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 /** A recording start that failed after its meeting was built. */
 function failedStart(closeOutput: () => Promise<boolean>) {
   jest.mocked(closeFailedInitializationOutput).mockImplementation(closeOutput);
@@ -42,7 +34,7 @@ beforeEach(() => {
 afterEach(() => jest.useRealTimers());
 
 test("a failed recording start closes its encoder at once and settles when the encoder closes within the allowance", async () => {
-  const encoder = held<boolean>();
+  const encoder = Promise.withResolvers<boolean>();
   const f = failedStart(() => encoder.promise);
 
   const disposed = f.dispose();

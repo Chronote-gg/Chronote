@@ -1,12 +1,20 @@
 /** @jest-environment node */
 import type { Client } from "discord.js";
 import type { MeetingControlCommand } from "../../src/types/meetingControl";
+import { pollerRepository } from "./workerPollerModules.fixture";
 
 const mockState = { eligible: false, captures: 0 };
-const mockControlList = jest.fn();
-const mockControlClaim = jest.fn();
-const mockPersonalList = jest.fn();
+const {
+  controlList: mockControlList,
+  controlClaim: mockControlClaim,
+  personalList: mockPersonalList,
+} = pollerRepository;
 const mockRenewalLease = jest.fn();
+function mockPollerModules() {
+  return jest.requireActual<typeof import("./workerPollerModules.fixture")>(
+    "./workerPollerModules.fixture",
+  );
+}
 jest.mock("../../src/services/workerRegistry", () => ({
   isEligible: () => mockState.eligible,
 }));
@@ -16,30 +24,28 @@ jest.mock("../../src/meetings", () => ({
       meetingId: `synthetic-meeting-${index}`,
     })),
 }));
-jest.mock("../../src/repositories/meetingControlCommandRepository", () => ({
-  getMeetingControlCommandRepository: () => ({
-    listClaimablePendingCommands: mockControlList,
-    claimCommand: mockControlClaim,
-  }),
-}));
-jest.mock("../../src/repositories/personalMediaUploadRepository", () => ({
-  getPersonalMediaUploadRepository: () => ({
-    listClaimable: mockPersonalList,
-  }),
-}));
+jest.mock(
+  "../../src/repositories/meetingControlCommandRepository",
+  () => mockPollerModules().meetingControlCommandRepositoryModule,
+);
+jest.mock(
+  "../../src/repositories/personalMediaUploadRepository",
+  () => mockPollerModules().personalMediaUploadRepositoryModule,
+);
 jest.mock("../../src/repositories/jobLeaseRepository", () => ({
   getJobLeaseRepository: () => ({
     tryAcquireJobLease: mockRenewalLease,
     releaseJobLease: jest.fn(),
   }),
 }));
-jest.mock("../../src/services/meetingControlBotService", () => ({
-  executeMeetingControlCommand: jest.fn(),
-}));
-jest.mock("../../src/services/personalMediaUploadProcessingService", () => ({
-  createPersonalMediaProcessingMeeting: jest.fn(),
-  processPersonalMediaUpload: jest.fn(),
-}));
+jest.mock(
+  "../../src/services/meetingControlBotService",
+  () => mockPollerModules().meetingControlBotServiceModule,
+);
+jest.mock(
+  "../../src/services/personalMediaUploadProcessingService",
+  () => mockPollerModules().personalMediaUploadProcessingServiceModule,
+);
 jest.mock("../../src/services/runtimeInstanceService", () => ({
   getRuntimeInstanceId: () => "synthetic-self",
 }));
