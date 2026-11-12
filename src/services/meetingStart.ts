@@ -28,6 +28,7 @@ import {
   latestLeaseCap,
   releaseSessionLease,
   startLeaseRenewal,
+  type AcquireSessionLeaseInput,
   type MeetingLeaseService,
 } from "./meetingLease";
 import { writeMeetingUserIndexForMeetingService } from "./meetingUserIndexService";
@@ -100,6 +101,18 @@ function admissionBlocked(reason: string): Error {
   return new Error(message);
 }
 
+function callerSignals(options: MeetingInitOptions): AbortSignal[] {
+  return options.startSignal ? [options.startSignal] : [];
+}
+
+/** As close does: once the lease is gone a held piece could only time out into a failure notice. */
+function retireStartedCapture(started: MeetingData | undefined) {
+  if (started) {
+    started.recordingCapture?.retire();
+    started.recordingCapture = undefined;
+  }
+}
+
 export function createMeetingStart(deps: MeetingStartDeps) {
   /** Only while status is starting or in_progress, so a later writer is never overwritten. */
   async function markFailed(reservation: SessionReservation): Promise<void> {
@@ -148,6 +161,26 @@ export function createMeetingStart(deps: MeetingStartDeps) {
     if (recording && !otherLeaseLive) deps.releaseCaptureProtection();
   }
 
+  /** Written in the background, so a failed index write never fails the start. */
+  function indexStartedMeeting(
+    leaseInput: AcquireSessionLeaseInput,
+    meeting: MeetingData,
+    meetingId: string,
+  ) {
+    if (leaseInput.sessionMode === "meeting") {
+      const history: MeetingHistory = {
+        ...leaseInput.history,
+        participants: [...meeting.participants.values()],
+      };
+      void deps.indexMeeting(history).catch((error: unknown) =>
+        console.warn("Meeting start could not write the user index", {
+          meetingId,
+          error,
+        }),
+      );
+    }
+  }
+
   async function startMeetingSession(
     options: MeetingInitOptions,
   ): Promise<MeetingData> {
@@ -166,7 +199,7 @@ export function createMeetingStart(deps: MeetingStartDeps) {
     );
     const signal = operationSignal(
       untilReceiving.signal,
-      ...(options.startSignal ? [options.startSignal] : []),
+      ...callerSignals(options),
     );
 
     const leaseInput = sessionLeaseInput({ ...options, meetingId });
@@ -272,27 +305,11 @@ export function createMeetingStart(deps: MeetingStartDeps) {
           meetingId,
         });
       await markFailed(reservation);
-      // As close does: once the lease is gone a held piece could only time out into a failure notice.
-      const started = meeting ?? initialization.meeting;
-      if (started) {
-        started.recordingCapture?.retire();
-        started.recordingCapture = undefined;
-      }
+      retireStartedCapture(meeting ?? initialization.meeting);
       await release(reservation, recording);
       throw error;
     }
-    if (leaseInput.sessionMode === "meeting") {
-      const history: MeetingHistory = {
-        ...leaseInput.history,
-        participants: [...meeting.participants.values()],
-      };
-      void deps.indexMeeting(history).catch((error: unknown) =>
-        console.warn("Meeting start could not write the user index", {
-          meetingId,
-          error,
-        }),
-      );
-    }
+    indexStartedMeeting(leaseInput, meeting, meetingId);
     if (pendingEndRequest) endRequested(pendingEndRequest);
     return meeting;
   }
