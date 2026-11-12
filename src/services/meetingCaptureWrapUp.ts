@@ -167,6 +167,15 @@ export async function buildMeetingRecording(
   return mixedAudioFile ?? combinedAudioFile;
 }
 
+/** How many audio files are still transcribing, or undefined when none are. */
+function pendingTranscriptionCount(meeting: MeetingData): number | undefined {
+  const transcriptionsReady = meeting.audioData.audioFiles.every(
+    (file) => !file.processing,
+  );
+  if (transcriptionsReady) return undefined;
+  return meeting.audioData.audioFiles.filter((file) => file.processing).length;
+}
+
 /**
  * Runs the final pass and compile, sets the final transcript and the
  * transcription outcome, and preserves the processed transcription.
@@ -176,13 +185,8 @@ export async function compileFinalTranscript(
   compile: MeetingTranscriptCompiler,
   audioFilePath: string,
 ): Promise<void> {
-  const transcriptionsReady = meeting.audioData.audioFiles.every(
-    (file) => !file.processing,
-  );
-  if (!transcriptionsReady) {
-    const pending = meeting.audioData.audioFiles.filter(
-      (file) => file.processing,
-    ).length;
+  const pending = pendingTranscriptionCount(meeting);
+  if (pending !== undefined) {
     console.log(
       `Waiting for transcriptions to finish: pending=${pending} meetingId=${meeting.meetingId}`,
     );
@@ -295,13 +299,8 @@ export async function compileCancelledTranscript(
   if (!meeting.transcribeMeeting) return undefined;
   // Cancelled-meeting uploads are best-effort recovery artifacts, so we skip
   // the slower final transcription pass that only runs for fully finalized meetings.
-  const transcriptionsReady = meeting.audioData.audioFiles.every(
-    (file) => !file.processing,
-  );
-  if (!transcriptionsReady) {
-    const pending = meeting.audioData.audioFiles.filter(
-      (file) => file.processing,
-    ).length;
+  const pending = pendingTranscriptionCount(meeting);
+  if (pending !== undefined) {
     console.log(
       `Waiting for cancelled meeting transcriptions to finish: pending=${pending} meetingId=${meeting.meetingId}`,
     );
