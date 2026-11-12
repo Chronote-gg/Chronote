@@ -751,6 +751,13 @@ export function startEligibleBotWork(): void {
   );
 }
 
+function involvesBot(oldState: VoiceState, newState: VoiceState) {
+  const botId = client.user?.id;
+  return Boolean(
+    botId && (oldState.member?.id === botId || newState.member?.id === botId),
+  );
+}
+
 async function handleVoiceStateUpdate(
   oldState: VoiceState,
   newState: VoiceState,
@@ -758,11 +765,7 @@ async function handleVoiceStateUpdate(
   // A draining worker still handles its own captures' leaves and the bot's disconnect below.
   if (isEligible() && !isShuttingDown())
     await recordSuppressionVoiceState(oldState, newState);
-  const botId = client.user?.id;
-  if (
-    botId &&
-    (oldState.member?.id === botId || newState.member?.id === botId)
-  ) {
+  if (involvesBot(oldState, newState)) {
     await handleBotVoiceUpdate(oldState, newState);
   }
   // Check if the user switched channels
