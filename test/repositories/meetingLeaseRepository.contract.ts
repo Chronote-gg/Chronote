@@ -121,6 +121,18 @@ export function meetingLeaseRepositoryContract(
   };
 
   describe("startSession", () => {
+    /** Starts a meeting in the synthetic channel, observing its suppression at a version or at none. */
+    const startObservingSuppression = (expectedVersion?: number) =>
+      h.repository.startSession({
+        lease: startLease(),
+        history,
+        suppression:
+          expectedVersion === undefined
+            ? { channelId: CHANNEL }
+            : { channelId: CHANNEL, expectedVersion },
+        now: NOW,
+      });
+
     it("start wins over an absent lease and writes the history row", async () => {
       const lease = startLease();
       await expect(
@@ -182,22 +194,8 @@ export function meetingLeaseRepositoryContract(
         version: 2,
         suppressed: true,
       });
-      await expect(
-        h.repository.startSession({
-          lease: startLease(),
-          history,
-          suppression: { channelId: CHANNEL, expectedVersion: 2 },
-          now: NOW,
-        }),
-      ).resolves.toBe("suppressed");
-      await expect(
-        h.repository.startSession({
-          lease: startLease(),
-          history,
-          suppression: { channelId: CHANNEL },
-          now: NOW,
-        }),
-      ).resolves.toBe("suppressed");
+      await expect(startObservingSuppression(2)).resolves.toBe("suppressed");
+      await expect(startObservingSuppression()).resolves.toBe("suppressed");
       await expect(h.repository.read(GUILD)).resolves.toBeUndefined();
       await expect(h.readHistory(key)).resolves.toBeUndefined();
     });
@@ -209,33 +207,12 @@ export function meetingLeaseRepositoryContract(
         version: 3,
         suppressed: false,
       });
-      await expect(
-        h.repository.startSession({
-          lease: startLease(),
-          history,
-          suppression: { channelId: CHANNEL, expectedVersion: 2 },
-          now: NOW,
-        }),
-      ).resolves.toBe("suppressed");
-      await expect(
-        h.repository.startSession({
-          lease: startLease(),
-          history,
-          suppression: { channelId: CHANNEL, expectedVersion: 3 },
-          now: NOW,
-        }),
-      ).resolves.toBe("admitted");
+      await expect(startObservingSuppression(2)).resolves.toBe("suppressed");
+      await expect(startObservingSuppression(3)).resolves.toBe("admitted");
     });
 
     it("an absent suppression row admits without a version", async () => {
-      await expect(
-        h.repository.startSession({
-          lease: startLease(),
-          history,
-          suppression: { channelId: CHANNEL },
-          now: NOW,
-        }),
-      ).resolves.toBe("admitted");
+      await expect(startObservingSuppression()).resolves.toBe("admitted");
     });
   });
 
