@@ -37,15 +37,19 @@ const historyKey = {
   channelId_timestamp: history.channelId_timestamp,
 };
 const objects = new Map<string, Buffer>();
+/** Keeps the first upload of each key, as an object store with write-once keys does. */
+const objectStore: Parameters<
+  typeof createRecordingCheckpointService
+>[0]["objects"] = {
+  upload: async (key, body) => {
+    if (!objects.has(key)) objects.set(key, Buffer.from(body));
+    return key;
+  },
+  read: async (key) => objects.get(key),
+};
 const service = createRecordingCheckpointService({
   repository,
-  objects: {
-    upload: async (key, body) => {
-      if (!objects.has(key)) objects.set(key, Buffer.from(body));
-      return key;
-    },
-    read: async (key) => objects.get(key),
-  },
+  objects: objectStore,
 });
 const capture = { ...captureFixture, captureStartedAt: null };
 const input = {
@@ -339,13 +343,7 @@ test.each(["abort", "deadline"] as const)(
         heldClient,
         tables,
       ),
-      objects: {
-        upload: async (key, body) => {
-          if (!objects.has(key)) objects.set(key, Buffer.from(body));
-          return key;
-        },
-        read: async (key) => objects.get(key),
-      },
+      objects: objectStore,
     });
     try {
       const pending = heldService.flush({
