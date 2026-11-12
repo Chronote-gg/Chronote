@@ -369,12 +369,16 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
    * dropped, and the write is refused if another edit lands in between. The
    * repository reports every refusal alike, so the next refresh decides: a
    * refused refresh is a lost claim, a row no longer processing is a lost
-   * claim as before, and anything else is a moved revision, retried.
+   * claim as before, and anything else is a moved revision, retried. The last
+   * refusal is decided the same way before it is reported as changing content.
    */
   async function saveTerminal(a: Attempt, input: FinishInput) {
     for (let attempt = 1; ; attempt += 1) {
       const fresh = await save(a, {});
       if (fresh.status !== MEETING_STATUS.PROCESSING) lost(a);
+      // Only reached once the refresh after the last refusal kept the claim.
+      if (attempt > TERMINAL_SAVE_ATTEMPTS)
+        throw new Error("Meeting content kept changing during the final save");
       const now = nowSeconds();
       const patch = terminalPatch(fresh, input, a.claim.owner, now);
       a.signal.throwIfAborted();
@@ -390,8 +394,6 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
         meetingFinishes.inc({ outcome: patch.status });
         return;
       }
-      if (attempt === TERMINAL_SAVE_ATTEMPTS)
-        throw new Error("Meeting content kept changing during the final save");
     }
   }
 

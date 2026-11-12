@@ -23,6 +23,7 @@ useMeetingFinishHooks();
 const GENERATED_NAME = "Synthetic meeting";
 const RENAME = "Synthetic rename";
 const TERMINAL_ATTEMPTS = 3;
+const OTHER = "synthetic-other-finisher";
 
 /** A recording's row, whose canonical writer admits a portal edit while it processes. */
 const recordingRow = (overrides: Partial<MeetingHistory> = {}) =>
@@ -104,6 +105,25 @@ test("edits racing every terminal write fail the attempt into the normal backoff
   });
   expect(world.current().finish?.nextAttemptAt).toBeDefined();
   expect(world.posts()).toHaveLength(0);
+});
+
+test("a claim lost at the last terminal write stops the attempt rather than reporting changing content", async () => {
+  const world = setup(recordingRow());
+  let edits = 0;
+  beforeTerminalWrites(world, TERMINAL_ATTEMPTS, async () => {
+    edits += 1;
+    if (edits === TERMINAL_ATTEMPTS)
+      world.current().finish = { ...world.current().finish!, owner: OTHER };
+    else await world.correct(`${RENAME} ${edits}`);
+  });
+  await world.finish(loads(finishInput()));
+  const warnings = jest.mocked(console.warn).mock.calls.map(([line]) => line);
+  expect(warnings).toContain("Meeting finish attempt stopped");
+  expect(warnings).not.toContain("Meeting finish attempt failed");
+  expect(world.current()).toMatchObject({
+    status: "processing",
+    finish: { owner: OTHER, attempts: 0 },
+  });
 });
 
 test("a revision that cannot say which fields changed keeps every canonical field the row holds", async () => {
