@@ -242,7 +242,7 @@ type Attempt = {
   localDirectories: string[];
   /** Recovery mixes are never reused by a later attempt, so every exit removes them. */
   transientDirectories: string[];
-  /** The row's content revision when the input was loaded; edits past it are kept. */
+  /** The content revision the input reflects; acknowledged edits past it are kept. */
   contentBaseline: number;
 };
 
@@ -460,9 +460,13 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
   async function processMeeting(a: Attempt): Promise<FinishInput | undefined> {
     let input: FinishInput | undefined;
     try {
-      a.contentBaseline = a.row.contentRevision ?? 0;
+      const loadedRevision = a.row.contentRevision ?? 0;
       input = withRowDecision(a.row, await load(a));
       a.source = input.source;
+      // The normal input comes from the in-memory meeting, which never takes
+      // in an acknowledged edit, so every edit since this start created the
+      // row is newer than it.
+      a.contentBaseline = input.source === "normal" ? 0 : loadedRevision;
       // Only a recovery with no saved audio at all ends here, silently. A
       // cancellation is honoured first; a live capture with no speech is empty.
       if (!input.cancel && !input.hasSavedAudio) {

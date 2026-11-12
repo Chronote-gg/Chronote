@@ -124,16 +124,35 @@ test("a revision that cannot say which fields changed keeps every canonical fiel
   });
 });
 
-test("with no edit the terminal save writes the generated content", async () => {
+test("a rename acknowledged while the meeting was still recording survives a normal-loader finish and is what delivery posts", async () => {
   const world = setup(recordingRow());
-  await world.finish(loads(finishInput()));
+  await expect(world.correct(RENAME)).resolves.toMatchObject({
+    kind: "saved",
+  });
+  await world.finish(loads(finishInput({ source: "normal" })));
   expect(world.current()).toMatchObject({
     status: "complete",
-    meetingName: GENERATED_NAME,
+    meetingName: RENAME,
     notes: GENERATED_NOTE,
     summarySentence: GENERATED_SUMMARY,
-    summaryLabel: "Synthetic label",
-    tags: ["alpha"],
   });
-  expect(world.current().contentRevision).toBeUndefined();
+  expect(posted(world)).toContain(RENAME);
+  expect(posted(world)).not.toContain(GENERATED_NAME);
 });
+
+test.each(["normal", "recovery"] as const)(
+  "with no edit the terminal save writes the generated content (%s loader)",
+  async (source) => {
+    const world = setup(recordingRow());
+    await world.finish(loads(finishInput({ source })));
+    expect(world.current()).toMatchObject({
+      status: "complete",
+      meetingName: GENERATED_NAME,
+      notes: GENERATED_NOTE,
+      summarySentence: GENERATED_SUMMARY,
+      summaryLabel: "Synthetic label",
+      tags: ["alpha"],
+    });
+    expect(world.current().contentRevision).toBeUndefined();
+  },
+);
