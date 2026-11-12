@@ -120,6 +120,36 @@ export function fakeDiscord() {
       | undefined,
   };
   const json = (body: unknown) => new Response(JSON.stringify(body));
+  const notFound = () => new Response("{}", { status: 404 });
+  /** One page of channel history, newest first, as Discord returns it. */
+  const listMessages = (query: URLSearchParams) => {
+    const limit = Number(query.get("limit"));
+    const after = query.get("after");
+    const before = query.get("before");
+    const sorted = [...messages].sort(byAge);
+    const page = after
+      ? sorted.filter((m) => BigInt(m.id) > BigInt(after)).slice(0, limit)
+      : sorted
+          .filter((m) => !before || BigInt(m.id) < BigInt(before))
+          .slice(-limit);
+    return json(page.reverse());
+  };
+  const createMessage = (body: RestMessage | undefined) => {
+    const created = discordMessage(nextId(), body ?? {});
+    messages.push(created);
+    return json(created);
+  };
+  /** Edits or deletes one existing message. */
+  const changeMessage = (request: RecordedRequest, messageId?: string) => {
+    const index = messages.findIndex((message) => message.id === messageId);
+    if (index < 0) return notFound();
+    if (request.method === "DELETE") {
+      messages.splice(index, 1);
+      return new Response(null, { status: 204 });
+    }
+    messages[index] = { ...messages[index], ...request.body };
+    return json(messages[index]);
+  };
   const fetchImpl = async (
     input: string | URL | Request,
     init?: RequestInit,
@@ -137,33 +167,10 @@ export function fakeDiscord() {
     if (injected) return injected;
     if (path === "/users/@me") return json({ id: BOT_ID, bot: true });
     const match = /^\/channels\/(\d+)\/messages(?:\/(\d+))?$/.exec(path);
-    if (!match || match[1] !== TEXT_CHANNEL_ID)
-      return new Response("{}", { status: 404 });
-    if (request.method === "GET") {
-      const limit = Number(url.searchParams.get("limit"));
-      const after = url.searchParams.get("after");
-      const before = url.searchParams.get("before");
-      const sorted = [...messages].sort(byAge);
-      const page = after
-        ? sorted.filter((m) => BigInt(m.id) > BigInt(after)).slice(0, limit)
-        : sorted
-            .filter((m) => !before || BigInt(m.id) < BigInt(before))
-            .slice(-limit);
-      return json(page.reverse());
-    }
-    if (request.method === "POST") {
-      const created = discordMessage(nextId(), request.body ?? {});
-      messages.push(created);
-      return json(created);
-    }
-    const index = messages.findIndex((message) => message.id === match[2]);
-    if (index < 0) return new Response("{}", { status: 404 });
-    if (request.method === "DELETE") {
-      messages.splice(index, 1);
-      return new Response(null, { status: 204 });
-    }
-    messages[index] = { ...messages[index], ...request.body };
-    return json(messages[index]);
+    if (!match || match[1] !== TEXT_CHANNEL_ID) return notFound();
+    if (request.method === "GET") return listMessages(url.searchParams);
+    if (request.method === "POST") return createMessage(request.body);
+    return changeMessage(request, match[2]);
   };
   return {
     ...state,

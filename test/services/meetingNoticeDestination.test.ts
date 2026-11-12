@@ -9,6 +9,11 @@ import {
   type RecordingLimitInput,
 } from "../../src/services/recordingLimitService";
 
+function mockEmbedModules() {
+  return jest.requireActual<typeof import("./embedModuleMocks.fixture")>(
+    "./embedModuleMocks.fixture",
+  );
+}
 const mockLimitLookup = jest.fn(async () => undefined);
 jest.mock("../../src/repositories/subscriptionRepository", () => ({
   getSubscriptionRepository: () => ({ get: mockLimitLookup }),
@@ -23,25 +28,19 @@ jest.mock("../../src/commands/summaryFeedback", () => ({
 jest.mock("../../src/commands/meetingName", () => ({
   MEETING_RENAME_PREFIX: "synthetic",
 }));
-jest.mock("../../src/services/summaryUpgradeService", () => ({
-  claimSummaryUpgrade: jest.fn(),
-}));
-jest.mock("../../src/services/analyticsService", () => ({
-  captureEvent: jest.fn(),
-}));
+jest.mock(
+  "../../src/services/summaryUpgradeService",
+  () => mockEmbedModules().summaryUpgradeServiceModule,
+);
+jest.mock(
+  "../../src/services/analyticsService",
+  () => mockEmbedModules().analyticsServiceModule,
+);
 jest.mock("../../src/observability/meetingDelivery", () => ({
   recordDelivery: (_meeting: unknown, _phase: unknown, result: unknown) =>
     result,
   deliveryError: () => ({ name: "SyntheticError" }),
 }));
-
-function held<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 function fixture() {
   const edit = jest.fn(async () => undefined);
@@ -82,7 +81,7 @@ beforeEach(() => jest.clearAllMocks());
 
 test("unrelated unsignaled notice keeps its early read-failure fallback", async () => {
   const f = fixture();
-  const lookup = held<undefined>();
+  const lookup = Promise.withResolvers<undefined>();
   jest
     .mocked(getGuildLimits)
     .mockRejectedValueOnce(new Error("Synthetic limits read failure"));

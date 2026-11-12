@@ -1,4 +1,9 @@
 /** @jest-environment node */
+function mockEmbedModules() {
+  return jest.requireActual<typeof import("./embedModuleMocks.fixture")>(
+    "./embedModuleMocks.fixture",
+  );
+}
 jest.mock("../../src/services/configService", () => ({
   config: {
     frontend: { siteUrl: "https://chronote.test" },
@@ -14,12 +19,14 @@ jest.mock("../../src/commands/summaryFeedback", () => ({
 jest.mock("../../src/commands/meetingName", () => ({
   MEETING_RENAME_PREFIX: "rename_meeting",
 }));
-jest.mock("../../src/services/summaryUpgradeService", () => ({
-  claimSummaryUpgrade: jest.fn(),
-}));
-jest.mock("../../src/services/analyticsService", () => ({
-  captureEvent: jest.fn(),
-}));
+jest.mock(
+  "../../src/services/summaryUpgradeService",
+  () => mockEmbedModules().summaryUpgradeServiceModule,
+);
+jest.mock(
+  "../../src/services/analyticsService",
+  () => mockEmbedModules().analyticsServiceModule,
+);
 jest.mock("@langfuse/tracing", () => ({ updateActiveObservation: jest.fn() }));
 jest.mock("../../src/services/langfuseClient", () => ({
   isLangfuseTracingEnabled: () => false,
@@ -110,6 +117,20 @@ const withoutTimestamps = (message: {
   embeds: message.embeds.map((embed) => ({ ...embed, timestamp: undefined })),
   components: message.components,
 });
+
+/** Delivers a row on the live path through a fresh fake Discord that keeps every save. */
+async function deliverLiveRow(initial: MeetingHistory) {
+  const discord = fakeDiscord();
+  const { save, current } = savingRow(initial);
+  const outcome = await deliverMeeting({
+    history: current(),
+    save,
+    transport: discord.transport,
+    signal: signal(),
+    path: "live",
+  });
+  return { discord, save, current, outcome };
+}
 
 describe("meeting delivery", () => {
   beforeEach(() => {
@@ -205,17 +226,8 @@ describe("meeting delivery", () => {
   });
 
   it("delivers the summary in place and every notes chunk, then records the done marker", async () => {
-    const discord = fakeDiscord();
-    const { save, current } = savingRow(history());
-    await expect(
-      deliverMeeting({
-        history: current(),
-        save,
-        transport: discord.transport,
-        signal: signal(),
-        path: "live",
-      }),
-    ).resolves.toEqual({ kind: "delivered" });
+    const { discord, save, current, outcome } = await deliverLiveRow(history());
+    expect(outcome).toEqual({ kind: "delivered" });
     const notes = renderMeetingDelivery(history()).notes;
     const row = current();
     expect(row.summaryMessageId).toBe(START_MESSAGE_ID);
@@ -240,15 +252,7 @@ describe("meeting delivery", () => {
   });
 
   it("a delivered row satisfies originalPublicationSettled", async () => {
-    const discord = fakeDiscord();
-    const { save, current } = savingRow(history());
-    await deliverMeeting({
-      history: current(),
-      save,
-      transport: discord.transport,
-      signal: signal(),
-      path: "live",
-    });
+    const { current } = await deliverLiveRow(history());
     expect(originalPublicationSettled(publicationSnapshot(current()))).toBe(
       true,
     );
@@ -300,17 +304,10 @@ describe("meeting delivery", () => {
   });
 
   it("missing start message posts a new summary", async () => {
-    const discord = fakeDiscord();
-    const { save, current } = savingRow(history({ startMessageId: "999" }));
-    await expect(
-      deliverMeeting({
-        history: current(),
-        save,
-        transport: discord.transport,
-        signal: signal(),
-        path: "live",
-      }),
-    ).resolves.toEqual({ kind: "delivered" });
+    const { discord, current, outcome } = await deliverLiveRow(
+      history({ startMessageId: "999" }),
+    );
+    expect(outcome).toEqual({ kind: "delivered" });
     const [summaryPost] = discord.requests.filter((r) => r.method === "POST");
     expect(summaryPost.body?.embeds[0].description).toBe("Synthetic summary.");
     expect(current().summaryMessageId).toBe(
