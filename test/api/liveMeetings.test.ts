@@ -63,14 +63,16 @@ jest.mock("../../src/services/meetingClose", () => ({
 jest.mock("../../src/services/meetingArtifactAccessService", () => ({
   resolveServerMeetingArtifactAccess: jest.fn(),
 }));
-jest.mock("../../src/embed", () => ({
-  updateMeetingProcessingMessage: jest.fn(async () => ({})),
-}));
-jest.mock("../../src/services/autoRecordJoinSuppressionService", () => ({
-  autoRecordJoinSuppressionService: {
-    suppressUntilEmpty: jest.fn(async () => true),
-  },
-}));
+jest.mock(
+  "../../src/embed",
+  () =>
+    jest.requireActual("../fixtures/meetingEndModuleMocks")
+      .processingMessageEmbed,
+);
+jest.mock(
+  "../../src/services/autoRecordJoinSuppressionService",
+  () => jest.requireActual("../fixtures/meetingEndModuleMocks").joinSuppression,
+);
 
 const mockedGetMeeting = getMeeting as jest.MockedFunction<typeof getMeeting>;
 const mockedEnsureUserInGuild = ensureUserInGuild as jest.MockedFunction<
@@ -594,25 +596,30 @@ test("known local interruption overrides finished flag and detection end time", 
   }
 });
 
+/** Posts the portal's end request for the synthetic meeting. */
+const postMeetingEnd = async () => {
+  const { server, baseUrl } = createServer(true);
+  try {
+    return await requestJsonPost(`${baseUrl}/api/live/guild-1/meeting-1/end`);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+};
+
+const expectClosedFromPortal = (meeting: MeetingData) =>
+  expect(closeMeeting).toHaveBeenCalledWith(meeting, {
+    endReason: MEETING_END_REASONS.WEB_UI,
+    endTriggeredByUserId: "user-1",
+  });
+
 test("ends meeting via api endpoint", async () => {
   const meeting = makeMeeting();
   mockedGetMeeting.mockReturnValue(meeting);
   mockedEnsureManageGuildWithUserToken.mockResolvedValue(true);
 
-  const { server, baseUrl } = createServer(true);
-  try {
-    const response = await requestJsonPost(
-      `${baseUrl}/api/live/guild-1/meeting-1/end`,
-    );
-    expect(response.statusCode).toBe(200);
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
+  expect((await postMeetingEnd()).statusCode).toBe(200);
 
-  expect(closeMeeting).toHaveBeenCalledWith(meeting, {
-    endReason: MEETING_END_REASONS.WEB_UI,
-    endTriggeredByUserId: "user-1",
-  });
+  expectClosedFromPortal(meeting);
 });
 
 test("a portal stop shows the processing state and saves the suppression once, before close", async () => {
@@ -639,22 +646,11 @@ test("a portal stop shows the processing state and saves the suppression once, b
     order.push("close");
   });
 
-  const { server, baseUrl } = createServer(true);
-  try {
-    const response = await requestJsonPost(
-      `${baseUrl}/api/live/guild-1/meeting-1/end`,
-    );
-    expect(response.statusCode).toBe(200);
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
+  expect((await postMeetingEnd()).statusCode).toBe(200);
 
   expect(updateMeetingProcessingMessage).toHaveBeenCalledWith(meeting);
   expect(order).toEqual(["suppress", "close"]);
-  expect(closeMeeting).toHaveBeenCalledWith(meeting, {
-    endReason: MEETING_END_REASONS.WEB_UI,
-    endTriggeredByUserId: "user-1",
-  });
+  expectClosedFromPortal(meeting);
 });
 
 test("queues remote meeting end request via active lease", async () => {
@@ -676,17 +672,10 @@ test("queues remote meeting end request via active lease", async () => {
   mockedIsLeaseActive.mockReturnValue(true);
   mockedRequestMeetingEndViaLease.mockResolvedValue(true);
 
-  const { server, baseUrl } = createServer(true);
-  try {
-    const response = await requestJsonPost(
-      `${baseUrl}/api/live/guild-1/meeting-1/end`,
-    );
-    expect(response.statusCode).toBe(200);
-    const payload = JSON.parse(response.body) as { status?: string };
-    expect(payload.status).toBe("accepted");
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
+  const response = await postMeetingEnd();
+  expect(response.statusCode).toBe(200);
+  const payload = JSON.parse(response.body) as { status?: string };
+  expect(payload.status).toBe("accepted");
 
   expect(mockedRequestMeetingEndViaLease).toHaveBeenCalledWith(
     "guild-1",

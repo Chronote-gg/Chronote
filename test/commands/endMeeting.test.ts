@@ -3,14 +3,16 @@ jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 jest.mock("../../src/services/meetingClose", () => ({
   closeMeeting: jest.fn(async () => undefined),
 }));
-jest.mock("../../src/embed", () => ({
-  updateMeetingProcessingMessage: jest.fn(async () => ({})),
-}));
-jest.mock("../../src/services/autoRecordJoinSuppressionService", () => ({
-  autoRecordJoinSuppressionService: {
-    suppressUntilEmpty: jest.fn(async () => true),
-  },
-}));
+jest.mock(
+  "../../src/embed",
+  () =>
+    jest.requireActual("../fixtures/meetingEndModuleMocks")
+      .processingMessageEmbed,
+);
+jest.mock(
+  "../../src/services/autoRecordJoinSuppressionService",
+  () => jest.requireActual("../fixtures/meetingEndModuleMocks").joinSuppression,
+);
 jest.mock("../../src/meetings", () => ({
   getMeeting: jest.fn(),
 }));
