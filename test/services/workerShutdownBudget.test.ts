@@ -54,20 +54,12 @@ jest.mock("../../src/services/meetingFinisher", () => ({
 jest.mock("../../src/services/runtimeBillingOperationService", () => ({
   drainBillingOperations: mockStep("billing"),
 }));
-jest.mock("../../src/services/analyticsService", () => ({
-  shutdownAnalytics: async () => {},
-}));
-jest.mock("../../src/services/speechDetectionService", () => ({
-  shutdownSpeechDetector: async () => {},
-}));
-jest.mock("../../src/services/langfuseClient", () => ({
-  shutdownLangfuseClient: async () => {},
-}));
-jest.mock("../../src/observability/langfuseInstrumentation", () => ({
-  shutdownLangfuseTracing: async () => {},
-}));
+jest.mock("../../src/services/analyticsService");
+jest.mock("../../src/services/speechDetectionService");
+jest.mock("../../src/services/langfuseClient");
+jest.mock("../../src/observability/langfuseInstrumentation");
 
-import type * as WorkerShutdown from "../../src/services/workerShutdown";
+import { loadWorkerShutdown as load } from "./workerShutdownModule.fixture";
 import { LIFECYCLE } from "../../src/services/lifecycleTiming";
 
 const STEP = LIFECYCLE.shutdownStepMs;
@@ -82,15 +74,6 @@ const EARLY_STEPS = [
 const LATER_CAPS = LIFECYCLE.finishAbortWaitMs + STEP + STEP + STEP;
 const DEADLINE_MS = LIFECYCLE.shutdownBudgetMs - LIFECYCLE.shutdownReserveMs;
 
-function load(): typeof WorkerShutdown {
-  let module!: typeof WorkerShutdown;
-  jest.isolateModules(() => {
-    module = jest.requireActual<typeof WorkerShutdown>(
-      "../../src/services/workerShutdown",
-    );
-  });
-  return module;
-}
 const resources = () => ({
   closeServer: mockStep("server"),
   destroyBot: mockStep("bot"),

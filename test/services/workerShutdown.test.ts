@@ -72,21 +72,13 @@ jest.mock("../../src/services/meetingFinisher", () => ({
 jest.mock("../../src/services/runtimeBillingOperationService", () => ({
   drainBillingOperations: mockStep("drainBilling"),
 }));
-jest.mock("../../src/services/analyticsService", () => ({
-  shutdownAnalytics: async () => {},
-}));
-jest.mock("../../src/services/speechDetectionService", () => ({
-  shutdownSpeechDetector: async () => {},
-}));
-jest.mock("../../src/services/langfuseClient", () => ({
-  shutdownLangfuseClient: async () => {},
-}));
-jest.mock("../../src/observability/langfuseInstrumentation", () => ({
-  shutdownLangfuseTracing: async () => {},
-}));
+jest.mock("../../src/services/analyticsService");
+jest.mock("../../src/services/speechDetectionService");
+jest.mock("../../src/services/langfuseClient");
+jest.mock("../../src/observability/langfuseInstrumentation");
 
 import { EventEmitter } from "node:events";
-import type * as WorkerShutdown from "../../src/services/workerShutdown";
+import { loadWorkerShutdown as load } from "./workerShutdownModule.fixture";
 
 const EXPECTED_ORDER = [
   "beginShutdown",
@@ -107,15 +99,6 @@ const EXPECTED_ORDER = [
   "destroyBot",
 ];
 
-function load(): typeof WorkerShutdown {
-  let module!: typeof WorkerShutdown;
-  jest.isolateModules(() => {
-    module = jest.requireActual<typeof WorkerShutdown>(
-      "../../src/services/workerShutdown",
-    );
-  });
-  return module;
-}
 const resources = () => ({
   closeServer: mockStep("closeServer"),
   destroyBot: mockStep("destroyBot"),
