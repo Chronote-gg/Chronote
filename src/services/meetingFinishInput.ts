@@ -461,6 +461,36 @@ async function recoveredAutoRecordCancellation(
   }
 }
 
+function generatedNotesInput(
+  history: MeetingHistory,
+  content: RecoveryContent,
+  transcriptText: string,
+  signal: AbortSignal,
+  interrupted: boolean,
+): MeetingNotesInput {
+  return liveShapedNotesInput(
+    recoveryNotesInput(history, content, transcriptText, signal, interrupted),
+    history,
+    interrupted,
+  );
+}
+
+function recoveredProcessing(
+  transcribe: boolean,
+  spoken: boolean,
+  notesInput: MeetingNotesInput,
+  content: RecoveryContent,
+  interrupted: boolean,
+): MeetingProcessingOutcome {
+  return !transcribe
+    ? {}
+    : !spoken
+      ? { transcription: "empty" }
+      : (notesInput.processing ?? {
+          transcription: recoveredTranscriptionOutcome(content, interrupted),
+        });
+}
+
 /**
  * Rebuilds the finish input from the history row and the checkpoint in S3,
  * transcribing only audio pieces that have no transcript yet.
@@ -503,25 +533,21 @@ export async function loadRecoveryFinishInput(
   // today's recovery does, so unavailable prompts cannot fail other outcomes.
   const notesInput =
     !cancel && spoken && content.manifest.capture.requested.generateNotes
-      ? liveShapedNotesInput(
-          recoveryNotesInput(
-            history,
-            content,
-            transcript.text,
-            signal,
-            interrupted,
-          ),
+      ? generatedNotesInput(
           history,
+          content,
+          transcript.text,
+          signal,
           interrupted,
         )
       : savedRowNotesInput(history, signal, transcript.text);
-  const processing: MeetingProcessingOutcome = !transcribe
-    ? {}
-    : !spoken
-      ? { transcription: "empty" }
-      : (notesInput.processing ?? {
-          transcription: recoveredTranscriptionOutcome(content, interrupted),
-        });
+  const processing = recoveredProcessing(
+    transcribe,
+    spoken,
+    notesInput,
+    content,
+    interrupted,
+  );
   notesInput.processing = processing;
 
   const recording = await renderRecoveredRecording(
