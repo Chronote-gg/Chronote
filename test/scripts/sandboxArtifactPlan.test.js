@@ -63,6 +63,8 @@ const validate = (p) =>
     directory,
     sourceSha,
   });
+const entry = (p, address) =>
+  p.resource_changes.find((r) => r.address === address);
 
 test("accepts a known empty tags_all unknown mask with exact approved tags", () => {
   const plan = sandboxArtifactPlan();
@@ -110,8 +112,6 @@ test("requires exact actual tags for known tags_all masks", () => {
     expect(validate(plan).result).toBe("accepted");
   }
 });
-const entry = (p, address) =>
-  p.resource_changes.find((r) => r.address === address);
 test("accepts native targeted completeness while refusing errors and deferred work", () => {
   const p = sandboxArtifactPlan();
   Object.assign(p, { applyable: true, complete: false, errored: false });
