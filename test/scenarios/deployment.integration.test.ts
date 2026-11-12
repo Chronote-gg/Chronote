@@ -1,7 +1,5 @@
 /** @jest-environment node */
 import type { MeetingHistory } from "../../src/types/db";
-import { sumMeetingSecondsInWindow } from "../../src/services/meetingUsageService";
-import { EMPTY_RECORDING_NOTICE } from "../../src/utils/meetingProcessing";
 import {
   embedText,
   epochSeconds,
@@ -22,6 +20,10 @@ import {
 import { SCENARIO_ECS_AGENT_URI } from "./harness/fakeEcsAgent";
 import { finishRow } from "./harness/finisher";
 import {
+  expectEmptyRecordingDelivered,
+  stopAddressedTo,
+} from "./harness/scenarioExpectations";
+import {
   SCENARIO_LIFECYCLE_OVERRIDES,
   type ScenarioWorker,
 } from "./harness/world";
@@ -32,7 +34,6 @@ const LIFECYCLE = { registryFreshSeconds: 2 } as const;
 const REGISTRY_SETTLE_MS = 3 * SCENARIO_LIFECYCLE_OVERRIDES.registryHeartbeatMs;
 const MODAL_RESPONSE = 9;
 const SETTLE_MS = 1_000;
-const WEEK_MS = 7 * 24 * 60 * 60 * MS_PER_SECOND;
 /** The summary card a meeting with no usable speech carries. */
 const NO_SUMMARY = "Summary unavailable.";
 
@@ -166,16 +167,12 @@ test("a portal stop addressed to a draining worker that holds the recording reac
   await pause(REGISTRY_SETTLE_MS);
   await scenario.speak(older, SERVER_A);
 
-  const requestId = await scenario.queueControl(
-    "stop_meeting",
+  const answered = await stopAddressedTo(
+    scenario,
     SERVER_A,
-    { serverId: SERVER_A.guildId, meetingId: live.meetingId },
+    live.meetingId,
     older.instanceId,
   );
-  const answered = await until(async () => {
-    const command = await scenario.controlCommand(requestId);
-    return command?.queueStatus === "pending" ? undefined : command;
-  }, "stop command answered");
   expect(answered).toMatchObject({
     queueStatus: "completed",
     claimedByInstanceId: older.instanceId,
@@ -287,17 +284,7 @@ test("a silent recording that ends on a draining worker gets the no-speech card 
   }
   // The draining worker wrote no claim, so the eligible worker finished it from the checkpoint.
   expectFinishedBy(samples.owners(), newer);
-  expect(done).toMatchObject({
-    status: "complete",
-    endReason: "button",
-    capture: { kind: "complete" },
-    processing: { transcription: "empty", notes: "skipped" },
-  });
-  expect(done.notes).toBeUndefined();
-  const posted = expectDeliveredOnce(scenario, done);
-  expect(posted[0].id).toBe(startMessage);
-  expect(posted.map(embedText).join()).toContain(EMPTY_RECORDING_NOTICE);
-  expect(sumMeetingSecondsInWindow([done], 0, Date.now() + WEEK_MS)).toBe(0);
+  expectEmptyRecordingDelivered(scenario, done, startMessage);
   expect(scenario.alarms()).toEqual([]);
 });
 

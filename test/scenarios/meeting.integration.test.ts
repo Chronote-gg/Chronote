@@ -1,6 +1,5 @@
 /** @jest-environment node */
-import { sumMeetingSecondsInWindow } from "../../src/services/meetingUsageService";
-import { EMPTY_RECORDING_NOTICE } from "../../src/utils/meetingProcessing";
+import type { MeetingHistory } from "../../src/types/db";
 import {
   embedText,
   epochSeconds,
@@ -13,8 +12,9 @@ import {
   SPEECH_SECONDS,
   SUMMARY_LABEL,
   until,
-  WEEK_MS,
 } from "./harness/scenario";
+import { expectEmptyRecordingDelivered } from "./harness/scenarioExpectations";
+import type { ScenarioWorker } from "./harness/world";
 
 const SETTLE_MS = 1_000;
 const ENDED_RECORDING_REPLY = "The recording has ended. Notes will follow.";
@@ -30,6 +30,25 @@ beforeEach(async () => {
 afterEach(async () => {
   await scenario.dispose();
 });
+
+/** Only the row's owner joined voice, nobody left it, the lease is the owner's and no alarm fired. */
+async function expectOnlyOwnerRecording(
+  workers: ScenarioWorker[],
+  row: MeetingHistory,
+) {
+  const joined = workers.filter((worker) =>
+    worker.voice.connections.has(SERVER_A.guildId),
+  );
+  expect(joined.map((worker) => worker.instanceId)).toEqual([
+    row.ownerInstanceId,
+  ]);
+  expect(workers.flatMap((worker) => worker.voice.departures)).toEqual([]);
+  expect(await scenario.world.rows.lease(SERVER_A.guildId)).toMatchObject({
+    meetingId: row.meetingId,
+    ownerInstanceId: row.ownerInstanceId,
+  });
+  expect(scenario.alarms()).toEqual([]);
+}
 
 test("scenario 1: start, speak, end: notes posted once, lease gone, a second start in the same server succeeds", async () => {
   scenario.scriptReplies();
@@ -149,17 +168,7 @@ test("scenario 8: two workers receive the same start: exactly one meeting, one s
   const messages = scenario.messages(SERVER_A);
   expect(messages).toHaveLength(1);
   expect(JSON.stringify(messages[0].components)).toContain("end_meeting");
-  const joined = [a, b].filter((worker) =>
-    worker.voice.connections.has(SERVER_A.guildId),
-  );
-  expect(joined).toHaveLength(1);
-  expect(joined[0].instanceId).toBe(row.ownerInstanceId);
-  expect([...a.voice.departures, ...b.voice.departures]).toEqual([]);
-  expect(await scenario.world.rows.lease(SERVER_A.guildId)).toMatchObject({
-    meetingId: row.meetingId,
-    ownerInstanceId: row.ownerInstanceId,
-  });
-  expect(scenario.alarms()).toEqual([]);
+  await expectOnlyOwnerRecording([a, b], row);
 });
 
 test("two eligible workers see the same auto-record voice join at the same instant: exactly one recording and one start message", async () => {
@@ -186,18 +195,7 @@ test("two eligible workers see the same auto-record voice join at the same insta
   expect(messages.map((message) => message.id)).toEqual([
     await scenario.startMessageOf(SERVER_A, row.meetingId),
   ]);
-  const joined = [a, b].filter((worker) =>
-    worker.voice.connections.has(SERVER_A.guildId),
-  );
-  expect(joined.map((worker) => worker.instanceId)).toEqual([
-    row.ownerInstanceId,
-  ]);
-  expect([...a.voice.departures, ...b.voice.departures]).toEqual([]);
-  expect(await scenario.world.rows.lease(SERVER_A.guildId)).toMatchObject({
-    meetingId: row.meetingId,
-    ownerInstanceId: row.ownerInstanceId,
-  });
-  expect(scenario.alarms()).toEqual([]);
+  await expectOnlyOwnerRecording([a, b], row);
 });
 
 test("an End press in a server where no worker is recording gets exactly one reply that the recording has ended, from one of two eligible workers", async () => {
@@ -271,19 +269,9 @@ test("a manual meeting where nobody speaks ends complete with the no-speech noti
   await scenario.button("end_meeting", startMessage, SERVER_A);
   const done = await scenario.delivered(SERVER_A, row.meetingId);
 
-  expect(done).toMatchObject({
-    status: "complete",
-    endReason: "button",
-    capture: { kind: "complete" },
-    processing: { transcription: "empty", notes: "skipped" },
-  });
-  expect(done.notes).toBeUndefined();
   expect(done.finish).toBeUndefined();
   // The no-speech notice goes through the same summary card and notes message as notes would.
-  const posted = expectDeliveredOnce(scenario, done);
-  expect(posted[0].id).toBe(startMessage);
-  expect(posted.map(embedText).join()).toContain(EMPTY_RECORDING_NOTICE);
-  expect(sumMeetingSecondsInWindow([done], 0, Date.now() + WEEK_MS)).toBe(0);
+  expectEmptyRecordingDelivered(scenario, done, startMessage);
   expect(await scenario.world.rows.lease(SERVER_A.guildId)).toBeUndefined();
   expect(scenario.alarms()).toEqual([]);
 });

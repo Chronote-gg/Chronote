@@ -29,6 +29,7 @@ import {
 } from "./harness/scenario";
 import { SCENARIO_ECS_AGENT_URI } from "./harness/fakeEcsAgent";
 import { finishRow } from "./harness/finisher";
+import { stopAddressedTo } from "./harness/scenarioExpectations";
 
 /**
  * Scaled down so a dead worker is noticed in seconds: its registry record goes
@@ -558,6 +559,32 @@ test.each([
   },
 );
 
+/**
+ * An abandoned meeting that failed silently: interrupted with no notes, no
+ * request but reads since `requests`, the channel unchanged from `before` and
+ * holding only the start message, the server free and no alarm.
+ */
+async function expectFailedSilently(
+  failed: MeetingHistory,
+  seen: { requests: number; before: string; startMessage: string },
+) {
+  expect(failed.capture).toMatchObject({ kind: "interrupted" });
+  expect(failed.notes).toBeUndefined();
+  // Nothing is posted or edited: the recording message stays as it was.
+  expect(
+    scenario.world.discord.rest
+      .requests()
+      .slice(seen.requests)
+      .filter((call) => call.method !== "GET"),
+  ).toEqual([]);
+  expect(JSON.stringify(scenario.messages(SERVER_A))).toBe(seen.before);
+  expect(scenario.messages(SERVER_A).map((message) => message.id)).toEqual([
+    seen.startMessage,
+  ]);
+  await scenario.leaseFree(SERVER_A);
+  expect(scenario.alarms()).toEqual([]);
+}
+
 test("scenario 13: a start that dies before saving any audio ends silently", async () => {
   const dying = await startWorker();
   const { row: live } = await scenario.startRecording(SERVER_A, [], [dying]);
@@ -581,21 +608,7 @@ test("scenario 13: a start that dies before saving any audio ends silently", asy
     "claim released",
   );
 
-  expect(failed.capture).toMatchObject({ kind: "interrupted" });
-  expect(failed.notes).toBeUndefined();
-  // Nothing is posted or edited: the recording message stays as it was.
-  expect(
-    scenario.world.discord.rest
-      .requests()
-      .slice(requests)
-      .filter((call) => call.method !== "GET"),
-  ).toEqual([]);
-  expect(JSON.stringify(scenario.messages(SERVER_A))).toBe(before);
-  expect(scenario.messages(SERVER_A).map((message) => message.id)).toEqual([
-    startMessage,
-  ]);
-  await scenario.leaseFree(SERVER_A);
-  expect(scenario.alarms()).toEqual([]);
+  await expectFailedSilently(failed, { requests, before, startMessage });
 });
 
 /** The production seal period: a worker that dies inside it has saved no piece. */
@@ -627,21 +640,8 @@ test("a worker that dies while its first speech is still inside the seal period,
     ADOPTION_WAIT_MS,
   );
 
-  expect(failed.capture).toMatchObject({ kind: "interrupted" });
-  expect(failed.notes).toBeUndefined();
   expect(await scenario.savedAudio(SERVER_A, live.meetingId)).toEqual([]);
-  expect(
-    scenario.world.discord.rest
-      .requests()
-      .slice(requests)
-      .filter((call) => call.method !== "GET"),
-  ).toEqual([]);
-  expect(JSON.stringify(scenario.messages(SERVER_A))).toBe(before);
-  expect(scenario.messages(SERVER_A).map((message) => message.id)).toEqual([
-    startMessage,
-  ]);
-  await scenario.leaseFree(SERVER_A);
-  expect(scenario.alarms()).toEqual([]);
+  await expectFailedSilently(failed, { requests, before, startMessage });
 });
 
 /** The flush bound, scaled down so a close that cannot save its last pieces ends in seconds. */
@@ -823,17 +823,12 @@ test("a meeting's worker dies while a portal stop command addressed to it is pen
   const { row: live } = await scenario.startRecording(SERVER_A, [], [dying]);
   const survivor = await startWorker();
   scenario.crash(dying);
-  const requestId = await scenario.queueControl(
-    "stop_meeting",
+  const answered = await stopAddressedTo(
+    scenario,
     SERVER_A,
-    { serverId: SERVER_A.guildId, meetingId: live.meetingId },
+    live.meetingId,
     dying.instanceId,
   );
-
-  const answered = await until(async () => {
-    const command = await scenario.controlCommand(requestId);
-    return command?.queueStatus === "pending" ? undefined : command;
-  }, "stop command answered");
   expect(answered).toMatchObject({
     queueStatus: "completed",
     claimedByInstanceId: survivor.instanceId,
