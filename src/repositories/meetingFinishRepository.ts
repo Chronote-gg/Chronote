@@ -381,6 +381,11 @@ function unchangedCondition(
     .join("");
 }
 
+/** No worker holds the finish claim: it was never taken, or it has expired. */
+function unclaimedCondition(e: Expression, now: number) {
+  return `(attribute_not_exists(${e.path("finish", "owner")}) OR ${e.path("finish", "expiresAt")} < ${e.value(now)})`;
+}
+
 function heldClaimCondition(e: Expression, claim: FinishClaim, now: number) {
   return `${e.path("meetingId")} = ${e.value(claim.meetingId)} AND ${ownedBy(e, claim)} AND ${e.path("finish", "expiresAt")} >= ${e.value(now)}`;
 }
@@ -513,7 +518,7 @@ export function createDynamoMeetingFinishRepository(
       const nowValue = e.value(now);
       const version = versionCondition(e, options);
       const nextAttemptAt = e.path("finish", "nextAttemptAt");
-      const condition = `${e.path("meetingId")} = ${e.value(row.meetingId)} AND ${version} AND (attribute_not_exists(${e.path("finish", "owner")}) OR ${e.path("finish", "expiresAt")} < ${nowValue}) AND (attribute_not_exists(${nextAttemptAt}) OR ${nextAttemptAt} <= ${nowValue}) AND ${seenStatusCondition(e, row)} AND ${seenFinishCondition(e, row)}`;
+      const condition = `${e.path("meetingId")} = ${e.value(row.meetingId)} AND ${version} AND ${unclaimedCondition(e, now)} AND (attribute_not_exists(${nextAttemptAt}) OR ${nextAttemptAt} <= ${nowValue}) AND ${seenStatusCondition(e, row)} AND ${seenFinishCondition(e, row)}`;
       const history = await updateReturning(row, e, {
         ConditionExpression: condition,
         UpdateExpression: `SET ${e.path("finish")} = ${e.value(claimedFinish(row.finish, owner, now))}`,
@@ -614,7 +619,7 @@ export function createDynamoMeetingFinishRepository(
       const e = new Expression();
       const processing = e.path("processing");
       const result = await update(row, e, {
-        ConditionExpression: `${e.path("meetingId")} = ${e.value(row.meetingId)} AND ${e.path("lifecycleVersion")} = ${e.value(LIFECYCLE_VERSION)} AND ${e.path("status")} IN (${e.list(OPEN_STATUSES)})`,
+        ConditionExpression: `${e.path("meetingId")} = ${e.value(row.meetingId)} AND ${e.path("lifecycleVersion")} = ${e.value(LIFECYCLE_VERSION)} AND ${e.path("status")} IN (${e.list(OPEN_STATUSES)}) AND ${unclaimedCondition(e, now)}`,
         UpdateExpression: `SET ${e.assignments({ status: MEETING_STATUS.FAILED, updatedAt: isoAt(now) })}, ${processing} = if_not_exists(${processing}, ${e.value(TRANSCRIPTION_FAILED)}) REMOVE ${e.path("finish")}`,
       });
       return result !== undefined;
@@ -666,9 +671,15 @@ function mockClaimable(
     row.status === seen.status &&
     mockSeenFinish(row, seen) &&
     markedAs(row, { operator }) &&
-    (finish?.owner === undefined ||
-      (finish.expiresAt !== undefined && finish.expiresAt < now)) &&
+    mockUnclaimed(finish, now) &&
     (finish?.nextAttemptAt === undefined || finish.nextAttemptAt <= now)
+  );
+}
+
+function mockUnclaimed(finish: MeetingHistory["finish"], now: number) {
+  return (
+    finish?.owner === undefined ||
+    (finish.expiresAt !== undefined && finish.expiresAt < now)
   );
 }
 
@@ -861,7 +872,8 @@ export function createMockMeetingFinishRepository(
       if (
         stored?.meetingId !== row.meetingId ||
         stored.lifecycleVersion !== LIFECYCLE_VERSION ||
-        !isOpen(stored.status)
+        !isOpen(stored.status) ||
+        !mockUnclaimed(stored.finish, now)
       )
         return false;
       apply(stored, {

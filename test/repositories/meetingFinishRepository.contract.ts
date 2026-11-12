@@ -3,8 +3,10 @@ import type { MeetingHistory } from "../../src/types/db";
 import { captureEndContract } from "./meetingFinishRepository.captureEnd.contract";
 import { claimContract } from "./meetingFinishRepository.claim.contract";
 import {
+  CLAIM,
   GUILD,
   NOW,
+  WORKER_A,
   collect,
   finisherRow,
   historyRow,
@@ -98,6 +100,23 @@ export function meetingFinishContract(
       expect((await h.readHistory(keyOf(recorded)))?.processing).toEqual({
         transcription: "ready",
       });
+    });
+
+    it("abandon refuses a row whose claim is live, and applies once that claim has expired", async () => {
+      const row = await seed("a", { status: "processing" });
+      const claim = await h.repository.claim(finisherRow(row), WORKER_A, NOW);
+      if (!claim) throw new Error("expected the claim to succeed");
+      const claimed = await h.readHistory(keyOf(row));
+      await expect(
+        h.repository.abandon(finisherRow(row), NOW + CLAIM),
+      ).resolves.toBe(false);
+      await expect(h.readHistory(keyOf(row))).resolves.toEqual(claimed);
+      await expect(
+        h.repository.abandon(finisherRow(row), NOW + CLAIM + 1),
+      ).resolves.toBe(true);
+      const failed = await h.readHistory(keyOf(row));
+      expect(failed?.status).toBe("failed");
+      expect(failed).not.toHaveProperty("finish");
     });
 
     it("abandon refuses a row without the lifecycle marker", async () => {

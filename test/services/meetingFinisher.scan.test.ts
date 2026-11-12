@@ -101,6 +101,27 @@ test("stuck and abandoned rows log the alarm lines", async () => {
   expect(world.deps.finish).not.toHaveBeenCalled();
 });
 
+test("a row another worker claims between this worker's read and its abandon write is left alone", async () => {
+  const raced = row("raced", {
+    status: "processing",
+    timestamp: isoAt(NOW - LIFECYCLE.abandonSeconds - 1),
+  });
+  const world = setup([raced]);
+  jest.mocked(world.deps.readLease).mockImplementationOnce(async () => {
+    world.current(raced).finish = claimedBy("synthetic-worker-a");
+    return undefined;
+  });
+
+  await world.scan();
+
+  expect(world.current(raced)).toMatchObject({
+    status: "processing",
+    finish: claimedBy("synthetic-worker-a"),
+  });
+  expect(logged(MEETING_ABANDONED_LOG)).toBe(0);
+  expect(world.deps.finish).not.toHaveBeenCalled();
+});
+
 test("the timer scans on each tick and stop does not wait for a held lease read, which then takes nothing", async () => {
   const world = setup([row("a")]);
   let release = () => undefined as void;
