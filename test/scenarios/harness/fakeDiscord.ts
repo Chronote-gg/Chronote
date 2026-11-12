@@ -57,6 +57,15 @@ function responseInit(reply: RestReply) {
   };
 }
 
+/** A REST call split into path segments, with `shape` as "METHOD segmentCount" for matching. */
+type RouteRequest = RestCall & { segments: string[]; shape: string };
+type Route = (() => RestReply) | undefined;
+
+function routeRequest(call: RestCall): RouteRequest {
+  const segments = call.path.split("/").slice(1);
+  return { ...call, segments, shape: `${call.method} ${segments.length}` };
+}
+
 function parseBody(body: unknown): unknown {
   return typeof body === "string" ? JSON.parse(body) : body;
 }
@@ -139,38 +148,88 @@ export class FakeRest {
   }
 
   /** Resolves only the routes this fake implements; anything else throws so a scenario cannot pass on a guess. */
-  private route({ method, path, body }: RestCall): () => RestReply {
-    const segments = path.split("/").slice(1);
-    const [resource, id, sub, messageId] = segments;
-    const shape = `${method} ${segments.length}`;
-    if (resource === "users" && id === "@me" && shape === "GET 2")
+  private route(call: RestCall): () => RestReply {
+    const reply = this.resourceRoute(routeRequest(call));
+    if (!reply)
+      throw new Error(
+        `FakeRest does not implement ${call.method} ${call.path}`,
+      );
+    return reply;
+  }
+
+  private resourceRoute(request: RouteRequest): Route {
+    switch (request.segments[0]) {
+      case "users":
+        return this.usersRoute(request);
+      case "interactions":
+        return this.interactionsRoute(request);
+      case "applications":
+        return this.applicationsRoute(request);
+      case "guilds":
+        return this.guildsRoute(request);
+      case "webhooks":
+        return this.webhooksRoute(request);
+      case "channels":
+        return this.channelsRoute(request);
+      default:
+        return undefined;
+    }
+  }
+
+  private usersRoute({ segments, shape }: RouteRequest): Route {
+    if (segments[1] === "@me" && shape === "GET 2")
       return () => json(userPayload(this.discord.bot));
-    if (
-      resource === "interactions" &&
-      segments[3] === "callback" &&
-      shape === "POST 4"
-    )
-      return () => this.callbackReply(id);
-    if (resource === "applications" && sub === "commands" && shape === "PUT 3")
-      return () => json([]);
-    if (resource === "guilds" && sub === "members" && shape === "PATCH 4")
+    return undefined;
+  }
+
+  private interactionsRoute({ segments, shape }: RouteRequest): Route {
+    if (segments[3] === "callback" && shape === "POST 4")
+      return () => this.callbackReply(segments[1]);
+    return undefined;
+  }
+
+  private applicationsRoute({ segments, shape }: RouteRequest): Route {
+    if (segments[2] === "commands" && shape === "PUT 3") return () => json([]);
+    return undefined;
+  }
+
+  private guildsRoute({ segments, shape }: RouteRequest): Route {
+    if (segments[2] === "members" && shape === "PATCH 4")
       return () =>
         json({ user: userPayload(this.discord.bot), roles: [], flags: 0 });
-    if (resource === "webhooks" && sub) {
-      if (shape === "POST 3")
-        return () => json(this.create(`interaction:${sub}`, body));
-      if (segments[3] === "messages" && segments.length === 5)
-        return () => this.originalReply(method, sub, body);
-    }
-    if (resource === "channels" && id && shape === "GET 2")
-      return () => this.channelReply(id);
-    if (resource === "channels" && id && sub === "messages") {
-      if (shape === "GET 3") return () => this.listReply(id);
-      if (shape === "POST 3") return () => json(this.create(id, body));
-      if (messageId && segments.length === 4 && MESSAGE_METHODS.has(method))
-        return () => this.messageReply(method, messageId, body);
-    }
-    throw new Error(`FakeRest does not implement ${method} ${path}`);
+    return undefined;
+  }
+
+  private webhooksRoute({
+    segments,
+    shape,
+    method,
+    body,
+  }: RouteRequest): Route {
+    const token = segments[2];
+    if (!token) return undefined;
+    if (shape === "POST 3")
+      return () => json(this.create(`interaction:${token}`, body));
+    if (segments[3] === "messages" && segments.length === 5)
+      return () => this.originalReply(method, token, body);
+    return undefined;
+  }
+
+  private channelsRoute({
+    segments,
+    shape,
+    method,
+    body,
+  }: RouteRequest): Route {
+    const [, id, sub, messageId] = segments;
+    if (!id) return undefined;
+    if (shape === "GET 2") return () => this.channelReply(id);
+    if (sub !== "messages") return undefined;
+    if (shape === "GET 3") return () => this.listReply(id);
+    if (shape === "POST 3") return () => json(this.create(id, body));
+    if (messageId && segments.length === 4 && MESSAGE_METHODS.has(method))
+      return () => this.messageReply(method, messageId, body);
+    return undefined;
   }
 
   /** Discord takes one callback per interaction and refuses any later one. */
