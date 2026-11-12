@@ -100,11 +100,11 @@ export async function settleCapturedAudio(
   signal: AbortSignal,
 ): Promise<void> {
   await runMeetingEndStep(meeting, "wait-audio-only", () =>
-    waitForAudioOnlyFinishProcessing(meeting),
+    untilAborted(() => waitForAudioOnlyFinishProcessing(meeting), signal),
   );
 
   await runMeetingEndStep(meeting, "close-output-file", () =>
-    closeOutputFile(meeting),
+    untilAborted(() => closeOutputFile(meeting), signal),
   );
 
   if (meeting.transcribeMeeting)

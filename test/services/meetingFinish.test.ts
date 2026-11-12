@@ -42,9 +42,16 @@ import {
   setup,
   startMessage,
   useMeetingFinishHooks,
+  type FinishWorld,
 } from "./meetingFinish.fixture";
 
 useMeetingFinishHooks();
+
+const ABANDONED_LOG = "Meeting finish attempt abandoned while still running";
+const STOPPED_LOG = "Meeting finish attempt stopped";
+const warned = (line: string) =>
+  jest.mocked(console.warn).mock.calls.filter(([first]) => first === line)
+    .length;
 
 test("each step is skipped when its output exists", async () => {
   const world = setup(processingRow({ transcriptS3Key: TRANSCRIPT_KEY }));
@@ -122,6 +129,80 @@ test("an attempt past its cap aborts like a lost claim", async () => {
   await finished;
   expect(seen?.aborted).toBe(true);
   expect(world.current().status).toBe("processing");
+  // A cooperative attempt unwinds inside the grace, so nothing is abandoned.
+  expect(world.scheduled()).toBe(false);
+  expect(warned(ABANDONED_LOG)).toBe(0);
+});
+
+describe("an attempt that ignores its abort", () => {
+  const ignoring = () => new Promise<FinishInput>(() => undefined);
+
+  async function expectAbandoned(world: FinishWorld, finished: Promise<void>) {
+    let returned = false;
+    void finished.then(() => (returned = true));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(returned).toBe(false);
+    await world.graceEnds();
+    await finished;
+    expect(warned(ABANDONED_LOG)).toBe(1);
+    expect(jest.mocked(console.warn)).toHaveBeenCalledWith(
+      ABANDONED_LOG,
+      expect.objectContaining({ meetingId: world.current().meetingId }),
+    );
+    expect(warned(STOPPED_LOG)).toBe(1);
+    // As any aborted attempt: no retry is scheduled and no attempt is counted.
+    expect(world.current()).toMatchObject({
+      status: "processing",
+      finish: { owner: OWNER, attempts: 0, phase: "process" },
+    });
+    expect(world.current().finish?.nextAttemptAt).toBeUndefined();
+    expect(world.scheduled()).toBe(false);
+  }
+
+  test("is abandoned after the grace once it reaches its cap", async () => {
+    const world = setup(processingRow());
+    const finished = world.finish(ignoring);
+    await new Promise((resolve) => setImmediate(resolve));
+    world.advance(LIFECYCLE.finishAttemptMaxMs);
+    await world.tick();
+    await expectAbandoned(world, finished);
+  });
+
+  test("is abandoned after the grace once an outside signal aborts it", async () => {
+    const world = setup(processingRow());
+    const external = new AbortController();
+    const finished = world.finish(ignoring, { signal: external.signal });
+    await new Promise((resolve) => setImmediate(resolve));
+    external.abort(new Error("Synthetic shutdown"));
+    await expectAbandoned(world, finished);
+  });
+
+  test("leaves no unhandled rejection when the abandoned work later fails", async () => {
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", record);
+    try {
+      const world = setup(processingRow());
+      const external = new AbortController();
+      let fail: (error: Error) => void = () => undefined;
+      const finished = world.finish(
+        () =>
+          new Promise<FinishInput>((_, reject) => {
+            fail = reject;
+          }),
+        { signal: external.signal },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      external.abort(new Error("Synthetic shutdown"));
+      await world.graceEnds();
+      await finished;
+      fail(new Error("Synthetic late failure"));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", record);
+    }
+  });
 });
 
 test("generation disabled saves a terminal status and posts no notes", async () => {

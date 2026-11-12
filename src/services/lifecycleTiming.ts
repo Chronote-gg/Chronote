@@ -69,6 +69,8 @@ export const LIFECYCLE = {
   // The SDK sets no deadline of its own, so one hung DynamoDB call would stall a heartbeat or hold a finish slot.
   dynamoConnectionTimeoutMs: 3_000,
   dynamoRequestTimeoutMs: 10_000,
+  // An aborted finish attempt that does not unwind in this long is abandoned, so it cannot hold a finish slot.
+  finishAbortGraceMs: 5_000,
 } as const;
 
 export function leaseCapEpochSeconds(

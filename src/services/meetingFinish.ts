@@ -10,14 +10,8 @@ import {
   type SummaryUpgradeOffer,
 } from "../embed";
 import type { MeetingHistory } from "../types/db";
-import type { CompletionPolicy } from "../types/meetingCompletionPolicy";
 import type { DeliveryResult } from "../types/meetingDelivery";
-import {
-  finishedMeetingStatus,
-  MEETING_END_REASONS,
-  MEETING_STATUS,
-  type MeetingStatus,
-} from "../types/meetingLifecycle";
+import { MEETING_STATUS, type MeetingStatus } from "../types/meetingLifecycle";
 import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
 import {
   abandonedLifecycleDelivery,
@@ -35,11 +29,7 @@ import {
 } from "../metrics";
 import { renderChatEntryLine } from "../utils/chatLog";
 import { resolveHistoryActorId } from "../utils/meetingLifecycle";
-import {
-  PROCESSING_FAILED_NOTICE,
-  TRANSCRIPTION_FAILED,
-} from "../utils/meetingProcessing";
-import { trimNotesForHistory } from "../utils/notesHistory";
+import { PROCESSING_FAILED_NOTICE } from "../utils/meetingProcessing";
 import { captureEvent } from "./analyticsService";
 import { config } from "./configService";
 import {
@@ -66,6 +56,14 @@ import {
   type FollowOnAttempt,
 } from "./meetingFinishFollowOns";
 import type { FinishInput } from "./meetingFinishInput";
+import {
+  cancellationFields,
+  failedProcessing,
+  notesVersionFields,
+  processingOutcome,
+  terminalStatus,
+  withRowDecision,
+} from "./meetingFinishTerminal";
 import {
   ensureMeetingNotes,
   ensureMeetingSummaries,
@@ -162,87 +160,6 @@ const deliverySettled = (row: MeetingHistory) =>
   row.recovery?.disposition === "done" ||
   row.delivery?.notes?.outcome === "failed";
 
-const captureEndIso = (row: MeetingHistory) =>
-  new Date(
-    Date.parse(row.timestamp) + row.duration * MS_PER_SECOND,
-  ).toISOString();
-
-function terminalStatus(row: MeetingHistory, input: FinishInput) {
-  if (input.cancel) return MEETING_STATUS.CANCELLED;
-  return finishedMeetingStatus(row.capture);
-}
-
-function notesVersionFields(row: MeetingHistory, input: FinishInput) {
-  const notes = input.notesInput.notesText;
-  if (!notes) return {};
-  const notesVersion = row.notesVersion ?? 1;
-  const notesLastEditedBy =
-    row.notesLastEditedBy ??
-    row.meetingCreatorId ??
-    input.notesInput.creator.id;
-  const notesLastEditedAt = row.notesLastEditedAt ?? captureEndIso(row);
-  return {
-    notesVersion,
-    notesLastEditedBy,
-    notesLastEditedAt,
-    notesHistory: [
-      {
-        version: notesVersion,
-        notes: trimNotesForHistory(notes),
-        editedBy: notesLastEditedBy,
-        editedAt: notesLastEditedAt,
-      },
-    ],
-  };
-}
-
-/**
- * What today's cancellation stores: the decision, its reason and how it ended.
- * The stored policy schema requires the full snapshot, so the decision is
- * written onto the row's snapshot or the one the loader carries.
- */
-function cancellationFields(
-  row: MeetingHistory,
-  input: FinishInput,
-): Partial<MeetingHistory> {
-  const decision: CompletionPolicy["decision"] = input.cancel
-    ? "cancel"
-    : "proceed";
-  const snapshot = row.completionPolicy ?? input.completionPolicy;
-  return {
-    ...(snapshot ? { completionPolicy: { ...snapshot, decision } } : {}),
-    ...(input.cancel
-      ? {
-          cancellationReason: input.cancel.reason,
-          endReason:
-            row.endReason === MEETING_END_REASONS.DISMISSED
-              ? MEETING_END_REASONS.DISMISSED
-              : MEETING_END_REASONS.AUTO_CANCELLED,
-        }
-      : {}),
-  };
-}
-
-/** A decision close already wrote is final: a retry or another loader never reverses it. */
-function withRowDecision(row: MeetingHistory, input: FinishInput): FinishInput {
-  const decided = row.completionPolicy?.decision;
-  if (decided === "cancel" && !input.cancel)
-    return { ...input, cancel: { reason: row.cancellationReason } };
-  if (decided === "proceed" && input.cancel) {
-    return { ...input, cancel: undefined };
-  }
-  return input;
-}
-
-function processingOutcome(input: FinishInput): MeetingProcessingOutcome {
-  const notes = input.notesInput;
-  const processing = { ...input.processing, ...notes.processing };
-  // Recovery records notes as skipped when the recording asked for none.
-  return !notes.generateNotes && notes.transcribeMeeting && !input.cancel
-    ? { ...processing, notes: "skipped", summary: "skipped" }
-    : processing;
-}
-
 function cancelledMessage(
   history: MeetingHistory,
   input: FinishInput | undefined,
@@ -303,25 +220,6 @@ function renderedNotesCount(row: MeetingHistory): number | undefined {
   } catch {
     return undefined;
   }
-}
-
-/**
- * The stages as stored when steps 1 to 3 gave up, so a portal retry can rerun
- * them: generation outcomes as recorded, else a failure before notes (loading,
- * transcription or storing the transcript) as transcription failed. A failed
- * row stores no notes, so notes generated in the failed attempt count as
- * failed. A cancellation records nothing, so no retry is offered for it.
- */
-function failedProcessing(
-  input: FinishInput | undefined,
-): MeetingProcessingOutcome | undefined {
-  if (input?.cancel) return undefined;
-  const outcome = input && processingOutcome(input);
-  if (!outcome || !Object.values(outcome).includes("failed"))
-    return TRANSCRIPTION_FAILED;
-  return outcome.notes === "generated"
-    ? { ...outcome, notes: "failed" }
-    : outcome;
 }
 
 function logContext(row: MeetingHistory) {
@@ -848,6 +746,38 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
   }
 
   /**
+   * Settles with the attempt, or throws its abort reason once it has stayed
+   * unsettled for the grace after the abort: a step that never observes the
+   * signal must not hold this worker's finish slot. Every write the abandoned
+   * work could still make is conditioned on the claim and checks the signal.
+   */
+  async function untilAbandoned(running: Promise<void>, a: Attempt) {
+    let cancelGrace: () => void = () => undefined;
+    const graceEnded = new Promise<"abandoned">((resolve) => {
+      const startGrace = () => {
+        cancelGrace = deps.schedule(
+          async () => resolve("abandoned"),
+          LIFECYCLE.finishAbortGraceMs,
+        );
+      };
+      if (a.signal.aborted) startGrace();
+      else a.signal.addEventListener("abort", startGrace, { once: true });
+    });
+    // The abandoned work may still reject; nothing is left to report it to.
+    running.catch(() => undefined);
+    try {
+      if ((await Promise.race([running, graceEnded])) !== "abandoned") return;
+    } finally {
+      cancelGrace();
+    }
+    console.warn(
+      "Meeting finish attempt abandoned while still running",
+      logContext(a.claim.history),
+    );
+    a.signal.throwIfAborted();
+  }
+
+  /**
    * Finishes one claimed meeting: saves its result once, delivers it, then runs
    * the follow-ons. Each step is skipped when the row already records its
    * output, so a retry after a crash resumes where the last attempt stopped.
@@ -901,7 +831,7 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     };
     cancelRenewal = deps.schedule(renew, LIFECYCLE.finishClaimRenewMs);
     try {
-      await run(a);
+      await untilAbandoned(run(a), a);
     } catch (error) {
       if (!controller.signal.aborted) throw error;
       console.warn("Meeting finish attempt stopped", {

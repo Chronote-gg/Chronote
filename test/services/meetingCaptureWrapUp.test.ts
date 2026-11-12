@@ -24,7 +24,11 @@ jest.mock("../../src/services/imageCaptionService", () => ({
 }));
 
 import type { Client } from "discord.js";
-import { waitForFinishProcessing } from "../../src/audio";
+import {
+  closeOutputFile,
+  waitForAudioOnlyFinishProcessing,
+  waitForFinishProcessing,
+} from "../../src/audio";
 import { evaluateAutoRecordCancellation } from "../../src/services/autoRecordCancellationService";
 import {
   compileCancelledTranscript,
@@ -177,6 +181,24 @@ test("settling stops waiting for in-flight transcriptions once the attempt is st
 
   await expect(settling).rejects.toThrow("synthetic claim lost");
 });
+
+test.each([
+  ["the audio-only wait", waitForAudioOnlyFinishProcessing],
+  ["the encoder close", closeOutputFile],
+] as const)(
+  "settling rejects promptly on abort while %s hangs",
+  async (_step, hanging) => {
+    jest
+      .mocked(hanging)
+      .mockReturnValueOnce(new Promise<void>(() => undefined));
+    const attempt = new AbortController();
+    const settling = settleCapturedAudio(meetingFor(), attempt.signal);
+
+    attempt.abort(new Error("synthetic attempt cap"));
+
+    await expect(settling).rejects.toThrow("synthetic attempt cap");
+  },
+);
 
 test("an attempt already stopped leaves no unhandled rejection from the transcription wait", async () => {
   const unhandled: unknown[] = [];

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { createMockMeetingFinishRepository } from "../../src/repositories/meetingFinishRepository";
 import { createMockMeetingUpdateDeliveryRepository } from "../../src/repositories/mockMeetingUpdateDeliveryRepository";
+import { LIFECYCLE } from "../../src/services/lifecycleTiming";
 import {
   createMeetingFinisher,
   type MeetingFinishDeps,
@@ -142,7 +143,16 @@ export function setup(initial: MeetingHistory) {
   const repository = createMockMeetingFinishRepository(histories, new Map());
   const discord = fakeDiscord();
   let nowMs = START_SECONDS * 1000;
-  let pending: (() => Promise<void>) | undefined;
+  const pending = new Set<{ run: () => Promise<void>; delayMs: number }>();
+  /** Runs the one scheduled callback with this delay, as its timer firing would. */
+  async function fire(delayMs: number, missing: string) {
+    const entry = [...pending].find(
+      (scheduled) => scheduled.delayMs === delayMs,
+    );
+    if (!entry) throw new Error(missing);
+    pending.delete(entry);
+    await entry.run();
+  }
   const deps: MeetingFinishDeps = {
     repository,
     transport: discord.transport,
@@ -152,10 +162,11 @@ export function setup(initial: MeetingHistory) {
     claimUpgrade: jest.fn(async () => undefined),
     followOns: stubFollowOns(),
     nowMs: () => nowMs,
-    schedule(run) {
-      pending = run;
+    schedule(run, delayMs) {
+      const entry = { run, delayMs };
+      pending.add(entry);
       return () => {
-        pending = undefined;
+        pending.delete(entry);
       };
     },
   };
@@ -204,13 +215,11 @@ export function setup(initial: MeetingHistory) {
         mutation: { kind: "rename", meetingName },
         actor: { editedBy: CREATOR_ID },
       }),
-    scheduled: () => pending !== undefined,
-    tick: async () => {
-      const run = pending;
-      if (!run) throw new Error("no renewal scheduled");
-      pending = undefined;
-      await run();
-    },
+    scheduled: () => pending.size > 0,
+    tick: () => fire(LIFECYCLE.finishClaimRenewMs, "no renewal scheduled"),
+    /** The grace an aborted attempt gets to unwind runs out. */
+    graceEnds: () =>
+      fire(LIFECYCLE.finishAbortGraceMs, "no abort grace scheduled"),
     advance: (ms: number) => {
       nowMs += ms;
     },
