@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { inProgressRenewalHooks } from "../fixtures/leaseRenewalHooks";
 import { meetingLeaseEvents } from "../../src/metrics";
 import { createMockMeetingLeaseRepository } from "../../src/repositories/meetingLeaseRepository";
 import {
@@ -55,13 +56,7 @@ function setup() {
       };
     },
   });
-  const hooks = {
-    maxDurationMs: MAX_DURATION_MS,
-    snapshot: () => ({ status: "in_progress" as const }),
-    onEndRequested: jest.fn(),
-    onLost: jest.fn(),
-    onCapReached: jest.fn(),
-  };
+  const hooks = inProgressRenewalHooks(MAX_DURATION_MS);
   async function tick(advanceMs = LIFECYCLE.leaseHeartbeatMs) {
     nowMs += advanceMs;
     const run = pending;

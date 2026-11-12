@@ -1,4 +1,5 @@
 /** @jest-environment node */
+import { inProgressRenewalHooks } from "../fixtures/leaseRenewalHooks";
 import { historyRow } from "../repositories/meetingLeaseRepository.contract";
 import { describeLocalDynamo } from "../repositories/workerRegistryDynamo.fixture";
 import { LIFECYCLE } from "../../src/services/lifecycleTiming";
@@ -26,13 +27,7 @@ function simulatedWorkers(repository: MeetingLeaseRepository) {
         };
       },
     });
-    const hooks = {
-      maxDurationMs: MAX_DURATION_MS,
-      snapshot: () => ({ status: "in_progress" as const }),
-      onEndRequested: jest.fn(),
-      onLost: jest.fn(),
-      onCapReached: jest.fn(),
-    };
+    const hooks = inProgressRenewalHooks(MAX_DURATION_MS);
     return {
       service,
       hooks,
