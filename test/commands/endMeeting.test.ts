@@ -16,6 +16,13 @@ jest.mock(
 jest.mock("../../src/meetings", () => ({
   getMeeting: jest.fn(),
 }));
+jest.mock("../../src/repositories/meetingHistoryTransitions", () => {
+  const repository = {
+    transitionMeetingHistory: jest.fn(async () => "applied"),
+    getMeetingHistory: jest.fn(async () => undefined),
+  };
+  return { getMeetingHistoryTransitionRepository: () => repository };
+});
 
 import {
   Collection,
@@ -35,7 +42,9 @@ import { updateMeetingProcessingMessage } from "../../src/embed";
 import { getMeeting } from "../../src/meetings";
 import { autoRecordJoinSuppressionService } from "../../src/services/autoRecordJoinSuppressionService";
 import { closeMeeting } from "../../src/services/meetingClose";
+import { getMeetingHistoryTransitionRepository } from "../../src/repositories/meetingHistoryTransitions";
 import type { MeetingData } from "../../src/types/meeting-data";
+import type { DeliveryResult } from "../../src/types/meetingDelivery";
 
 const client = {} as Client;
 const CREATOR = "synthetic-creator";
@@ -223,6 +232,101 @@ test("the processing state is kept on the meeting, and a failed edit settles it 
   await expect(meeting.processingMessageShown).resolves.toBeUndefined();
   expect(console.warn).toHaveBeenCalledWith(
     "Meeting processing message was not shown",
+    expect.objectContaining({ meetingId: "synthetic-meeting" }),
+  );
+});
+
+const REPLACEMENT = "synthetic-replacement-message";
+const HISTORY_KEY = {
+  guildId: "synthetic-guild",
+  channelId_timestamp: "synthetic-voice#synthetic-start",
+};
+const transition = () =>
+  jest.mocked(getMeetingHistoryTransitionRepository().transitionMeetingHistory);
+
+function reservedMeeting() {
+  return meetingFor({
+    reservation: {
+      sessionMode: "meeting",
+      guildId: "synthetic-guild",
+      meetingId: "synthetic-meeting",
+      ownerInstanceId: "synthetic-owner",
+      executionVersion: 1,
+      voiceOperationAttemptId: "synthetic-attempt",
+      reservedAt: 0,
+      historyKey: HISTORY_KEY,
+    },
+  });
+}
+
+/** The processing update had to post a new message, because the recording message was gone. */
+function processingUpdateSends(outcome: "sent_fallback" | "edited_existing") {
+  jest
+    .mocked(updateMeetingProcessingMessage)
+    .mockImplementationOnce(async (meeting) => {
+      if (outcome === "sent_fallback") meeting.startMessageId = REPLACEMENT;
+      const result: DeliveryResult = {
+        outcome,
+        intended: 1,
+        sent: 1,
+        errors: [],
+      };
+      return result;
+    });
+}
+
+test("a processing update that posts a replacement saves its id to the row before it settles", async () => {
+  const meeting = reservedMeeting();
+  processingUpdateSends("sent_fallback");
+  let saved: (outcome: "applied" | "stale") => void = () => undefined;
+  // The row has already moved to processing by the time the replacement lands.
+  transition()
+    .mockResolvedValueOnce("stale")
+    .mockImplementationOnce(() => new Promise((resolve) => (saved = resolve)));
+  let settled = false;
+
+  await runEndMeetingFlow({ meeting });
+  void meeting.processingMessageShown?.then(() => (settled = true));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(settled).toBe(false);
+  saved("applied");
+  await meeting.processingMessageShown;
+  expect(transition().mock.calls.map(([input]) => input)).toEqual(
+    ["in_progress", "processing"].map((expectedStatus) =>
+      expect.objectContaining({
+        key: HISTORY_KEY,
+        expectedMeetingId: "synthetic-meeting",
+        expectedOwnerInstanceId: "synthetic-owner",
+        expectedExecutionVersion: 1,
+        expectedStatus,
+        patch: { startMessageId: REPLACEMENT, updatedAt: expect.any(String) },
+      }),
+    ),
+  );
+});
+
+test("a processing update that edits the recording message in place writes nothing", async () => {
+  const meeting = reservedMeeting();
+  processingUpdateSends("edited_existing");
+
+  await runEndMeetingFlow({ meeting });
+  await meeting.processingMessageShown;
+
+  expect(transition()).not.toHaveBeenCalled();
+});
+
+test("a replacement id that cannot be saved is logged and the close goes on", async () => {
+  const meeting = reservedMeeting();
+  processingUpdateSends("sent_fallback");
+  transition().mockRejectedValueOnce(new Error("synthetic outage"));
+
+  await runEndMeetingFlow({ meeting });
+  await expect(meeting.processingMessageShown).resolves.toBeUndefined();
+
+  expect(closeMeeting).toHaveBeenCalledTimes(1);
+  expect(console.warn).toHaveBeenCalledWith(
+    "Meeting start message id could not be saved",
     expect.objectContaining({ meetingId: "synthetic-meeting" }),
   );
 });

@@ -4,6 +4,7 @@ import { getMeeting } from "../meetings";
 import { autoRecordJoinSuppressionService } from "../services/autoRecordJoinSuppressionService";
 import { deferInteractionUpdate } from "../services/interactionResponseService";
 import { closeMeeting } from "../services/meetingClose";
+import { saveReplacementStartMessageId } from "../services/meetingStartMessage";
 import type { MeetingData } from "../types/meeting-data";
 import { MEETING_END_REASONS } from "../types/meetingLifecycle";
 import { canUserEndMeeting } from "../utils/meetingPermissions";
@@ -85,11 +86,16 @@ export async function runEndMeetingFlow(
   };
   if (meeting.sessionMode === "tts_only") return closeMeeting(meeting, cause);
   // Kept on the meeting so the local finish delivers only after it settles.
+  // A replacement's id reaches the row first, because delivery, on this worker
+  // or another, edits the message the row names.
   if (!meeting.finishing)
     meeting.processingMessageShown = updateMeetingProcessingMessage(
       meeting,
     ).then(
-      () => undefined,
+      async (result) => {
+        if (result.outcome === "sent_fallback" && meeting.startMessageId)
+          await saveReplacementStartMessageId(meeting, meeting.startMessageId);
+      },
       (error: unknown) =>
         console.warn("Meeting processing message was not shown", {
           meetingId: meeting.meetingId,

@@ -45,11 +45,9 @@ import {
   getRollingUsageForGuild,
   getRollingWindowMs,
 } from "../services/meetingUsageService";
-import { LIFECYCLE } from "../services/lifecycleTiming";
 import {
   MEETING_END_REASONS,
   MEETING_START_REASONS,
-  MEETING_STATUS,
   type AutoRecordRule,
   type MeetingStartReason,
 } from "../types/meetingLifecycle";
@@ -66,7 +64,7 @@ import {
   resolveMeetingNotesChannel,
 } from "../services/meetingNotesDestinationService";
 import { closeMeeting } from "../services/meetingClose";
-import { getMeetingHistoryTransitionRepository } from "../repositories/meetingHistoryTransitions";
+import { saveStartMessageId } from "../services/meetingStartMessage";
 
 type GuildLimits = Awaited<ReturnType<typeof getGuildLimits>>["limits"];
 
@@ -522,32 +520,7 @@ export async function recordStartMessage(
   messageId: string,
 ): Promise<void> {
   meeting.startMessageId = messageId;
-  const reservation = meeting.reservation;
-  if (reservation?.sessionMode !== "meeting") return;
-  try {
-    const outcome =
-      await getMeetingHistoryTransitionRepository().transitionMeetingHistory({
-        key: reservation.historyKey,
-        expectedMeetingId: reservation.meetingId,
-        expectedOwnerInstanceId: reservation.ownerInstanceId,
-        expectedExecutionVersion: reservation.executionVersion,
-        expectedStatus: MEETING_STATUS.IN_PROGRESS,
-        patch: {
-          startMessageId: messageId,
-          updatedAt: new Date().toISOString(),
-        },
-        signal: AbortSignal.timeout(LIFECYCLE.leaseHeartbeatMs),
-      });
-    if (outcome !== "applied")
-      console.warn("Meeting start message id was not saved", {
-        meetingId: meeting.meetingId,
-      });
-  } catch (error) {
-    console.warn("Meeting start message id could not be saved", {
-      meetingId: meeting.meetingId,
-      error,
-    });
-  }
+  await saveStartMessageId(meeting, messageId);
 }
 
 export async function handleRequestStartMeeting(

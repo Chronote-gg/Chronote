@@ -119,8 +119,10 @@ const withoutTimestamps = (message: {
 });
 
 /** Delivers a row on the live path through a fresh fake Discord that keeps every save. */
-async function deliverLiveRow(initial: MeetingHistory) {
-  const discord = fakeDiscord();
+async function deliverLiveRow(
+  initial: MeetingHistory,
+  discord = fakeDiscord(),
+) {
   const { save, current } = savingRow(initial);
   const outcome = await deliverMeeting({
     history: current(),
@@ -320,6 +322,26 @@ describe("meeting delivery", () => {
       errors: [],
       recoveredMissingMessage: { code: 10008, status: 404 },
     });
+  });
+
+  it("a row naming the replacement processing card has that card edited in place", async () => {
+    const discord = fakeDiscord();
+    const replacement = snowflake(POSTING_STARTS_AT - 1000);
+    discord.messages.splice(
+      0,
+      1,
+      discordMessage(replacement, { embeds: [{ title: "Processing" }] }),
+    );
+    const { current } = await deliverLiveRow(
+      history({ startMessageId: replacement }),
+      discord,
+    );
+    expect(current().summaryMessageId).toBe(replacement);
+    expect(current().delivery?.summary?.outcome).toBe("edited_existing");
+    expect(
+      discord.messages.find((m) => m.id === replacement)?.embeds[0]
+        ?.description,
+    ).toBe("Synthetic summary.");
   });
 
   it("a crash between two notes chunks resumes after the last chunk present and repeats none", async () => {
