@@ -17,7 +17,7 @@ import {
 import { getBillingChangeRepository } from "../../src/repositories/billingChangeRepository";
 import { billingChangeBase } from "../../src/types/billingChange";
 import { changeOperation, changePointer } from "../fixtures/billingChange";
-import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
+import { getMockStore } from "../../src/repositories/mockStore";
 import { config } from "../../src/services/configService";
 import {
   sourceSubscription,
@@ -27,23 +27,8 @@ import {
 import { renewalPayerId, renewalSubscription } from "../fixtures/renewal";
 import { renewalStripeClientFixture } from "../fixtures/renewalStripeClient";
 import { stripeTransport } from "../fixtures/stripeTransport";
-const previous = {
-  mock: config.mock.enabled,
-  enabled: config.stripe.subscriptionTransitionsEnabled,
-};
-beforeEach(() => {
-  config.mock.enabled = true;
-  config.stripe.subscriptionTransitionsEnabled = false;
-  resetMockStore();
-  getMockStore().subscriptions.set(
-    changeOperation.guildId,
-    structuredClone(changePointer),
-  );
-});
-afterEach(() => {
-  config.mock.enabled = previous.mock;
-  config.stripe.subscriptionTransitionsEnabled = previous.enabled;
-});
+import { useBillingChangeMockStore } from "../fixtures/billingChangeMockStore";
+useBillingChangeMockStore();
 function seedReview(amountDue = 0) {
   const operation = {
     ...billingChangeBase(changeOperation),

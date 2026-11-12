@@ -10,32 +10,16 @@ import {
   billingChangeOperationSchema,
 } from "../../src/types/billingChange";
 import type { StripeSubscription } from "../../src/types/stripe";
-import { config } from "../../src/services/configService";
-import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
+import { getMockStore } from "../../src/repositories/mockStore";
 import { getBillingChangeRepository } from "../../src/repositories/billingChangeRepository";
-import { changeOperation, changePointer } from "../fixtures/billingChange";
+import { changeOperation } from "../fixtures/billingChange";
 import { sourceSubscription, fundedInvoice } from "../fixtures/renewalStripe";
 import { renewalStripeClientFixture } from "../fixtures/renewalStripeClient";
 import { stripeTransport } from "../fixtures/stripeTransport";
+import { useBillingChangeMockStore } from "../fixtures/billingChangeMockStore";
 
-const originalConfig = {
-  mock: config.mock.enabled,
-  transitions: config.stripe.subscriptionTransitionsEnabled,
-};
-beforeEach(async () => {
-  config.mock.enabled = true;
-  config.stripe.subscriptionTransitionsEnabled = false;
-  resetMockStore();
-  getMockStore().subscriptions.set(
-    changeOperation.guildId,
-    structuredClone(changePointer),
-  );
-});
-afterEach(() => {
-  config.mock.enabled = originalConfig.mock;
-  config.stripe.subscriptionTransitionsEnabled = originalConfig.transitions;
-  jest.restoreAllMocks();
-});
+useBillingChangeMockStore();
+afterEach(() => jest.restoreAllMocks());
 
 async function fixture(
   timing: "immediate" | "renewal",
