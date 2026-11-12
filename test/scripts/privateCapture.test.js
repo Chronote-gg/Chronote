@@ -4,19 +4,10 @@ import { test, expect } from "@jest/globals";
 import { createTerraformCapture } from "../../scripts/deployment/private-capture.cjs";
 import { privateCaptureFixture } from "../fixtures/deployment/privateCapture.js";
 import { digest } from "../../scripts/deployment/collector-payload.cjs";
+import { invocation } from "../fixtures/deployment/terraformWorkflow.js";
 
 const FIXED_NOW_SECONDS = 1000;
 const RETENTION_COVERING_OPERATION = 40000;
-const invocation = {
-  repository: "Chronote-gg/Chronote",
-  sourceSha: "a".repeat(40),
-  workflowPath: ".github/workflows/terraform-plan.yml",
-  runId: "10",
-  runAttempt: 1,
-  environment: "production",
-  workspace: "default",
-  scope: "full",
-};
 function fixture() {
   const f = privateCaptureFixture();
   f.binding.retentionUntil = RETENTION_COVERING_OPERATION;
