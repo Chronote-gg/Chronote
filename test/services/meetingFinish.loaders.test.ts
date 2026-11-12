@@ -46,10 +46,17 @@ import { MEETING_FINISH_FAILED_LOG } from "../../src/metrics";
 import type { MeetingHistory } from "../../src/types/db";
 import { EMPTY_RECORDING_NOTICE } from "../../src/utils/meetingProcessing";
 import { autoRecordCompletionPolicy } from "../fixtures/completionPolicy";
-import { pcmArtifact, recoveryFixture } from "./meetingRecoveryFixtures";
+import {
+  pcmArtifact,
+  recoveryFixture,
+  withoutFinalPass,
+} from "./meetingRecoveryFixtures";
+import { INTERRUPTED_CAPTURE_NOTICE } from "../../src/services/meetingRecoveryContent";
+import type { RecordingCaptureState } from "../../src/types/recordingCheckpoint";
 import {
   DONE_MARKER,
   GUILD_ID,
+  MEETING_SECONDS,
   START,
   VOICE_CHANNEL_ID,
   discordMessage,
@@ -157,14 +164,16 @@ test("auto-record cancel with no speech ends cancelled with the cancelled embed"
   expect(errorsLogged(MEETING_FINISH_FAILED_LOG)).toBe(0);
 });
 
-test("a recovered auto-recording cancelled by the evaluation ends cancelled with the cancelled message and no notes", async () => {
-  const PIECE_BYTES = 3840;
-  const undecided = autoRecordCompletionPolicy({
-    elapsedMilliseconds: 30_000,
-    dismissed: false,
-    decision: "undecided",
-  });
-  const saved = await recoveryFixture("Synthetic short chatter.", {
+const PIECE_BYTES = 3840;
+const SPOKEN = "Synthetic speaker agreed on a placeholder plan.";
+/** One saved audio piece whose transcript is saved too, so recovery transcribes nothing. */
+function transcribedPiece(
+  text: string,
+  options: Parameters<typeof recoveryFixture>[1] = {},
+) {
+  return recoveryFixture(text, {
+    timestamp: START,
+    context: withoutFinalPass,
     artifacts: [
       pcmArtifact("user:123", 0, Buffer.alloc(PIECE_BYTES, 1), [
         { startOffsetMs: 0, durationMs: 20 },
@@ -183,6 +192,15 @@ test("a recovered auto-recording cancelled by the evaluation ends cancelled with
         ],
       };
     },
+    ...options,
+  });
+}
+
+test("a recovered auto-recording cancelled by the evaluation ends cancelled with the cancelled message and no notes", async () => {
+  const undecided = autoRecordCompletionPolicy({
+    elapsedMilliseconds: 30_000,
+    dismissed: false,
+    decision: "undecided",
   });
   jest.mocked(decideAutoRecordCancellation).mockResolvedValueOnce({
     cancel: true,
@@ -191,6 +209,10 @@ test("a recovered auto-recording cancelled by the evaluation ends cancelled with
   const row = autoRecordingRow({
     endReason: "channel_empty",
     completionPolicy: undecided,
+  });
+  // Only a capture whose final flush landed is evaluated as having ended complete.
+  const saved = await transcribedPiece("Synthetic short chatter.", {
+    captureState: row.capture,
   });
   const world = setup(row);
   await world.finish((signal) =>
@@ -315,4 +337,88 @@ test("a recovered capture that ended complete with no saved audio ends complete 
   );
   expectCompletedWithNoSpeechNotice(world, world.current());
   expect(errorsLogged(MEETING_FINISH_FAILED_LOG)).toBe(0);
+});
+
+/**
+ * Close records a complete capture when its final flush failed but it kept the
+ * audio for a local finish. Only the manifest proves the flush landed, so a
+ * recovery without that proof finishes the meeting as interrupted.
+ */
+describe("a recovered capture the row records as complete", () => {
+  const rowCapture = processingRow().capture;
+  const captureEnd = new Date(
+    Date.parse(START) + MEETING_SECONDS * 1000,
+  ).toISOString();
+  const interruptedRow = {
+    kind: "interrupted" as const,
+    startedAt: START,
+    endedAt: null,
+    detectedAt: START,
+  };
+  async function recover(
+    manifestCapture: RecordingCaptureState | undefined,
+    capture: MeetingHistory["capture"] = rowCapture,
+  ) {
+    const saved = await transcribedPiece(SPOKEN, {
+      captureState: manifestCapture,
+    });
+    return (signal: AbortSignal) =>
+      loadRecoveryFinishInput(
+        { ...saved.claim.history, capture },
+        signal,
+        saved.reader,
+      );
+  }
+  const load = async (load: Promise<(signal: AbortSignal) => unknown>) =>
+    (await load)(new AbortController().signal);
+
+  test("whose manifest records a complete capture loads unchanged", async () => {
+    const input = await load(recover(rowCapture));
+    expect(input).toMatchObject({ processing: { transcription: "ready" } });
+    expect(input).not.toHaveProperty("capture");
+    expect(input).toHaveProperty("notesInput.captureNotice", undefined);
+  });
+
+  test("whose manifest does not loads as interrupted, keeping the row's start and end", async () => {
+    const input = await load(recover(undefined));
+    expect(input).toMatchObject({
+      capture: {
+        kind: "interrupted",
+        startedAt: START,
+        endedAt: captureEnd,
+        detectedAt: expect.any(String),
+      },
+      processing: { transcription: "partial" },
+      notesInput: {
+        captureNotice: expect.stringContaining(INTERRUPTED_CAPTURE_NOTICE),
+      },
+    });
+  });
+
+  test("an interrupted row loads unchanged", async () => {
+    const input = await load(recover(undefined, interruptedRow));
+    expect(input).not.toHaveProperty("capture");
+    expect(input).toHaveProperty(
+      "notesInput.captureNotice",
+      expect.stringContaining(INTERRUPTED_CAPTURE_NOTICE),
+    );
+  });
+
+  test("whose manifest does not ends interrupted with the capture rewritten and the notice posted", async () => {
+    const world = setup(processingRow());
+    await world.finish(await recover(undefined));
+    expect(world.current()).toMatchObject({
+      status: "interrupted",
+      capture: {
+        kind: "interrupted",
+        startedAt: START,
+        endedAt: captureEnd,
+      },
+      recovery: DONE_MARKER,
+    });
+    expect(JSON.stringify(world.discord.messages)).toContain(
+      "recording was interrupted",
+    );
+    expect(errorsLogged(MEETING_FINISH_FAILED_LOG)).toBe(0);
+  });
 });

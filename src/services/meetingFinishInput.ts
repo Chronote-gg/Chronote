@@ -51,7 +51,10 @@ import { LIFECYCLE } from "./lifecycleTiming";
 import { fetchJsonFromS3 } from "./storageService";
 import { formatUserMention } from "../utils/participants";
 import { summarizeCaptureCoverage } from "../utils/meetingCaptureNotice";
-import type { CaptureCoverageSummary } from "../types/recordingCheckpoint";
+import type {
+  CaptureCoverageSummary,
+  RecordingCaptureState,
+} from "../types/recordingCheckpoint";
 
 export type FinishInput = {
   source: "normal" | "recovery";
@@ -81,6 +84,8 @@ export type FinishInput = {
   localDirectory?: string;
   /** Saved audio as the checkpoint confirms it, which an interrupted meeting's notice reports. */
   captureCoverage?: CaptureCoverageSummary;
+  /** Replaces the row's capture state: a complete capture the checkpoint does not prove complete. */
+  capture?: RecordingCaptureState;
 };
 
 const MS_PER_SECOND = 1000;
@@ -324,11 +329,32 @@ async function emptyRecording(
   };
 }
 
-/** The recorded terminal capture kind, else the one the manifest proves. */
+/**
+ * Interrupted when the row says so, or when the manifest does not record a
+ * complete capture: a row also says complete when close kept the audio for a
+ * local finish after its final flush failed, and the checkpoint then lacks
+ * the unsaved tail. Only a completed final flush leaves a complete manifest.
+ */
 function interruptedCapture(history: MeetingHistory, content: RecoveryContent) {
-  if (history.capture?.kind === "complete") return false;
-  if (history.capture?.kind === "interrupted") return true;
-  return content.manifest.captureState.kind !== "complete";
+  return (
+    history.capture?.kind === "interrupted" ||
+    content.manifest.captureState.kind !== "complete"
+  );
+}
+
+/** The row's complete capture restated as interrupted, when the checkpoint does not prove it. */
+function unprovenCompleteCapture(
+  history: MeetingHistory,
+  interrupted: boolean,
+): RecordingCaptureState | undefined {
+  const capture = history.capture;
+  if (!interrupted || capture?.kind !== "complete") return undefined;
+  return {
+    kind: "interrupted",
+    startedAt: capture.startedAt,
+    endedAt: capture.endedAt,
+    detectedAt: new Date().toISOString(),
+  };
 }
 
 type RecoveredTranscript = {
@@ -585,6 +611,7 @@ export async function loadRecoveryFinishInput(
     reader,
     signal,
   );
+  const capture = unprovenCompleteCapture(history, interrupted);
   return {
     source: "recovery",
     notesInput,
@@ -595,6 +622,7 @@ export async function loadRecoveryFinishInput(
     hasSavedAudio: true,
     captureCoverage: summarizeCaptureCoverage(content.coverage),
     ...(cancel ? { cancel } : {}),
+    ...(capture ? { capture } : {}),
     ...recording,
   };
 }

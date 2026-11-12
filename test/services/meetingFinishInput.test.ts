@@ -77,6 +77,7 @@ import {
   pcmArtifact,
   recoveryFixture,
   savedTranscriptionPrompt,
+  withoutFinalPass,
 } from "./meetingRecoveryFixtures";
 import {
   INTERRUPTED_CAPTURE_NOTICE,
@@ -126,10 +127,22 @@ function pieces(count: number, sourceId = "user:123") {
   );
 }
 
+/** The saved prompt re-transcription needs, with no final pass to rerun for a complete capture. */
+function savedPromptWithoutFinalPass(
+  saved: Parameters<typeof savedTranscriptionPrompt>[0],
+) {
+  savedTranscriptionPrompt(saved);
+  withoutFinalPass(saved);
+}
+
 /** Saved entry for piece 1 of three; pieces 0 and 2 have no transcript yet. */
-function savedMiddlePiece(text = SAVED_TEXT) {
+function savedMiddlePiece(
+  text = SAVED_TEXT,
+  captureState?: RecordingCaptureState,
+) {
   return recoveryFixture(text, {
-    context: savedTranscriptionPrompt,
+    captureState,
+    context: savedPromptWithoutFinalPass,
     artifacts: pieces(3),
     transcript: (saved) => {
       saved.entries[0].correspondence = {
@@ -473,9 +486,11 @@ const interruptedCaptureState = {
   endedAt: null,
 };
 
-function singleUntranscribedPiece() {
+/** Pass `completeCapture` for a capture whose final flush landed, as a complete row's normally did. */
+function singleUntranscribedPiece(captureState?: RecordingCaptureState) {
   return recoveryFixture("", {
-    context: savedTranscriptionPrompt,
+    captureState,
+    context: savedPromptWithoutFinalPass,
     artifacts: pieces(1),
     transcript: (saved) => {
       saved.entries = [];
@@ -484,7 +499,7 @@ function singleUntranscribedPiece() {
 }
 
 test("normal and recovery loaders produce the same notes input for the same meeting content", async () => {
-  const f = await singleUntranscribedPiece();
+  const f = await singleUntranscribedPiece(completeCapture);
   const recovered = await track(
     loadRecoveryFinishInput(
       {
@@ -603,7 +618,11 @@ test.each([
         .mockResolvedValueOnce({ status: "skipped" } as never);
     const f = await recoveryFixture("", {
       requested,
-      context: withoutSavedPrompts,
+      captureState: completeCapture,
+      context: (saved) => {
+        withoutSavedPrompts(saved);
+        withoutFinalPass(saved);
+      },
       artifacts: pieces(1),
       transcript: (saved) => {
         saved.entries = [];
@@ -692,7 +711,7 @@ describe("recovery evaluates auto-record cancellation", () => {
   }
 
   async function recover(overrides: Partial<MeetingHistory> = {}) {
-    const f = await singleUntranscribedPiece();
+    const f = await singleUntranscribedPiece(completeCapture);
     return track(
       loadRecoveryFinishInput(
         {
@@ -807,8 +826,9 @@ describe("recovery evaluates auto-record cancellation", () => {
     attemptSignal = signal(),
   ) {
     const f = await recoveryFixture("", {
+      captureState: completeCapture,
       context: (saved) => {
-        savedTranscriptionPrompt(saved);
+        savedPromptWithoutFinalPass(saved);
         saved.chatContext = chatContext;
       },
       artifacts: pieces(1),
@@ -880,7 +900,7 @@ describe("recovery evaluates auto-record cancellation", () => {
       .spyOn(openaiText, "generateOpenAIText")
       .mockResolvedValueOnce('{"cancel":false}');
     try {
-      const f = await savedMiddlePiece();
+      const f = await savedMiddlePiece(SAVED_TEXT, completeCapture);
       const input = await track(
         loadRecoveryFinishInput(
           {
@@ -912,7 +932,7 @@ describe("recovery evaluates auto-record cancellation", () => {
   });
 
   test("a stored transcript with no segments proceeds unevaluated and logs", async () => {
-    const f = await savedMiddlePiece();
+    const f = await savedMiddlePiece(SAVED_TEXT, completeCapture);
     const key = `${f.claim.history.checkpoint!.artifactFolder}transcript.json`;
     jest.mocked(fetchJsonFromS3).mockResolvedValueOnce({
       text: "[Speaker @ time]: Stored transcript.",

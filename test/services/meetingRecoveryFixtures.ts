@@ -33,6 +33,17 @@ export function pcmArtifact(
     checksumSha256: createHash("sha256").update(bytes).digest("hex"),
   };
 }
+/**
+ * Saved settings that ran no final pass. A recovered capture whose manifest
+ * records it complete reruns the original final pass, which needs its own
+ * saved prompt.
+ */
+export function withoutFinalPass(
+  saved: ReturnType<typeof generationContextSchema.parse>,
+) {
+  if (saved.settings.availability === "available")
+    saved.settings.value.transcription.finalPassEnabled = false;
+}
 /** Saves the text transcription prompt that recovery re-transcription requires. */
 export function savedTranscriptionPrompt(
   saved: ReturnType<typeof generationContextSchema.parse>,

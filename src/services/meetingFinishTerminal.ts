@@ -21,7 +21,7 @@ const captureEndIso = (row: MeetingHistory) =>
 
 function terminalStatus(row: MeetingHistory, input: FinishInput) {
   if (input.cancel) return MEETING_STATUS.CANCELLED;
-  return finishedMeetingStatus(row.capture);
+  return finishedMeetingStatus(input.capture ?? row.capture);
 }
 
 function notesVersionFields(row: MeetingHistory, input: FinishInput) {
@@ -141,6 +141,7 @@ export function terminalPatch(
     ...(input.captureCoverage && !row.captureCoverage
       ? { captureCoverage: input.captureCoverage }
       : {}),
+    ...(input.capture ? { capture: input.capture } : {}),
     updatedAt: new Date(now * MS_PER_SECOND).toISOString(),
     finish: {
       ...(row.finish?.startedAt === undefined
