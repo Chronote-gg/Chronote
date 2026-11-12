@@ -1,34 +1,26 @@
 import { MEETING_FINISH_FAILED_LOG } from "../../src/metrics";
 import { PROCESSING_FAILED_NOTICE } from "../../src/utils/meetingProcessing";
 import {
-  addFinishChannels,
   FINISH_GUILD_ID,
   FINISH_START,
-  FINISH_TEXT_CHANNEL_ID,
   finishRow,
   onlyRow,
   spokenInput,
   startFinishWorker,
 } from "./harness/finisher";
-import { createWorld, type World } from "./harness/world";
+import {
+  finishChannelMessages,
+  useFinishWorld,
+} from "./harness/finishScenario";
+import type { World } from "./harness/world";
 
 const FINISH_ATTEMPTS = 4;
 /** Each attempt can retry the notes call; this outlasts all of them. */
 const NOTES_FAILURES = 100;
 
 let world: World;
-
-beforeEach(async () => {
-  world = await createWorld();
-  addFinishChannels(world);
-  jest.spyOn(console, "warn").mockImplementation(() => undefined);
-  jest.spyOn(console, "error").mockImplementation(() => undefined);
-  jest.spyOn(console, "log").mockImplementation(() => undefined);
-});
-
-afterEach(async () => {
-  jest.restoreAllMocks();
-  await world.dispose();
+useFinishWorld((created) => {
+  world = created;
 });
 
 const alarms = () =>
@@ -64,9 +56,7 @@ test("scenario 7: notes keep failing, so the meeting is retried and then fails w
   expect(row.status).toBe("failed");
   expect(row.finish).toBeUndefined();
   expect(row.notes).toBeUndefined();
-  const posted = [...world.discord.rest.messages.values()].filter(
-    (message) => message.channel_id === FINISH_TEXT_CHANNEL_ID,
-  );
+  const posted = finishChannelMessages(world);
   expect(posted.map((message) => message.content)).toEqual([
     PROCESSING_FAILED_NOTICE,
   ]);

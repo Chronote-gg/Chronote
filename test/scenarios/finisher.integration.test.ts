@@ -3,14 +3,11 @@ import type * as MeetingFinisher from "../../src/services/meetingFinisher";
 import type * as MeetingFinish from "../../src/services/meetingFinish";
 import type * as MeetingFinishInput from "../../src/services/meetingFinishInput";
 import type * as WorkerRegistry from "../../src/services/workerRegistry";
-import { renderMeetingDelivery } from "../../src/services/meetingDelivery";
 import type { MeetingFinisherDeps } from "../../src/services/meetingFinisher";
 import type { MeetingHistory } from "../../src/types/db";
 import { formatMeetingCaptureNotice } from "../../src/utils/meetingCaptureNotice";
-import { NOTES } from "../services/meetingDelivery.fixture";
 import type * as RecoveryFixtures from "../services/meetingRecoveryFixtures";
 import {
-  addFinishChannels,
   FINISH_GUILD_ID,
   FINISH_TEXT_CHANNEL_ID,
   finishRow,
@@ -18,7 +15,13 @@ import {
   spokenInput,
 } from "./harness/finisher";
 import {
-  createWorld,
+  expectEveryChunkOnce,
+  finishChannelMessages,
+  killOnPost,
+  savedMeeting,
+  useFinishWorld,
+} from "./harness/finishScenario";
+import {
   installWorkerSeams,
   SCENARIO_LIFECYCLE_OVERRIDES,
   type WorkerSeams,
@@ -140,84 +143,17 @@ async function waitFor(
 }
 
 let world: World;
-
-beforeEach(async () => {
-  world = await createWorld();
-  addFinishChannels(world);
+useFinishWorld((created) => {
+  world = created;
   // Every text call answers with summary JSON, which also reads as notes, so
   // the order of notes and summary calls across workers does not matter.
-  world.openai.script(
+  created.openai.script(
     "text",
     ...Array.from({ length: SCRIPTED_TEXT_CALLS }, () => SUMMARY_JSON),
   );
-  jest.spyOn(console, "warn").mockImplementation(() => undefined);
-  jest.spyOn(console, "error").mockImplementation(() => undefined);
-  jest.spyOn(console, "log").mockImplementation(() => undefined);
 });
 
-afterEach(async () => {
-  jest.restoreAllMocks();
-  await world.dispose();
-});
-
-const channelMessages = () =>
-  [...world.discord.rest.messages.values()].filter(
-    (message) => message.channel_id === FINISH_TEXT_CHANNEL_ID,
-  );
-const titles = () =>
-  channelMessages().map((message) => {
-    const [embed] = message.embeds;
-    return embed && typeof embed === "object" && "title" in embed
-      ? String(embed.title)
-      : "";
-  });
-
-/** Kills a worker while it answers its `count`th POST; `refuse` also fails that POST. */
-function killOnPost(
-  kill: () => void,
-  count: number,
-  refuse: boolean,
-): () => boolean {
-  let posts = 0;
-  let armed = true;
-  world.discord.rest.onPost(() => {
-    if (!armed || ++posts < count) return;
-    armed = false;
-    kill();
-    if (refuse) throw new Error("Scenario worker died before posting");
-  });
-  return () => !armed;
-}
-
-/** A meeting whose terminal status and notes were saved before delivery began. */
-function savedMeeting(meetingId: string) {
-  return finishRow(meetingId, {
-    status: "complete",
-    notes: NOTES,
-    summarySentence: "Synthetic summary.",
-    summaryLabel: "Synthetic label",
-    processing: {
-      transcription: "ready",
-      notes: "generated",
-      summary: "generated",
-    },
-    transcriptS3Key: `scenario/${meetingId}/transcript.json`,
-    finish: { attempts: 0, phase: "deliver" },
-  });
-}
-
-function expectEveryChunkOnce(row: MeetingHistory) {
-  const chunks = renderMeetingDelivery(row).notes.map((chunk) =>
-    String(chunk.embeds[0]?.title),
-  );
-  expect(chunks.length).toBeGreaterThan(1);
-  const posted = titles();
-  for (const title of chunks)
-    expect(posted.filter((value) => value === title)).toHaveLength(1);
-  expect(row.notesMessageIds).toHaveLength(chunks.length);
-  expect(row.recovery?.disposition).toBe("done");
-  expect(row.finish).toBeUndefined();
-}
+const channelMessages = () => finishChannelMessages(world);
 
 const delivered = async () => {
   const row = await onlyRow(world);
@@ -227,7 +163,7 @@ const delivered = async () => {
 /** Kills worker A's loop mid-delivery, then lets worker B's loop finish the meeting. */
 async function deliverAcrossADeath(postCount: number, refuse: boolean) {
   const a = await startLoopWorker(world, "scenario-worker-a");
-  const died = killOnPost(() => a.seams.kill(), postCount, refuse);
+  const died = killOnPost(world, () => a.seams.kill(), postCount, refuse);
   a.run(() => a.finisher.startMeetingFinisher());
   await waitFor("worker A dies", died);
   await waitFor(
@@ -348,7 +284,7 @@ test("scenario 4: a worker dies after the terminal status is saved, and another 
 
   expect(postedBeforeDeath).toBe(0);
   const row = await onlyRow(world);
-  expectEveryChunkOnce(row);
+  expectEveryChunkOnce(world, row);
   expect(channelMessages()).toHaveLength(row.notesMessageIds!.length + 1);
   expect(await world.rows.lease(FINISH_GUILD_ID)).toBeUndefined();
 });
@@ -360,7 +296,7 @@ test("scenario 5: a worker dies between two notes messages, and another worker's
 
   expect(postedBeforeDeath).toBe(2);
   const row = await onlyRow(world);
-  expectEveryChunkOnce(row);
+  expectEveryChunkOnce(world, row);
   expect(channelMessages()).toHaveLength(row.notesMessageIds!.length + 1);
 });
 

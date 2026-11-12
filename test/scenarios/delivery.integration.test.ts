@@ -1,86 +1,30 @@
 import { MEETING_DELIVERY_FAILED_LOG } from "../../src/metrics";
-import { renderMeetingDelivery } from "../../src/services/meetingDelivery";
-import type { MeetingHistory } from "../../src/types/db";
-import { NOTES } from "../services/meetingDelivery.fixture";
 import {
-  addFinishChannels,
   FINISH_GUILD_ID,
   FINISH_TEXT_CHANNEL_ID,
-  finishRow,
   onlyRow,
   spokenInput,
   startFinishWorker,
 } from "./harness/finisher";
-import { createWorld, type World } from "./harness/world";
+import {
+  expectEveryChunkOnce,
+  finishChannelMessages,
+  killOnPost,
+  savedMeeting,
+  useFinishWorld,
+} from "./harness/finishScenario";
+import type { World } from "./harness/world";
 
 const FORBIDDEN = 403;
 const SERVER_ERROR = 500;
 const PERMANENT_FAILURES = 10;
 
 let world: World;
-
-beforeEach(async () => {
-  world = await createWorld();
-  addFinishChannels(world);
-  jest.spyOn(console, "warn").mockImplementation(() => undefined);
-  jest.spyOn(console, "error").mockImplementation(() => undefined);
-  jest.spyOn(console, "log").mockImplementation(() => undefined);
+useFinishWorld((created) => {
+  world = created;
 });
 
-afterEach(async () => {
-  jest.restoreAllMocks();
-  await world.dispose();
-});
-
-/** A meeting whose terminal status and notes were saved before delivery began. */
-function savedMeeting(
-  meetingId: string,
-  overrides: Partial<MeetingHistory> = {},
-) {
-  return finishRow(meetingId, {
-    status: "complete",
-    notes: NOTES,
-    summarySentence: "Synthetic summary.",
-    summaryLabel: "Synthetic label",
-    processing: {
-      transcription: "ready",
-      notes: "generated",
-      summary: "generated",
-    },
-    transcriptS3Key: `scenario/${meetingId}/transcript.json`,
-    finish: { attempts: 0, phase: "deliver" },
-    ...overrides,
-  });
-}
-
-const channelMessages = () =>
-  [...world.discord.rest.messages.values()].filter(
-    (message) => message.channel_id === FINISH_TEXT_CHANNEL_ID,
-  );
-const titles = () =>
-  channelMessages().map((message) => {
-    const [embed] = message.embeds;
-    return embed && typeof embed === "object" && "title" in embed
-      ? String(embed.title)
-      : "";
-  });
-
-/** Kills `worker` while it answers its `count`th POST; `refuse` also fails that POST. */
-function killOnPost(
-  kill: () => void,
-  count: number,
-  refuse: boolean,
-): () => boolean {
-  let posts = 0;
-  let armed = true;
-  world.discord.rest.onPost(() => {
-    if (!armed || ++posts < count) return;
-    armed = false;
-    kill();
-    if (refuse) throw new Error("Scenario worker died before posting");
-  });
-  return () => !armed;
-}
+const channelMessages = () => finishChannelMessages(world);
 
 async function finishWith(
   worker: Awaited<ReturnType<typeof startFinishWorker>>,
@@ -95,24 +39,10 @@ async function finishWith(
   );
 }
 
-function expectEveryChunkOnce(row: MeetingHistory) {
-  const chunks = renderMeetingDelivery(row).notes.map((chunk) =>
-    String(chunk.embeds[0]?.title),
-  );
-  expect(chunks.length).toBeGreaterThan(1);
-  const posted = titles();
-  for (const title of chunks)
-    expect(posted.filter((value) => value === title)).toHaveLength(1);
-  expect(row.notesMessageIds).toHaveLength(chunks.length);
-  expect(new Set(row.notesMessageIds).size).toBe(chunks.length);
-  expect(row.recovery?.disposition).toBe("done");
-  expect(row.finish).toBeUndefined();
-}
-
 test("scenario 4: a worker dies after the terminal status is saved, and a second run posts the notes exactly once", async () => {
   await world.rows.seedHistory(savedMeeting("scenario-meeting-4"));
   const a = await startFinishWorker(world, "scenario-worker-a");
-  const died = killOnPost(() => a.seams.kill(), 1, true);
+  const died = killOnPost(world, () => a.seams.kill(), 1, true);
   await expect(finishWith(a)).rejects.toThrow("was killed");
   expect(died()).toBe(true);
   expect(channelMessages()).toHaveLength(0);
@@ -120,7 +50,7 @@ test("scenario 4: a worker dies after the terminal status is saved, and a second
   const b = await startFinishWorker(world, "scenario-worker-b");
   await finishWith(b);
   const row = await onlyRow(world);
-  expectEveryChunkOnce(row);
+  expectEveryChunkOnce(world, row);
   expect(channelMessages()).toHaveLength(row.notesMessageIds!.length + 1);
   expect(await world.rows.lease(FINISH_GUILD_ID)).toBeUndefined();
 });
@@ -129,7 +59,7 @@ test("scenario 5: a worker dies between two notes messages, and the rest are pos
   await world.rows.seedHistory(savedMeeting("scenario-meeting-5"));
   const a = await startFinishWorker(world, "scenario-worker-a");
   // The summary is post 1; the first notes chunk (post 2) lands but its id is never saved.
-  const died = killOnPost(() => a.seams.kill(), 2, false);
+  const died = killOnPost(world, () => a.seams.kill(), 2, false);
   await expect(finishWith(a)).rejects.toThrow("was killed");
   expect(died()).toBe(true);
   expect(channelMessages()).toHaveLength(2);
@@ -139,7 +69,7 @@ test("scenario 5: a worker dies between two notes messages, and the rest are pos
   const b = await startFinishWorker(world, "scenario-worker-b");
   await finishWith(b);
   const row = await onlyRow(world);
-  expectEveryChunkOnce(row);
+  expectEveryChunkOnce(world, row);
   expect(row.summaryMessageId).toBe(interrupted.summaryMessageId);
   expect(channelMessages()).toHaveLength(row.notesMessageIds!.length + 1);
 });
