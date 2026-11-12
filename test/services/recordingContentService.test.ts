@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { fixture } from "../helpers/recordingContentFixture";
+import { loadCheckpointCapture } from "../fixtures/checkpointCaptureModules";
 
 import {
   subscribeToUserVoice,
@@ -122,18 +123,15 @@ test("disabled generation does not fetch unused templates", async () => {
 });
 
 test("late usable transcript caller publishes after PCM completion without changing capture facts", async () => {
-  const { mkdtempSync, rmSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const path = await import("node:path");
-  const { createRecordingCheckpointCapture } =
-    await import("../../src/services/recordingCheckpointCapture");
-  const { createRecordingCheckpointService } =
-    await import("../../src/services/recordingCheckpointService");
-  const { createMockMeetingHistoryTransitionRepository } =
-    await import("../../src/repositories/meetingHistoryTransitions");
-  const { history } = await import("../fixtures/meetingHistory");
+  const {
+    directory,
+    removeDirectory,
+    createRecordingCheckpointCapture,
+    createRecordingCheckpointService,
+    createMockMeetingHistoryTransitionRepository,
+    history,
+  } = await loadCheckpointCapture("late-content-");
   const { meeting } = await fixture();
-  const directory = mkdtempSync(path.join(tmpdir(), "late-content-"));
   const controller = new AbortController();
   meeting.ownershipSignal = controller.signal;
   const row = {
@@ -261,7 +259,7 @@ test("late usable transcript caller publishes after PCM completion without chang
     meeting.recordingCapture.fence();
     await meeting.recordingCapture.settled();
     meeting.recordingCapture.releaseSettledBuffers();
-    rmSync(directory, { recursive: true, force: true });
+    removeDirectory();
   }
 });
 
