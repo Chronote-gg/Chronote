@@ -65,6 +65,53 @@ const validate = (p) =>
   });
 const entry = (p, address) =>
   p.resource_changes.find((r) => r.address === address);
+
+test("accepts a known empty tags_all unknown mask with exact approved tags", () => {
+  const plan = sandboxArtifactPlan();
+  const change = plan.resource_changes.find(
+    (resource) => resource.address === artifactPolicy,
+  ).change;
+  change.after_unknown.tags_all = {};
+  change.after.tags_all = {
+    Project: "meeting-notes",
+    Environment: "sandbox",
+    ManagedBy: "terraform",
+    Service: "chronote",
+  };
+  expect(validate(plan).result).toBe("accepted");
+});
+
+test.each([null, [], { Environment: false }, { Environment: true }, "false"])(
+  "rejects malformed or nonempty tags_all mask %p",
+  (mask) => {
+    const plan = sandboxArtifactPlan();
+    entry(plan, artifactPolicy).change.after_unknown.tags_all = mask;
+    expect(() => validate(plan)).toThrow();
+  },
+);
+
+test("rejects object masks for other computed fields", () => {
+  const plan = sandboxArtifactPlan();
+  entry(plan, artifactPolicy).change.after_unknown.attachment_count = {};
+  expect(() => validate(plan)).toThrow();
+});
+
+test("requires exact actual tags for known tags_all masks", () => {
+  for (const mask of [{}, false]) {
+    const plan = sandboxArtifactPlan();
+    const change = entry(plan, artifactPolicy).change;
+    change.after_unknown.tags_all = mask;
+    change.after.tags_all = {
+      Project: "meeting-notes",
+      Environment: "production",
+      ManagedBy: "terraform",
+      Service: "chronote",
+    };
+    expect(() => validate(plan)).toThrow();
+    change.after.tags_all.Environment = "sandbox";
+    expect(validate(plan).result).toBe("accepted");
+  }
+});
 test("accepts native targeted completeness while refusing errors and deferred work", () => {
   const p = sandboxArtifactPlan();
   Object.assign(p, { applyable: true, complete: false, errored: false });
