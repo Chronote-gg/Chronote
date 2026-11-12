@@ -136,6 +136,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:
+          terraform_version: 1.17.1
           terraform_wrapper: false
       - name: Run private Terraform Apply
         env:
