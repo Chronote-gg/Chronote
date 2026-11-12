@@ -66,9 +66,8 @@ function beforeTerminalWrites(
 
 const posted = (world: FinishWorld) => JSON.stringify(startMessage(world));
 
-test("a rename acknowledged after the input was loaded survives the terminal save and is what delivery posts", async () => {
-  const world = setup(recordingRow());
-  await world.finish(loadThenRename(world));
+/** The rename is kept beside this attempt's notes and summary, and it is the name delivery posts. */
+function expectRenameSavedAndPosted(world: FinishWorld) {
   expect(world.current()).toMatchObject({
     status: "complete",
     meetingName: RENAME,
@@ -77,6 +76,12 @@ test("a rename acknowledged after the input was loaded survives the terminal sav
   });
   expect(posted(world)).toContain(RENAME);
   expect(posted(world)).not.toContain(GENERATED_NAME);
+}
+
+test("a rename acknowledged after the input was loaded survives the terminal save and is what delivery posts", async () => {
+  const world = setup(recordingRow());
+  await world.finish(loadThenRename(world));
+  expectRenameSavedAndPosted(world);
 });
 
 test("an edit landing between the refresh and the terminal write is refused and the retry keeps it", async () => {
@@ -150,14 +155,7 @@ test("a rename acknowledged while the meeting was still recording survives a nor
     kind: "saved",
   });
   await world.finish(loads(finishInput({ source: "normal" })));
-  expect(world.current()).toMatchObject({
-    status: "complete",
-    meetingName: RENAME,
-    notes: GENERATED_NOTE,
-    summarySentence: GENERATED_SUMMARY,
-  });
-  expect(posted(world)).toContain(RENAME);
-  expect(posted(world)).not.toContain(GENERATED_NAME);
+  expectRenameSavedAndPosted(world);
 });
 
 test.each(["normal", "recovery"] as const)(
