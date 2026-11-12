@@ -4,7 +4,7 @@ import {
   getJobLeaseRepository,
 } from "../../src/repositories/jobLeaseRepository";
 import { resetMockStore } from "../../src/repositories/mockStore";
-import { config } from "../../src/services/configService";
+import { useMockModeStore } from "./mockModeStore.fixture";
 import { jobLeaseContract } from "./jobLeaseRepository.contract";
 
 const lease = { name: "synthetic-job", now: 1_000_000, ttlSeconds: 600 };
@@ -16,15 +16,7 @@ describe("mock job lease", () => {
 });
 
 describe("mock-mode binding", () => {
-  const enabled = config.mock.enabled;
-  beforeEach(() => {
-    config.mock.enabled = true;
-    resetMockStore();
-  });
-  afterEach(() => {
-    config.mock.enabled = enabled;
-    resetMockStore();
-  });
+  useMockModeStore();
 
   it("shares one lease table per mock store", async () => {
     await getJobLeaseRepository().tryAcquireJobLease({ ...lease, owner: "a" });

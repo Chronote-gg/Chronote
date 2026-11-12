@@ -5,7 +5,7 @@ import {
   type LegacyRow,
 } from "../../src/repositories/workerRegistryRepository";
 import { resetMockStore } from "../../src/repositories/mockStore";
-import { config } from "../../src/services/configService";
+import { useMockModeStore } from "./mockModeStore.fixture";
 import {
   workerRecord,
   workerRegistryContract,
@@ -24,15 +24,7 @@ describe("mock worker registry", () => {
 });
 
 describe("mock-mode binding", () => {
-  const enabled = config.mock.enabled;
-  beforeEach(() => {
-    config.mock.enabled = true;
-    resetMockStore();
-  });
-  afterEach(() => {
-    config.mock.enabled = enabled;
-    resetMockStore();
-  });
+  useMockModeStore();
 
   it("shares one registry per mock store", async () => {
     await getWorkerRegistryRepository().put(workerRecord("synthetic-a"));

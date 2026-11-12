@@ -4,9 +4,9 @@ import {
   getMeetingLeaseRepository,
 } from "../../src/repositories/meetingLeaseRepository";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
-import { config } from "../../src/services/configService";
 import type { ActiveMeetingLease, MeetingHistory } from "../../src/types/db";
 import type { DeploymentControlRecord } from "../../src/types/deploymentControl";
+import { useMockModeStore } from "./mockModeStore.fixture";
 import {
   GUILD,
   leaseRecord,
@@ -41,15 +41,7 @@ describe("mock meeting lease repository", () => {
 });
 
 describe("mock-mode binding", () => {
-  const enabled = config.mock.enabled;
-  beforeEach(() => {
-    config.mock.enabled = true;
-    resetMockStore();
-  });
-  afterEach(() => {
-    config.mock.enabled = enabled;
-    resetMockStore();
-  });
+  useMockModeStore();
 
   it("uses the mock store's lease map", async () => {
     await getMeetingLeaseRepository().retake(leaseRecord(), 0);

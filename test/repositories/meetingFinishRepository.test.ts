@@ -1,9 +1,9 @@
 /** @jest-environment node */
 import { getMeetingFinishRepository } from "../../src/repositories/meetingFinishRepository";
 import { createMockMeetingFinishRepository } from "../../src/repositories/meetingFinishRepository";
-import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
-import { config } from "../../src/services/configService";
+import { getMockStore } from "../../src/repositories/mockStore";
 import type { ActiveMeetingLease, MeetingHistory } from "../../src/types/db";
+import { useMockModeStore } from "./mockModeStore.fixture";
 import {
   historyRow,
   meetingFinishContract,
@@ -37,15 +37,7 @@ describe("mock meeting finish repository", () => {
 });
 
 describe("mock-mode binding", () => {
-  const enabled = config.mock.enabled;
-  beforeEach(() => {
-    config.mock.enabled = true;
-    resetMockStore();
-  });
-  afterEach(() => {
-    config.mock.enabled = enabled;
-    resetMockStore();
-  });
+  useMockModeStore();
 
   it("finishes rows held in the mock store", async () => {
     const row = historyRow("binding", {
