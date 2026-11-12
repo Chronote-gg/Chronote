@@ -21,9 +21,11 @@ import type { FinishInput } from "../../src/services/meetingFinishInput";
 import type { ActiveMeetingLease, MeetingHistory } from "../../src/types/db";
 import type { MeetingNotesInput } from "../../src/types/meeting-data";
 import type { RecordingCheckpoint } from "../../src/types/recordingCheckpoint";
-import { getProcessingRetryEligibility } from "../../src/services/processingRetryEligibility";
-import { projectMeetingUpdateDelivery } from "../../src/services/meetingUpdateStatus";
-import { initialMeetingUpdatePolicy } from "../../src/types/meetingPublication";
+import {
+  acceptingUpload,
+  expectSettledAndUnpublished,
+  stubFollowOns,
+} from "../fixtures/meetingFinishPipeline";
 import {
   GUILD_ID,
   MEETING_SECONDS,
@@ -99,21 +101,11 @@ function setup(initial: MeetingHistory) {
   const pipeline: MeetingFinishDeps = {
     repository,
     transport: discord.transport,
-    upload: jest.fn(async (key: string, body: string | Uint8Array) => ({
-      key,
-      versionId: null,
-      byteLength: Buffer.byteLength(body),
-      checksumSha256: "0".repeat(64),
-    })),
+    upload: acceptingUpload(),
     notes,
     summaries: jest.fn(async () => ({})),
     claimUpgrade: jest.fn(async () => undefined),
-    followOns: {
-      exportToNotion: jest.fn(async () => undefined),
-      writeUserIndex: jest.fn(async () => undefined),
-      captureCompleted: jest.fn(),
-      sendWeeklyLimitNotice: jest.fn(async () => undefined),
-    },
+    followOns: stubFollowOns(),
     nowMs: () => nowMs,
     schedule: () => () => undefined,
   };
@@ -217,17 +209,7 @@ describe("finishStranded", () => {
     await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
       "finished",
     );
-    const row = world.current();
-    expect(row.recovery).toBeUndefined();
-    expect(row.publicationRepair).toBeUndefined();
-    expect(getProcessingRetryEligibility(row)).toEqual({
-      eligible: false,
-      reason: "nothing_failed",
-    });
-    expect(initialMeetingUpdatePolicy(row)).toEqual({ kind: "unpublished" });
-    expect(projectMeetingUpdateDelivery(row)).toMatchObject({
-      status: "unpublished",
-    });
+    expectSettledAndUnpublished(world.current());
     expect(world.discord.requests).toEqual([]);
   });
 
