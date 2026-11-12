@@ -21,6 +21,21 @@ const env = {
   EXPECTED_SESSION_NAME: session,
 };
 
+test("Sandbox installs the shared FFmpeg prerequisite before unit tests", () => {
+  const sandbox = parse(
+    readFileSync(".github/workflows/deploy-staging.yml", "utf8"),
+  ).jobs.test.steps;
+  const shared = parse(readFileSync(".github/workflows/ci-core.yml", "utf8"))
+    .jobs.test.steps;
+  const name = "Install FFmpeg for conversion fixtures";
+  const install = sandbox.findIndex((step) => step.name === name);
+  expect(install).toBeGreaterThan(-1);
+  expect(sandbox[install]).toEqual(shared.find((step) => step.name === name));
+  expect(install).toBeLessThan(
+    sandbox.findIndex((step) => step.run === "yarn test"),
+  );
+});
+
 test("accepts the exact Sandbox role session", () => {
   expect(
     execFileSync("node", ["scripts/deployment/assert-sandbox-identity.cjs"], {
