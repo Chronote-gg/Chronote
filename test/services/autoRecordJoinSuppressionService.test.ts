@@ -3,6 +3,7 @@ import { AutoRecordJoinSuppressionService } from "../../src/services/autoRecordJ
 import { getMockStore } from "../../src/repositories/mockStore";
 import { getDeploymentControlRepository } from "../../src/db";
 import type { SuppressionRecord } from "../../src/types/deploymentControl";
+import { expectSuppressionWriteOutcomes } from "../fixtures/suppressionWrites";
 
 test("lateExplicitStopSuppressesNewRuntimeAutoJoin", async () => {
   getMockStore().deploymentControlRecords.clear();
@@ -39,20 +40,18 @@ describe("AutoRecordJoinSuppressionService", () => {
       version: 1,
     };
     const repository = getDeploymentControlRepository();
-    expect(await repository.writeSuppression({ record })).toBe("applied");
-    expect(await repository.writeSuppression({ record })).toBe("stale");
-    expect(
-      await repository.writeSuppression({
-        record: { ...record, version: 2, suppressed: false },
-        expectedVersion: 1,
-      }),
-    ).toBe("applied");
-    expect(
-      await repository.writeSuppression({
-        record: { ...record, version: 2 },
-        expectedVersion: 1,
-      }),
-    ).toBe("stale");
+    await expectSuppressionWriteOutcomes(repository, [
+      [{ record }, "applied"],
+      [{ record }, "stale"],
+      [
+        {
+          record: { ...record, version: 2, suppressed: false },
+          expectedVersion: 1,
+        },
+        "applied",
+      ],
+      [{ record: { ...record, version: 2 }, expectedVersion: 1 }, "stale"],
+    ]);
     expect(await repository.getRecord(record.pk, record.sk)).toMatchObject({
       version: 2,
       suppressed: false,

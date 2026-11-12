@@ -25,6 +25,7 @@ import type {
   PersonalRecordingSegmentRecord,
 } from "../../src/types/db";
 import type { SuppressionRecord } from "../../src/types/deploymentControl";
+import { expectSuppressionWriteOutcomes } from "../fixtures/suppressionWrites";
 
 const prefix = `work-claims-${randomUUID()}-`;
 const tables = {
@@ -544,25 +545,16 @@ function suppression(
 test("late stop persists before lease release and stale clear cannot erase a newer stop", async () => {
   const authority = await ownedSession();
   const record = suppression(authority);
-  expect(await repository.writeSuppression({ record })).toBe("applied");
-  expect(
-    await repository.writeSuppression({
-      record: { ...record, version: 2, suppressed: false },
-      expectedVersion: 1,
-    }),
-  ).toBe("applied");
-  expect(
-    await repository.writeSuppression({
-      record: { ...record, version: 3 },
-      expectedVersion: 2,
-    }),
-  ).toBe("applied");
-  expect(
-    await repository.writeSuppression({
-      record: { ...record, version: 2, suppressed: false },
-      expectedVersion: 1,
-    }),
-  ).toBe("stale");
+  const clear = {
+    record: { ...record, version: 2, suppressed: false },
+    expectedVersion: 1,
+  };
+  await expectSuppressionWriteOutcomes(repository, [
+    [{ record }, "applied"],
+    [clear, "applied"],
+    [{ record: { ...record, version: 3 }, expectedVersion: 2 }, "applied"],
+    [clear, "stale"],
+  ]);
   expect(await repository.getRecord(record.pk, record.sk)).toMatchObject({
     version: 3,
     suppressed: true,
