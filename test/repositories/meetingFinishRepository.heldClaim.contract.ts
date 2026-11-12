@@ -102,6 +102,41 @@ export function heldClaimContract({ h, seed }: ContractContext) {
       ).resolves.toMatchObject({ notes: "fresh" });
     });
 
+    it("save refuses when the content revision moved since it was read", async () => {
+      const claim = await claimed();
+      const absent = { contentRevision: undefined };
+      await expect(
+        h.repository.save(
+          claim,
+          { notes: "first" },
+          NOW + 1,
+          undefined,
+          absent,
+        ),
+      ).resolves.toMatchObject({ notes: "first" });
+      await h.repository.save(claim, { contentRevision: 1 }, NOW + 1);
+      await expect(
+        h.repository.save(
+          claim,
+          { notes: "stale" },
+          NOW + 1,
+          undefined,
+          absent,
+        ),
+      ).resolves.toBeUndefined();
+      await expect(
+        h.repository.save(claim, { notes: "stale" }, NOW + 1, undefined, {
+          contentRevision: 2,
+        }),
+      ).resolves.toBeUndefined();
+      await expect(
+        h.repository.save(claim, { notes: "fresh" }, NOW + 1, undefined, {
+          contentRevision: 1,
+        }),
+      ).resolves.toMatchObject({ notes: "fresh" });
+      expect((await h.readHistory(claim.key))?.notes).toBe("fresh");
+    });
+
     it("save never rewrites the key attributes", async () => {
       const claim = await claimed();
       const saved = await h.repository.save(

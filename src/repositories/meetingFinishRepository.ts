@@ -101,8 +101,8 @@ export type MeetingFinishRepository = {
     patch: Partial<MeetingHistory>,
     now: number,
     expectedStatus?: MeetingStatus,
-    /** Refuses the write when the row's update delivery differs, including absence. */
-    unchanged?: Pick<MeetingHistory, "updateDelivery">,
+    /** Refuses the write when any field named here differs on the row, including absence. */
+    unchanged?: UnchangedFields,
     /** Attributes the same write deletes: only a leftover recovery value. */
     remove?: readonly "recovery"[],
   ): Promise<MeetingHistory | undefined>;
@@ -119,6 +119,10 @@ export type MeetingFinishRepository = {
    */
   restoreStranded(claim: FinishClaim, before: MeetingHistory): Promise<boolean>;
 };
+/** A field named here with an undefined value requires the row to lack it. */
+export type UnchangedFields = Partial<
+  Pick<MeetingHistory, "updateDelivery" | "contentRevision">
+>;
 export type MeetingFinishTables = {
   meetingHistory: string;
   activeMeeting: string;
@@ -356,15 +360,25 @@ function seenFinishCondition(e: Expression, row: FinisherRow) {
     : `attribute_not_exists(${e.path("finish")})`;
 }
 
-function unchangedUpdateDelivery(
+const unchangedKeys = (unchanged: UnchangedFields | undefined) =>
+  Object.keys(unchanged ?? {}).filter(
+    (key): key is keyof UnchangedFields =>
+      key === "updateDelivery" || key === "contentRevision",
+  );
+
+function unchangedCondition(
   e: Expression,
-  unchanged: Pick<MeetingHistory, "updateDelivery"> | undefined,
+  unchanged: UnchangedFields | undefined,
 ) {
-  if (!unchanged) return "";
-  const field = e.path("updateDelivery");
-  return unchanged.updateDelivery === undefined
-    ? ` AND attribute_not_exists(${field})`
-    : ` AND ${field} = ${e.value(unchanged.updateDelivery)}`;
+  return unchangedKeys(unchanged)
+    .map((key) => {
+      const field = e.path(key);
+      const value = unchanged?.[key];
+      return value === undefined
+        ? ` AND attribute_not_exists(${field})`
+        : ` AND ${field} = ${e.value(value)}`;
+    })
+    .join("");
 }
 
 function heldClaimCondition(e: Expression, claim: FinishClaim, now: number) {
@@ -567,7 +581,7 @@ export function createDynamoMeetingFinishRepository(
         ConditionExpression:
           heldClaimCondition(e, claim, now) +
           status +
-          unchangedUpdateDelivery(e, unchanged),
+          unchangedCondition(e, unchanged),
         UpdateExpression: `SET ${e.assignments(savedFields(patch, now))}${removed}`,
       });
     },
@@ -809,12 +823,14 @@ export function createMockMeetingFinishRepository(
         !row ||
         !mockHolds(row, claim, now) ||
         (expectedStatus !== undefined && row.status !== expectedStatus) ||
-        (unchanged !== undefined &&
-          // Cloning both sides compares values the way DynamoDB does, not object prototypes.
-          !isDeepStrictEqual(
-            structuredClone(row.updateDelivery),
-            structuredClone(unchanged.updateDelivery),
-          ))
+        unchangedKeys(unchanged).some(
+          (key) =>
+            // Cloning both sides compares values the way DynamoDB does, not object prototypes.
+            !isDeepStrictEqual(
+              structuredClone(row[key]),
+              structuredClone(unchanged?.[key]),
+            ),
+        )
       )
         return undefined;
       for (const field of remove) delete row[field];

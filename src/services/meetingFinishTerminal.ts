@@ -4,10 +4,12 @@ import {
   finishedMeetingStatus,
   MEETING_END_REASONS,
   MEETING_STATUS,
+  type MeetingStatus,
 } from "../types/meetingLifecycle";
 import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
 import { TRANSCRIPTION_FAILED } from "../utils/meetingProcessing";
 import { trimNotesForHistory } from "../utils/notesHistory";
+import { LIFECYCLE } from "./lifecycleTiming";
 import type { FinishInput } from "./meetingFinishInput";
 
 const MS_PER_SECOND = 1000;
@@ -17,12 +19,12 @@ const captureEndIso = (row: MeetingHistory) =>
     Date.parse(row.timestamp) + row.duration * MS_PER_SECOND,
   ).toISOString();
 
-export function terminalStatus(row: MeetingHistory, input: FinishInput) {
+function terminalStatus(row: MeetingHistory, input: FinishInput) {
   if (input.cancel) return MEETING_STATUS.CANCELLED;
   return finishedMeetingStatus(row.capture);
 }
 
-export function notesVersionFields(row: MeetingHistory, input: FinishInput) {
+function notesVersionFields(row: MeetingHistory, input: FinishInput) {
   const notes = input.notesInput.notesText;
   if (!notes) return {};
   const notesVersion = row.notesVersion ?? 1;
@@ -51,7 +53,7 @@ export function notesVersionFields(row: MeetingHistory, input: FinishInput) {
  * The stored policy schema requires the full snapshot, so the decision is
  * written onto the row's snapshot or the one the loader carries.
  */
-export function cancellationFields(
+function cancellationFields(
   row: MeetingHistory,
   input: FinishInput,
 ): Partial<MeetingHistory> {
@@ -115,4 +117,39 @@ export function failedProcessing(
   return outcome.notes === "generated"
     ? { ...outcome, notes: "failed" }
     : outcome;
+}
+
+/** What the terminal save writes over `row`, the latest acknowledged row. */
+export function terminalPatch(
+  row: MeetingHistory,
+  input: FinishInput,
+  owner: string,
+  now: number,
+): Partial<MeetingHistory> & { status: MeetingStatus } {
+  const notes = input.notesInput;
+  return {
+    status: terminalStatus(row, input),
+    notes: input.cancel ? undefined : notes.notesText,
+    meetingName: notes.meetingName,
+    summarySentence: notes.summarySentence,
+    summaryLabel: notes.summaryLabel,
+    processing: processingOutcome(input),
+    participants: input.participants,
+    tags: notes.tags,
+    ...(input.cancel ? {} : notesVersionFields(row, input)),
+    ...cancellationFields(row, input),
+    ...(input.captureCoverage && !row.captureCoverage
+      ? { captureCoverage: input.captureCoverage }
+      : {}),
+    updatedAt: new Date(now * MS_PER_SECOND).toISOString(),
+    finish: {
+      ...(row.finish?.startedAt === undefined
+        ? {}
+        : { startedAt: row.finish.startedAt }),
+      owner,
+      expiresAt: now + LIFECYCLE.finishClaimSeconds,
+      attempts: 0,
+      phase: "deliver",
+    },
+  };
 }

@@ -10,6 +10,7 @@ import {
   type SummaryUpgradeOffer,
 } from "../embed";
 import type { MeetingHistory } from "../types/db";
+import { withoutSupersededCanonicalFields } from "../types/meetingCanonicalContent";
 import type { DeliveryResult } from "../types/meetingDelivery";
 import { MEETING_STATUS, type MeetingStatus } from "../types/meetingLifecycle";
 import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
@@ -57,11 +58,9 @@ import {
 } from "./meetingFinishFollowOns";
 import type { FinishInput } from "./meetingFinishInput";
 import {
-  cancellationFields,
   failedProcessing,
-  notesVersionFields,
   processingOutcome,
-  terminalStatus,
+  terminalPatch,
   withRowDecision,
 } from "./meetingFinishTerminal";
 import {
@@ -78,6 +77,8 @@ const TERMINAL_STATUSES: readonly MeetingStatus[] = [
   MEETING_STATUS.CANCELLED,
   MEETING_STATUS.FAILED,
 ];
+// A canonical edit landing between the refresh and the write is retried this often in all.
+const TERMINAL_SAVE_ATTEMPTS = 3;
 const ACKNOWLEDGED_SUMMARY: DeliveryResult = {
   outcome: "complete",
   intended: 1,
@@ -241,6 +242,8 @@ type Attempt = {
   localDirectories: string[];
   /** Recovery mixes are never reused by a later attempt, so every exit removes them. */
   transientDirectories: string[];
+  /** The row's content revision when the input was loaded; edits past it are kept. */
+  contentBaseline: number;
 };
 
 export function createMeetingFinisher(deps: MeetingFinishDeps) {
@@ -360,41 +363,36 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
       throw new Error("Meeting transcription, notes or summary failed");
   }
 
+  /**
+   * Keeps every canonical edit acknowledged since the input was loaded: the
+   * row is refreshed through the claim, the fields such an edit superseded are
+   * dropped, and the write is refused if another edit lands in between. The
+   * repository reports every refusal alike, so the next refresh decides: a
+   * refused refresh is a lost claim, a row no longer processing is a lost
+   * claim as before, and anything else is a moved revision, retried.
+   */
   async function saveTerminal(a: Attempt, input: FinishInput) {
-    const row = a.row;
-    const notes = input.notesInput;
-    const status = terminalStatus(row, input);
-    const now = nowSeconds();
-    await save(
-      a,
-      {
-        status,
-        notes: input.cancel ? undefined : notes.notesText,
-        meetingName: notes.meetingName,
-        summarySentence: notes.summarySentence,
-        summaryLabel: notes.summaryLabel,
-        processing: processingOutcome(input),
-        participants: input.participants,
-        tags: notes.tags,
-        ...(input.cancel ? {} : notesVersionFields(row, input)),
-        ...cancellationFields(row, input),
-        ...(input.captureCoverage && !row.captureCoverage
-          ? { captureCoverage: input.captureCoverage }
-          : {}),
-        updatedAt: new Date(now * MS_PER_SECOND).toISOString(),
-        finish: {
-          ...(row.finish?.startedAt === undefined
-            ? {}
-            : { startedAt: row.finish.startedAt }),
-          owner: a.claim.owner,
-          expiresAt: now + LIFECYCLE.finishClaimSeconds,
-          attempts: 0,
-          phase: "deliver",
-        },
-      },
-      MEETING_STATUS.PROCESSING,
-    );
-    meetingFinishes.inc({ outcome: status });
+    for (let attempt = 1; ; attempt += 1) {
+      const fresh = await save(a, {});
+      if (fresh.status !== MEETING_STATUS.PROCESSING) lost(a);
+      const now = nowSeconds();
+      const patch = terminalPatch(fresh, input, a.claim.owner, now);
+      a.signal.throwIfAborted();
+      const saved = await deps.repository.save(
+        a.claim,
+        withoutSupersededCanonicalFields(fresh, patch, a.contentBaseline),
+        now,
+        MEETING_STATUS.PROCESSING,
+        { contentRevision: fresh.contentRevision },
+      );
+      if (saved) {
+        a.row = saved;
+        meetingFinishes.inc({ outcome: patch.status });
+        return;
+      }
+      if (attempt === TERMINAL_SAVE_ATTEMPTS)
+        throw new Error("Meeting content kept changing during the final save");
+    }
   }
 
   async function saveFailed(a: Attempt, processing?: MeetingProcessingOutcome) {
@@ -462,6 +460,7 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
   async function processMeeting(a: Attempt): Promise<FinishInput | undefined> {
     let input: FinishInput | undefined;
     try {
+      a.contentBaseline = a.row.contentRevision ?? 0;
       input = withRowDecision(a.row, await load(a));
       a.source = input.source;
       // Only a recovery with no saved audio at all ends here, silently. A
@@ -802,6 +801,7 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
       load: loadInput,
       localDirectories: [],
       transientDirectories: [],
+      contentBaseline: 0,
     };
     const stop = () => controller.abort(options.signal?.reason);
     if (options.signal?.aborted) stop();
