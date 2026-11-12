@@ -84,12 +84,17 @@ export async function runEndMeetingFlow(
     endTriggeredByUserId: meeting.endTriggeredByUserId,
   };
   if (meeting.sessionMode === "tts_only") return closeMeeting(meeting, cause);
+  // Kept on the meeting so the local finish delivers only after it settles.
   if (!meeting.finishing)
-    void updateMeetingProcessingMessage(meeting).catch((error: unknown) =>
-      console.warn("Meeting processing message was not shown", {
-        meetingId: meeting.meetingId,
-        error,
-      }),
+    meeting.processingMessageShown = updateMeetingProcessingMessage(
+      meeting,
+    ).then(
+      () => undefined,
+      (error: unknown) =>
+        console.warn("Meeting processing message was not shown", {
+          meetingId: meeting.meetingId,
+          error,
+        }),
     );
   const suppression = suppressionPersisted
     ? undefined

@@ -212,6 +212,21 @@ test("a button press is answered, shows processing and ends with the presser rec
   });
 });
 
+test("the processing state is kept on the meeting, and a failed edit settles it with a warning", async () => {
+  const meeting = meetingFor();
+  jest
+    .mocked(updateMeetingProcessingMessage)
+    .mockRejectedValueOnce(new Error("synthetic edit failure"));
+
+  await runEndMeetingFlow({ meeting });
+
+  await expect(meeting.processingMessageShown).resolves.toBeUndefined();
+  expect(console.warn).toHaveBeenCalledWith(
+    "Meeting processing message was not shown",
+    expect.objectContaining({ meetingId: "synthetic-meeting" }),
+  );
+});
+
 test("a press on a stale control message changes nothing", async () => {
   const meeting = meetingFor();
   jest.mocked(getMeeting).mockReturnValue(meeting);

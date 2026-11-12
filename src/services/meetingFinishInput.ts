@@ -47,6 +47,7 @@ import { decideAutoRecordCancellation } from "./autoRecordCancellationService";
 import type { ChatEntry } from "../types/chat";
 import type { RecordingLimitState } from "./recordingLimitService";
 import { createRecordingCheckpointService } from "./recordingCheckpointService";
+import { LIFECYCLE } from "./lifecycleTiming";
 import { fetchJsonFromS3 } from "./storageService";
 import { formatUserMention } from "../utils/participants";
 import { summarizeCaptureCoverage } from "../utils/meetingCaptureNotice";
@@ -144,6 +145,33 @@ async function normalFinishInput(
 }
 
 /**
+ * Delivery edits the recording message the stop marked as processing, so a
+ * fast finish must not let that earlier edit land last. Bounded, because the
+ * edit runs beside close and may hang.
+ */
+async function processingMessageSettled(
+  meeting: MeetingData,
+  signal: AbortSignal,
+): Promise<void> {
+  const shown = meeting.processingMessageShown;
+  if (!shown) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopWaiting: () => void = () => undefined;
+  const bound = new Promise<void>((resolve) => {
+    stopWaiting = resolve;
+    timer = setTimeout(resolve, LIFECYCLE.processingMessageWaitMs);
+    signal.addEventListener("abort", stopWaiting, { once: true });
+  });
+  try {
+    await Promise.race([shown, bound]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", stopWaiting);
+  }
+  signal.throwIfAborted();
+}
+
+/**
  * Builds the finish input from what the closing worker holds: the in-memory
  * transcript compile, the final pass and the locally mixed recording.
  */
@@ -153,6 +181,7 @@ export async function loadNormalFinishInput(
   signal: AbortSignal,
 ): Promise<FinishInput> {
   signal.throwIfAborted();
+  await processingMessageSettled(meeting, signal);
   await settleCapturedAudio(meeting, signal);
   signal.throwIfAborted();
   const cancellation = await resolveMeetingCancellation(meeting);

@@ -155,6 +155,11 @@ export interface MeetingData {
   recordingLimitNotice?: RecordingLimitState;
   messagesToDelete?: string[];
   leaseOwnerInstanceId?: string;
+  /**
+   * Settles once the processing state edit on the recording message has
+   * landed or failed, and never rejects; delivery edits the same message.
+   */
+  processingMessageShown?: Promise<void>;
 }
 
 /** Plain content and processing state, explicitly prepared for live or recovered notes. */

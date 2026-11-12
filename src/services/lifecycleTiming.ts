@@ -71,6 +71,8 @@ export const LIFECYCLE = {
   dynamoRequestTimeoutMs: 10_000,
   // An aborted finish attempt that does not unwind in this long is abandoned, so it cannot hold a finish slot.
   finishAbortGraceMs: 5_000,
+  // How long the local finish waits for the processing state on the recording message before delivering.
+  processingMessageWaitMs: 5_000,
 } as const;
 
 export function leaseCapEpochSeconds(

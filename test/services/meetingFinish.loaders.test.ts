@@ -32,6 +32,7 @@ jest.mock("../../src/services/mixedPcmService", () => ({
 }));
 
 import type { Client } from "discord.js";
+import { LIFECYCLE } from "../../src/services/lifecycleTiming";
 import { resolveMeetingCancellation } from "../../src/services/meetingCaptureWrapUp";
 import { sumMeetingSecondsInWindow } from "../../src/services/meetingUsageService";
 import type { MeetingData } from "../../src/types/meeting-data";
@@ -257,6 +258,44 @@ test("a manual meeting with no speech ends complete with the no-speech notice an
     state,
     expect.anything(),
   );
+});
+
+describe("the processing state shown when the meeting stopped", () => {
+  const PROCESSING_EDIT_DELAY_MS = 50;
+
+  test("lands before delivery edits the recording message", async () => {
+    const world = setup(processingRow());
+    let requestsWhenShown: number | undefined;
+    const processingMessageShown = new Promise<void>((resolve) =>
+      setTimeout(resolve, PROCESSING_EDIT_DELAY_MS),
+    ).then(() => {
+      requestsWhenShown = world.discord.requests.length;
+    });
+    await world.finish(normalLoad(silentMeeting({ processingMessageShown })));
+    expect(requestsWhenShown).toBe(0);
+    expect(world.edits().length).toBeGreaterThan(0);
+  });
+
+  test("that never lands holds the finish only for its bound", async () => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate", "nextTick"] });
+    try {
+      const world = setup(processingRow());
+      const processingMessageShown = new Promise<void>(() => undefined);
+      const finished = world.finish(
+        normalLoad(silentMeeting({ processingMessageShown })),
+      );
+      await jest.advanceTimersByTimeAsync(
+        LIFECYCLE.processingMessageWaitMs - 1,
+      );
+      expect(world.discord.requests).toHaveLength(0);
+      await jest.advanceTimersByTimeAsync(1);
+      await finished;
+      expect(world.current().status).toBe("complete");
+      expect(world.edits().length).toBeGreaterThan(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
 
 test("a recovered capture that ended complete with no saved audio ends complete with the no-speech notice and is not metered", async () => {
