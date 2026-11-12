@@ -121,6 +121,22 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 const counted = (event: string) =>
   events.mock.calls.filter(([labels]) => labels.event === event).length;
+/** A lease another meeting in the same guild still holds. */
+const otherMeetingLiveLease = () =>
+  leaseRecord({
+    meetingId: "synthetic-meeting-b",
+    leaseExpiresAt: START_SECONDS + 1,
+  });
+/** The caller heard about the stop request exactly once, naming the user who asked. */
+function expectEndRequestHandedOnce(
+  hooks: ReturnType<typeof setup>["hooks"],
+  userId: string,
+) {
+  expect(hooks.onEndRequested).toHaveBeenCalledTimes(1);
+  expect(hooks.onEndRequested).toHaveBeenCalledWith(
+    expect.objectContaining({ endRequestedByUserId: userId }),
+  );
+}
 
 describe("acquireSessionLease", () => {
   it("writes the lease and a lifecycle 2 history row in one admission", async () => {
@@ -162,13 +178,7 @@ describe("acquireSessionLease", () => {
 
   it("is blocked by a live lease", async () => {
     const t = setup();
-    t.leases.set(
-      GUILD,
-      leaseRecord({
-        meetingId: "synthetic-meeting-b",
-        leaseExpiresAt: START_SECONDS + 1,
-      }),
-    );
+    t.leases.set(GUILD, otherMeetingLiveLease());
     await expect(
       t.service.acquireSessionLease(t.startInput()),
     ).resolves.toEqual({ kind: "blocked", reason: "active_session" });
@@ -203,13 +213,7 @@ describe("acquireSessionLease", () => {
     const start = jest
       .spyOn(t.repository, "startSession")
       .mockRejectedValue(conflict());
-    t.leases.set(
-      GUILD,
-      leaseRecord({
-        meetingId: "synthetic-meeting-b",
-        leaseExpiresAt: START_SECONDS + 1,
-      }),
-    );
+    t.leases.set(GUILD, otherMeetingLiveLease());
     await expect(
       t.service.acquireSessionLease(t.startInput()),
     ).resolves.toEqual({ kind: "blocked", reason: "active_session" });
@@ -260,13 +264,7 @@ describe("acquireSessionLease", () => {
 
   it("a start that timed out while another meeting holds the lease is blocked", async () => {
     const t = setup();
-    t.leases.set(
-      GUILD,
-      leaseRecord({
-        meetingId: "synthetic-meeting-b",
-        leaseExpiresAt: START_SECONDS + 1,
-      }),
-    );
+    t.leases.set(GUILD, otherMeetingLiveLease());
     timedOutStart(t, { commit: false });
     await expect(
       t.service.acquireSessionLease(t.startInput()),
@@ -530,10 +528,7 @@ describe("startLeaseRenewal", () => {
       leaseExpiresAt: t.seconds() + LIFECYCLE.leaseSeconds,
     });
     await t.tick();
-    expect(t.hooks.onEndRequested).toHaveBeenCalledTimes(1);
-    expect(t.hooks.onEndRequested).toHaveBeenCalledWith(
-      expect.objectContaining({ endRequestedByUserId: "synthetic-user" }),
-    );
+    expectEndRequestHandedOnce(t.hooks, "synthetic-user");
   });
 
   it("a stop request that lands between the read and the retake reaches the caller once", async () => {
@@ -625,10 +620,7 @@ describe("startLeaseRenewal", () => {
     });
     await t.tick();
     await t.tick();
-    expect(t.hooks.onEndRequested).toHaveBeenCalledTimes(1);
-    expect(t.hooks.onEndRequested).toHaveBeenCalledWith(
-      expect.objectContaining({ endRequestedByUserId: "synthetic-user" }),
-    );
+    expectEndRequestHandedOnce(t.hooks, "synthetic-user");
   });
 
   it("refuses a reservation it did not admit", () => {
