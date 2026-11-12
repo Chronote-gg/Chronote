@@ -1,3 +1,4 @@
+import { useAuthNavigationBlocker } from "../../../hooks/useAuthNavigationBlocker";
 import {
   Box,
   Button,
@@ -79,6 +80,12 @@ export default function MeetingDetailModals({
   onRenameSave,
   renamePending,
 }: MeetingDetailModalsProps) {
+  useAuthNavigationBlocker(Boolean(renameDraft), renameModalOpen);
+  useAuthNavigationBlocker(Boolean(feedbackDraft), feedbackModalOpen);
+  useAuthNavigationBlocker(
+    [notesCorrectionDraft, notesCorrectionDiff].some(Boolean),
+    notesCorrectionModalOpen,
+  );
   const archiveTitle = archiveNextState
     ? "Archive meeting"
     : "Unarchive meeting";

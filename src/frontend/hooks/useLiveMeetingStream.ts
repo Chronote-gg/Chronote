@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { buildApiUrl } from "../services/apiClient";
+import {
+  getAuthRequestGeneration,
+  reportAuthCheck,
+  reportAuthorizedRead,
+} from "../services/authRecovery";
 import type {
   LiveMeetingAttendeesPayload,
   LiveMeetingEventsPayload,
@@ -74,9 +79,11 @@ export function useLiveMeetingStream({
 
     const url = buildApiUrl(`/api/live/${guildId}/${meetingId}/stream`);
     const source = new EventSource(url, { withCredentials: true });
+    const requestGeneration = getAuthRequestGeneration();
 
     source.addEventListener("init", (event) => {
       const payload = JSON.parse(event.data) as LiveMeetingInitPayload;
+      reportAuthorizedRead(requestGeneration, "live.stream");
       setMeeting(payload.meeting);
       setEvents(payload.events);
       setAttendees(payload.meeting.attendees ?? []);
@@ -141,9 +148,11 @@ export function useLiveMeetingStream({
           : "error",
       );
       source.close();
+      reportAuthCheck(requestGeneration);
     };
 
     return () => {
+      source.onerror = null;
       source.close();
     };
   }, [enabled, guildId, meetingId, retryKey]);

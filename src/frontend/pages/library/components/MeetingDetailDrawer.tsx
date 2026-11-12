@@ -79,7 +79,11 @@ const resolveRenameDraft = (meeting: {
   return "";
 };
 
-const renderDetailStatusBadge = (status?: LiveMeetingStatus) => {
+const renderDetailStatusBadge = (
+  status?: LiveMeetingStatus,
+  connecting = false,
+) => {
+  if (connecting) return null;
   switch (status) {
     case "unavailable":
       return (
@@ -187,7 +191,6 @@ export default function MeetingDetailDrawer({
   );
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [feedbackDraft, setFeedbackDraft] = useState("");
-
   const [notesEditorModalOpen, setNotesEditorModalOpen] = useState(false);
   const [notesImportModalOpen, setNotesImportModalOpen] = useState(false);
 
@@ -197,6 +200,7 @@ export default function MeetingDetailDrawer({
   const [notesCorrectionDiff, setNotesCorrectionDiff] = useState<string | null>(
     null,
   );
+
   const [notesCorrectionToken, setNotesCorrectionToken] = useState<
     string | null
   >(null);
@@ -367,9 +371,8 @@ export default function MeetingDetailDrawer({
         </Badge>
       ) : null}
       {renderDetailStatusBadge(
-        liveStreamEnabled && liveStream.status === "connecting"
-          ? undefined
-          : displayStatus,
+        displayStatus,
+        liveStreamEnabled && liveStream.status === "connecting",
       )}
     </Group>
   ) : (
@@ -379,10 +382,8 @@ export default function MeetingDetailDrawer({
   );
 
   useEffect(() => {
-    if (!meeting) {
-      initializedMeetingIdRef.current = null;
-      return;
-    }
+    if (!opened) initializedMeetingIdRef.current = null;
+    if (!meeting) return;
     if (initializedMeetingIdRef.current === meeting.id) return;
     initializedMeetingIdRef.current = meeting.id;
     resetDeliveryFeedback();
@@ -408,7 +409,7 @@ export default function MeetingDetailDrawer({
     setDictionaryTeachingModalOpen(false);
     setDictionaryTeachingInstruction("");
     setDictionaryTeachingContextToken(undefined);
-  }, [meeting]);
+  }, [meeting, opened]);
 
   const openNotesCorrectionModal = () => {
     setNotesCorrectionModalOpen(true);
@@ -528,22 +529,6 @@ export default function MeetingDetailDrawer({
         message: "Unable to apply this correction right now.",
       });
     }
-  };
-
-  const openNotesEditorModal = () => {
-    setNotesEditorModalOpen(true);
-  };
-
-  const closeNotesEditorModal = () => {
-    setNotesEditorModalOpen(false);
-  };
-
-  const openNotesImportModal = () => {
-    setNotesImportModalOpen(true);
-  };
-
-  const closeNotesImportModal = () => {
-    setNotesImportModalOpen(false);
   };
 
   useEffect(() => {
@@ -1017,8 +1002,8 @@ export default function MeetingDetailDrawer({
       onFeedbackUp={handleSummaryFeedbackUp}
       onFeedbackDown={handleSummaryFeedbackDown}
       onCopySummary={handleCopySummary}
-      onEditNotes={openNotesEditorModal}
-      onImportNotes={openNotesImportModal}
+      onEditNotes={() => setNotesEditorModalOpen(true)}
+      onImportNotes={() => setNotesImportModalOpen(true)}
       notionActionLabel={notionActionLabel}
       notionActionPending={notionActionPending}
       notionPageUrl={notionExportStatus?.pageUrl}
@@ -1108,6 +1093,84 @@ export default function MeetingDetailDrawer({
             overflow: "hidden",
           }}
         >
+          <MeetingDetailModals
+            notesCorrectionModalOpen={notesCorrectionModalOpen}
+            notesCorrectionDraft={notesCorrectionDraft}
+            notesCorrectionDiff={notesCorrectionDiff}
+            notesCorrectionChanged={notesCorrectionChanged}
+            onNotesCorrectionDraftChange={handleNotesCorrectionDraftChange}
+            onNotesCorrectionModalClose={closeNotesCorrectionModal}
+            onNotesCorrectionGenerate={handleNotesCorrectionGenerate}
+            onNotesCorrectionApply={handleNotesCorrectionApply}
+            notesCorrectionGenerating={suggestNotesCorrectionMutation.isPending}
+            notesCorrectionApplying={applyNotesCorrectionMutation.isPending}
+            feedbackModalOpen={feedbackModalOpen}
+            feedbackDraft={feedbackDraft}
+            onFeedbackDraftChange={setFeedbackDraft}
+            onFeedbackModalClose={() => setFeedbackModalOpen(false)}
+            onFeedbackSubmit={handleSummaryFeedbackSubmit}
+            feedbackSubmitting={feedbackMutation.isPending}
+            endMeetingModalOpen={endMeetingModalOpen}
+            onEndMeetingModalClose={() => setEndMeetingModalOpen(false)}
+            onConfirmEndMeeting={handleConfirmEndMeeting}
+            endMeetingLoading={endMeetingLoading}
+            archiveModalOpen={archiveModalOpen}
+            archiveNextState={archiveNextState}
+            onArchiveModalClose={() => {
+              setArchiveModalOpen(false);
+              setArchiveNextState(null);
+            }}
+            onArchiveConfirm={handleArchiveConfirm}
+            archivePending={archiveMutation.isPending}
+            renameModalOpen={renameModalOpen}
+            renameDraft={renameDraft}
+            renameError={renameError}
+            onRenameDraftChange={setRenameDraft}
+            onRenameModalClose={() => setRenameModalOpen(false)}
+            onRenameSave={handleRenameSave}
+            renamePending={renameMutation.isPending}
+          />
+          {selectedGuildId ? (
+            <DictionaryTeachingModal
+              opened={dictionaryTeachingModalOpen}
+              serverId={selectedGuildId}
+              initialInstruction={dictionaryTeachingInstruction}
+              correctionContextToken={dictionaryTeachingContextToken}
+              onClose={() => {
+                setDictionaryTeachingModalOpen(false);
+                setDictionaryTeachingInstruction("");
+                setDictionaryTeachingContextToken(undefined);
+              }}
+              onSaved={() =>
+                trpcUtils.dictionary.list.invalidate({
+                  serverId: selectedGuildId,
+                })
+              }
+            />
+          ) : null}
+          <MeetingNotesEditorModal
+            opened={notesEditorModalOpen}
+            initialMarkdown={detail?.notes ?? ""}
+            initialDelta={detail?.notesDelta}
+            saving={updateNotesMutation.isPending}
+            onClose={() => setNotesEditorModalOpen(false)}
+            onSave={handleNotesEditorSave}
+          />
+          <MeetingNotesImportModal
+            opened={notesImportModalOpen}
+            saving={importNotesMutation.isPending}
+            onClose={() => setNotesImportModalOpen(false)}
+            onImport={handleNotesImport}
+          />
+          <PersonalMeetingShareModal
+            opened={personalShareModalOpen}
+            onClose={() => setPersonalShareModalOpen(false)}
+            meetingTitle={meeting?.title}
+            accessGrants={personalShareStateQuery.data?.accessGrants ?? []}
+            saving={personalShareMutation.isPending}
+            error={personalShareError}
+            onSave={handleSetPersonalShareGrants}
+          />
           {detailError ? (
             <Center py="xl">
               <Text c="dimmed">{resolveDetailErrorMessage(detailError)}</Text>
@@ -1121,77 +1184,6 @@ export default function MeetingDetailDrawer({
               <MeetingUpdateDeliveryRow
                 meeting={meeting}
                 resolveDelivery={deliveryFeedback.resolveDelivery}
-              />
-              <MeetingDetailModals
-                notesCorrectionModalOpen={notesCorrectionModalOpen}
-                notesCorrectionDraft={notesCorrectionDraft}
-                notesCorrectionDiff={notesCorrectionDiff}
-                notesCorrectionChanged={notesCorrectionChanged}
-                onNotesCorrectionDraftChange={handleNotesCorrectionDraftChange}
-                onNotesCorrectionModalClose={closeNotesCorrectionModal}
-                onNotesCorrectionGenerate={handleNotesCorrectionGenerate}
-                onNotesCorrectionApply={handleNotesCorrectionApply}
-                notesCorrectionGenerating={
-                  suggestNotesCorrectionMutation.isPending
-                }
-                notesCorrectionApplying={applyNotesCorrectionMutation.isPending}
-                feedbackModalOpen={feedbackModalOpen}
-                feedbackDraft={feedbackDraft}
-                onFeedbackDraftChange={setFeedbackDraft}
-                onFeedbackModalClose={() => setFeedbackModalOpen(false)}
-                onFeedbackSubmit={handleSummaryFeedbackSubmit}
-                feedbackSubmitting={feedbackMutation.isPending}
-                endMeetingModalOpen={endMeetingModalOpen}
-                onEndMeetingModalClose={() => setEndMeetingModalOpen(false)}
-                onConfirmEndMeeting={handleConfirmEndMeeting}
-                endMeetingLoading={endMeetingLoading}
-                archiveModalOpen={archiveModalOpen}
-                archiveNextState={archiveNextState}
-                onArchiveModalClose={() => {
-                  setArchiveModalOpen(false);
-                  setArchiveNextState(null);
-                }}
-                onArchiveConfirm={handleArchiveConfirm}
-                archivePending={archiveMutation.isPending}
-                renameModalOpen={renameModalOpen}
-                renameDraft={renameDraft}
-                renameError={renameError}
-                onRenameDraftChange={setRenameDraft}
-                onRenameModalClose={() => setRenameModalOpen(false)}
-                onRenameSave={handleRenameSave}
-                renamePending={renameMutation.isPending}
-              />
-              {selectedGuildId ? (
-                <DictionaryTeachingModal
-                  opened={dictionaryTeachingModalOpen}
-                  serverId={selectedGuildId}
-                  initialInstruction={dictionaryTeachingInstruction}
-                  correctionContextToken={dictionaryTeachingContextToken}
-                  onClose={() => {
-                    setDictionaryTeachingModalOpen(false);
-                    setDictionaryTeachingInstruction("");
-                    setDictionaryTeachingContextToken(undefined);
-                  }}
-                  onSaved={() =>
-                    trpcUtils.dictionary.list.invalidate({
-                      serverId: selectedGuildId,
-                    })
-                  }
-                />
-              ) : null}
-              <MeetingNotesEditorModal
-                opened={notesEditorModalOpen}
-                initialMarkdown={detail?.notes ?? ""}
-                initialDelta={detail?.notesDelta}
-                saving={updateNotesMutation.isPending}
-                onClose={closeNotesEditorModal}
-                onSave={handleNotesEditorSave}
-              />
-              <MeetingNotesImportModal
-                opened={notesImportModalOpen}
-                saving={importNotesMutation.isPending}
-                onClose={closeNotesImportModal}
-                onImport={handleNotesImport}
               />
               <Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
                 {liveStreamEnabled ? (
@@ -1238,18 +1230,6 @@ export default function MeetingDetailDrawer({
                   onCopyLink={handleCopyShareLink}
                   onSetVisibility={handleSetShareVisibility}
                   onRotate={handleRotateShare}
-                />
-
-                <PersonalMeetingShareModal
-                  opened={personalShareModalOpen}
-                  onClose={() => setPersonalShareModalOpen(false)}
-                  meetingTitle={meeting.title}
-                  accessGrants={
-                    personalShareStateQuery.data?.accessGrants ?? []
-                  }
-                  saving={personalShareMutation.isPending}
-                  error={personalShareError}
-                  onSave={handleSetPersonalShareGrants}
                 />
 
                 {fullScreen ? (

@@ -1,3 +1,4 @@
+import { useAuthNavigationBlocker } from "../hooks/useAuthNavigationBlocker";
 import { useMemo, useState } from "react";
 import {
   Alert,
@@ -86,6 +87,18 @@ export default function AdminEntitlements() {
   const [reason, setReason] = useState("");
   const [publicNote, setPublicNote] = useState("");
   const [internalNotes, setInternalNotes] = useState("");
+  useAuthNavigationBlocker(
+    [
+      guildId,
+      label,
+      recipientName,
+      recipientContact,
+      reason,
+      publicNote,
+      internalNotes,
+      expiresOn,
+    ].some(Boolean),
+  );
   const [filterGuildId, setFilterGuildId] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [tierFilter, setTierFilter] = useState<TierFilter>("all");

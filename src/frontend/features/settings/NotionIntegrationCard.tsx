@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAuthNavigationBlocker } from "../../hooks/useAuthNavigationBlocker";
 import {
   Alert,
   Badge,
@@ -416,14 +417,34 @@ export function NotionIntegrationCard({
   const [autoExportEnabled, setAutoExportEnabled] = useState(true);
   const [channelIds, setChannelIds] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState("");
+  const [dirty, setDirty] = useState(false);
+  useAuthNavigationBlocker(dirty || busy);
 
   useEffect(() => {
     const nextState = getAutomationFormState(automation);
+    if (dirty) {
+      if (
+        destinationPageId === nextState.destinationPageId &&
+        autoExportEnabled === nextState.autoExportEnabled &&
+        tagDraft === nextState.tagDraft &&
+        channelIds.join(",") === nextState.channelIds.join(",")
+      )
+        setDirty(false);
+      return;
+    }
     setDestinationPageId(nextState.destinationPageId);
     setAutoExportEnabled(nextState.autoExportEnabled);
-    setChannelIds(nextState.channelIds);
+    if (channelIds.join(",") !== nextState.channelIds.join(","))
+      setChannelIds(nextState.channelIds);
     setTagDraft(nextState.tagDraft);
-  }, [automation]);
+  }, [
+    automation,
+    dirty,
+    destinationPageId,
+    autoExportEnabled,
+    tagDraft,
+    channelIds,
+  ]);
 
   const destinationOptions = buildDestinationOptions(
     destinationPages,
@@ -483,7 +504,10 @@ export function NotionIntegrationCard({
           placeholder="Select a Notion page"
           data={destinationOptions}
           value={destinationPageId}
-          onChange={setDestinationPageId}
+          onChange={(value) => {
+            setDirty(true);
+            setDestinationPageId(value);
+          }}
           searchable
           disabled={controlsDisabled}
         />
@@ -498,9 +522,10 @@ export function NotionIntegrationCard({
           }
           description="Chronote remains the source of truth and syncs later Chronote note edits one-way to Notion."
           checked={autoExportEnabled}
-          onChange={(event) =>
-            setAutoExportEnabled(event.currentTarget.checked)
-          }
+          onChange={(event) => {
+            setDirty(true);
+            setAutoExportEnabled(event.currentTarget.checked);
+          }}
           disabled={controlsDisabled}
         />
 
@@ -513,7 +538,10 @@ export function NotionIntegrationCard({
             }
             data={channelOptions}
             value={channelIds}
-            onChange={setChannelIds}
+            onChange={(value) => {
+              setDirty(true);
+              setChannelIds(value);
+            }}
             searchable
             clearable
             disabled={controlsDisabled}
@@ -525,7 +553,10 @@ export function NotionIntegrationCard({
           description="Comma-separated. Leave empty to export meetings with any tags."
           placeholder="campaign, recap"
           value={tagDraft}
-          onChange={(event) => setTagDraft(event.currentTarget.value)}
+          onChange={(event) => {
+            setDirty(true);
+            setTagDraft(event.currentTarget.value);
+          }}
           disabled={controlsDisabled}
         />
 

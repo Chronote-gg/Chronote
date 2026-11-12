@@ -58,7 +58,9 @@ test.each([
       const auth = useAuth();
       return (
         <div>
-          {auth.protectedQueriesReady ? "identity ready" : "identity pending"}
+          {auth.state === "unauthenticated"
+            ? "identity ready"
+            : "identity pending"}
         </div>
       );
     }

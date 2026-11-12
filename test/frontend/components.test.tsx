@@ -220,7 +220,10 @@ describe("frontend components", () => {
     );
     expect(screen.getByLabelText("Close navigation")).toBeInTheDocument();
     const logoutButton = screen.getByTestId("logout-cta");
-    expect(logoutButton).toHaveAttribute("href", authState.logoutUrl);
+    expect(logoutButton).toHaveAttribute(
+      "href",
+      "https://example.com/logout?interaction=consent",
+    );
     expect(screen.getByText("Switch account")).toBeInTheDocument();
     unmount();
 
