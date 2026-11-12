@@ -1,19 +1,15 @@
 /** @jest-environment node */
 import { randomUUID } from "node:crypto";
-import type { RuntimeIdentity } from "../../src/types/deploymentControl";
+import {
+  expectedAdmission,
+  receiptRuntime,
+} from "../fixtures/stripeReceiptAdmission";
 import { config } from "../../src/services/configService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import { getStripeWebhookRepository } from "../../src/repositories/stripeWebhookRepository";
 import type { StripeWebhookEvent } from "../../src/types/db";
 import { STRIPE_RECEIPT_BOUNDARY } from "../../src/types/stripeWebhookReceipt";
-const runtime: RuntimeIdentity = {
-  kind: "ecs",
-  instanceId: "old",
-  taskArn: "arn:aws:ecs:us-east-1:123456789012:task/fixture/old",
-  imageDigest: "sha256:fixture",
-  candidateId: "old",
-  protocolVersion: 1,
-};
+const runtime = receiptRuntime;
 const birth = { version: STRIPE_RECEIPT_BOUNDARY, writer: runtime };
 const event = (id = randomUUID()): StripeWebhookEvent => ({
   eventId: id,
@@ -130,13 +126,7 @@ test("admission runs without any deployment control record and records the suppl
   const before = Math.floor(Date.now() / 1000);
   expect(getMockStore().deploymentControlRecords.size).toBe(0);
   expect(await repo.admit(row.eventId, "token", attemptId, runtime)).toBe(true);
-  const admission = {
-    attemptId,
-    leaseToken: "token",
-    runtime,
-    generation: config.runtime.release,
-    admittedAt: expect.any(Number),
-  };
+  const admission = expectedAdmission(attemptId);
   const stored = await repo.get(row.eventId);
   expect(stored).toMatchObject({
     continuation: "admitted",

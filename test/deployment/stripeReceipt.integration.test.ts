@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { TransactWriteItemsCommand } from "@aws-sdk/client-dynamodb";
-import type { RuntimeIdentity } from "../../src/types/deploymentControl";
+import {
+  expectedAdmission,
+  receiptRuntime,
+} from "../fixtures/stripeReceiptAdmission";
 import {
   createIntroductionTable,
   introductionClient as client,
@@ -9,17 +12,9 @@ import {
 import { createStripeWebhookDynamoRepository } from "../../src/repositories/stripeWebhookDynamoRepository";
 import { STRIPE_RECEIPT_BOUNDARY } from "../../src/types/stripeWebhookReceipt";
 import { continueStripeReceipt } from "../../src/services/stripeWebhookReceiptService";
-import { config } from "../../src/services/configService";
 import { getRuntimeInstanceId } from "../../src/services/runtimeInstanceService";
 import type { StripeWebhookEvent } from "../../src/types/db";
-const runtime: RuntimeIdentity = {
-  kind: "ecs",
-  instanceId: "old",
-  taskArn: "arn:aws:ecs:us-east-1:123456789012:task/fixture/old",
-  imageDigest: "sha256:fixture",
-  candidateId: "old",
-  protocolVersion: 1,
-};
+const runtime = receiptRuntime;
 const receiptTable = "receipt-events-" + randomUUID();
 const repo = createStripeWebhookDynamoRepository(client, receiptTable);
 const hold = {
@@ -50,13 +45,7 @@ test("native admission writes only the receipt's own state with no deployment co
   await repo.claim(row);
   const attemptId = randomUUID();
   expect(await repo.admit(row.eventId, "token", attemptId, runtime)).toBe(true);
-  const admission = {
-    attemptId,
-    leaseToken: "token",
-    runtime,
-    generation: config.runtime.release,
-    admittedAt: expect.any(Number),
-  };
+  const admission = expectedAdmission(attemptId);
   expect(await repo.get(row.eventId)).toEqual({
     eventId: row.eventId,
     receivedAt: row.receivedAt,
