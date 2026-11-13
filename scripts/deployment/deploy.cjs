@@ -159,21 +159,38 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     const candidates = older.filter(
       (task) => wait.first || wait.serving.has(task.taskArn),
     );
-    if (candidates.length) {
-      const ready = await readyWorkers();
-      for (const task of candidates) {
-        const serving = servingRecord(task, ready);
-        if (serving && wait.first) {
-          log(
-            `Older task ${task.taskArn} is the serving worker on revision ${serving.release} and no newer revision has a ready worker; not waited for`,
-          );
-          wait.serving.add(task.taskArn);
-        }
-        if (!serving) wait.serving.delete(task.taskArn);
-      }
-    }
+    const ready = candidates.length ? await readyForDrain(wait.retire) : [];
+    const first = wait.first;
     wait.first = false;
+    if (!ready) return older;
+    for (const task of candidates) {
+      const serving = servingRecord(task, ready);
+      if (serving && first) {
+        log(
+          `Older task ${task.taskArn} is the serving worker on revision ${serving.release} and no newer revision has a ready worker; not waited for`,
+        );
+        wait.serving.add(task.taskArn);
+      }
+      if (!serving) wait.serving.delete(task.taskArn);
+    }
     return older.filter((task) => !wait.serving.has(task.taskArn));
+  }
+
+  /**
+   * A drain can run for hours, so without retire an unreadable registry only
+   * makes this poll count every older task as draining. With retire it fails
+   * the step, because guessing could stop the serving worker.
+   */
+  async function readyForDrain(retire) {
+    try {
+      return await readyWorkers();
+    } catch (error) {
+      if (retire) throw error;
+      log(
+        "Worker registry could not be read; every older task counts as draining for this poll",
+      );
+      return null;
+    }
   }
 
   /** The task's own ready record when no ready worker runs a higher release. */
@@ -283,7 +300,7 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     const namespace = `${required("SECRETS_PREFIX")}/Deploy`;
     const started = now();
     const retired = new Set();
-    const wait = { first: true, serving: new Set() };
+    const wait = { first: true, retire, serving: new Set() };
     for (;;) {
       const draining = await drainingTasks(wait);
       log(
