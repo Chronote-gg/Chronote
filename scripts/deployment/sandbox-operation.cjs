@@ -3,7 +3,10 @@ const assert = require("node:assert/strict");
 const { awsCli, createCoordinator } = require("./coordinator.cjs");
 const { assertSandboxIdentity } = require("./assert-sandbox-identity.cjs");
 const { createWriterInventory } = require("./carryforward-writers.cjs");
-const { createAwsCaller } = require("./coordinator-aws.cjs");
+const {
+  createAwsCaller,
+  CoordinatorFailure,
+} = require("./coordinator-aws.cjs");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function assertNoEndpointOverride(env) {
   assert.ok(
@@ -27,11 +30,23 @@ async function authenticateOperation(options, env, token) {
 function guardedCoordinator(base, beforeMutation) {
   const diagnostic = base.diagnostic ?? {};
   const submit = createAwsCaller(base.aws, diagnostic);
+  async function authority(service, operation, input) {
+    try {
+      await beforeMutation(operation, input);
+    } catch (error) {
+      if (error instanceof CoordinatorFailure) throw error;
+      throw new CoordinatorFailure(
+        "operation_authority_unconfirmed",
+        "Operation authority could not be confirmed",
+        `${service}.${operation}`,
+      );
+    }
+  }
   return createCoordinator({
     ...base,
     diagnostic,
     submitArtifactTransaction: async (build) => {
-      await beforeMutation("transact-write-items");
+      await authority("dynamodb", "transact-write-items");
       return submit("dynamodb", "transact-write-items", await build());
     },
     aws: async (service, operation, input) => {
@@ -44,7 +59,7 @@ function guardedCoordinator(base, beforeMutation) {
           "modify-listener",
         ].includes(operation)
       )
-        await beforeMutation(operation, input);
+        await authority(service, operation, input);
       return base.aws(service, operation, input);
     },
   });

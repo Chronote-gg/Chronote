@@ -7,6 +7,7 @@ import { artifactSafetyFixture } from "./fixtures/artifactSafetyFixture";
 import { attestation } from "./fixtures/legacyArtifactFixture";
 import { createArtifactHandoff } from "../../scripts/deployment/artifact-handoff.cjs";
 import { guardedCoordinator } from "../../scripts/deployment/sandbox-operation.cjs";
+import { CoordinatorFailure } from "../../scripts/deployment/coordinator-aws.cjs";
 import { fixture as coordinatorFixture } from "./fixtures/coordinatorFixture";
 import { introductionFixture } from "../fixtures/productionIntroduction";
 
@@ -109,6 +110,52 @@ function delayedConsume(
   };
 }
 
+function promotionHeartbeat(f: ReturnType<typeof coordinatorFixture>) {
+  f.advanceTime(10);
+  for (const [id, row] of f.state.artifacts)
+    f.state.artifacts.set(id, { ...row, revision: row.revision + 1 });
+}
+
+test.each([false, true])(
+  "authority refusal preserves classification, typed %s",
+  async (typed) => {
+    const f = coordinatorFixture();
+    await f.coordinator.prepare();
+    const before = f.calls.length;
+    const failure = typed
+      ? new CoordinatorFailure(
+          "fixture_authority_refused",
+          "private",
+          "fixture.guard",
+        )
+      : new Error("PRIVATE_GUARD_PAYLOAD");
+    const coordinator = guardedCoordinator(f.options, async (operation) => {
+      if (operation === "transact-write-items") throw failure;
+    });
+    const error = await coordinator.promote().catch((caught) => caught);
+    if (typed) expect(error).toBe(failure);
+    else
+      expect(error).toMatchObject({
+        category: "operation_authority_unconfirmed",
+        operation: "dynamodb.transact-write-items",
+      });
+    expect(error.message).not.toContain("PRIVATE_GUARD_PAYLOAD");
+    expect(
+      f.calls
+        .slice(before)
+        .filter((call) =>
+          [
+            "transact-write-items",
+            "register-task-definition",
+            "update-service",
+            "modify-listener",
+          ].includes(call.operation),
+        ),
+    ).toEqual([]);
+    expect(f.state.ctl.servingGeneration).toBe(1);
+  },
+);
+
 test("guarded preparation snapshots artifact CAS after authority latency and heartbeat", async () => {
   const f = coordinatorFixture();
   const original = f.aws.getMockImplementation()!;
@@ -182,12 +229,123 @@ test.each(["startup", "revision_rollback"])(
   },
 );
 
+test("promotion snapshots artifact conditions after its full authority guard", async () => {
+  const f = coordinatorFixture();
+  await f.coordinator.prepare();
+  const original = f.aws.getMockImplementation()!;
+  let submitted = 0;
+  f.aws.mockImplementation(async (service, operation, input) => {
+    if (
+      operation === "transact-write-items" &&
+      input.TransactItems?.[0]?.Update
+    ) {
+      submitted++;
+      for (const item of input.TransactItems) {
+        const check = item.ConditionCheck;
+        if (!check) continue;
+        const names = check.ExpressionAttributeNames;
+        const revision = Object.keys(names).find(
+          (key) => names[key] === "revision",
+        );
+        if (!revision) continue;
+        const value = check.ConditionExpression.split(" AND ")
+          .find((clause) => clause.startsWith(revision + " = "))!
+          .split(" = ")[1];
+        const identity = unmarshall(check.Key)
+          .sk.substring("ARTIFACTS#".length)
+          .split("/")[0];
+        if (
+          unmarshall(check.ExpressionAttributeValues)[value] !==
+          f.state.artifacts.get(identity)!.revision
+        )
+          throw Object.assign(
+            new Error("conditional artifact snapshot changed"),
+            {
+              name: "TransactionCanceledException",
+              CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+            },
+          );
+      }
+    }
+    return original(service, operation, input);
+  });
+  const coordinator = guardedCoordinator(f.options, async (operation) => {
+    if (operation === "transact-write-items") {
+      promotionHeartbeat(f);
+    }
+  });
+  await expect(coordinator.promote()).resolves.toEqual({ kind: "promoted" });
+  expect(submitted).toBe(1);
+});
+
+test.each([
+  "source_request",
+  "candidate_identity",
+  "candidate_snapshot",
+  "proof_rollback",
+  "revision_rollback",
+])(
+  "promotion refuses %s drift during authority before submission",
+  async (change) => {
+    const f = coordinatorFixture();
+    await f.coordinator.prepare();
+    const before = f.calls.length;
+    const coordinator = guardedCoordinator(f.options, async (operation) => {
+      if (operation !== "transact-write-items") return;
+      const row = f.state.artifacts.get("old")!;
+      if (change === "source_request" && row.state === "consumed")
+        row.request.expiresAt++;
+      if (change === "revision_rollback") row.revision--;
+      if (change === "candidate_identity")
+        f.state.artifacts.get("new")!.identity.candidateId = "foreign";
+      const target = f.state.artifacts.get("new")!;
+      if (target.startup.kind === "sealed") {
+        if (change === "candidate_snapshot")
+          target.startup.proof.snapshot.digest = "f".repeat(64);
+        if (change === "proof_rollback") {
+          target.startup.proof.provenAt--;
+          target.startup.proof.expiresAt--;
+        }
+      }
+    });
+    await expect(coordinator.promote()).rejects.toThrow();
+    expect(
+      f.calls
+        .slice(before)
+        .filter((call) => call.operation === "transact-write-items"),
+    ).toEqual([]);
+    expect(f.state.ctl.servingGeneration).toBe(1);
+  },
+);
+
+test("guarded promotion reconciles a lost acknowledgment after authority latency", async () => {
+  const f = coordinatorFixture();
+  await f.coordinator.prepare();
+  f.state.losePromotionResponse = true;
+  let guards = 0;
+  const coordinator = guardedCoordinator(f.options, async (operation) => {
+    if (operation === "transact-write-items") {
+      guards++;
+      promotionHeartbeat(f);
+    }
+  });
+  await expect(coordinator.promote()).resolves.toEqual({ kind: "promoted" });
+  expect(guards).toBe(1);
+  expect(f.state.ctl.servingMembers).toEqual({
+    new: f.state.rows.new.identity,
+  });
+  expect(f.state.ctl.servingGeneration).toBe(2);
+});
+
 test("rejected artifact authority never submits its transaction", async () => {
   const f = coordinatorFixture();
   const coordinator = guardedCoordinator(f.options, async (operation) => {
     if (operation === "transact-write-items") throw Error("authority refused");
   });
-  await expect(coordinator.prepare()).rejects.toThrow("authority refused");
+  await expect(coordinator.prepare()).rejects.toMatchObject({
+    category: "operation_authority_unconfirmed",
+    operation: "dynamodb.transact-write-items",
+  });
   expect(
     f.calls.some((call) =>
       ["transact-write-items", "update-service"].includes(call.operation),
@@ -195,36 +353,48 @@ test("rejected artifact authority never submits its transaction", async () => {
   ).toBe(false);
 });
 
-test("an introduction hold appearing during artifact authority prevents submission", async () => {
-  const f = coordinatorFixture();
-  const original = f.aws.getMockImplementation()!;
-  let held = false;
-  f.aws.mockImplementation(async (service, operation, input) => {
-    if (held && operation === "get-item" && input.Key?.sk?.S === "INTRODUCTION")
-      return {
-        Item: marshall(
-          introductionFixture({
-            holdId: "hold",
-            introductionId: "intro",
-            revision: 1,
-          }),
+test.each(["prepare", "promote"] as const)(
+  "an introduction hold during %s authority prevents submission",
+  async (phase) => {
+    const f = coordinatorFixture();
+    if (phase === "promote") await f.coordinator.prepare();
+    const before = f.calls.length;
+    const expectedArtifact = structuredClone(f.state.artifacts.get("old"));
+    const original = f.aws.getMockImplementation()!;
+    let held = false;
+    f.aws.mockImplementation(async (service, operation, input) => {
+      if (
+        held &&
+        operation === "get-item" &&
+        input.Key?.sk?.S === "INTRODUCTION"
+      )
+        return {
+          Item: marshall(
+            introductionFixture({
+              holdId: "hold",
+              introductionId: "intro",
+              revision: 1,
+            }),
+          ),
+        };
+      return original(service, operation, input);
+    });
+    const coordinator = guardedCoordinator(f.options, async (operation) => {
+      if (operation === "transact-write-items") held = true;
+    });
+    await expect(coordinator[phase]()).rejects.toMatchObject({
+      category: "introduction_held",
+    });
+    expect(
+      f.calls
+        .slice(before)
+        .some((call) =>
+          ["transact-write-items", "update-service"].includes(call.operation),
         ),
-      };
-    return original(service, operation, input);
-  });
-  const coordinator = guardedCoordinator(f.options, async (operation) => {
-    if (operation === "transact-write-items") held = true;
-  });
-  await expect(coordinator.prepare()).rejects.toMatchObject({
-    category: "introduction_held",
-  });
-  expect(
-    f.calls.some((call) =>
-      ["transact-write-items", "update-service"].includes(call.operation),
-    ),
-  ).toBe(false);
-  expect(f.state.artifacts.get("old")!.state).toBe("idle");
-});
+    ).toBe(false);
+    expect(f.state.artifacts.get("old")).toEqual(expectedArtifact);
+  },
+);
 
 test("guarded artifact provider errors retain coordinator classification", async () => {
   const f = coordinatorFixture();

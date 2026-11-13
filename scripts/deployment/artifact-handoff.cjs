@@ -360,11 +360,34 @@ function createArtifactHandoff(options) {
     }
     return { ConditionCheck: check };
   }
-  async function promotionChecks(ctl, identity) {
+  function promotionStable(previous, current) {
+    if (same(previous, current)) return true;
+    if (previous.startup.kind !== "sealed" || current.startup.kind !== "sealed")
+      return heartbeatOnly(previous, current);
+    const normalized = (row) => ({
+      ...row,
+      startup: {
+        kind: "sealed",
+        proof: { ...row.startup.proof, provenAt: 0, expiresAt: 0 },
+      },
+    });
+    return (
+      current.startup.proof.provenAt >= previous.startup.proof.provenAt &&
+      current.startup.proof.expiresAt >= previous.startup.proof.expiresAt &&
+      heartbeatOnly(normalized(previous), normalized(current))
+    );
+  }
+  async function promotionChecks(ctl, identity, expected) {
     if (production)
       refuse("Private promotion recipe requires an artifact safety upgrade");
     const source = await committed(ctl);
     const target = await candidate(identity);
+    if (
+      expected &&
+      (!promotionStable(expected[0], source) ||
+        !promotionStable(expected[1], target))
+    )
+      refuse("Artifact promotion authority changed before guarded submission");
     const checks = [condition(source), condition(target, true)];
     for (const authority of target.startup.proof.snapshot.authorities)
       checks.push({
@@ -509,15 +532,23 @@ function createArtifactHandoff(options) {
     return { kind: "cancellation_requested" };
   }
   async function promote(ctl, promotion, retained, transactPromotion) {
-    const checks = await promotionChecks(ctl, promotion.candidate);
-    const transaction = options.builders.buildPromotionTransaction({
-      ...promotion,
-      tables,
-    });
-    transaction.TransactItems.push(...checks);
+    const expected = [
+      await committed(ctl),
+      await candidate(promotion.candidate),
+    ];
+    const build = async () => {
+      const checks = await promotionChecks(ctl, promotion.candidate, expected);
+      const transaction = options.builders.buildPromotionTransaction({
+        ...promotion,
+        now: now(),
+        tables,
+      });
+      transaction.TransactItems.push(...checks);
+      return transaction;
+    };
     return transactPromotion(
       ctl,
-      transaction,
+      build,
       promotion.candidate,
       promotion.proposedGeneration,
       retained,

@@ -170,9 +170,10 @@ function createSourceLossInspection({
       "image",
     ])
       assert.equal(d[key], config[key]);
-    assert.equal(d.phase, "warming");
+    assert.ok(["warming", "promoting"].includes(d.phase));
     assert.equal(d.routing?.state, "source");
-    assert.equal(d.candidate, undefined);
+    if (d.phase === "warming") assert.equal(d.candidate, undefined);
+    else assert.ok(d.candidate);
     assert.equal(ctl.servingGeneration, d.originalGeneration);
     assert.deepEqual(Object.values(ctl.servingMembers), [d.outgoing]);
     assert.deepEqual(d.originalMembers, [d.outgoing]);
@@ -210,6 +211,8 @@ function createSourceLossInspection({
     );
     assert.equal(matches.length, 1);
     const warm = matches[0];
+    if (d.phase === "promoting")
+      assert.ok(types.sameRuntimeIdentity(d.candidate, warm.identity));
     assert.ok(!warm.retirementRequest && !warm.retirementAcknowledgment);
     assert.equal(warm.authorizedGeneration, ctl.servingGeneration);
     assert.ok(proof.ready(warm, ctl, warm.identity, d.runtimeMode));
@@ -227,6 +230,8 @@ function createSourceLossInspection({
       warm.identity,
     );
     assert.ok(_expiresAt > now() + 120);
+    if (d.phase === "promoting")
+      assert.equal(d.routing.candidateRevision, terminal.candidateRevision);
     await routing.assertAction(d.routing, false);
     return { control: ctl, candidateIdentity: warm.identity, terminal };
   }
