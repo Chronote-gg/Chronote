@@ -9,9 +9,9 @@ jest.mock("../../src/services/transcriptionService", () => ({
   })),
 }));
 import {
-  getCheckpointPcmBudget,
-  reserveCheckpointPcm,
-  releaseCheckpointPcm,
+  capturePcmBudget,
+  createRecordingCheckpointCapture,
+  PCM_RESERVED_COPIES,
 } from "../../src/services/recordingCheckpointCapture";
 import { transcribeContentSnippet } from "../../src/services/transcriptionService";
 jest.mock("../../src/services/transcriptionFinalPassService", () => ({
@@ -37,7 +37,13 @@ import { recoveryFixture } from "./meetingRecoveryFixtures";
 import {
   readRecoveryContent,
   recoverTranscript,
+  recoveryPcmBudget,
 } from "../../src/services/meetingRecoveryContent";
+import { LIFECYCLE } from "../../src/services/lifecycleTiming";
+import { PROCESSING_RETRY_MAX_CONCURRENT } from "../../src/constants";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { liveTranscriptionProcessingSettings } from "../../src/services/transcriptionProcessingSettings";
 import { runContentTranscriptionFinalPass } from "../../src/services/transcriptionFinalPassService";
 import { renderMixedPcmTracks } from "../../src/services/mixedPcmService";
@@ -270,7 +276,9 @@ test("1001 jittered packets use one accounted ASR chunk with exact source bytes 
     .mockImplementationOnce(async (_input, snippet) => {
       const buffer = snippet.chunks[0];
       expect(buffer.length).toBe(21020 * 192);
-      expect(getCheckpointPcmBudget().reservedBytes).toBe(buffer.length * 4);
+      expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(
+        buffer.length * 4,
+      );
       for (let i = 0; i < 1001; i++) {
         expect(
           buffer
@@ -292,7 +300,7 @@ test("1001 jittered packets use one accounted ASR chunk with exact source bytes 
   expect(transcribeContentSnippet).toHaveBeenCalledTimes(1);
   expect(result.segments).toHaveLength(1);
   expect(audio.coverage).toEqual(coverage);
-  expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
+  expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
 });
 
 test("long intervals and long gaps split into at most 30s scratch with an exact final tail", async () => {
@@ -315,7 +323,7 @@ test("long intervals and long gaps split into at most 30s scratch with an exact 
     ),
   ).toEqual([0, 30000, 90000]);
   expect(calls.at(-1)![1].chunks[0]).toEqual(Buffer.alloc(3840, 2));
-  expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
+  expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
 });
 
 test("scratch ownership remains charged until an aborted actual call settles", async () => {
@@ -347,10 +355,10 @@ test("scratch ownership remains charged until an aborted actual call settles", a
   const rejection = expect(work).rejects.toThrow("stopped");
   await started;
   controller.abort(new Error("stopped"));
-  expect(getCheckpointPcmBudget().reservedBytes).toBe(3840 * 4);
+  expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(3840 * 4);
   settle();
   await rejection;
-  expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
+  expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
   expect(transcribeContentSnippet).toHaveBeenCalledTimes(1);
 });
 
@@ -366,25 +374,78 @@ test("provider failure releases scratch and cannot start the later group", async
   await expect(
     recoverTranscript(f.content, f.reader, f.signal, (run) => run()),
   ).rejects.toThrow("provider failed");
-  expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
+  expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
   expect(transcribeContentSnippet).toHaveBeenCalledTimes(1);
 });
 
-test("an exhausted shared PCM budget refuses allocation and transcription", async () => {
+/** Runs `work` while `budget` is fully reserved, then frees it again. */
+async function whileFull(
+  budget: typeof capturePcmBudget,
+  work: () => Promise<void>,
+) {
+  const bytes = budget.snapshot().limitBytes / PCM_RESERVED_COPIES;
+  expect(budget.reserve(bytes)).toBe(true);
+  try {
+    await work();
+  } finally {
+    budget.release(bytes);
+  }
+  expect(budget.snapshot().reservedBytes).toBe(0);
+}
+
+test("an exhausted recovery PCM budget refuses allocation and transcription", async () => {
   const f = await fixture();
   addIntervalAudio(f, [{ startOffsetMs: 0, durationMs: 20 }]);
-  const bytes = getCheckpointPcmBudget().limitBytes / 4;
-  expect(reserveCheckpointPcm(bytes)).toBe(true);
-  try {
+  await whileFull(recoveryPcmBudget, async () => {
     await expect(
       recoverTranscript(f.content, f.reader, f.signal, (run) => run()),
     ).rejects.toThrow("budget unavailable");
     expect(transcribeContentSnippet).not.toHaveBeenCalled();
-    expect(getCheckpointPcmBudget().reservedBytes).toBe(bytes * 4);
+  });
+});
+
+test("the recovery budget holds one largest group for every concurrent load", () => {
+  const largestGroupBytes = 30 * 192000;
+  const loads =
+    LIFECYCLE.maxConcurrentFinishes + PROCESSING_RETRY_MAX_CONCURRENT;
+  for (let load = 0; load < loads; load++)
+    expect(recoveryPcmBudget.reserve(largestGroupBytes)).toBe(true);
+  expect(recoveryPcmBudget.reserve(largestGroupBytes)).toBe(false);
+  recoveryPcmBudget.release(loads * largestGroupBytes);
+  expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
+});
+
+test("a full capture budget does not refuse a recovery group", async () => {
+  const f = await fixture();
+  addIntervalAudio(f, [{ startOffsetMs: 0, durationMs: 20 }]);
+  await whileFull(capturePcmBudget, async () => {
+    await recoverTranscript(f.content, f.reader, f.signal, (run) => run());
+    expect(transcribeContentSnippet).toHaveBeenCalledTimes(1);
+  });
+  expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
+});
+
+test("a full recovery budget does not refuse a live capture chunk", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "budget-capture-"));
+  const controller = new AbortController();
+  const stopCapture = jest.fn();
+  const capture = createRecordingCheckpointCapture({
+    directory,
+    startedAt: 0,
+    signal: controller.signal,
+    commit: async () => true,
+    stopCapture,
+  });
+  try {
+    await whileFull(recoveryPcmBudget, async () => {
+      expect(capture.push("user", Buffer.alloc(3840), 0)).toBe(true);
+      expect(stopCapture).not.toHaveBeenCalled();
+    });
   } finally {
-    releaseCheckpointPcm(bytes);
+    capture.retire();
+    rmSync(directory, { recursive: true, force: true });
   }
-  expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
+  expect(capturePcmBudget.snapshot().reservedBytes).toBe(0);
 });
 
 test.each(["alignment", "bytes", "overlap"])(
@@ -402,7 +463,7 @@ test.each(["alignment", "bytes", "overlap"])(
       recoverTranscript(f.content, f.reader, f.signal, (run) => run()),
     ).rejects.toThrow("PCM");
     expect(transcribeContentSnippet).not.toHaveBeenCalled();
-    expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
+    expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
   },
 );
 
@@ -486,7 +547,7 @@ test("represented middle input splits residual runs while preserving observed ga
       ([, item]) => item.timestamp - Date.parse(f.claim.history.timestamp),
     ),
   ).toEqual([0, 42]);
-  expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
+  expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
 });
 
 test.each(["complete", "tail", "empty", "supplemental"] as const)(
@@ -559,7 +620,7 @@ test.each([
       recoverTranscript(f.content, f.reader, f.signal, (run) => run()),
     ).rejects.toThrow();
     expect(transcribeContentSnippet).not.toHaveBeenCalled();
-    expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
+    expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
   },
 );
 

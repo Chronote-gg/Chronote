@@ -1,7 +1,9 @@
 import {
-  reserveCheckpointPcm,
-  releaseCheckpointPcm,
+  createPcmBudget,
+  PCM_RESERVED_COPIES,
 } from "./recordingCheckpointCapture";
+import { LIFECYCLE } from "./lifecycleTiming";
+import { PROCESSING_RETRY_MAX_CONCURRENT } from "../constants";
 import { processRecoveryTranscript } from "./recoveryTranscriptionProcessing";
 import {
   createRecoveryArtifactScope,
@@ -223,6 +225,21 @@ export function transcriptionInput(
   };
 }
 const RECOVERY_CHUNK_FRAMES = 48000 * 30;
+const PCM_FRAME_BYTES = 4;
+// Each load holds one group at a time; the finisher and the processing retry
+// worker each run at most their own cap of loads on one worker.
+const RECOVERY_CONCURRENT_LOADS =
+  LIFECYCLE.maxConcurrentFinishes + PROCESSING_RETRY_MAX_CONCURRENT;
+/**
+ * Loading saved audio has its own allowance, apart from live capture, so a
+ * load can never refuse a live recording and a busy capture never fails a load.
+ */
+export const recoveryPcmBudget = createPcmBudget(
+  RECOVERY_CONCURRENT_LOADS *
+    RECOVERY_CHUNK_FRAMES *
+    PCM_FRAME_BYTES *
+    PCM_RESERVED_COPIES,
+);
 type RecoveryAudioSlice = {
   artifact: Extract<CheckpointArtifact, { kind: "audio" }>;
   startFrame: number;
@@ -373,8 +390,8 @@ async function transcribeAudioGroup(
   timestamp: number,
 ) {
   input.signal.throwIfAborted();
-  const length = (group.endFrame - group.startFrame) * 4;
-  if (!reserveCheckpointPcm(length))
+  const length = (group.endFrame - group.startFrame) * PCM_FRAME_BYTES;
+  if (!recoveryPcmBudget.reserve(length))
     throw new Error("Recovery PCM budget unavailable");
   try {
     // Silence is temporary alignment scratch, never newly claimed capture coverage.
@@ -398,7 +415,7 @@ async function transcribeAudioGroup(
     throw new Error("Recovery transcription failed");
   } finally {
     // Awaited conversion/provider lifetime has settled, including cancellation/error.
-    releaseCheckpointPcm(length);
+    recoveryPcmBudget.release(length);
   }
 }
 async function recoverAudioIntervals(

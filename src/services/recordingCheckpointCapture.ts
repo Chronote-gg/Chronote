@@ -11,25 +11,42 @@ import { LIFECYCLE } from "./lifecycleTiming";
 
 const RATE = 48000 * 2 * 2;
 const UNSAVED_MS = 60_000;
-const LIMIT = 64 * 1024 * 1024;
-const PRESSURE = LIMIT / 2;
+const MIB = 1024 * 1024;
 // Owned PCM, concatenation, response collector and flattened response scratch.
-const COPIES = 4;
-let reservedBytes = 0;
-export const getCheckpointPcmBudget = () => ({
-  reservedBytes,
-  limitBytes: LIMIT,
-});
-export function reserveCheckpointPcm(bytes: number): boolean {
-  if (bytes < 0 || reservedBytes + bytes * COPIES > LIMIT) return false;
-  reservedBytes += bytes * COPIES;
-  return true;
+export const PCM_RESERVED_COPIES = 4;
+
+/** An in-process PCM allowance; every byte is counted PCM_RESERVED_COPIES times. */
+export function createPcmBudget(limitBytes: number) {
+  let reservedBytes = 0;
+  return {
+    reserve(bytes: number): boolean {
+      const charged = bytes * PCM_RESERVED_COPIES;
+      if (bytes < 0 || reservedBytes + charged > limitBytes) return false;
+      reservedBytes += charged;
+      return true;
+    },
+    release(bytes: number): void {
+      reservedBytes -= bytes * PCM_RESERVED_COPIES;
+    },
+    snapshot: () => ({ reservedBytes, limitBytes }),
+  };
 }
-export function releaseCheckpointPcm(bytes: number): void {
-  reservedBytes -= bytes * COPIES;
-}
+
+// Live capture and TTS playback share this. 256 MiB counted is 64 MiB of PCM,
+// about 349 speaker-seconds at 192,000 bytes a second, across the worker. The
+// task has 2048 MB and peaked near 790 MB; even if all four counted copies were
+// resident at once, 790 + 256 MiB stays near 1.06 GB, about half the task.
+export const CAPTURE_PCM_LIMIT_BYTES = 256 * MIB;
+const PRESSURE = CAPTURE_PCM_LIMIT_BYTES / 2;
+export const capturePcmBudget = createPcmBudget(CAPTURE_PCM_LIMIT_BYTES);
+export const getCheckpointPcmBudget = capturePcmBudget.snapshot;
+export const reserveCheckpointPcm = capturePcmBudget.reserve;
+export const releaseCheckpointPcm = capturePcmBudget.release;
 function crossedPressureThreshold(previousReservedBytes: number): boolean {
-  return previousReservedBytes < PRESSURE && reservedBytes >= PRESSURE;
+  return (
+    previousReservedBytes < PRESSURE &&
+    getCheckpointPcmBudget().reservedBytes >= PRESSURE
+  );
 }
 
 /** Which guard stopped the capture, so the interruption log can tell the stops apart. */
@@ -150,8 +167,8 @@ export function createRecordingCheckpointCapture(input: Input) {
     if (fence())
       input.stopCapture("storage_preservation", {
         cause,
-        pcmReservedBytes: reservedBytes,
-        pcmLimitBytes: LIMIT,
+        pcmReservedBytes: getCheckpointPcmBudget().reservedBytes,
+        pcmLimitBytes: CAPTURE_PCM_LIMIT_BYTES,
         ...(refusedChunkBytes === undefined ? {} : { refusedChunkBytes }),
       });
   }
@@ -261,7 +278,7 @@ export function createRecordingCheckpointCapture(input: Input) {
         .filter((item) => item.artifact.sourceId === sourceId)
         .reduce((total, item) => total + item.artifact.bytes.byteLength, 0);
     if (chunk.length === 0) return true;
-    const previousReservedBytes = reservedBytes;
+    const previousReservedBytes = getCheckpointPcmBudget().reservedBytes;
     const refused = refusalCause(sourceBytes, chunk, at);
     if (refused) {
       interrupt(refused, chunk.length);

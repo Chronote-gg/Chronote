@@ -425,6 +425,7 @@ The Sandbox deploy role has no Terraform scope for its `PutMetricData` and `Stop
 - An analytics event or a weekly limit notice can be lost in a crash within milliseconds of delivery settling.
 - Renewal recovery pauses for up to ten minutes after the worker holding its job lease dies.
 - A failed first deployment leaves ECS retrying the failed revision until the owner deploys a fix.
+- The capture memory budget was raised from 64 to 256 MiB, and loading saved audio for recovery got its own budget. With one shared budget, two busy meetings, or one recovery load and a busy meeting, could stop a live recording. Reversing it means changing one constant.
 
 ## Deferred, in the order they should come
 

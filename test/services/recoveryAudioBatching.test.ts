@@ -10,10 +10,10 @@ jest.mock("../../src/services/recoveryTranscriptionProcessing", () => ({
 }));
 import { transcribeContentSnippet } from "../../src/services/transcriptionService";
 import { processRecoveryTranscript } from "../../src/services/recoveryTranscriptionProcessing";
-import { getCheckpointPcmBudget } from "../../src/services/recordingCheckpointCapture";
 import {
   readRecoveryContent,
   recoverTranscript,
+  recoveryPcmBudget,
 } from "../../src/services/meetingRecoveryContent";
 import {
   pcmArtifact,
@@ -171,11 +171,11 @@ test.each(["missing", "cancelled"])(
         }
         return read(...args);
       });
-    const before = getCheckpointPcmBudget().reservedBytes;
+    const before = recoveryPcmBudget.snapshot().reservedBytes;
     await expect(
       recoverTranscript(content, f.reader, controller.signal, (run) => run()),
     ).rejects.toThrow();
-    expect(getCheckpointPcmBudget().reservedBytes).toBe(before);
+    expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(before);
     expect(transcribeContentSnippet).not.toHaveBeenCalled();
   },
 );

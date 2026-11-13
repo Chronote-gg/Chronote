@@ -3,8 +3,12 @@ import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  CAPTURE_PCM_LIMIT_BYTES,
+  PCM_RESERVED_COPIES,
   createRecordingCheckpointCapture,
   getCheckpointPcmBudget,
+  releaseCheckpointPcm,
+  reserveCheckpointPcm,
 } from "../../src/services/recordingCheckpointCapture";
 import type * as LifecycleTiming from "../../src/services/lifecycleTiming";
 import type { CheckpointArtifactInput } from "../../src/types/recordingCheckpoint";
@@ -37,6 +41,13 @@ function fixture(
   return { capture, controller, commit, stopped };
 }
 const pcm = () => Buffer.alloc(3840, 1);
+const PRESSURE_PCM_BYTES = CAPTURE_PCM_LIMIT_BYTES / 2 / PCM_RESERVED_COPIES;
+/** Other meetings hold the budget up to `headroom` PCM bytes below the pressure line. */
+function otherMeetingsHoldBelowPressure(headroom: number) {
+  const bytes = PRESSURE_PCM_BYTES - headroom;
+  expect(reserveCheckpointPcm(bytes)).toBe(true);
+  return () => releaseCheckpointPcm(bytes);
+}
 const contextSnapshot = (sequence: number): CheckpointArtifactInput => ({
   kind: "context",
   sourceId: "context",
@@ -224,6 +235,7 @@ test("sustained storage pressure keeps new audio frames batched", async () => {
       return true;
     }),
   );
+  const releaseOthers = otherMeetingsHoldBelowPressure(8 * 1024 * 1024);
   try {
     f.capture.push("first", Buffer.alloc(5760000), 0);
     f.capture.push("second", Buffer.alloc(2650000), 0);
@@ -235,6 +247,7 @@ test("sustained storage pressure keeps new audio frames batched", async () => {
     resume();
     await f.capture.finish();
     f.capture.releaseSettledBuffers();
+    releaseOthers();
   }
   expect(
     f.commit.mock.calls
@@ -348,30 +361,6 @@ test("uploadFailureDoesNotDeleteLocalTail", async () => {
   f.capture.releaseSettledBuffers();
 });
 
-test("process budget includes queued bytes and scratch across meetings", async () => {
-  const held = jest.fn(
-    (_a: readonly CheckpointArtifactInput[], signal: AbortSignal) =>
-      new Promise<boolean>((resolve) =>
-        signal.addEventListener("abort", () => resolve(false), { once: true }),
-      ),
-  );
-  const a = fixture(held);
-  const b = fixture(held);
-  const large = Buffer.alloc(5760000);
-  expect(a.capture.push("a", large, 0)).toBe(true);
-  expect(b.capture.push("b", large, 0)).toBe(true);
-  expect(a.capture.push("c", large, 0)).toBe(false);
-  expect(getCheckpointPcmBudget().reservedBytes).toBeLessThanOrEqual(
-    64 * 1024 * 1024,
-  );
-  a.controller.abort();
-  b.controller.abort();
-  await jest.advanceTimersByTimeAsync(0);
-  a.capture.releaseSettledBuffers();
-  b.capture.releaseSettledBuffers();
-  expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
-});
-
 const heldCommit = () =>
   jest.fn(
     (_artifacts: readonly CheckpointArtifactInput[], signal: AbortSignal) =>
@@ -385,6 +374,37 @@ async function releaseHeld(...captures: Array<ReturnType<typeof fixture>>) {
   await jest.advanceTimersByTimeAsync(0);
   for (const f of captures) f.capture.releaseSettledBuffers();
 }
+const PCM_BYTES_PER_SECOND = 192000;
+const BUSY_MEETING_SECONDS = 43;
+
+/** One speaker's unconfirmed audio, in the largest chunks a capture accepts. */
+function holdSpeech(f: ReturnType<typeof fixture>, speaker: string) {
+  const chunk = largestChunk();
+  const tail = Buffer.alloc(
+    BUSY_MEETING_SECONDS * PCM_BYTES_PER_SECOND - chunk.length,
+  );
+  return f.capture.push(speaker, chunk, 0) && f.capture.push(speaker, tail, 0);
+}
+
+test("eight busy meetings with unconfirmed audio all fit the capture budget", async () => {
+  // At the old 64 MiB limit the third of these meetings was refused.
+  const meetings = Array.from({ length: 8 }, () => fixture(heldCommit()));
+  meetings.forEach((f, index) =>
+    expect(holdSpeech(f, `speaker${index}`)).toBe(true),
+  );
+  expect(getCheckpointPcmBudget().reservedBytes).toBe(
+    8 * BUSY_MEETING_SECONDS * PCM_BYTES_PER_SECOND * PCM_RESERVED_COPIES,
+  );
+  for (const f of meetings) expect(f.stopped).not.toHaveBeenCalled();
+  const overflow = fixture(heldCommit());
+  expect(holdSpeech(overflow, "overflow")).toBe(false);
+  expect(overflow.stopped).toHaveBeenCalledWith(
+    "storage_preservation",
+    expect.objectContaining({ cause: "shared_budget" }),
+  );
+  await releaseHeld(...meetings, overflow);
+  expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
+});
 
 test.each([
   {
@@ -419,7 +439,10 @@ test.each([
     expect(f.stopped).toHaveBeenCalledTimes(1);
     expect(f.stopped).toHaveBeenCalledWith(
       "storage_preservation",
-      expect.objectContaining({ cause, pcmLimitBytes: 64 * 1024 * 1024 }),
+      expect.objectContaining({
+        cause,
+        pcmLimitBytes: CAPTURE_PCM_LIMIT_BYTES,
+      }),
     );
     await releaseHeld(f);
   },
@@ -427,20 +450,23 @@ test.each([
 
 test("a capture refused by the shared budget reports the budget and the refused chunk", async () => {
   const a = fixture(heldCommit());
-  const b = fixture(heldCommit());
   a.capture.push("a", largestChunk(), 0);
-  b.capture.push("b", largestChunk(), 0);
-  const reservedBytes = getCheckpointPcmBudget().reservedBytes;
+  const filler =
+    (CAPTURE_PCM_LIMIT_BYTES - getCheckpointPcmBudget().reservedBytes) /
+    PCM_RESERVED_COPIES;
+  expect(reserveCheckpointPcm(filler)).toBe(true);
 
   expect(a.capture.push("c", largestChunk(), 0)).toBe(false);
 
   expect(a.stopped).toHaveBeenCalledWith("storage_preservation", {
     cause: "shared_budget",
-    pcmReservedBytes: reservedBytes,
-    pcmLimitBytes: 64 * 1024 * 1024,
+    pcmReservedBytes: CAPTURE_PCM_LIMIT_BYTES,
+    pcmLimitBytes: CAPTURE_PCM_LIMIT_BYTES,
     refusedChunkBytes: 5760000,
   });
-  await releaseHeld(a, b);
+  releaseCheckpointPcm(filler);
+  await releaseHeld(a);
+  expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
 });
 
 test("completed text remains publishable after complete PCM capture", async () => {
@@ -521,6 +547,10 @@ test.each(["size", "age", "pressure"])(
     const f = fixture();
     const duration =
       rotation === "age" ? 20 : rotation === "pressure" ? 15000 : 30000;
+    // Only the second meeting's chunk crosses the pressure line.
+    const releaseOthers = otherMeetingsHoldBelowPressure(
+      rotation === "pressure" ? largestChunk().length : PRESSURE_PCM_BYTES,
+    );
     f.capture.push("user", Buffer.alloc(192 * duration), 0);
     if (rotation === "age") await jest.advanceTimersByTimeAsync(30000);
     if (rotation === "pressure")
@@ -542,6 +572,7 @@ test.each(["size", "age", "pressure"])(
     expect(intervals.reduce((sum, item) => sum + item.durationMs, 0)).toBe(
       duration + 60,
     );
+    releaseOthers();
     expect(intervals.at(-1)!.startOffsetMs).toBe(duration + 1000);
     const adjusted = artifacts.find(
       (a) => a.kind === "audio" && a.timing?.maxCursorAdjustmentMs === 21,
