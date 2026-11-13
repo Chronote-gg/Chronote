@@ -299,6 +299,22 @@ test.each([
   ).toBe("processing");
 });
 
+test("legacy_processing_reads_processing_from_its_lease", async () => {
+  jest.mocked(getMeetingHistoryService).mockResolvedValue(
+    history({
+      status: "processing",
+      ownerInstanceId: "worker",
+      executionVersion: 2,
+    }),
+  );
+  jest
+    .mocked(getActiveMeetingLease)
+    .mockResolvedValue({ ...liveLease(), status: "processing" });
+  expect(
+    (await getFirstMeetingState({ guildId, userId, historyId })).kind,
+  ).toBe("processing");
+});
+
 test.each([
   ["legacy processing", { status: "processing" as const }],
   [
