@@ -2,6 +2,7 @@ import {
   authRequestsAllowed,
   getAuthRequestGeneration,
   reportAuthRequired,
+  reportAuthorizedOperation,
 } from "./authRecovery";
 
 export class AuthNeededError extends Error {
@@ -147,5 +148,6 @@ export async function apiFetch<T = unknown>(
   const data = await parseJsonSafely(res);
   if (generation !== getAuthRequestGeneration())
     throw new ApiError(409, "Session changed");
+  reportAuthorizedOperation(generation, String(input));
   return data as T;
 }

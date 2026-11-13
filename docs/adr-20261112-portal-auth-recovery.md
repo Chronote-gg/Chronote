@@ -26,7 +26,8 @@ step when their previous grant could be reused.
   the retained subtree when the actor changes.
 - Keep permission failures, unavailable identity checks and empty results
   distinct. EventSource errors request an identity check without establishing
-  that the session expired.
+  that the session expired or consuming the session-rejection budget. External
+  provider credential errors retain their own reconnect guidance.
 
 ## Consequences
 

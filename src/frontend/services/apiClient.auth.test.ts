@@ -40,3 +40,20 @@ test("a real 401 reports session rejection and paused requests never reach fetch
     stop();
   }
 });
+
+test("a successful manual REST retry can confirm the current session", async () => {
+  jest.spyOn(global, "fetch").mockResolvedValue(new Response("{}"));
+  const listener = jest.fn();
+  const stop = subscribeAuthTransport(listener);
+  try {
+    await apiFetch("/api/live/fixture/status");
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "authorized-operation",
+        path: "/api/live/fixture/status",
+      }),
+    );
+  } finally {
+    stop();
+  }
+});

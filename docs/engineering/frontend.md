@@ -6,6 +6,10 @@
 
 `AuthContext` owns identity checks and a bounded recovery episode. Private layouts use `ProtectedSessionBoundary`; state-owning editors and uploads register `useAuthNavigationBlocker` so a paused session does not unmount local work before warning. The tRPC observer and live REST controls distinguish session rejection from permission and transport failures. Public routes do not initiate automatic sign-in.
 
+Stream transport failures check identity in the background without spending the session-rejection budget or remounting a valid page. Notion credential failures use `PRECONDITION_FAILED` and retain their reconnect guidance; `UNAUTHORIZED` identifies a rejected portal session.
+
+A successful authenticated operation on the rejected path ends its recovery episode. This includes a mutation the user deliberately retries; failed mutations are never replayed automatically.
+
 Ordinary Discord login uses `prompt=none`; interactive recovery and Switch account use `consent`. The shared atomic OAuth state store keeps login and install transactions in separate namespaces and preserves each attempt's return target across session regeneration. Session lifetime and scopes are unchanged. Callback outcomes and browser recovery metadata are never proof of authentication.
 
 ## Frontend tooling

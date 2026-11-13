@@ -8,6 +8,7 @@ async function sessionFixture(
   let authUnavailable = false;
   let forbidden = false;
   let detailDenied = false;
+  let identityReads = 0;
   const navigations: URL[] = [];
   await page.route("**/trpc/**", async (route) => {
     if (route.request().method() === "OPTIONS") {
@@ -29,7 +30,8 @@ async function sessionFixture(
       },
     });
     names.forEach((name, index) => {
-      if (name === "auth.me")
+      if (name === "auth.me") {
+        identityReads++;
         results[index] = authUnavailable
           ? reject("INTERNAL_SERVER_ERROR", 500)
           : {
@@ -39,7 +41,7 @@ async function sessionFixture(
                   : null,
               },
             };
-      else if (!signedIn) results[index] = reject("UNAUTHORIZED", 401);
+      } else if (!signedIn) results[index] = reject("UNAUTHORIZED", 401);
       else if (detailDenied && name === "meetings.detail")
         results[index] = reject("UNAUTHORIZED", 401);
       else if (options.pollDetail && name === "meetings.detail")
@@ -77,6 +79,9 @@ async function sessionFixture(
   });
   return {
     navigations,
+    get identityReads() {
+      return identityReads;
+    },
     expire: () => {
       signedIn = false;
     },
@@ -203,4 +208,32 @@ test("a notes import draft survives a terminal detail rejection after a valid id
   ).toBeVisible({ timeout: 20000 });
   expect(session.navigations).toHaveLength(0);
   await expect(notes).toHaveValue("Fixture unfinished import");
+});
+
+test("repeated stream failures retain a valid session and the live retry controls", async ({
+  page,
+}) => {
+  const session = await sessionFixture(page);
+  let streams = 0;
+  await page.route("**/api/live/**/stream", async (route) => {
+    streams++;
+    await route.fulfill({ status: 404, body: "Fixture stream unavailable" });
+  });
+  await page.goto("/live/fixture/fixture");
+  const error = page.getByText(
+    "Unable to connect. Check your access to the voice channel and try again.",
+    { exact: true },
+  );
+  await expect(error).toBeVisible();
+  await expect.poll(() => session.identityReads).toBe(2);
+  expect(streams).toBe(1);
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(error).toBeVisible();
+  await expect.poll(() => session.identityReads).toBe(3);
+  expect(streams).toBe(2);
+  expect(session.navigations).toHaveLength(0);
+  await expect(page.getByTestId("live-meeting-page")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Sign in again", exact: true }),
+  ).toHaveCount(0);
 });

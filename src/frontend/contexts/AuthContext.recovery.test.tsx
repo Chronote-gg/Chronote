@@ -26,6 +26,7 @@ let actor: { id: string; username: string; avatar: null } | null;
 let identityError = false;
 let identityReads = 0;
 let protectedDenied = false;
+let mutationRequests = 0;
 let latest: ReturnType<typeof useAuth>;
 function Probe() {
   latest = useAuth();
@@ -36,6 +37,7 @@ const terminal: TRPCLink<AppRouter> =
   ({ op }) =>
     observable((observer) => {
       if (op.path === "auth.me") identityReads++;
+      if (op.type === "mutation") mutationRequests++;
       queueMicrotask(() => {
         if (
           (op.path === "auth.me" && identityError) ||
@@ -84,6 +86,7 @@ beforeEach(() => {
   identityError = false;
   identityReads = 0;
   protectedDenied = false;
+  mutationRequests = 0;
   sessionStorage.clear();
   window.history.replaceState({}, "", "/");
   setAuthRequestsAllowed(true);
@@ -121,6 +124,34 @@ test("parallel protected rejections reconcile once and do not replay the failed 
   });
   await screen.findByText("unauthenticated");
   expect(identityReads).toBe(2);
+});
+
+test("a successful manual mutation retry ends its episode without replaying the failed write", async () => {
+  const client = setup();
+  await waitFor(() => expect(latest.protectedQueriesReady).toBe(true));
+  const save = () =>
+    client.personalUploads.completeUpload.mutate({
+      uploadId: "fixture",
+      key: "fixture-key",
+      uploadToken: "fixture-token",
+    });
+  protectedDenied = true;
+  await act(async () => {
+    await save().catch(() => undefined);
+  });
+  expect(identityReads).toBe(2);
+  expect(mutationRequests).toBe(1);
+  protectedDenied = false;
+  await act(async () => {
+    await save();
+  });
+  expect(mutationRequests).toBe(2);
+  actor = null;
+  await act(async () => {
+    await client.servers.listEligible.query().catch(() => undefined);
+  });
+  await waitFor(() => expect(identityReads).toBe(3));
+  expect(latest.state).toBe("unauthenticated");
 });
 
 test("an unavailable auth check is not a signed-out session even with retained user data", async () => {
@@ -184,6 +215,41 @@ function QueriedDraft() {
   trpc.servers.listEligible.useQuery(undefined, { retry: false });
   return <Draft />;
 }
+
+async function setupDraft() {
+  const client = setup(
+    <ProtectedSessionBoundary>
+      <Draft />
+    </ProtectedSessionBoundary>,
+  );
+  return { client, draft: await screen.findByLabelText("Draft") };
+}
+
+test("repeated stream outages preserve the page and leave the session-rejection budget unused", async () => {
+  const navigate = jest
+    .spyOn(recovery, "navigateToDiscord")
+    .mockImplementation(() => {});
+  try {
+    const { client, draft } = await setupDraft();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await act(async () =>
+        recovery.reportAuthCheck(recovery.getAuthRequestGeneration()),
+      );
+      await waitFor(() => expect(identityReads).toBe(attempt + 2));
+      expect(latest.state).toBe("authenticated");
+      expect(screen.getByLabelText("Draft")).toBe(draft);
+    }
+    expect(navigate).not.toHaveBeenCalled();
+    actor = null;
+    await act(async () => {
+      await client.servers.listEligible.query().catch(() => undefined);
+    });
+    await waitFor(() => expect(identityReads).toBe(4));
+    await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+  } finally {
+    navigate.mockRestore();
+  }
+});
 test("a resumed read that still rejects ends recovery after one identity check", async () => {
   setup(
     <ProtectedSessionBoundary>
@@ -208,12 +274,7 @@ test("expiry preserves a real local draft before offering to leave for sign-in",
     .spyOn(recovery, "navigateToDiscord")
     .mockImplementation(() => {});
   try {
-    const client = setup(
-      <ProtectedSessionBoundary>
-        <Draft />
-      </ProtectedSessionBoundary>,
-    );
-    const draft = await screen.findByLabelText("Draft");
+    const { client, draft } = await setupDraft();
     fireEvent.change(draft, { target: { value: "fixture unsaved edit" } });
     actor = null;
     await act(async () => {

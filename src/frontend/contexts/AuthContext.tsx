@@ -182,7 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refetch = authQuery.refetch;
   const refresh = useCallback(async () => {
-    await refetch();
+    await refetch({ cancelRefetch: false });
   }, [refetch]);
   const reconcile = useCallback((): Promise<void> => {
     if (check.current) return check.current;
@@ -220,7 +220,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () =>
       subscribeAuthTransport((event) => {
         if (event.generation !== requestGeneration.current) return;
-        if (event.kind === "authorized-read") {
+        if (event.kind === "check") {
+          void refresh();
+          return;
+        }
+        if (event.kind === "authorized-operation") {
           if (
             episodePath.current === null ||
             episodePath.current === event.path
@@ -234,7 +238,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           void reconcile();
         }
       }),
-    [reconcile],
+    [reconcile, refresh],
   );
 
   const ensureProtectedSession = useCallback(async () => {

@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { AppRouter } from "../../trpc/router";
 
 export type AuthTransportEvent = {
-  kind: "unauthorized" | "authorized-read" | "check";
+  kind: "unauthorized" | "authorized-operation" | "check";
   generation: number;
   path: string;
 };
@@ -33,8 +33,15 @@ export const reportAuthCheck = (requestGeneration: number) =>
     generation: requestGeneration,
     path: "live.stream",
   });
-export const reportAuthorizedRead = (requestGeneration: number, path: string) =>
-  publish({ kind: "authorized-read", generation: requestGeneration, path });
+export const reportAuthorizedOperation = (
+  requestGeneration: number,
+  path: string,
+) =>
+  publish({
+    kind: "authorized-operation",
+    generation: requestGeneration,
+    path,
+  });
 export const setAuthRequestsAllowed = (value: boolean) => {
   requestsAllowed = value;
 };
@@ -67,9 +74,9 @@ export const authRecoveryLink: TRPCLink<AppRouter> =
             observer.error(new TRPCClientError("Session changed"));
             return;
           }
-          if (protectedOperation && op.type === "query")
+          if (protectedOperation)
             publish({
-              kind: "authorized-read",
+              kind: "authorized-operation",
               generation: current,
               path: op.path,
             });

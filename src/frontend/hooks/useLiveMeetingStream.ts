@@ -3,7 +3,7 @@ import { buildApiUrl } from "../services/apiClient";
 import {
   getAuthRequestGeneration,
   reportAuthCheck,
-  reportAuthorizedRead,
+  reportAuthorizedOperation,
 } from "../services/authRecovery";
 import type {
   LiveMeetingAttendeesPayload,
@@ -83,7 +83,7 @@ export function useLiveMeetingStream({
 
     source.addEventListener("init", (event) => {
       const payload = JSON.parse(event.data) as LiveMeetingInitPayload;
-      reportAuthorizedRead(requestGeneration, "live.stream");
+      reportAuthorizedOperation(requestGeneration, "live.stream");
       setMeeting(payload.meeting);
       setEvents(payload.events);
       setAttendees(payload.meeting.attendees ?? []);
