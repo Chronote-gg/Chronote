@@ -145,40 +145,41 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
   }
 
   /**
-   * An older task is draining unless it is still the serving worker: its own
-   * record is ready and no ready worker runs a higher release. That is the
-   * worker's own eligibility rule, so after a rollout whose revision never
-   * became ready the only serving worker is neither waited for nor retired.
-   * Serving is decided at the first evaluation that can read the registry,
-   * and a task leaves it only on positive evidence: a ready worker on a
-   * higher release. One stale sample, of the newer worker or of the task's
-   * own record, must neither end a real drain nor retire the serving worker.
+   * An older task is draining only on positive evidence: a ready worker runs
+   * a higher release than the task's revision. Draining is sticky, so one
+   * stale sample of the newer worker cannot end a real drain. A task whose
+   * own record is ready with nothing newer ready is the serving worker (the
+   * worker's own eligibility rule) and is neither waited for nor retired; it
+   * too leaves that state only when superseded. Any other task is unknown:
+   * it is waited for but never retired, and is re-evaluated every poll, so a
+   * serving worker whose first sample was stale is recognised once fresh.
    */
   async function drainingTasks(wait) {
     const older = await olderTasks();
-    if (!older.length) return older;
-    const candidates = older.filter(
-      (task) => wait.first || wait.serving.has(task.taskArn),
-    );
-    const ready = candidates.length ? await readyForDrain(wait.retire) : [];
-    if (!ready) return older;
-    for (const task of candidates)
-      if (wait.first) markIfServing(task, ready, wait.serving);
-      else if (
-        ready.some((record) => record.release > wait.serving.get(task.taskArn))
-      )
-        wait.serving.delete(task.taskArn);
-    wait.first = false;
-    return older.filter((task) => !wait.serving.has(task.taskArn));
+    const open = older.filter((task) => !wait.draining.has(task.taskArn));
+    const ready = open.length ? await readyForDrain(wait.retire) : [];
+    if (!ready) return { waiting: older, retirable: [] };
+    for (const task of open) classify(task, ready, wait);
+    return {
+      waiting: older.filter((task) => !wait.serving.has(task.taskArn)),
+      retirable: older.filter((task) => wait.draining.has(task.taskArn)),
+    };
   }
 
-  function markIfServing(task, ready, serving) {
-    const own = servingRecord(task, ready);
-    if (!own) return;
-    log(
-      `Older task ${task.taskArn} is the serving worker on revision ${own.release} and no newer revision has a ready worker; not waited for`,
-    );
-    serving.set(task.taskArn, own.release);
+  function classify(task, ready, wait) {
+    const revision = Number(task.taskDefinitionArn.split(":").pop());
+    if (ready.some((record) => record.release > revision)) {
+      wait.serving.delete(task.taskArn);
+      wait.draining.add(task.taskArn);
+    } else if (
+      !wait.serving.has(task.taskArn) &&
+      ready.some((record) => record.taskArn === task.taskArn)
+    ) {
+      log(
+        `Older task ${task.taskArn} is the serving worker on revision ${revision} and no newer revision has a ready worker; not waited for`,
+      );
+      wait.serving.add(task.taskArn);
+    }
   }
 
   /**
@@ -196,14 +197,6 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
       );
       return null;
     }
-  }
-
-  /** The task's own ready record when no ready worker runs a higher release. */
-  function servingRecord(task, ready) {
-    const own = ready.find((record) => record.taskArn === task.taskArn);
-    if (!own || ready.some((record) => record.release > own.release))
-      return null;
-    return own;
   }
 
   async function registry() {
@@ -305,25 +298,29 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     const namespace = `${required("SECRETS_PREFIX")}/Deploy`;
     const started = now();
     const retired = new Set();
-    const wait = { first: true, retire, serving: new Map() };
+    const wait = { retire, serving: new Set(), draining: new Set() };
     for (;;) {
-      const draining = await drainingTasks(wait);
+      const { waiting, retirable } = await drainingTasks(wait);
       log(
-        `${draining.length} older ${draining.length === 1 ? "task" : "tasks"} draining`,
+        `${waiting.length} older ${waiting.length === 1 ? "task" : "tasks"} draining`,
       );
-      if (!draining.length) break;
+      if (!waiting.length) break;
       if (now() - started >= DRAIN_TIMEOUT_MS) {
         await aws("cloudwatch", "put-metric-data", {
           Namespace: namespace,
           MetricData: [{ MetricName: DRAIN_METRIC, Value: 1, Unit: "Count" }],
         });
-        throw new Error(
-          `Older tasks still running after ${DRAIN_TIMEOUT_MS / MINUTE_MS} minutes`,
-        );
+        throw new Error(drainTimeoutMessage(waiting.length - retirable.length));
       }
-      if (retire) await retireTasks(draining, retired);
+      if (retire) await retireTasks(retirable, retired);
       await sleep(DRAIN_POLL_MS);
     }
+  }
+
+  function drainTimeoutMessage(unknown) {
+    const message = `Older tasks still running after ${DRAIN_TIMEOUT_MS / MINUTE_MS} minutes`;
+    if (!unknown) return message;
+    return `${message}; ${unknown} of them never showed a fresh ready worker record and no newer revision became ready, so none was stopped. Check whether a worker on the new revision ever reported ready, and whether each older task's worker is writing its registry heartbeat`;
   }
 
   /** Stops each draining task once; `retired` remembers stops across polls. */

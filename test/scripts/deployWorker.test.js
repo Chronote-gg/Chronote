@@ -59,6 +59,11 @@ describe("preflight", () => {
 });
 
 describe("wait-drain", () => {
+  // A ready worker on revision 7 is the evidence that revision 6 tasks drain.
+  const supersededByRevision7 = (clock) => [
+    CUTOVER,
+    worker("i-new", { heartbeatAt: Math.floor(clock / 1000) }),
+  ];
   test("drain wait returns when no older task runs", async () => {
     const h = harness({
       tasks: [
@@ -89,6 +94,7 @@ describe("wait-drain", () => {
   });
   test("drain wait times out at 160 minutes and publishes the metric", async () => {
     const h = harness({
+      registry: supersededByRevision7,
       tasks: [
         {
           taskArn: "task/old",
@@ -183,6 +189,7 @@ describe("wait-drain", () => {
   });
   test("retire stops each draining task once", async () => {
     const h = harness({
+      registry: supersededByRevision7,
       tasks: [
         {
           taskArn: "task/a",

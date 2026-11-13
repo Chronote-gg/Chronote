@@ -77,6 +77,60 @@ describe("wait-drain: an older task that is still the serving worker", () => {
     await expect(h.deploy.waitDrain()).resolves.toBeUndefined();
     expect(h.elapsed()).toBeGreaterThanOrEqual(10 * MINUTE_MS);
   });
+  /** Read 1 is the marker and read 2 the first evaluation, which sees `first`. */
+  const firstReadThen = (first, later) => {
+    let calls = 0;
+    return (clock) => {
+      calls += 1;
+      const now = freshSeconds(clock);
+      return [CUTOVER, ...(calls <= 2 ? first(now) : later(now))];
+    };
+  };
+  const unknownFirst = [
+    ["stale", (now) => [oldRecord(now, { heartbeatAt: now - 31 })]],
+    ["missing", () => []],
+    ["not ready", (now) => [oldRecord(now, { ready: false })]],
+  ];
+  test.each(unknownFirst)(
+    "is skipped once a %s first record comes back fresh and ready",
+    async (_, first) => {
+      for (const retire of [false, true]) {
+        const h = servingHarness(() => [], {
+          registry: firstReadThen(first, (now) => [oldRecord(now)]),
+        });
+        await expect(h.deploy.waitDrain({ retire })).resolves.toBeUndefined();
+        expect(h.elapsed()).toBe(30_000);
+        expect(h.named("ecs.stop-task")).toHaveLength(0);
+        expect(
+          h.logs.filter((line) => /task\/old is the serving worker/.test(line)),
+        ).toHaveLength(1);
+      }
+    },
+  );
+  test("unknown for the whole wait with retire stops nothing and fails with what to check", async () => {
+    const h = servingHarness((now) => [
+      oldRecord(now, { heartbeatAt: now - 31 }),
+    ]);
+    await expect(h.deploy.waitDrain({ retire: true })).rejects.toThrow(
+      /160 minutes.*1 of them never showed a fresh ready worker record and no newer revision became ready, so none was stopped.*heartbeat/,
+    );
+    expect(h.named("ecs.stop-task")).toHaveLength(0);
+    expect(h.named("cloudwatch.put-metric-data")).toHaveLength(1);
+  });
+  test("unknown at first, then superseded by a newer ready worker, drains normally", async () => {
+    const readyAt = START_MS + 2 * MINUTE_MS;
+    const h = servingHarness((now) => [
+      oldRecord(now, { heartbeatAt: now - 31 }),
+      ...(now * 1000 >= readyAt
+        ? [worker("i-new", { release: 7, heartbeatAt: now })]
+        : []),
+    ]);
+    await expect(h.deploy.waitDrain({ retire: true })).resolves.toBeUndefined();
+    expect(h.elapsed()).toBeGreaterThanOrEqual(2 * MINUTE_MS);
+    expect(h.named("ecs.stop-task").map((c) => c.params.task)).toEqual([
+      "task/old",
+    ]);
+  });
   test("the rollout proceeds after a drain wait that skipped it", async () => {
     const h = servingHarness((now) => [oldRecord(now)]);
     await h.deploy.waitDrain({ retire: true });
