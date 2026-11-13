@@ -31,6 +31,54 @@ test("inspection freezes exact source/candidate/topology and is read only", asyn
   expect(writes(f)).toEqual([]);
 });
 
+test.each([
+  ["expired", 0],
+  ["fresh-looking", 2000],
+])(
+  "selects the native running task over %s historical replacement rows",
+  async (_kind, expiresAt) => {
+    const f = await sourceLossFixture();
+    const historical = structuredClone(f.state.rows.new);
+    const identity = {
+      ...historical.identity,
+      instanceId: "historical",
+      taskArn: historical.identity.taskArn.replace(/new$/, "historical"),
+    };
+    Object.assign(historical, { sk: "RUNTIME#historical", identity });
+    historical.readiness.identity = identity;
+    historical.readiness.expiresAt = expiresAt;
+    historical.protection.identity = identity;
+    historical.workCounts.pending_admission = 1;
+    f.state.rows.historical = historical;
+    const original = structuredClone(historical);
+    const inspected = await reviewed(f);
+    expect(inspected.binding.candidateIdentity).toEqual(f.candidateIdentity);
+    expect(
+      await recoverSandbox({ ...f.options, mode: "recover" }),
+    ).toMatchObject({
+      kind: "availability_restored",
+      settlement: "lost_owner_settlement_pending",
+    });
+    expect(f.state.rows.historical).toEqual(original);
+  },
+);
+
+test("refuses multiple runtime identities for the actual running task", async () => {
+  const f = await sourceLossFixture();
+  const duplicate = structuredClone(f.state.rows.new);
+  const identity = { ...duplicate.identity, instanceId: "duplicate" };
+  Object.assign(duplicate, { sk: "RUNTIME#duplicate", identity });
+  duplicate.readiness.identity = identity;
+  duplicate.protection.identity = identity;
+  f.state.rows.duplicate = duplicate;
+  await expect(reviewed(f)).rejects.toMatchObject({
+    code: "ERR_ASSERTION",
+    actual: 2,
+    expected: 1,
+  });
+  expect(writes(f)).toEqual([]);
+});
+
 test("restores unchanged test billing flags without settling lost source work", async () => {
   const f = await sourceLossFixture();
   const flags = [

@@ -198,9 +198,12 @@ function createSourceLossInspection({
       assert.ok(rows.length <= 100);
       ExclusiveStartKey = page.LastEvaluatedKey;
     } while (ExclusiveStartKey);
+    const taskArns = await listServiceTaskArns(aws, config);
+    assert.equal(taskArns.length, 1);
     const matches = rows.filter(
       (row) =>
         row.identity.kind === "ecs" &&
+        row.identity.taskArn === taskArns[0] &&
         row.identity.candidateId === d.candidateId &&
         row.identity.imageDigest === d.image.split("@")[1] &&
         row.role === "candidate",
