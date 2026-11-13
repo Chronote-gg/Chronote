@@ -18,6 +18,7 @@ import {
   User,
   VoiceBasedChannel,
   PermissionFlagsBits,
+  Routes,
 } from "discord.js";
 import {
   NoSubscriberBehavior,
@@ -238,9 +239,11 @@ export async function restoreVoiceSessionNickname(
   if (!meeting.botNicknameChanged) return true;
   signal?.throwIfAborted();
   try {
-    const botMember = meeting.guild.members.me;
-    if (!botMember) return false;
-    await botMember.setNickname(meeting.botNicknameBeforeSession ?? null);
+    // The REST call, not setNickname, so a give-up drops a request still queued in the rate-limit bucket.
+    await meeting.guild.client.rest.patch(
+      Routes.guildMember(meeting.guild.id, "@me"),
+      { body: { nick: meeting.botNicknameBeforeSession ?? null }, signal },
+    );
     meeting.botNicknameChanged = false;
     return true;
   } catch (error) {

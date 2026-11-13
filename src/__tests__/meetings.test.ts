@@ -164,6 +164,7 @@ import {
   Collection,
   PermissionsBitField,
   PermissionFlagsBits,
+  Routes,
 } from "discord.js";
 import { resolveMeetingRuntimeConfig } from "../services/meetingConfigService";
 import { startRecordingContentCheckpoint } from "../services/recordingContentService";
@@ -222,7 +223,7 @@ const buildMeetingOptions = (botMember: unknown = null) => {
     roles: new Collection(),
     scheduledEvents: new Collection(),
     channels: new Collection(),
-    client: {},
+    client: { rest: { patch: jest.fn(async () => ({})) } },
     voiceAdapterCreator: {},
     members: { me: botMember },
   } as unknown as Guild;
@@ -566,9 +567,35 @@ describe("initializeMeeting", () => {
     );
     expect(meeting.botNicknameBeforeSession).toBeNull();
 
-    await restoreVoiceSessionNickname(meeting);
-    expect(botMember.setNickname).toHaveBeenLastCalledWith(null);
+    const giveUp = new AbortController();
+    await expect(
+      restoreVoiceSessionNickname(meeting, giveUp.signal),
+    ).resolves.toBe(true);
+    expect(guild.client.rest.patch).toHaveBeenCalledWith(
+      Routes.guildMember("guild-1", "@me"),
+      { body: { nick: null }, signal: giveUp.signal },
+    );
 
+    deleteMeeting(meeting);
+  });
+
+  it("a restore the caller gave up on before it ran sends no request", async () => {
+    const botMember = buildBotMember("Meeting Notes Bot");
+    const options = buildMeetingOptions(botMember);
+    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
+    jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
+    const meeting = await initializeMeeting({
+      ...options,
+      transcribeMeeting: false,
+      generateNotes: false,
+    });
+    const giveUp = new AbortController();
+    giveUp.abort();
+
+    await expect(
+      restoreVoiceSessionNickname(meeting, giveUp.signal),
+    ).rejects.toThrow();
+    expect(options.guild.client.rest.patch).not.toHaveBeenCalled();
     deleteMeeting(meeting);
   });
 

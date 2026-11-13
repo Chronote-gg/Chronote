@@ -242,13 +242,20 @@ test("close refuses a meeting the new lease service does not hold and changes no
   expect(t.deps.liveMeetings()).toEqual([legacy, ending]);
 });
 
-test("a nickname restore that never resolves does not delay the lease release beyond its bound", async () => {
+test("a nickname restore that never resolves is aborted at its bound, before the lease release", async () => {
   const meeting = meetingFor();
   const t = setup([meeting]);
-  t.deps.restoreNickname.mockImplementationOnce(() => never());
+  let restoreSignal: AbortSignal | undefined;
+  t.deps.restoreNickname.mockImplementationOnce((_meeting, signal) => {
+    restoreSignal = signal;
+    return never();
+  });
   t.deps.sleep.mockImplementation((ms: number) =>
     ms === LIFECYCLE.closeNicknameMs ? Promise.resolve() : never(),
   );
+  t.deps.lease.releaseSessionLease.mockImplementationOnce(async () => {
+    expect(restoreSignal?.aborted).toBe(true);
+  });
 
   await t.close.closeMeeting(meeting, button);
 
@@ -258,6 +265,18 @@ test("a nickname restore that never resolves does not delay the lease release be
   );
   expect(t.deps.flushCapture).toHaveBeenCalledTimes(1);
   expect(t.deps.finish.recordCaptureEnd).toHaveBeenCalledTimes(1);
+  expect(t.deps.lease.releaseSessionLease).toHaveBeenCalledTimes(1);
+  expect(restoreSignal?.aborted).toBe(true);
+});
+
+test("a nickname restore that settles in time is not aborted", async () => {
+  const meeting = meetingFor();
+  const t = setup([meeting]);
+
+  await t.close.closeMeeting(meeting, button);
+
+  const [, signal] = t.deps.restoreNickname.mock.calls[0];
+  expect(signal?.aborted).toBe(false);
   expect(t.deps.lease.releaseSessionLease).toHaveBeenCalledTimes(1);
 });
 

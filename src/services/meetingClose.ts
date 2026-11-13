@@ -116,7 +116,7 @@ export type MeetingCloseDeps = {
   stopCapture(meeting: MeetingData, disposition: CaptureDisposition): void;
   leaveVoice(connection: VoiceConnection): void;
   dropVoiceLocally(connection: VoiceConnection): void;
-  restoreNickname(meeting: MeetingData): Promise<unknown>;
+  restoreNickname(meeting: MeetingData, signal: AbortSignal): Promise<unknown>;
   /** Publishes remaining pieces and the final context; false when not all of it landed. */
   flushCapture(meeting: MeetingData): Promise<boolean>;
   /** What the local finish reads from this process: the chat log file and the last snippets. */
@@ -228,14 +228,17 @@ export function createMeetingClose(deps: MeetingCloseDeps) {
       deps.leaveVoice(meeting.connection),
     );
     await attempt(meeting, "restore-nickname", async () => {
+      // Aborted on give-up so a restore still queued cannot land after the lease is released.
+      const giveUp = new AbortController();
       const restored = await within(
-        deps.restoreNickname(meeting),
+        deps.restoreNickname(meeting, giveUp.signal),
         LIFECYCLE.closeNicknameMs,
       );
-      if (restored === TIMED_OUT)
-        console.warn("Meeting close nickname restore timed out", {
-          meetingId: meeting.meetingId,
-        });
+      if (restored !== TIMED_OUT) return;
+      giveUp.abort();
+      console.warn("Meeting close nickname restore timed out", {
+        meetingId: meeting.meetingId,
+      });
     });
   }
 
@@ -621,7 +624,7 @@ function close() {
     stopCapture,
     leaveVoice,
     dropVoiceLocally,
-    restoreNickname: (meeting) => restoreVoiceSessionNickname(meeting),
+    restoreNickname: restoreVoiceSessionNickname,
     flushCapture,
     prepareLocalFinish,
     retireCapture,

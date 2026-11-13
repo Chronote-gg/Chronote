@@ -246,7 +246,10 @@ test("closeAllCaptures never rejects and returns within the shutdown budget", as
   expect(t.deps.sleep).toHaveBeenCalledWith(budget, expect.any(AbortSignal));
   // The same promise closeAllCaptures started; the stuck capture never settles.
   await t.close.closeMeeting(failing, button);
-  expect(t.deps.restoreNickname).toHaveBeenCalledWith(failing);
+  expect(t.deps.restoreNickname).toHaveBeenCalledWith(
+    failing,
+    expect.any(AbortSignal),
+  );
   expect(t.deps.flushCapture).toHaveBeenCalledWith(failing);
   expect(t.recorded().map((input) => input.reservation)).toEqual([
     failing.reservation,
