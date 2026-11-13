@@ -137,6 +137,20 @@ function setup(initial: MeetingHistory) {
   };
 }
 
+/** A live lease naming the meeting refuses it before anything is loaded or written. */
+async function expectLeaseRefused(row: MeetingHistory) {
+  const world = setup(row);
+  jest.mocked(world.deps.readLease).mockResolvedValue({
+    meetingId: row.meetingId,
+    leaseExpiresAt: world.nowSeconds() + 30,
+  } as ActiveMeetingLease);
+  await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
+    "lease_held",
+  );
+  expect(world.deps.loadRecovery).not.toHaveBeenCalled();
+  expect(world.current()).toEqual(row);
+}
+
 beforeEach(() => {
   jest.spyOn(console, "warn").mockImplementation(() => undefined);
   jest.spyOn(console, "error").mockImplementation(() => undefined);
@@ -345,17 +359,7 @@ describe("finishStranded", () => {
   });
 
   test("a meeting whose live lease names it is refused", async () => {
-    const row = strandedRow();
-    const world = setup(row);
-    jest.mocked(world.deps.readLease).mockResolvedValue({
-      meetingId: row.meetingId,
-      leaseExpiresAt: world.nowSeconds() + 30,
-    } as ActiveMeetingLease);
-    await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
-      "lease_held",
-    );
-    expect(world.deps.loadRecovery).not.toHaveBeenCalled();
-    expect(world.current()).toEqual(row);
+    await expectLeaseRefused(strandedRow());
   });
 
   test("a row that carries the lifecycle marker is left to the finisher loop", async () => {
@@ -488,19 +492,9 @@ describe("finishStranded on a terminal row whose old recovery never finished", (
   });
 
   test("a live lease still refuses it", async () => {
-    const row = strandedRow({
-      status: "interrupted",
-      recovery: unfinishedRecovery,
-    });
-    const world = setup(row);
-    jest.mocked(world.deps.readLease).mockResolvedValue({
-      meetingId: row.meetingId,
-      leaseExpiresAt: world.nowSeconds() + 30,
-    } as ActiveMeetingLease);
-    await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
-      "lease_held",
+    await expectLeaseRefused(
+      strandedRow({ status: "interrupted", recovery: unfinishedRecovery }),
     );
-    expect(world.current()).toEqual(row);
   });
 
   test("a terminal row whose recovery is done or absent is not stranded", async () => {
