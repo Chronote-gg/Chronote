@@ -863,8 +863,19 @@ describe("rollback", () => {
     const [update] = h.named("ecs.update-service");
     expect(update.params.taskDefinition).toMatch(/:9$/);
   });
+  test("rollback finds nothing to roll back to when image and configuration are unchanged", async () => {
+    const h = rollbackHarness({ failed: taskDefinition(8, PREVIOUS_IMAGE) });
+    await expect(rollBack(h)).rejects.toThrow(
+      /revision 8 runs the same image and configuration as revision 7, so there is nothing to roll back to.*forward repair/,
+    );
+    await expect(rollBack(h)).rejects.not.toThrow(/task definition/);
+    expectNothingChanged(h);
+  });
   test.each([
-    ["the image did not change", () => taskDefinition(8, PREVIOUS_IMAGE)],
+    [
+      "only the environment changed",
+      () => withEnvironment(taskDefinition(8, PREVIOUS_IMAGE), "KEEP", "2"),
+    ],
     [
       "the environment changed with the image",
       () => withEnvironment(taskDefinition(8, NEW_IMAGE), "KEEP", "2"),

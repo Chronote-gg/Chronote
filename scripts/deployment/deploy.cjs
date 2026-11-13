@@ -478,6 +478,10 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
       sortedByName(registrationInput(previous, "")),
     );
     if (!sameImage && sameDefinition) return;
+    if (sameImage && sameDefinition)
+      throw new Error(
+        `Cutover marker present: revision ${failed.revision} runs the same image and configuration as revision ${previous.revision}, so there is nothing to roll back to. Nothing was rolled back. The failure needs a forward repair: fix the cause and deploy again; failing the run`,
+      );
     const difference = sameImage
       ? "runs the same image as"
       : "differs in more than its image from";
