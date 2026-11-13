@@ -221,8 +221,23 @@ const notReprocessed = (row: MeetingHistory) =>
 const notesMessageRecorded = (row: MeetingHistory) =>
   Boolean(row.summaryMessageId || row.notesMessageIds?.length);
 
-const POST_RECORDED_WARNING =
-  "This meeting records a notes message id, so the old runtime probably posted its notes already. Proceeding because --post was passed: the summary is edited in place, and a notes chunk is skipped only when delivery finds it in its readback of recent channel history; otherwise the full set of notes is posted again.";
+const EDITED_OR_POSTED =
+  "edited in place, or posted as a new message if the original is gone";
+
+/**
+ * What `--post` will do to a row whose old runtime recorded a message id, said
+ * before it acts. A `failed` row is never delivered, so it gets no warning.
+ */
+function postRecordedWarning(row: MeetingHistory): string | undefined {
+  if (!notReprocessed(row) || !notesMessageRecorded(row)) return undefined;
+  const proceeding = "Proceeding because --post was passed:";
+  if (row.status === MEETING_STATUS.CANCELLED)
+    return `This cancelled meeting records a message id. ${proceeding} only the cancelled notice is sent, ${EDITED_OR_POSTED}.`;
+  if (row.status === MEETING_STATUS.FAILED) return undefined;
+  if (!row.notes)
+    return `This meeting records a message id but has no notes. ${proceeding} only the summary card is sent, ${EDITED_OR_POSTED}.`;
+  return `This meeting records a notes message id, so the old runtime probably posted its notes already. ${proceeding} the summary card is ${EDITED_OR_POSTED}, and a notes chunk is skipped only when delivery finds it in its readback of recent channel history; otherwise the full set of notes is posted again.`;
+}
 
 /** A capture whose worker died is adopted as interrupted; anything else is claimed. */
 async function take(
@@ -311,8 +326,8 @@ export async function finishStranded(
   if (!stranded(before)) return "not_stranded";
   if (await leaseHeld(before, deps.readLease, deps.nowMs(), signal))
     return "lease_held";
-  if (deliver && notReprocessed(before) && notesMessageRecorded(before))
-    console.error(POST_RECORDED_WARNING);
+  const warning = deliver ? postRecordedWarning(before) : undefined;
+  if (warning) console.error(warning);
   return finishAttempts(key, before, deliver, deps, signal);
 }
 
@@ -394,6 +409,7 @@ async function settleUnfinished(
 /** What happened to the row, for results that leave the meeting unfinished. */
 export function resultMessage(
   result: FinishStrandedResult,
+  deliver: boolean,
 ): string | undefined {
   switch (result) {
     case "restored":
@@ -401,7 +417,9 @@ export function resultMessage(
     case "interrupted":
       return "Interrupted; the meeting's row was put back as it was.";
     case "delivery_pending":
-      return "The notes are saved and the meeting has its final status, but delivery did not complete; its claim was released and its delivery state kept. Rerunning with --post will post the notes.";
+      return deliver
+        ? "The notes are saved and the meeting has its final status, but delivery did not complete; its claim was released and its delivery state kept. Rerun with --post to deliver the notes."
+        : "The notes are saved and the meeting has its final status, but it was not settled; its claim was released and its delivery state kept. Rerun with --no-post to settle it.";
     case "restore_refused":
       return "The row could not be put back because another claim holds it or it changed; it was left as it is.";
     default:
@@ -533,7 +551,7 @@ async function main(
     signal,
   );
   console.log(JSON.stringify({ result, deliver: command.deliver }));
-  const message = resultMessage(result);
+  const message = resultMessage(result, command.deliver);
   if (message) console.error(message);
   return result === "finished";
 }

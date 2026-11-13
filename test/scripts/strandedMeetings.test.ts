@@ -479,6 +479,39 @@ describe("finishStranded on a terminal row whose old recovery never finished", (
     expect(world.current().recovery?.disposition).toBe("done");
   });
 
+  test.each([
+    ["a cancelled row with notes", { status: "cancelled" }, "cancelled notice"],
+    [
+      "a complete row without notes",
+      { status: "complete", notes: undefined },
+      "summary card",
+    ],
+  ] as const)(
+    "--post on %s that records a message id says what will be edited instead of warning about notes chunks",
+    async (_name, overrides, expected) => {
+      const world = setup(
+        notesSavedRow({ ...overrides, summaryMessageId: "901" }),
+      );
+      await finishStranded(KEY, true, world.deps);
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining(expected),
+      );
+      expect(console.error).not.toHaveBeenCalledWith(
+        expect.stringContaining("chunk"),
+      );
+    },
+  );
+
+  test("--post on a failed row with notes prints no warning, since nothing is posted", async () => {
+    const world = setup(
+      notesSavedRow({ status: "failed", notesMessageIds: ["900"] }),
+    );
+    await finishStranded(KEY, true, world.deps);
+    expect(console.error).not.toHaveBeenCalledWith(
+      expect.stringContaining("message id"),
+    );
+  });
+
   test("--post on a failed row with saved notes posts nothing and keeps it unsettled", async () => {
     const world = setup(notesSavedRow({ status: "failed" }));
     await expect(finishStranded(KEY, true, world.deps)).resolves.toBe("failed");
@@ -650,11 +683,14 @@ test("list reports each stranded meeting with what its checkpoint manifest holds
 });
 
 test("the closing message says what happened to the row", () => {
-  expect(resultMessage("finished")).toBeUndefined();
-  expect(resultMessage("interrupted")).toContain("put back as it was");
-  expect(resultMessage("restored")).toContain("put back as it was");
-  const pending = resultMessage("delivery_pending");
+  expect(resultMessage("finished", true)).toBeUndefined();
+  expect(resultMessage("interrupted", true)).toContain("put back as it was");
+  expect(resultMessage("restored", true)).toContain("put back as it was");
+  const pending = resultMessage("delivery_pending", true);
   expect(pending).not.toContain("put back");
   expect(pending).toContain("notes are saved");
-  expect(pending).toContain("--post will post the notes");
+  expect(pending).toContain("Rerun with --post to deliver");
+  const settle = resultMessage("delivery_pending", false);
+  expect(settle).toContain("Rerun with --no-post to settle");
+  expect(settle).not.toContain("--post to");
 });
