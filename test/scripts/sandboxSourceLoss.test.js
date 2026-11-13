@@ -59,6 +59,19 @@ test("restores unchanged test billing flags without settling lost source work", 
   expect(f.loss.receipt.settlement).toBe("lost_owner_settlement_pending");
 });
 
+test("recovery refuses billing drift after review even when both definitions agree", async () => {
+  const f = await sourceLossFixture();
+  const approved = await reviewed(f);
+  for (const side of ["sourceBillingFlags", "candidateBillingFlags"])
+    f.loss[side].push({ name: "STRIPE_RENEWAL_GRACE_ENABLED", value: "true" });
+  const changed = await recoverSandbox({ ...f.options, mode: "inspect" });
+  expect(changed.bindingSha256).not.toBe(approved.bindingSha256);
+  await expect(
+    recoverSandbox({ ...f.options, mode: "recover" }),
+  ).rejects.toThrow();
+  expect(writes(f)).toEqual([]);
+});
+
 test.each([
   "STRIPE_RENEWAL_GRACE_ENABLED",
   "STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED",
