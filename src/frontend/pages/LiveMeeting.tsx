@@ -1,11 +1,10 @@
+import { ProtectedSessionBoundary } from "../components/ProtectedSessionBoundary";
 import { useEffect, useRef, useState } from "react";
 import {
   Badge,
   Button,
-  Center,
   Divider,
   Group,
-  Loader,
   Stack,
   Switch,
   Text,
@@ -19,20 +18,11 @@ import Surface from "../components/Surface";
 import MeetingTimeline, {
   MEETING_TIMELINE_FILTERS,
 } from "../components/MeetingTimeline";
-import { buildApiUrl } from "../services/apiClient";
 import { useAuth } from "../contexts/AuthContext";
 import { useLiveMeetingStream } from "../hooks/useLiveMeetingStream";
 import { formatDateTimeLabel } from "../utils/meetingLibrary";
 import type { MeetingEventType } from "../../types/meetingTimeline";
 import { MEETING_STATUS } from "../../types/meetingLifecycle";
-
-const buildLoginUrl = () => {
-  const base = buildApiUrl("/auth/discord");
-  if (typeof window === "undefined") {
-    return base;
-  }
-  return `${base}?redirect=${encodeURIComponent(window.location.href)}`;
-};
 
 const resolveStreamStatusLabel = (status: string) => {
   switch (status) {
@@ -76,11 +66,11 @@ const resolveTimelineEmptyLabel = (status: string) => {
   }
 };
 
-export default function LiveMeeting() {
+function LiveMeetingContent() {
   const params = useParams({
     from: "/live/$guildId/$meetingId",
   });
-  const { state: authState, loading: authLoading } = useAuth();
+  const { state: authState, protectedQueriesReady } = useAuth();
   const [autoScroll, setAutoScroll] = useState(true);
   const [activeFilters, setActiveFilters] = useState<MeetingEventType[]>(
     MEETING_TIMELINE_FILTERS.map((filter) => filter.value),
@@ -89,7 +79,7 @@ export default function LiveMeeting() {
   const stream = useLiveMeetingStream({
     guildId: params.guildId,
     meetingId: params.meetingId,
-    enabled: authState === "authenticated",
+    enabled: authState === "authenticated" && protectedQueriesReady,
   });
 
   useEffect(() => {
@@ -98,39 +88,6 @@ export default function LiveMeeting() {
     if (!viewport) return;
     viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
   }, [stream.events, autoScroll]);
-
-  if (authState === "unauthenticated") {
-    return (
-      <Stack gap="lg" data-testid="live-meeting-page">
-        <PageHeader
-          title="Live meeting"
-          description="Sign in to view the live transcript."
-        />
-        <Surface p="lg">
-          <Stack gap="sm" align="center">
-            <Text size="sm" c="dimmed" ta="center">
-              This live transcript requires Discord sign in with access to the
-              voice channel.
-            </Text>
-            <Button component="a" href={buildLoginUrl()}>
-              Sign in with Discord
-            </Button>
-          </Stack>
-        </Surface>
-      </Stack>
-    );
-  }
-
-  if (authState === "unknown" || authLoading) {
-    return (
-      <Center py="xl">
-        <Stack gap="xs" align="center">
-          <Loader color="brand" />
-          <Text c="dimmed">Checking sign in status...</Text>
-        </Stack>
-      </Center>
-    );
-  }
 
   const meeting = stream.meeting;
   const statusLabel = resolveStreamStatusLabel(stream.status);
@@ -206,5 +163,13 @@ export default function LiveMeeting() {
         />
       </Surface>
     </Stack>
+  );
+}
+
+export default function LiveMeeting() {
+  return (
+    <ProtectedSessionBoundary>
+      <LiveMeetingContent />
+    </ProtectedSessionBoundary>
   );
 }

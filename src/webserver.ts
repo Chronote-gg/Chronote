@@ -1,5 +1,6 @@
 import { discordInstallStateStore } from "./services/discordInstallStateStore";
 import {
+  discordLoginAuthentication,
   discordCallbackAuthentication,
   resolveDiscordCallbackRedirect,
 } from "./services/discordInstallAuth";
@@ -24,6 +25,7 @@ import {
   registerMcpOAuthSessionRoutes,
   registerMcpOAuthStatelessRoutes,
 } from "./api/mcpOAuth";
+import { discordLoginStateStore } from "./services/discordLoginStateStore";
 import { config } from "./services/configService";
 import { DynamoSessionStore } from "./services/sessionStore";
 import { getStripeClient } from "./services/stripeClient";
@@ -59,7 +61,6 @@ const USER_PROFILE_RATE_LIMIT_MAX = 120;
 const CSRF_TOKEN_PATH = "/api/csrf-token";
 const CSRF_HEADER_NAME = "x-csrf-token";
 
-type SessionWithRedirect = session.Session & { oauthRedirect?: string };
 type RequestWithCsrf = express.Request & { csrfToken: () => string };
 
 const isLocalFrontendUrl = () =>
@@ -88,17 +89,6 @@ export function setupWebServer(
     resolveRedirectTarget(req.query.redirect, config.frontend.siteUrl, {
       allowedInternalPaths: ["/api/notion/connect"],
     });
-
-  const storeRedirectInSession = (
-    req: express.Request,
-    redirect?: string,
-  ): SessionWithRedirect | undefined => {
-    if (!redirect) return undefined;
-    const sessionWithRedirect = req.session as SessionWithRedirect | undefined;
-    if (!sessionWithRedirect) return undefined;
-    sessionWithRedirect.oauthRedirect = redirect;
-    return sessionWithRedirect;
-  };
 
   // Trust first proxy (needed for secure cookies behind ALB/CloudFront)
   app.set("trust proxy", 1);
@@ -261,6 +251,7 @@ export function setupWebServer(
           callbackURL: config.discord.callbackUrl,
           scope: ["identify", "email", "guilds"],
           state: true,
+          store: discordLoginStateStore,
         },
         (
           accessToken: string,
@@ -374,22 +365,7 @@ export function setupWebServer(
     app.get(
       "/auth/discord",
       authRateLimiter,
-      (req, _res, next) => {
-        const redirectParam = resolveRedirectParam(req);
-        const sessionWithRedirect = storeRedirectInSession(req, redirectParam);
-        if (!sessionWithRedirect) {
-          next();
-          return;
-        }
-        sessionWithRedirect.save((err) => {
-          if (err) {
-            next(err);
-            return;
-          }
-          next();
-        });
-      },
-      passport.authenticate("discord"),
+      discordLoginAuthentication(passport, config.frontend.siteUrl),
     );
 
     app.get(
@@ -465,7 +441,13 @@ export function setupWebServer(
   app.get("/logout", (req, res) => {
     const redirectParam = resolveRedirectParam(req);
     const fallback = getFrontendFallback();
-    const redirectTarget = redirectParam || fallback;
+    const redirectTarget =
+      req.query.interaction === "consent"
+        ? new URL(
+            `/auth/discord?interaction=consent&redirect=${encodeURIComponent(redirectParam || fallback)}`,
+            config.discord.callbackUrl,
+          ).toString()
+        : redirectParam || fallback;
     const finishLogout = () => {
       res.redirect(redirectTarget);
     };

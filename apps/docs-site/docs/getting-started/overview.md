@@ -49,6 +49,14 @@ Chronote processes the recording:
 3. A summary embed and full notes are posted to the same destination as the recording controls.
 4. Everything is saved to your meeting history.
 
+## Sign in to the portal
+
+Open **Open portal** on the website, or follow a private meeting link. If your Chronote session has expired, the portal takes you through Discord and returns to the page you requested. Discord can skip another approval click when you already granted access in that browser. First-time authorization, a revoked grant or a signed-out Discord browser can still require interaction. Adding the bot to a server has its own permission approval.
+
+If signing in would discard unfinished edits or an upload, Chronote warns before leaving the page. **Stay here** keeps that local work in the tab with saving paused. **Continue to sign in** leaves the page and discards that unfinished work. It does not automatically repeat a failed save or purchase.
+
+If Chronote cannot check your session, use **Retry**. A sign-in or connection error does not mean your meetings were deleted. Use **Switch account** when you want an interactive account change.
+
 ## What to set up next
 
 Open **Meetings** in the portal to browse recordings you can access across servers and personal recordings. It starts with all sources, all time and active meetings. Choose a server or **Personal recordings** in the source list. On mobile, the sources appear above the list, and **Filters** opens the date, archive, tag and channel controls. Personal recordings includes recordings shared with you.

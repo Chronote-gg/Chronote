@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useAuthNavigationBlocker } from "../../hooks/useAuthNavigationBlocker";
 import type { inferRouterOutputs } from "@trpc/server";
 import {
   Alert,
@@ -80,6 +81,15 @@ export default function DictionaryTeachingModal({
     useState(correctionContextToken);
   const previewMutation = trpc.dictionary.previewTeaching.useMutation();
   const commitMutation = trpc.dictionary.commitTeaching.useMutation();
+  useAuthNavigationBlocker(
+    opened &&
+      Boolean(
+        instruction ||
+        drafts.length ||
+        previewMutation.isPending ||
+        commitMutation.isPending,
+      ),
+  );
 
   useEffect(() => {
     if (!opened) return;

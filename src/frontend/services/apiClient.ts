@@ -1,3 +1,10 @@
+import {
+  authRequestsAllowed,
+  getAuthRequestGeneration,
+  reportAuthRequired,
+  reportAuthorizedOperation,
+} from "./authRecovery";
+
 export class AuthNeededError extends Error {
   constructor(message = "Authentication required") {
     super(message);
@@ -24,7 +31,7 @@ async function parseJsonSafely(res: Response): Promise<unknown> {
   try {
     return JSON.parse(text);
   } catch {
-    throw new AuthNeededError("Non-JSON response (likely auth redirect)");
+    throw new ApiError(502, "Unexpected server response");
   }
 }
 
@@ -121,13 +128,16 @@ export async function apiFetch<T = unknown>(
   input: RequestInfo,
   init?: RequestInit,
 ): Promise<T> {
+  if (!authRequestsAllowed()) throw new AuthNeededError("Sign-in is paused");
+  const generation = getAuthRequestGeneration();
   const requestInit = await withCsrfToken(init);
   const res = await fetch(withBase(input), {
     ...requestInit,
     credentials: "include",
   });
 
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
+    reportAuthRequired(generation, String(input));
     throw new AuthNeededError();
   }
 
@@ -136,5 +146,8 @@ export async function apiFetch<T = unknown>(
   }
 
   const data = await parseJsonSafely(res);
+  if (generation !== getAuthRequestGeneration())
+    throw new ApiError(409, "Session changed");
+  reportAuthorizedOperation(generation, String(input));
   return data as T;
 }

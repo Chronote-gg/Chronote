@@ -7,6 +7,10 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Smoother portal sign-in (November 12)
+
+- Expired sessions reconnect through Discord and return to the requested page. Returning users can skip another approval click when Discord recognizes their existing grant. The portal warns before leaving unfinished edits or an upload. See [Sign in to the portal](/getting-started/#sign-in-to-the-portal).
+
 ### Start meetings during updates (November 11)
 
 - We are rolling out a change so that routine Chronote updates normally no longer block new starts. A recording that is already running continues until it ends, and new meetings can usually start while an update is in progress. Switching to this change includes one short pause of a few minutes in which meetings cannot start.

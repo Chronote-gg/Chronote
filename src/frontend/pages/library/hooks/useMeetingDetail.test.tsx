@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { useMeetingDetail } from "./useMeetingDetail";
 import type { MeetingDetailInput } from "../../../utils/meetingLibrary";
+import { subscribeAuthTransport } from "../../../services/authRecovery";
 jest.mock("../../../services/apiClient", () => ({
   buildApiUrl: (path: string) => path,
 }));
@@ -101,6 +102,25 @@ beforeEach(() => {
     events: [],
     attendees: [],
   };
+});
+test("a drawer stream failure requests a shared identity check without assuming logout", () => {
+  const listener = jest.fn();
+  const unsubscribe = subscribeAuthTransport(listener);
+  const view = renderHook(() =>
+    useMeetingDetail({
+      opened: true,
+      selectedGuildId: "generated",
+      selectedMeetingId: mockDetail.id,
+      channelNameMap: new Map(),
+      invalidateMeetingLists: async () => {},
+    }),
+  );
+  act(() => sources[0].onerror?.());
+  expect(listener).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "check", path: "live.stream" }),
+  );
+  view.unmount();
+  unsubscribe();
 });
 test("unavailable SSE survives unchanged in-progress history and explicit returning-owner recheck", () => {
   const params = {

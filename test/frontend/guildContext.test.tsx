@@ -141,6 +141,7 @@ test("account transitions hide previous guild metadata and clear stored selectio
     ),
   );
   authState.user = { id: "new-user" };
+  authState.actorKey++;
   authState.protectedQueriesReady = false;
   view.rerender(guildProbe());
   expect(screen.getByTestId("guild-state")).toHaveAttribute("data-count", "0");

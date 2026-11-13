@@ -1,3 +1,4 @@
+import { useAuthNavigationBlocker } from "../hooks/useAuthNavigationBlocker";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -146,6 +147,7 @@ export default function Settings() {
   >(null);
   const [channelTags, setChannelTags] = useState("");
   const [channelContext, setChannelContext] = useState("");
+  useAuthNavigationBlocker(channelModalOpen);
   const [channelLiveVoiceMode, setChannelLiveVoiceMode] = useState<
     "inherit" | "on" | "off"
   >("inherit");

@@ -182,6 +182,8 @@ Coverage update rule:
 
 ## Frontend
 
+Portal sign-in reconnects expired sessions and returns to the requested page. It warns before leaving unfinished work. See [sign-in help](https://docs.chronote.gg/getting-started/#sign-in-to-the-portal).
+
 - Vite + React 19 + Mantine 8 UI under `src/frontend/`, builds to `build/frontend/`.
 - Public product docs use Docusaurus under `apps/docs-site`, builds to `build/docs-site/`.
 - Routing/data/state: TanStack Router + TanStack Query + tRPC + Zustand.
