@@ -57,6 +57,8 @@ The source must refresh its own readiness at the new epoch. Normal preparation w
 
 After writer inventory and other awaited reads, late authority checks validate exact identities, current-generation readiness, unexpired coordinator authority, native protection and stable Control. Listener submission also checks fresh native routing and the exact source action. Carryforward CLI calls use one transport attempt. Unknown listener acknowledgment retains the submitted fence; observing intended weights never authorizes replay.
 
+Artifact submissions finish those authority checks before taking the final artifact snapshot and building its exact conditional transaction. Only monotonic heartbeat updates may be incorporated into that snapshot. Changed artifact state or startup authority refuses. Proof deadlines are checked at submission time, and a lost response still requires exact artifact and Control readback.
+
 After promotion, the outgoing source retains its original authorized generation and may disable admission readiness while draining. Its native protection is checked independently until an exact current-operation retirement request and acknowledgment prove all seven work counts are zero. The final read must confirm that acknowledgment before accepting released protection, including when release occurs during the awaited checks. Unknown or incomplete retirement preserves the operation for review.
 
 The observer counts historical archives separately and retains pending source-loss counts. Its aggregate deploymentIncomplete may remain true for historical obligations after a new normal deployment completes. That signal is neither the authorization rule nor proof of settlement.

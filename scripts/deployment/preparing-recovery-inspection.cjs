@@ -26,6 +26,32 @@ function createPreparingInspection(options) {
     originalExecution,
   } = options;
   const base = createCarryforwardInspection(options);
+  async function registeredArtifact(source) {
+    const artifactTypes =
+      options.artifactTypes ?? require("../../dist/types/artifactSafety.js");
+    const row = artifactTypes.artifactSafetyRecordSchema.parse(
+      await base.read("ENV", artifactTypes.artifactSafetyKey(source).sk),
+    );
+    assert.deepEqual(row.identity, source);
+    assert.equal(row.state, "idle");
+    assert.equal(row.startup.kind, "active");
+    assert.equal(row.attestation, undefined);
+    assert.ok(row.freshUntil > now());
+    return {
+      artifactFreshUntil: row.freshUntil,
+      artifactAuthority: {
+        recordType: row.recordType,
+        schemaVersion: row.schemaVersion,
+        identity: row.identity,
+        state: row.state,
+        startup: row.startup,
+        request: null,
+        proof: null,
+        attestation: null,
+        retirementVerification: null,
+      },
+    };
+  }
   async function registration(archive, run) {
     const prepared = candidateDefinition(
       (
@@ -116,7 +142,10 @@ function createPreparingInspection(options) {
     assert.equal(ctl.coordinatorToken, proof.logicalRunToken);
     assert.equal(d.runToken, proof.logicalRunToken);
     assert.equal(d.phase, "preparing");
-    assert.equal(d.taskDefinition, undefined);
+    assert.ok(
+      d.taskDefinition === undefined ||
+        d.taskDefinition === proof.definitionArn,
+    );
     assert.equal(d.candidate, undefined);
     assert.equal(d.routing.state, "source");
     assert.deepEqual(observed.routing, d.routing);
@@ -187,6 +216,9 @@ function createPreparingInspection(options) {
         Date.parse(run.updated_at) <= now() * 1000,
     );
     const registered = await registration(archive, run);
+    const artifact = d.taskDefinition
+      ? await registeredArtifact(observed.source)
+      : {};
     await base.template(d.previousTaskDefinition, observed.runtimeMode);
     assert.deepEqual(
       controlAuthority(await base.control()),
@@ -202,6 +234,9 @@ function createPreparingInspection(options) {
       source: observed.source,
       routing: observed.routing,
       definitionArn: registered.arn,
+      ...(artifact.artifactAuthority
+        ? { artifactAuthority: artifact.artifactAuthority }
+        : {}),
       registration: registered,
       originalExecution: Object.fromEntries(
         [
@@ -218,6 +253,7 @@ function createPreparingInspection(options) {
     };
     return {
       ...observed,
+      ...artifact,
       archive,
       recovery,
       binding,

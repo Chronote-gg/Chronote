@@ -4,6 +4,7 @@ import { preparingRecoveryFixture } from "../deployment/fixtures/preparingRecove
 import { recoverPreparingSandbox } from "../../scripts/deployment/recover-preparing-sandbox.cjs";
 import { readPreparingProof } from "../../scripts/deployment/preparing-recovery-proof.cjs";
 import { bindingHash } from "../../scripts/deployment/binding-hash.cjs";
+import { controlAuthority } from "../../scripts/deployment/carryforward-state.cjs";
 
 async function bind(f) {
   const result = await recoverPreparingSandbox({
@@ -27,6 +28,79 @@ test("preparing inspection is read-only and binds the existing registration and 
   expect(f.state.ctl.deployment.taskDefinition).toBeUndefined();
   expect(f.carry.archive).toEqual(f.archive);
 });
+
+test("preparing inspection accepts only the exact already acknowledged registration", async () => {
+  const f = await preparingRecoveryFixture();
+  f.state.ctl.deployment.taskDefinition = f.proof.definitionArn;
+  f.proof.controlSha256 = bindingHash(controlAuthority(f.state.ctl));
+  f.bindProof();
+  expect(await bind(f)).toMatchObject({ kind: "inspection" });
+  expect(f.recoveryState.receipt).toBeUndefined();
+  const registrations = f.calls.filter(
+    (call) => call.operation === "register-task-definition",
+  ).length;
+  await expect(
+    recoverPreparingSandbox({ ...f.options, mode: "recover" }),
+  ).resolves.toMatchObject({ kind: "preparing_recovery_complete" });
+  expect(
+    f.calls.filter((call) => call.operation === "register-task-definition"),
+  ).toHaveLength(registrations);
+  expectUnchangedHistory(f);
+});
+
+test("preparing inspection refuses a different pinned definition despite a matching Control hash", async () => {
+  const f = await preparingRecoveryFixture();
+  f.state.ctl.deployment.taskDefinition = "definition:foreign";
+  f.proof.controlSha256 = bindingHash(controlAuthority(f.state.ctl));
+  f.bindProof();
+  const before = f.calls.length;
+  await expect(bind(f)).rejects.toMatchObject({ code: "ERR_ASSERTION" });
+  expect(
+    f.calls
+      .slice(before)
+      .some((call) =>
+        [
+          "update-item",
+          "transact-write-items",
+          "register-task-definition",
+          "update-service",
+        ].includes(call.operation),
+      ),
+  ).toBe(false);
+  expect(f.recoveryState.receipt).toBeUndefined();
+  expectUnchangedHistory(f);
+});
+
+test.each(["requested", "draining", "sealed", "cancel_requested"])(
+  "pinned preparing inspection refuses old-epoch artifact %s before recovery consumption",
+  async (state) => {
+    const f = await preparingRecoveryFixture();
+    f.state.ctl.deployment.taskDefinition = f.proof.definitionArn;
+    f.proof.controlSha256 = bindingHash(controlAuthority(f.state.ctl));
+    f.bindProof();
+    f.state.artifactAutoSeal = false;
+    const row = f.state.artifacts.get("old");
+    f.state.artifacts.set("old", {
+      ...row,
+      state,
+      request: {
+        source: row.identity,
+        coordinatorToken: f.state.ctl.coordinatorToken,
+        coordinatorEpoch: f.state.ctl.coordinatorEpoch,
+        servingGeneration: f.state.ctl.servingGeneration,
+        requestedAt: f.options.now(),
+        expiresAt: f.options.now() + 300,
+      },
+      ...(state === "draining" ? { activeProducers: 1 } : {}),
+      ...(state === "sealed"
+        ? { proof: f.state.artifacts.get("new").startup.proof }
+        : {}),
+    });
+    await expect(bind(f)).rejects.toThrow();
+    expect(f.recoveryState.receipt).toBeUndefined();
+    expectUnchangedHistory(f);
+  },
+);
 test.each([false, true])(
   "one recovery adopts without registering and genuinely retires source, lost response=%s",
   async (loseAck) => {

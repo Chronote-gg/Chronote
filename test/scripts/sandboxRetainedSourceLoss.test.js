@@ -251,6 +251,37 @@ test("retained CLI errors never echo the private packet", () => {
   expect(result.stderr).toContain("retained_source_loss_recovery_failed");
 });
 
+test.each([true, false])(
+  "recovery CLI reports only trusted classification, classified=%s",
+  (classified) => {
+    const { spawnSync } = jest.requireActual("node:child_process");
+    const result = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `const {runRecoveryCli}=require('./scripts/deployment/recover-sandbox.cjs');
+        const {CoordinatorFailure}=require('./scripts/deployment/coordinator-aws.cjs');
+        const error=${classified ? "new CoordinatorFailure('control_store_condition_failed','PRIVATE_MESSAGE','dynamodb.transact-write-items')" : "Object.assign(Error('PRIVATE_MESSAGE'),{category:'PRIVATE_CATEGORY',operation:'PRIVATE_OPERATION'})"};
+        error.stderr='PRIVATE_STDERR';
+        runRecoveryCli(async()=>{throw error},'recover','recovery_failed');`,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stdout + result.stderr).not.toContain("PRIVATE");
+    expect(JSON.parse(result.stderr)).toEqual({
+      kind: "recovery_failed",
+      action: "preserve_receipts_and_review_current_state",
+      ...(classified
+        ? {
+            category: "control_store_condition_failed",
+            operation: "dynamodb.transact-write-items",
+          }
+        : {}),
+    });
+  },
+);
+
 test.each(["slow_native", "foreign_listener"])(
   "retained recovery preserves fence for %s",
   async (kind) => {

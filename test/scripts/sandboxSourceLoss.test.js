@@ -30,6 +30,185 @@ test("inspection freezes exact source/candidate/topology and is read only", asyn
   );
   expect(writes(f)).toEqual([]);
 });
+
+test.each([
+  ["expired", 0],
+  ["fresh-looking", 2000],
+])(
+  "selects the native running task over %s historical replacement rows",
+  async (_kind, expiresAt) => {
+    const f = await sourceLossFixture();
+    const historical = structuredClone(f.state.rows.new);
+    const identity = {
+      ...historical.identity,
+      instanceId: "historical",
+      taskArn: historical.identity.taskArn.replace(/new$/, "historical"),
+    };
+    Object.assign(historical, { sk: "RUNTIME#historical", identity });
+    historical.readiness.identity = identity;
+    historical.readiness.expiresAt = expiresAt;
+    historical.protection.identity = identity;
+    historical.workCounts.pending_admission = 1;
+    f.state.rows.historical = historical;
+    const original = structuredClone(historical);
+    const inspected = await reviewed(f);
+    expect(inspected.binding.candidateIdentity).toEqual(f.candidateIdentity);
+    expect(
+      await recoverSandbox({ ...f.options, mode: "recover" }),
+    ).toMatchObject({
+      kind: "availability_restored",
+      settlement: "lost_owner_settlement_pending",
+    });
+    expect(f.state.rows.historical).toEqual(original);
+  },
+);
+
+test("refuses multiple runtime identities for the actual running task", async () => {
+  const f = await sourceLossFixture();
+  const duplicate = structuredClone(f.state.rows.new);
+  const identity = { ...duplicate.identity, instanceId: "duplicate" };
+  Object.assign(duplicate, { sk: "RUNTIME#duplicate", identity });
+  duplicate.readiness.identity = identity;
+  duplicate.protection.identity = identity;
+  f.state.rows.duplicate = duplicate;
+  await expect(reviewed(f)).rejects.toMatchObject({
+    code: "ERR_ASSERTION",
+    actual: 2,
+    expected: 1,
+  });
+  expect(writes(f)).toEqual([]);
+});
+
+test("restores unchanged test billing flags without settling lost source work", async () => {
+  const f = await sourceLossFixture();
+  const flags = [
+    { name: "STRIPE_RENEWAL_GRACE_ENABLED", value: "true" },
+    { name: "STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED", value: "true" },
+    { name: "STRIPE_INTRO_OFFER_LEDGER_ENABLED", value: "false" },
+    { name: "STRIPE_RENEWAL_REACTIVATION_ENABLED", value: "true" },
+  ];
+  f.loss.sourceBillingFlags.push(...structuredClone(flags));
+  f.loss.candidateBillingFlags.push(...structuredClone(flags));
+  f.state.rows.old.workCounts.pending_admission = 1;
+  const original = structuredClone(f.state.rows.old);
+  const inspection = await reviewed(f);
+  expect(inspection.binding.terminal.billingFlags).toMatchObject({
+    STRIPE_MODE: "test",
+    STRIPE_RENEWAL_GRACE_ENABLED: "true",
+    STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED: "true",
+  });
+  expect(await recoverSandbox({ ...f.options, mode: "recover" })).toMatchObject(
+    {
+      kind: "availability_restored",
+      settlement: "lost_owner_settlement_pending",
+    },
+  );
+  expect(f.state.rows.old).toEqual(original);
+  expect(f.loss.receipt.settlement).toBe("lost_owner_settlement_pending");
+});
+
+test("recovery refuses billing drift after review even when both definitions agree", async () => {
+  const f = await sourceLossFixture();
+  const approved = await reviewed(f);
+  for (const side of ["sourceBillingFlags", "candidateBillingFlags"])
+    f.loss[side].push({ name: "STRIPE_RENEWAL_GRACE_ENABLED", value: "true" });
+  const changed = await recoverSandbox({ ...f.options, mode: "inspect" });
+  expect(changed.bindingSha256).not.toBe(approved.bindingSha256);
+  await expect(
+    recoverSandbox({ ...f.options, mode: "recover" }),
+  ).rejects.toMatchObject({
+    name: "AssertionError",
+    code: "ERR_ASSERTION",
+    actual: changed.bindingSha256,
+    expected: approved.bindingSha256,
+  });
+  expect(writes(f)).toEqual([]);
+});
+
+test.each([
+  "STRIPE_RENEWAL_GRACE_ENABLED",
+  "STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED",
+  "STRIPE_RENEWAL_REACTIVATION_ENABLED",
+])("refuses changed %s in either immutable definition", async (name) => {
+  for (const side of ["sourceBillingFlags", "candidateBillingFlags"]) {
+    const f = await sourceLossFixture();
+    f.loss[side].push({ name, value: "true" });
+    await expect(reviewed(f)).rejects.toThrow();
+    expect(writes(f)).toEqual([]);
+  }
+});
+
+test("refuses an enabled intro ledger even when unchanged", async () => {
+  const f = await sourceLossFixture();
+  for (const side of ["sourceBillingFlags", "candidateBillingFlags"])
+    f.loss[side].push({
+      name: "STRIPE_INTRO_OFFER_LEDGER_ENABLED",
+      value: "true",
+    });
+  await expect(reviewed(f)).rejects.toThrow();
+  expect(writes(f)).toEqual([]);
+});
+
+test.each(["source", "candidate"])(
+  "refuses duplicate or secret billing flags in the %s definition",
+  async (side) => {
+    for (const kind of ["duplicate", "secret"]) {
+      const f = await sourceLossFixture();
+      if (kind === "duplicate")
+        f.loss[side + "BillingFlags"].push({
+          name: "STRIPE_MODE",
+          value: "test",
+        });
+      else {
+        const original = f.aws.getMockImplementation();
+        f.aws.mockImplementation(async (service, operation, input) => {
+          const result = await original(service, operation, input);
+          const arn = side === "source" ? "definition:old" : "definition:new";
+          if (
+            operation === "describe-task-definition" &&
+            input.taskDefinition === arn
+          )
+            result.taskDefinition.containerDefinitions[0].secrets.push({
+              name: "STRIPE_RENEWAL_GRACE_ENABLED",
+              valueFrom: "fixture-reference",
+            });
+          return result;
+        });
+      }
+      await expect(reviewed(f)).rejects.toThrow();
+      expect(writes(f)).toEqual([]);
+    }
+  },
+);
+
+test.each(["arn", "family", "image", "live"])(
+  "refuses mismatched source definition %s",
+  async (kind) => {
+    const f = await sourceLossFixture();
+    const original = f.aws.getMockImplementation();
+    f.aws.mockImplementation(async (service, operation, input) => {
+      const result = await original(service, operation, input);
+      if (
+        operation === "describe-task-definition" &&
+        input.taskDefinition === "definition:old"
+      ) {
+        const definition = result.taskDefinition;
+        if (kind === "arn") definition.taskDefinitionArn = "foreign";
+        if (kind === "family") definition.family = "foreign";
+        if (kind === "image")
+          definition.containerDefinitions[0].image =
+            "repo@sha256:" + "c".repeat(64);
+        if (kind === "live")
+          definition.containerDefinitions[0].environment.find(
+            (e) => e.name === "STRIPE_MODE",
+          ).value = "live";
+      }
+      return result;
+    });
+    await expect(reviewed(f)).rejects.toThrow();
+    expect(writes(f)).toEqual([]);
+  },
+);
 test("same candidate restores admission before traffic and leaves settlement pending", async () => {
   const f = await sourceLossFixture();
   const original = structuredClone(f.state.rows.old);
@@ -194,7 +373,10 @@ test.each([
         result.taskDefinition.containerDefinitions[0].environment.find(
           (e) => e.name === "STRIPE_MODE",
         ).value = "live";
-      if (kind === "billing_gate")
+      if (
+        kind === "billing_gate" &&
+        input.taskDefinition === f.state.ctl.deployment.taskDefinition
+      )
         result.taskDefinition.containerDefinitions[0].environment.push({
           name: "STRIPE_RENEWAL_GRACE_ENABLED",
           value: "true",

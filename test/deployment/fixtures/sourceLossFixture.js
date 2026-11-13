@@ -19,6 +19,8 @@ export async function sourceLossFixture() {
     loseAck: false,
     beforeWrite: () => undefined,
     afterWrite: () => undefined,
+    sourceBillingFlags: [],
+    candidateBillingFlags: [],
   };
   const original = f.aws.getMockImplementation();
   function transact(input) {
@@ -81,6 +83,30 @@ export async function sourceLossFixture() {
     }
     return response;
   }
+  function definition(arn) {
+    const source = arn === "definition:old";
+    const image = source
+      ? `repo@${f.oldIdentity.imageDigest}`
+      : f.options.env.CANDIDATE_IMAGE;
+    const flags = source
+      ? state.sourceBillingFlags
+      : state.candidateBillingFlags;
+    return {
+      ...f.definition,
+      taskDefinitionArn: arn,
+      containerDefinitions: [
+        {
+          ...f.definition.containerDefinitions[0],
+          image,
+          environment: [
+            ...f.definition.containerDefinitions[0].environment,
+            { name: "STRIPE_MODE", value: "test" },
+            ...flags,
+          ],
+        },
+      ],
+    };
+  }
   f.aws.mockImplementation(async (service, operation, input) => {
     if (service === "sts")
       return {
@@ -97,22 +123,7 @@ export async function sourceLossFixture() {
     )
       return { Item: state.receipt ? marshall(state.receipt) : undefined };
     if (operation === "describe-task-definition")
-      return {
-        taskDefinition: {
-          ...f.definition,
-          taskDefinitionArn: "definition:new",
-          containerDefinitions: [
-            {
-              ...f.definition.containerDefinitions[0],
-              image: f.options.env.CANDIDATE_IMAGE,
-              environment: [
-                ...f.definition.containerDefinitions[0].environment,
-                { name: "STRIPE_MODE", value: "test" },
-              ],
-            },
-          ],
-        },
-      };
+      return { taskDefinition: definition(input.taskDefinition) };
     if (operation === "scan") return { Items: [] };
     if (operation === "list-tasks")
       return {

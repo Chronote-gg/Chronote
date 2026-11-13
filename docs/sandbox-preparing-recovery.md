@@ -8,9 +8,11 @@ Use this only under an approved recovery plan and an exclusive operator window. 
 
 Before execution, complete focused regressions, native transaction tests, independent review, exact-head CI and hosted-feedback checks. Merge readiness remains subject to the repository's separate observation window.
 
-Read and bind the actual preparing Control, immutable carryforward archive, original pending source-loss receipt and existing source. Require an expired original coordinator lease, a terminal failed original workflow at the archived tooling source, one serving generation/member, source-only acknowledged routing, an empty spare pool, fresh source-owned readiness and native protection. Refuse an acknowledged candidate or definition, pending tasks, ambiguous registrations, changed history, routing markers or a competing writer.
+Read and bind the actual preparing Control, immutable carryforward archive, original pending source-loss receipt and existing source. Require an expired original coordinator lease, a terminal failed original workflow at the archived tooling source, one serving generation/member, source-only acknowledged routing, an empty spare pool, fresh source-owned readiness and native protection. Control may leave the definition absent or pin exactly the proof's independently validated registration. Refuse a different pinned definition, an acknowledged candidate, pending tasks, ambiguous registrations, changed history, routing markers or a competing writer.
 
 Completely enumerate active family registrations. Require exactly one with the original operation's candidate ID, exact pinned ARN, original execution principal and registration time inside that original execution. Compare the untouched registration input against the original prepared definition. Verify the prepared object's original raw hash first. Only ordering of environment entries with unique names may differ. Reject duplicate names or any other changed field, entry shape, value or array order. Do not reconstruct the observed registration with a helper that overwrites its image, candidate ID or timeout.
+
+If Control already pins that registration, require the source's modern artifact row to be fresh, idle and active, without an operator attestation or an existing request or proof. Bind its semantic authority and condition-check it atomically with the recovery claim. Heartbeat counters may advance; changed artifact authority or an expired capability refuses before recovery is consumed.
 
 ## Private recovery proof
 
