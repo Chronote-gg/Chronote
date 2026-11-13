@@ -69,8 +69,13 @@ type RetrySchedule = Pick<
   FinishState,
   "attempts" | "nextAttemptAt" | "phase" | "deliverSince"
 >;
-/** Rows that predate the lifecycle marker are claimed or adopted only by an operator. */
-type ClaimOptions = { operator?: boolean };
+/**
+ * Rows that predate the lifecycle marker are claimed or adopted only by an
+ * operator. `reopen`, for an operator claim only, takes a terminal row with no
+ * saved notes whose old recovery never finished and sets it back to
+ * `processing` in the same write, so the pipeline processes it.
+ */
+type ClaimOptions = { operator?: boolean; reopen?: boolean };
 
 export type MeetingFinishRepository = {
   scan(signal: AbortSignal): AsyncIterable<FinisherRow>;
@@ -114,8 +119,9 @@ export type MeetingFinishRepository = {
   /**
    * Puts an unmarked row back as `before` was, for an operator attempt that
    * could not finish it: removes the finish map and restores every field that
-   * adoption and the steps before the terminal save write. Refused once the
-   * row is terminal, carries the marker, or another owner holds the claim.
+   * adoption, a reopening claim and the steps before the terminal save write,
+   * so a reopened row gets its original terminal status back. Refused once the
+   * row is terminal again, carries the marker, or another owner holds the claim.
    */
   restoreStranded(claim: FinishClaim, before: MeetingHistory): Promise<boolean>;
 };
@@ -170,6 +176,19 @@ const isOpen = (status: MeetingStatus | undefined) =>
   status !== undefined && OPEN_STATUSES.includes(status);
 const isLive = (status: MeetingStatus | undefined) =>
   status !== undefined && LIVE_STATUSES.includes(status);
+
+const unfinishedRecovery = (row: MeetingHistory) =>
+  row.recovery !== undefined && row.recovery.disposition !== "done";
+
+/**
+ * A terminal row whose recovery value the old runtime left before `done`. The
+ * portal refuses retry and corrections for it, so only an operator can settle it.
+ */
+export const terminalWithUnfinishedRecovery = (row: MeetingHistory) =>
+  row.status !== undefined && !isOpen(row.status) && unfinishedRecovery(row);
+
+const reopens = (options: ClaimOptions | undefined) =>
+  Boolean(options?.operator && options.reopen);
 
 function defined<T extends object>(fields: T): Partial<T> {
   return Object.fromEntries(
@@ -386,6 +405,19 @@ function unclaimedCondition(e: Expression, now: number) {
   return `(attribute_not_exists(${e.path("finish", "owner")}) OR ${e.path("finish", "expiresAt")} < ${e.value(now)})`;
 }
 
+function unfinishedRecoveryCondition(e: Expression) {
+  return `attribute_exists(${e.path("recovery")}) AND ${e.path("recovery", "disposition")} <> ${e.value("done")}`;
+}
+
+/** The extra condition and assignment a reopening claim adds to the claim write. */
+function reopenClause(e: Expression, options: ClaimOptions | undefined) {
+  if (!reopens(options)) return { condition: "", assignment: "" };
+  return {
+    condition: ` AND attribute_not_exists(${e.path("notes")}) AND ${unfinishedRecoveryCondition(e)}`,
+    assignment: `, ${e.path("status")} = ${e.value(MEETING_STATUS.PROCESSING)}`,
+  };
+}
+
 function heldClaimCondition(e: Expression, claim: FinishClaim, now: number) {
   return `${e.path("meetingId")} = ${e.value(claim.meetingId)} AND ${ownedBy(e, claim)} AND ${e.path("finish", "expiresAt")} >= ${e.value(now)}`;
 }
@@ -518,10 +550,11 @@ export function createDynamoMeetingFinishRepository(
       const nowValue = e.value(now);
       const version = versionCondition(e, options);
       const nextAttemptAt = e.path("finish", "nextAttemptAt");
-      const condition = `${e.path("meetingId")} = ${e.value(row.meetingId)} AND ${version} AND ${unclaimedCondition(e, now)} AND (attribute_not_exists(${nextAttemptAt}) OR ${nextAttemptAt} <= ${nowValue}) AND ${seenStatusCondition(e, row)} AND ${seenFinishCondition(e, row)}`;
+      const reopen = reopenClause(e, options);
+      const condition = `${e.path("meetingId")} = ${e.value(row.meetingId)} AND ${version} AND ${unclaimedCondition(e, now)} AND (attribute_not_exists(${nextAttemptAt}) OR ${nextAttemptAt} <= ${nowValue}) AND ${seenStatusCondition(e, row)} AND ${seenFinishCondition(e, row)}${reopen.condition}`;
       const history = await updateReturning(row, e, {
         ConditionExpression: condition,
-        UpdateExpression: `SET ${e.path("finish")} = ${e.value(claimedFinish(row.finish, owner, now))}`,
+        UpdateExpression: `SET ${e.path("finish")} = ${e.value(claimedFinish(row.finish, owner, now))}${reopen.assignment}`,
       });
       return history && claimFor(row, owner, history);
     },
@@ -629,7 +662,7 @@ export function createDynamoMeetingFinishRepository(
       const e = new Expression();
       for await (const item of scanAll(
         {
-          FilterExpression: `attribute_not_exists(${e.path("lifecycleVersion")}) AND ${e.path("status")} IN (${e.list(OPEN_STATUSES)})`,
+          FilterExpression: `attribute_not_exists(${e.path("lifecycleVersion")}) AND (${e.path("status")} IN (${e.list(OPEN_STATUSES)}) OR (attribute_exists(${e.path("status")}) AND ${unfinishedRecoveryCondition(e)}))`,
           ...e.attributes(),
         },
         signal,
@@ -785,15 +818,20 @@ export function createMockMeetingFinishRepository(
 
     async claim(row, owner, now, options) {
       const stored = find(row);
+      const reopen = reopens(options);
       if (
         !stored ||
-        !mockClaimable(stored, row, Boolean(options?.operator), now)
+        !mockClaimable(stored, row, Boolean(options?.operator), now) ||
+        (reopen && (stored.notes !== undefined || !unfinishedRecovery(stored)))
       )
         return undefined;
       return claimFor(
         row,
         owner,
-        apply(stored, { finish: claimedFinish(row.finish, owner, now) }),
+        apply(stored, {
+          finish: claimedFinish(row.finish, owner, now),
+          ...(reopen ? { status: MEETING_STATUS.PROCESSING } : {}),
+        }),
       );
     },
 
@@ -888,7 +926,10 @@ export function createMockMeetingFinishRepository(
     async *listStranded(signal) {
       for (const row of allRows()) {
         if (signal.aborted) return;
-        if (row.lifecycleVersion === undefined && isOpen(row.status))
+        if (
+          row.lifecycleVersion === undefined &&
+          (isOpen(row.status) || terminalWithUnfinishedRecovery(row))
+        )
           yield structuredClone(row);
       }
     },

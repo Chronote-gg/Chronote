@@ -121,6 +121,41 @@ export const derivedEnd = {
   duration: 300,
 } satisfies Parameters<MeetingFinishRepository["adopt"]>[2];
 
+/** A recovery value the old runtime left before it reached `done`. */
+export const unfinishedRecovery = {
+  disposition: "needs_reconciliation",
+  reason: "policy_unknown",
+  attempt: 1,
+  executionVersion: 1,
+  stage: "notes",
+  retry: { maxAttempts: 3, nextAttemptAt: null },
+} satisfies MeetingHistory["recovery"];
+
+/** Notes sent, then the old runtime stopped before writing its done marker. */
+export const deliveryUncertainRecovery = {
+  ...unfinishedRecovery,
+  reason: "delivery_uncertain",
+  stage: "delivery",
+} satisfies MeetingHistory["recovery"];
+
+/** A failed old recovery attempt with its next retry still scheduled. */
+export const retryingFailedRecovery = {
+  disposition: "failed",
+  attempt: 1,
+  executionVersion: 1,
+  stage: "notes",
+  retry: { maxAttempts: 3, nextAttemptAt: "2026-01-01T01:00:00.000Z" },
+} satisfies MeetingHistory["recovery"];
+
+export const doneRecovery = {
+  disposition: "done",
+  outcome: "completed",
+  attempt: 1,
+  executionVersion: 1,
+  stage: "delivery",
+  retry: { maxAttempts: 3, nextAttemptAt: null },
+} satisfies MeetingHistory["recovery"];
+
 export async function collect<T>(rows: AsyncIterable<T>): Promise<T[]> {
   const out: T[] = [];
   for await (const row of rows) out.push(row);

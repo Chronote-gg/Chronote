@@ -27,8 +27,15 @@ import {
   stubFollowOns,
 } from "../fixtures/meetingFinishPipeline";
 import {
+  deliveryUncertainRecovery,
+  doneRecovery,
+  retryingFailedRecovery,
+  unfinishedRecovery,
+} from "../repositories/meetingFinishRepository.contract.fixture";
+import {
   GUILD_ID,
   MEETING_SECONDS,
+  NOTES,
   START,
   VOICE_CHANNEL_ID,
   fakeDiscord,
@@ -373,6 +380,169 @@ describe("finishStranded", () => {
       "not_claimable",
     );
     expect(world.current()).toEqual(held);
+  });
+});
+
+describe("finishStranded on a terminal row whose old recovery never finished", () => {
+  /** Notes saved and possibly posted: the old runtime crashed between the send and its done marker. */
+  const notesSavedRow = (overrides: Partial<MeetingHistory> = {}) =>
+    history({
+      lifecycleVersion: undefined,
+      status: "interrupted",
+      updatedAt: START,
+      recovery: deliveryUncertainRecovery,
+      ...overrides,
+    });
+  const posts = (world: ReturnType<typeof setup>) =>
+    world.discord.requests.filter((request) => request.method === "POST");
+
+  test.each(["interrupted", "failed"] as const)(
+    "--no-post settles a %s row with saved notes without generating notes",
+    async (status) => {
+      const world = setup(notesSavedRow({ status }));
+      await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
+        "finished",
+      );
+      expect(world.notes).not.toHaveBeenCalled();
+      expect(world.current()).toMatchObject({ status, notes: NOTES });
+      expectSettledAndUnpublished(world.current());
+      expect(world.discord.requests).toEqual([]);
+    },
+  );
+
+  test("--post on a notes-less interrupted row processes and delivers it", async () => {
+    const world = setup(
+      strandedRow({ status: "interrupted", recovery: unfinishedRecovery }),
+    );
+    await expect(finishStranded(KEY, true, world.deps)).resolves.toBe(
+      "finished",
+    );
+    expect(world.deps.loadRecovery).toHaveBeenCalled();
+    expect(world.current()).toMatchObject({
+      notes: "- Synthetic note.",
+      recovery: { disposition: "done" },
+    });
+    expect(world.current().finish).toBeUndefined();
+    expect(posts(world)).not.toHaveLength(0);
+  });
+
+  test("--no-post on a notes-less failed row with a retry time finishes it settled and unpublished", async () => {
+    const world = setup(
+      strandedRow({
+        status: "failed",
+        recovery: retryingFailedRecovery,
+      }),
+    );
+    await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
+      "finished",
+    );
+    expect(world.current()).toMatchObject({ notes: "- Synthetic note." });
+    expectSettledAndUnpublished(world.current());
+    expect(world.discord.requests).toEqual([]);
+  });
+
+  test("a notes-less row that cannot finish gets its terminal status and recovery back", async () => {
+    const before = strandedRow({
+      status: "interrupted",
+      recovery: unfinishedRecovery,
+    });
+    const world = setup(before);
+    world.notes.mockRejectedValue(new Error("synthetic notes failure"));
+    await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
+      "restored",
+    );
+    expect(world.current()).toEqual(before);
+  });
+
+  test("--post on a row whose notes message is recorded says so before it acts", async () => {
+    const world = setup(notesSavedRow({ notesMessageIds: ["900"] }));
+    const order: string[] = [];
+    jest.mocked(console.error).mockImplementation((message: unknown) => {
+      if (String(message).includes("notes message")) order.push("warned");
+    });
+    const claim = world.deps.repository.claim;
+    world.deps.repository.claim = async (...args) => {
+      order.push("claimed");
+      return claim(...args);
+    };
+    await expect(finishStranded(KEY, true, world.deps)).resolves.toBe(
+      "finished",
+    );
+    expect(order).toEqual(["warned", "claimed"]);
+    expect(world.current().recovery?.disposition).toBe("done");
+  });
+
+  test("--post on a failed row with saved notes posts nothing and keeps it unsettled", async () => {
+    const world = setup(notesSavedRow({ status: "failed" }));
+    await expect(finishStranded(KEY, true, world.deps)).resolves.toBe("failed");
+    expect(posts(world)).toEqual([]);
+    expect(world.current().recovery).toEqual(deliveryUncertainRecovery);
+  });
+
+  test("--no-post on such a row does not warn about the recorded message", async () => {
+    const world = setup(notesSavedRow({ notesMessageIds: ["900"] }));
+    await finishStranded(KEY, false, world.deps);
+    expect(console.error).not.toHaveBeenCalledWith(
+      expect.stringContaining("notes message"),
+    );
+  });
+
+  test("a live lease still refuses it", async () => {
+    const row = strandedRow({
+      status: "interrupted",
+      recovery: unfinishedRecovery,
+    });
+    const world = setup(row);
+    jest.mocked(world.deps.readLease).mockResolvedValue({
+      meetingId: row.meetingId,
+      leaseExpiresAt: world.nowSeconds() + 30,
+    } as ActiveMeetingLease);
+    await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
+      "lease_held",
+    );
+    expect(world.current()).toEqual(row);
+  });
+
+  test("a terminal row whose recovery is done or absent is not stranded", async () => {
+    for (const recovery of [undefined, doneRecovery]) {
+      const world = setup(notesSavedRow({ recovery }));
+      await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
+        "not_stranded",
+      );
+    }
+  });
+
+  test("list says which kind each row is and whether a notes message is recorded", async () => {
+    const rows = [
+      strandedRow(),
+      strandedRow({ status: "failed", recovery: unfinishedRecovery }),
+      notesSavedRow({ notesMessageIds: ["900"] }),
+    ];
+    const listed = await listStranded(
+      {
+        repository: {
+          async *listStranded() {
+            yield* rows;
+          },
+        },
+        readManifest: jest.fn(),
+        readLease: async () => undefined,
+      },
+      new AbortController().signal,
+    );
+    expect(listed).toEqual([
+      expect.objectContaining({ kind: "open", notesMessageRecorded: false }),
+      expect.objectContaining({
+        kind: "needs_processing",
+        status: "failed",
+        recovery: "needs_reconciliation",
+      }),
+      expect.objectContaining({
+        kind: "notes_saved",
+        notesSaved: true,
+        notesMessageRecorded: true,
+      }),
+    ]);
   });
 });
 

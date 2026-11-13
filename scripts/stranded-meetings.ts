@@ -8,7 +8,13 @@
  *
  * `list` writes every stranded meeting, with what its checkpoint manifest
  * claims and whether a live lease still names it, to `stranded.json` in a new
- * owner-only directory and prints only the count.
+ * owner-only directory and prints only the count. Besides open rows, it lists
+ * terminal rows whose old recovery value never reached done: nothing else can
+ * ever finish them, because the portal refuses retry and corrections for them.
+ * A notes-less one is set back to processing by the claim and processed like
+ * any other; one with saved notes is never regenerated, only settled
+ * (--no-post) or delivered (--post, which warns first when a notes message id
+ * is recorded, since the old runtime probably posted it).
  *
  * `finish` claims the meeting as an operator and runs the recovery loader and
  * the finish pipeline. It refuses a meeting whose live lease names it: the old
@@ -37,7 +43,10 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { z } from "zod";
-import { getMeetingFinishRepository } from "../src/repositories/meetingFinishRepository";
+import {
+  getMeetingFinishRepository,
+  terminalWithUnfinishedRecovery,
+} from "../src/repositories/meetingFinishRepository";
 import type {
   FinishClaim,
   FinisherRow,
@@ -189,10 +198,29 @@ export type FinishStrandedDeps = {
   sleep(ms: number, signal: AbortSignal): Promise<void>;
 };
 
-/** An unmarked row that is open, or whose notes are saved and delivery is pending. */
+/**
+ * An unmarked row that is open, whose notes are saved and delivery is pending,
+ * or that is terminal with an old recovery value that never reached `done`.
+ */
 const stranded = (row: MeetingHistory) =>
   row.lifecycleVersion === undefined &&
-  (isOpen(row.status) || row.finish !== undefined);
+  (isOpen(row.status) ||
+    row.finish !== undefined ||
+    terminalWithUnfinishedRecovery(row));
+
+/** A terminal row the old runtime left before notes were saved: it still needs processing. */
+const needsReopening = (row: MeetingHistory) =>
+  terminalWithUnfinishedRecovery(row) && row.notes === undefined;
+
+/** A terminal row whose notes were saved but whose old publication never finished. */
+const notesSavedUnsettled = (row: MeetingHistory) =>
+  terminalWithUnfinishedRecovery(row) && row.notes !== undefined;
+
+const notesMessageRecorded = (row: MeetingHistory) =>
+  Boolean(row.summaryMessageId || row.notesMessageIds?.length);
+
+const POST_RECORDED_WARNING =
+  "This meeting records a notes message id, so the old runtime probably posted its notes already. Proceeding because --post was passed: delivery reads the channel and resumes after the chunks already there.";
 
 /** A capture whose worker died is adopted as interrupted; anything else is claimed. */
 async function take(
@@ -201,11 +229,14 @@ async function take(
   signal: AbortSignal,
 ): Promise<FinishClaim | undefined> {
   const owner = `stranded-meetings:${randomUUID()}`;
-  const operator = { operator: true };
   if (!isLive(row.status)) {
     const now = Math.floor(deps.nowMs() / MS_PER_SECOND);
-    return deps.repository.claim(finisherRow(row), owner, now, operator);
+    return deps.repository.claim(finisherRow(row), owner, now, {
+      operator: true,
+      reopen: needsReopening(row),
+    });
   }
+  const operator = { operator: true };
   const captureEnd = await readAdoptedCaptureEnd(
     row,
     deps.readCoverage,
@@ -227,12 +258,18 @@ async function waitForRetry(
   if (wait > 0) await deps.sleep(wait, signal);
 }
 
-/** What a row with no finish map left says about how the meeting ended. */
+/**
+ * What a row with no finish map left says about how the meeting ended. A
+ * `--no-post` settle keeps the old terminal status, `failed` included, so it
+ * is finished once its leftover recovery value is gone.
+ */
 function concluded(
   row: MeetingHistory,
   deliver: boolean,
+  settling: boolean,
 ): FinishStrandedResult | undefined {
   if (row.finish || isOpen(row.status)) return undefined;
+  if (settling && row.recovery === undefined) return "finished";
   if (row.status === MEETING_STATUS.FAILED) return "failed";
   return deliver && row.delivery?.notes?.outcome === "failed"
     ? "delivery_failed"
@@ -272,6 +309,8 @@ export async function finishStranded(
   if (!stranded(before)) return "not_stranded";
   if (await leaseHeld(before, deps.readLease, deps.nowMs(), signal))
     return "lease_held";
+  if (deliver && notesSavedUnsettled(before) && notesMessageRecorded(before))
+    console.error(POST_RECORDED_WARNING);
   return finishAttempts(key, before, deliver, deps, signal);
 }
 
@@ -285,6 +324,7 @@ async function finishAttempts(
 ): Promise<FinishStrandedResult> {
   let current = before;
   let lastClaim: FinishClaim | undefined;
+  const settling = !deliver && notesSavedUnsettled(before);
   for (let attempt = 1; attempt <= OPERATOR_ATTEMPTS; attempt++) {
     if (!(await waitedForRetry(current, deps, signal))) break;
     if (signal.aborted) break;
@@ -295,7 +335,7 @@ async function finishAttempts(
     const after = await deps.repository.read(key);
     if (!after) return "not_found";
     current = after;
-    const result = concluded(after, deliver);
+    const result = concluded(after, deliver, settling);
     if (result) return result;
     if (signal.aborted || after.finish?.nextAttemptAt === undefined) break;
   }
@@ -411,6 +451,13 @@ async function checkpointSummary(
   }
 }
 
+/** Open, or terminal with an unfinished old recovery and either no notes or saved notes. */
+function strandedKind(row: MeetingHistory) {
+  if (needsReopening(row)) return "needs_processing";
+  if (notesSavedUnsettled(row)) return "notes_saved";
+  return "open";
+}
+
 /** Each stranded meeting and what its checkpoint holds; identifiers stay in the private file. */
 export async function listStranded(
   deps: ListStrandedDeps,
@@ -422,11 +469,14 @@ export async function listStranded(
       guildId: row.guildId,
       channelId_timestamp: row.channelId_timestamp,
       meetingId: row.meetingId,
+      kind: strandedKind(row),
       status: row.status,
+      recovery: row.recovery?.disposition ?? null,
       timestamp: row.timestamp,
       capture: row.capture?.kind ?? null,
       transcriptSaved: Boolean(row.transcriptS3Key),
       notesSaved: Boolean(row.notes),
+      notesMessageRecorded: notesMessageRecorded(row),
       leaseHeld: await leaseHeld(row, deps.readLease, Date.now(), signal),
       checkpoint: await checkpointSummary(row.checkpoint, deps, signal),
     });

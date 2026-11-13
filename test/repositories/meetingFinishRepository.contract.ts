@@ -8,7 +8,10 @@ import {
   NOW,
   WORKER_A,
   collect,
+  doneRecovery,
   finisherRow,
+  retryingFailedRecovery,
+  unfinishedRecovery,
   historyRow,
   keyOf,
   type MeetingFinishHarness,
@@ -161,6 +164,12 @@ export function meetingFinishContract(
         lifecycleVersion: undefined,
         finish: { attempts: 0, phase: "deliver" },
       });
+      // Only an operator finishes a row whose old recovery never reached done.
+      await seed("legacy-recovery", {
+        status: "interrupted",
+        lifecycleVersion: undefined,
+        recovery: unfinishedRecovery,
+      });
       const rows = await collect(
         h.repository.scan(new AbortController().signal),
       );
@@ -209,12 +218,43 @@ export function meetingFinishContract(
         lifecycleVersion: undefined,
       });
       await seed("marked", { status: "processing" });
-      const rows = await collect(
-        h.repository.listStranded(new AbortController().signal),
-      );
-      const byKey = (a: MeetingHistory, b: MeetingHistory) =>
-        a.channelId_timestamp.localeCompare(b.channelId_timestamp);
-      expect(rows.sort(byKey)).toEqual(stranded.sort(byKey));
+      await expectListed(stranded);
+    });
+
+    it("lists terminal rows without the marker whose old recovery never finished", async () => {
+      const legacy = { lifecycleVersion: undefined };
+      const stranded = [
+        await seed("interrupted", {
+          ...legacy,
+          status: "interrupted",
+          recovery: unfinishedRecovery,
+        }),
+        await seed("failed", {
+          ...legacy,
+          status: "failed",
+          recovery: retryingFailedRecovery,
+        }),
+      ];
+      await seed("done", {
+        ...legacy,
+        status: "interrupted",
+        recovery: doneRecovery,
+      });
+      await seed("absent", { ...legacy, status: "failed" });
+      await seed("marked", {
+        status: "interrupted",
+        recovery: unfinishedRecovery,
+      });
+      await expectListed(stranded);
     });
   });
+
+  async function expectListed(expected: MeetingHistory[]) {
+    const rows = await collect(
+      h.repository.listStranded(new AbortController().signal),
+    );
+    const byKey = (a: MeetingHistory, b: MeetingHistory) =>
+      a.channelId_timestamp.localeCompare(b.channelId_timestamp);
+    expect(rows.sort(byKey)).toEqual(expected.sort(byKey));
+  }
 }

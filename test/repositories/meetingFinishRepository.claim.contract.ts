@@ -8,10 +8,14 @@ import {
   WORKER_A,
   WORKER_B,
   derivedEnd,
+  doneRecovery,
   finisherRow,
   keyOf,
+  unfinishedRecovery,
   type ContractContext,
 } from "./meetingFinishRepository.contract.fixture";
+
+const reopening = { operator: true, reopen: true };
 
 export function claimContract({ h, seed }: ContractContext) {
   describe("claim", () => {
@@ -262,6 +266,51 @@ export function claimContract({ h, seed }: ContractContext) {
         NOW,
       );
       await expectRestored(claim, before);
+    });
+
+    it("a reopening claim sets a notes-less terminal row to processing, and restore puts back its status and recovery", async () => {
+      const before = await seed("a", {
+        status: "interrupted",
+        lifecycleVersion: undefined,
+        recovery: unfinishedRecovery,
+      });
+      const claim = await h.repository.claim(
+        finisherRow(before),
+        WORKER_B,
+        NOW,
+        reopening,
+      );
+      expect(claim?.history).toMatchObject({
+        status: "processing",
+        recovery: unfinishedRecovery,
+        finish: { owner: WORKER_B },
+      });
+      if (!claim) throw new Error("expected the reopening claim");
+      await h.repository.save(
+        claim,
+        { transcriptS3Key: "synthetic/transcript.json" },
+        NOW,
+      );
+      await expectRestored(claim, before);
+    });
+
+    it("a reopening claim refuses a row with saved notes or a finished recovery", async () => {
+      const legacy = { status: "failed", lifecycleVersion: undefined } as const;
+      const rows = [
+        await seed("notes", {
+          ...legacy,
+          recovery: unfinishedRecovery,
+          notes: "synthetic notes",
+        }),
+        await seed("done", { ...legacy, recovery: doneRecovery }),
+        await seed("absent", legacy),
+      ];
+      for (const row of rows) {
+        await expect(
+          h.repository.claim(finisherRow(row), WORKER_B, NOW, reopening),
+        ).resolves.toBeUndefined();
+        await expect(h.readHistory(keyOf(row))).resolves.toEqual(row);
+      }
     });
 
     it("refuses while another owner holds the claim", async () => {
