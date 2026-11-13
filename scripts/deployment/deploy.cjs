@@ -27,8 +27,8 @@ const AWS_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
 const WORKERS_PK = "WORKERS";
 const WORKER_SK_PREFIX = "WORKER#";
 const CUTOVER_SK = "CUTOVER";
-const MARKER_READ_ATTEMPTS = 3;
-const MARKER_RETRY_MS = 5 * SECOND_MS;
+const REGISTRY_READ_ATTEMPTS = 3;
+const REGISTRY_RETRY_MS = 5 * SECOND_MS;
 const CUTOVER = { present: "present", absent: "absent", unknown: "unknown" };
 const DRAIN_METRIC = "DrainWaitTimedOut";
 const RETIRE_REASON = "Retired by a deployment";
@@ -178,9 +178,24 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     return (Items ?? []).map((item) => unmarshall(item));
   }
 
+  /** One failed read must not fail a step, so every registry read gets three tries. */
+  async function registryWithRetry(label) {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await registry();
+      } catch (error) {
+        log(
+          `${label} ${attempt} of ${REGISTRY_READ_ATTEMPTS} failed: ${error.message}`,
+        );
+        if (attempt === REGISTRY_READ_ATTEMPTS) throw error;
+        await sleep(REGISTRY_RETRY_MS);
+      }
+    }
+  }
+
   async function workers() {
     const nowSeconds = Math.floor(now() / SECOND_MS);
-    return (await registry()).filter(
+    return (await registryWithRetry("Worker registry read")).filter(
       (record) =>
         String(record.sk).startsWith(WORKER_SK_PREFIX) &&
         record.heartbeatAt >= nowSeconds - HEARTBEAT_FRESH_SECONDS,
@@ -192,19 +207,13 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
   }
 
   async function cutoverState() {
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        const marked = (await registry()).some(
-          (record) => record.sk === CUTOVER_SK,
-        );
-        return marked ? CUTOVER.present : CUTOVER.absent;
-      } catch (error) {
-        log(
-          `Cutover marker read ${attempt} of ${MARKER_READ_ATTEMPTS} failed: ${error.message}`,
-        );
-        if (attempt === MARKER_READ_ATTEMPTS) return CUTOVER.unknown;
-        await sleep(MARKER_RETRY_MS);
-      }
+    try {
+      const marked = (await registryWithRetry("Cutover marker read")).some(
+        (record) => record.sk === CUTOVER_SK,
+      );
+      return marked ? CUTOVER.present : CUTOVER.absent;
+    } catch {
+      return CUTOVER.unknown;
     }
   }
 
@@ -333,7 +342,7 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     return input;
   }
 
-  async function deployImage(image) {
+  async function deployImage(image, rolloutState = {}) {
     const family = required("ECS_TASK_FAMILY");
     const svc = await service();
     const previousImage = await servingImage(svc);
@@ -349,7 +358,11 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
       )
     ).taskDefinition;
     // Printed first so a run that fails from here on still knows what to roll back to.
-    output({ previousImage, previousTaskDefinition: svc.taskDefinition });
+    output({
+      previousImage,
+      previousTaskDefinition: svc.taskDefinition,
+      ...rolloutState,
+    });
     try {
       await aws("ecs", "update-service", {
         cluster: cluster(),
@@ -374,7 +387,9 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
   async function rollout({ image }) {
     if (!DIGEST_IMAGE.test(image ?? ""))
       throw new Error("--image must pin a sha256 digest");
-    return deployImage(image);
+    // Read before the update: a marker written later, while the new worker
+    // comes up, must not let rollback pick the old runtime's image.
+    return deployImage(image, { cutover: await cutoverState() });
   }
 
   async function waitReady({ release }) {
@@ -420,18 +435,19 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     );
   }
 
-  async function rollback({ image, previousTaskDefinition }) {
+  async function rollback({ image, previousTaskDefinition, rolloutCutover }) {
     if (!image) throw new Error("--image is required");
     if (!previousTaskDefinition)
       throw new Error("--previous-task-definition is required");
     // Release numbers only ever increase, so the only rollback is a higher
-    // revision, and it is only correct once new workers are in charge.
-    const cutover = await cutoverState();
-    if (cutover === CUTOVER.absent)
+    // revision, and it is only correct once new workers are in charge. The
+    // state recorded at rollout decides: when the marker appeared later, the
+    // previous image is the old runtime's, which cannot start any more.
+    if (rolloutCutover === CUTOVER.absent)
       throw new Error(
         "Cutover marker absent: the old runtime is still in charge. Nothing was rolled back: the service still points at the revision that failed and the old runtime's task was not touched. Fix forward with a new deployment of a fixed commit, never a rollback, and do not stop the old task until a new worker reports ready; failing the run",
       );
-    if (cutover === CUTOVER.unknown)
+    if (rolloutCutover !== CUTOVER.present)
       throw new Error(
         "Cutover marker unreadable: the cutover state could not be read, so nothing was changed. If the cutover has already happened, roll back by redeploying the last good commit; failing the run",
       );
@@ -465,6 +481,8 @@ function parseArguments(argv) {
     else if (flag === "--release") options.release = Number(rest[++index]);
     else if (flag === "--previous-task-definition")
       options.previousTaskDefinition = rest[++index];
+    else if (flag === "--rollout-cutover")
+      options.rolloutCutover = rest[++index];
     else throw new Error(`Unknown argument ${flag}`);
   }
   return { command, options };

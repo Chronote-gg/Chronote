@@ -569,6 +569,7 @@ describe("rollout", () => {
       value: {
         previousImage: PREVIOUS_IMAGE,
         previousTaskDefinition: CURRENT_ARN,
+        cutover: "present",
       },
       afterCalls: updateIndex,
     });
@@ -591,9 +592,30 @@ describe("rollout", () => {
       /AccessDenied/,
     );
     expect(h.outputs.map((o) => o.value)).toEqual([
-      { previousImage: PREVIOUS_IMAGE, previousTaskDefinition: CURRENT_ARN },
+      {
+        previousImage: PREVIOUS_IMAGE,
+        previousTaskDefinition: CURRENT_ARN,
+        cutover: "present",
+      },
     ]);
   });
+  test.each([
+    ["absent", failingReads(1, () => [])],
+    ["unknown", failingReads(MARKER_READ_ATTEMPTS, () => [CUTOVER])],
+  ])(
+    "rollout records the marker as %s before updating the service",
+    async (cutover, registry) => {
+      const h = harness({ registry });
+      await expect(h.deploy.rollout({ image: NEW_IMAGE })).resolves.toEqual({
+        revision: 8,
+        previousImage: PREVIOUS_IMAGE,
+      });
+      expect(h.outputs[0].value.cutover).toBe(cutover);
+      expect(h.named("dynamodb.query")).toHaveLength(
+        cutover === "absent" ? 2 : MARKER_READ_ATTEMPTS,
+      );
+    },
+  );
   test("rollout refuses an image without a digest", async () => {
     const h = harness();
     await expect(h.deploy.rollout({ image: "repo:latest" })).rejects.toThrow(
@@ -624,6 +646,24 @@ describe("wait-ready", () => {
     });
     await expect(h.deploy.waitReady({ release: 8 })).resolves.toBeUndefined();
     expect(h.elapsed()).toBe(2 * MINUTE_MS);
+  });
+  test("ready wait survives a registry read that fails once", async () => {
+    const h = harness({
+      registry: failingReads(1, (clock) => [
+        worker("i-new", { release: 8, heartbeatAt: Math.floor(clock / 1000) }),
+      ]),
+    });
+    await expect(h.deploy.waitReady({ release: 8 })).resolves.toBeUndefined();
+    expect(h.named("dynamodb.query")).toHaveLength(2);
+  });
+  test("ready wait fails after three failed registry reads", async () => {
+    const h = harness({
+      registry: failingReads(MARKER_READ_ATTEMPTS, () => []),
+    });
+    await expect(h.deploy.waitReady({ release: 8 })).rejects.toThrow(
+      /ProvisionedThroughputExceeded/,
+    );
+    expect(h.named("dynamodb.query")).toHaveLength(MARKER_READ_ATTEMPTS);
   });
   test("ready wait times out after 15 minutes", async () => {
     const h = harness({
@@ -688,6 +728,7 @@ describe("rollback", () => {
     h.deploy.rollback({
       image: PREVIOUS_IMAGE,
       previousTaskDefinition: arn(7),
+      rolloutCutover: "present",
       ...options,
     });
   const expectNothingChanged = (h) => {
@@ -710,10 +751,6 @@ describe("rollback", () => {
     expect(register.params.containerDefinitions[0].image).toBe(PREVIOUS_IMAGE);
     const [update] = h.named("ecs.update-service");
     expect(update.params.taskDefinition).toMatch(/:9$/);
-    expect(h.named("dynamodb.query")[0].params).toMatchObject({
-      TableName: env.DEPLOYMENT_CONTROL_TABLE,
-      ConsistentRead: true,
-    });
   });
   test.each([
     ["the image did not change", () => taskDefinition(8, PREVIOUS_IMAGE)],
@@ -735,38 +772,24 @@ describe("rollback", () => {
     ).rejects.toThrow(/--previous-task-definition is required/);
     expectNothingChanged(h);
   });
-  test("rollback without the cutover marker changes nothing in ECS", async () => {
-    const h = rollbackHarness({ registry: () => [] });
-    await expect(rollBack(h)).rejects.toThrow(
+  test("rollback refuses when the marker was absent at rollout, even if it is present now", async () => {
+    const h = rollbackHarness();
+    await expect(rollBack(h, { rolloutCutover: "absent" })).rejects.toThrow(
       /old runtime is still in charge.*new deployment of a fixed commit/,
     );
     expectNothingChanged(h);
+    expect(h.named("dynamodb.query")).toHaveLength(0);
   });
-  test("rollback retries a failing marker read, then changes nothing", async () => {
-    const h = rollbackHarness({
-      registry: () => {
-        throw new Error("AccessDenied");
-      },
-    });
-    await expect(rollBack(h)).rejects.toThrow(
-      /cutover state could not be read.*nothing was changed/,
-    );
-    expect(h.named("dynamodb.query")).toHaveLength(MARKER_READ_ATTEMPTS);
-    expectNothingChanged(h);
-    expect(h.elapsed()).toBeLessThan(MINUTE_MS);
-  });
-  test("rollback takes the path of a marker read that succeeds on retry", async () => {
-    const absent = rollbackHarness({ registry: failingReads(1, () => []) });
-    await expect(rollBack(absent)).rejects.toThrow(
-      /old runtime is still in charge/,
-    );
-    expect(absent.named("ecs.update-service")).toHaveLength(0);
-    const present = rollbackHarness({
-      registry: failingReads(1, () => [CUTOVER]),
-    });
-    await expect(rollBack(present)).rejects.toThrow(/rolled back.*revision 9/i);
-    expect(present.named("dynamodb.query")).toHaveLength(2);
-  });
+  test.each(["unknown", undefined])(
+    "rollback refuses when the marker state at rollout was %s",
+    async (rolloutCutover) => {
+      const h = rollbackHarness();
+      await expect(rollBack(h, { rolloutCutover })).rejects.toThrow(
+        /cutover state could not be read.*nothing was changed/,
+      );
+      expectNothingChanged(h);
+    },
+  );
 });
 
 test("arguments parse into subcommand options", async () => {
@@ -787,10 +810,16 @@ test("arguments parse into subcommand options", async () => {
       PREVIOUS_IMAGE,
       "--previous-task-definition",
       OLD_ARN,
+      "--rollout-cutover",
+      "present",
     ]),
   ).toEqual({
     command: "rollback",
-    options: { image: PREVIOUS_IMAGE, previousTaskDefinition: OLD_ARN },
+    options: {
+      image: PREVIOUS_IMAGE,
+      previousTaskDefinition: OLD_ARN,
+      rolloutCutover: "present",
+    },
   });
   expect(() => parseArguments(["rollout", "--force"])).toThrow(/Unknown/);
 });

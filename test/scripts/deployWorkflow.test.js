@@ -74,19 +74,27 @@ describe.each(FILES)("%s", (name) => {
     expect(rollback.env.PREVIOUS_TASK_DEFINITION).toBe(
       "${{ steps.rollout.outputs.previous_task_definition }}",
     );
-    expect(rollout.run).toContain(
-      `echo "previous_task_definition=$(jq -rs 'map(.previousTaskDefinition // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"`,
+    expect(rollback.env.ROLLOUT_CUTOVER).toBe(
+      "${{ steps.rollout.outputs.cutover }}",
     );
+    for (const [name, key] of [
+      ["previous_task_definition", "previousTaskDefinition"],
+      ["cutover", "cutover"],
+    ])
+      expect(rollout.run).toContain(
+        `echo "${name}=$(jq -rs 'map(.${key} // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"`,
+      );
   });
 
-  test("rollback is given only the previous image and revision", () => {
+  test("rollback is given only the previous image and revision and the marker state at rollout", () => {
     const rollback = backend.steps[indexOfCommand(backend, "rollback")];
     expect(Object.keys(rollback.env)).toEqual([
       "PREVIOUS_IMAGE",
       "PREVIOUS_TASK_DEFINITION",
+      "ROLLOUT_CUTOVER",
     ]);
     expect(rollback.run.trim()).toBe(
-      `${DEPLOY_SCRIPT} rollback --image "$PREVIOUS_IMAGE" --previous-task-definition "$PREVIOUS_TASK_DEFINITION"`,
+      `${DEPLOY_SCRIPT} rollback --image "$PREVIOUS_IMAGE" --previous-task-definition "$PREVIOUS_TASK_DEFINITION" --rollout-cutover "$ROLLOUT_CUTOVER"`,
     );
   });
 

@@ -521,6 +521,7 @@ jobs:
           set -e
           echo "previous_image=$(jq -rs 'map(.previousImage // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"
           echo "previous_task_definition=$(jq -rs 'map(.previousTaskDefinition // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"
+          echo "cutover=$(jq -rs 'map(.cutover // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"
           echo "revision=$(jq -rs 'map(.revision // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"
           exit "$status"
 
@@ -535,7 +536,8 @@ jobs:
         env:
           PREVIOUS_IMAGE: ${{ steps.rollout.outputs.previous_image }}
           PREVIOUS_TASK_DEFINITION: ${{ steps.rollout.outputs.previous_task_definition }}
-        run: node scripts/deployment/deploy.cjs rollback --image "$PREVIOUS_IMAGE" --previous-task-definition "$PREVIOUS_TASK_DEFINITION"
+          ROLLOUT_CUTOVER: ${{ steps.rollout.outputs.cutover }}
+        run: node scripts/deployment/deploy.cjs rollback --image "$PREVIOUS_IMAGE" --previous-task-definition "$PREVIOUS_TASK_DEFINITION" --rollout-cutover "$ROLLOUT_CUTOVER"
 
       - name: Create deployment summary
         if: always()
