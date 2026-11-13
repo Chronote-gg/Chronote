@@ -124,7 +124,7 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
       );
   }
 
-  async function drainingTasks() {
+  async function olderTasks() {
     const svc = await service();
     const { taskArns } = await aws("ecs", "list-tasks", {
       cluster: cluster(),
@@ -144,6 +144,30 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     );
   }
 
+  /**
+   * An older task is draining unless it is still the serving worker: its own
+   * record is ready and no ready worker runs a higher release. That is the
+   * worker's own eligibility rule, so after a rollout whose revision never
+   * became ready the only serving worker is neither waited for nor retired.
+   */
+  async function drainingTasks(reported) {
+    const older = await olderTasks();
+    if (!older.length) return older;
+    const ready = await readyWorkers();
+    return older.filter((task) => {
+      const own = ready.find((record) => record.taskArn === task.taskArn);
+      const serving =
+        Boolean(own) && !ready.some((record) => record.release > own.release);
+      if (serving && !reported.has(task.taskArn)) {
+        log(
+          `Older task ${task.taskArn} is the serving worker on revision ${own.release} and no newer revision has a ready worker; not waited for`,
+        );
+        reported.add(task.taskArn);
+      }
+      return !serving;
+    });
+  }
+
   async function registry() {
     const { Items } = await aws("dynamodb", "query", {
       TableName: required("DEPLOYMENT_CONTROL_TABLE"),
@@ -161,6 +185,10 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
         String(record.sk).startsWith(WORKER_SK_PREFIX) &&
         record.heartbeatAt >= nowSeconds - HEARTBEAT_FRESH_SECONDS,
     );
+  }
+
+  async function readyWorkers() {
+    return (await workers()).filter((record) => record.ready === true);
   }
 
   async function cutoverState() {
@@ -230,8 +258,9 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     const namespace = `${required("SECRETS_PREFIX")}/Deploy`;
     const started = now();
     const retired = new Set();
+    const notWaitedFor = new Set();
     for (;;) {
-      const draining = await drainingTasks();
+      const draining = await drainingTasks(notWaitedFor);
       log(
         `${draining.length} older ${draining.length === 1 ? "task" : "tasks"} draining`,
       );
@@ -344,8 +373,8 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
       throw new Error("--release must be a task definition revision");
     const started = now();
     for (;;) {
-      const ready = (await workers()).some(
-        (record) => record.release === release && record.ready === true,
+      const ready = (await readyWorkers()).some(
+        (record) => record.release === release,
       );
       if (ready) {
         log(`A worker on revision ${release} is ready`);

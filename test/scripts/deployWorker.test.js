@@ -289,8 +289,10 @@ describe("wait-drain", () => {
         { MetricName: "DrainWaitTimedOut", Value: 1, Unit: "Count" },
       ],
     });
-    // Only the cutover marker read; the protection wait is never reached.
-    expect(h.named("dynamodb.query")).toHaveLength(1);
+    // The marker read and one registry read per drain poll; the protection wait is never reached.
+    expect(h.named("dynamodb.query")).toHaveLength(
+      1 + h.named("ecs.list-tasks").length,
+    );
   });
   test("drain wait without the cutover marker does not wait for the old runtime or retire it", async () => {
     const h = harness({
@@ -379,6 +381,81 @@ describe("wait-drain", () => {
     expect(
       h.logs.filter((line) => /2 older tasks draining/.test(line)),
     ).toHaveLength(2);
+  });
+  describe("an older task that is still the serving worker", () => {
+    const OLD_TASK = {
+      taskArn: "task/old",
+      taskDefinitionArn: OLD_ARN,
+      lastStatus: "RUNNING",
+    };
+    const freshSeconds = (clock) => Math.floor(clock / 1000);
+    const servingHarness = (records, overrides = {}) =>
+      harness({
+        tasks: [{ ...OLD_TASK }],
+        registry: (clock) => [CUTOVER, ...records(freshSeconds(clock))],
+        ...overrides,
+      });
+    const oldRecord = (nowSeconds, fields = {}) =>
+      worker("i-old", {
+        release: 6,
+        taskArn: OLD_TASK.taskArn,
+        heartbeatAt: nowSeconds,
+        ...fields,
+      });
+    const stopsAtTenMinutes = (clock, state) => {
+      if (clock - START_MS >= 10 * MINUTE_MS) state.tasks = [];
+    };
+
+    test.each([false, true])(
+      "is neither waited for nor retired (retire %s)",
+      async (retire) => {
+        const h = servingHarness((now) => [
+          oldRecord(now),
+          worker("i-failed", { release: 7, ready: false, heartbeatAt: now }),
+        ]);
+        await expect(h.deploy.waitDrain({ retire })).resolves.toBeUndefined();
+        expect(h.elapsed()).toBe(0);
+        expect(h.named("ecs.stop-task")).toHaveLength(0);
+        expect(h.named("cloudwatch.put-metric-data")).toHaveLength(0);
+        expect(
+          h.logs.filter((line) =>
+            /task\/old is the serving worker.*not waited for/.test(line),
+          ),
+        ).toHaveLength(1);
+      },
+    );
+    test("is waited for and retired once a newer release is ready", async () => {
+      const records = (now) => [
+        oldRecord(now),
+        worker("i-new", { release: 7, heartbeatAt: now }),
+      ];
+      const waiting = servingHarness(records, { onSleep: stopsAtTenMinutes });
+      await expect(waiting.deploy.waitDrain()).resolves.toBeUndefined();
+      expect(waiting.elapsed()).toBeGreaterThanOrEqual(10 * MINUTE_MS);
+      const retiring = servingHarness(records);
+      await retiring.deploy.waitDrain({ retire: true });
+      expect(retiring.named("ecs.stop-task").map((c) => c.params.task)).toEqual(
+        ["task/old"],
+      );
+    });
+    test.each([
+      ["stale", (now) => [oldRecord(now, { heartbeatAt: now - 31 })]],
+      ["not ready", (now) => [oldRecord(now, { ready: false })]],
+      ["missing", () => []],
+    ])("is waited for when its record is %s", async (_, records) => {
+      const h = servingHarness(records, { onSleep: stopsAtTenMinutes });
+      await expect(h.deploy.waitDrain()).resolves.toBeUndefined();
+      expect(h.elapsed()).toBeGreaterThanOrEqual(10 * MINUTE_MS);
+    });
+    test("the rollout proceeds after a drain wait that skipped it", async () => {
+      const h = servingHarness((now) => [oldRecord(now)]);
+      await h.deploy.waitDrain({ retire: true });
+      await expect(h.deploy.rollout({ image: NEW_IMAGE })).resolves.toEqual({
+        revision: 8,
+        previousImage: PREVIOUS_IMAGE,
+      });
+      expect(h.named("ecs.stop-task")).toHaveLength(0);
+    });
   });
   test("protection wait proceeds after five minutes", async () => {
     const h = harness({
