@@ -253,11 +253,14 @@ test("a nickname restore that never resolves is aborted at its bound, before the
   t.deps.sleep.mockImplementation((ms: number) =>
     ms === LIFECYCLE.closeNicknameMs ? Promise.resolve() : never(),
   );
+  let abortedAtRelease: boolean | undefined;
   t.deps.lease.releaseSessionLease.mockImplementationOnce(async () => {
-    expect(restoreSignal?.aborted).toBe(true);
+    abortedAtRelease = restoreSignal?.aborted;
   });
 
   await t.close.closeMeeting(meeting, button);
+
+  expect(abortedAtRelease).toBe(true);
 
   expect(t.deps.sleep).toHaveBeenCalledWith(
     LIFECYCLE.closeNicknameMs,
