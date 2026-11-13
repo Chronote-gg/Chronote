@@ -163,7 +163,6 @@ test.each(["plan", "apply"])(
         ? [
             "node scripts/deployment/validate-sandbox-site-permissions-plan.cjs --session",
             "node scripts/deployment/validate-artifact-preservation-plan.cjs --session apply",
-            "node scripts/deployment/production-writer-guard.cjs --inspect",
           ]
         : [
             'test "$PLAN_SCOPE" = deployment-prerequisites || test "$PLAN_SCOPE" = deployment-runtime || test "$PLAN_SCOPE" = site-delivery || test "$PLAN_SCOPE" = processing-retry || test "$PLAN_SCOPE" = artifact-preservation',
@@ -501,14 +500,15 @@ test("production Plan uses the reviewed OIDC read, lock and capture session", ()
   ).toBe(
     "arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/state",
   );
-  expect(
-    job.steps.find((step) => step.name === "Run private Terraform Plan").env,
-  ).toMatchObject({
+  const planEnv = job.steps.find(
+    (step) => step.name === "Run private Terraform Plan",
+  ).env;
+  expect(planEnv).toMatchObject({
     DEPLOYMENT_ENVIRONMENT: "${{ inputs.github_environment }}",
     DEPLOYMENT_ACCOUNT_ID: "${{ vars.AWS_ACCOUNT_ID }}",
     DEPLOYMENT_CONTROL_TABLE: "${{ vars.DEPLOYMENT_CONTROL_TABLE }}",
-    DEPLOYMENT_GUARD_ROLE_ARN: "${{ vars.TERRAFORM_AWS_ROLE_ARN }}",
   });
+  expect(planEnv).not.toHaveProperty("DEPLOYMENT_GUARD_ROLE_ARN");
 });
 
 test.each(["plan", "apply"])(

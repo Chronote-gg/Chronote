@@ -1,11 +1,8 @@
 import type { RepliableInteraction } from "discord.js";
-import type { WorkAdmissionAuthority } from "./types/deploymentControl";
 import { claimInteractionReceipt } from "./services/interactionIdempotencyService";
-import {
-  beginRuntimeWorkClaim,
-  type RuntimeWorkClaim,
-  type SessionControlClosing,
-} from "./services/runtimeWorkAdmissionService";
+import { LIFECYCLE } from "./services/lifecycleTiming";
+
+export type InteractionClaim = "claimed" | "duplicate" | "failed" | "timed_out";
 
 export const resolveInteractionKind = (
   interaction: RepliableInteraction,
@@ -28,84 +25,31 @@ export const resolveInteractionKind = (
   return "other";
 };
 
+/**
+ * Never throws. Only "claimed" lets this worker respond: a failed or timed
+ * out claim may have landed, and answering then could answer beside the holder.
+ */
 export const tryClaimInteraction = async (
   interaction: RepliableInteraction,
-  authority: WorkAdmissionAuthority,
-): Promise<boolean> => {
+): Promise<InteractionClaim> => {
+  // Discord allows three seconds for a first response, so a slow claim is abandoned.
+  const signal = AbortSignal.timeout(LIFECYCLE.interactionReceiptClaimMs);
   try {
-    return await claimInteractionReceipt({
+    const claimed = await claimInteractionReceipt({
       interactionId: interaction.id,
       interactionKind: resolveInteractionKind(interaction),
       guildId: interaction.guildId ?? undefined,
-      authority,
+      signal,
     });
+    return claimed ? "claimed" : "duplicate";
   } catch (error) {
-    console.error("Failed to claim interaction receipt", {
-      interactionId: interaction.id,
-      error,
-    });
-    throw error;
+    const timedOut = signal.aborted;
+    console.warn(
+      timedOut
+        ? "Interaction receipt claim timed out; not responding"
+        : "Interaction receipt claim failed; not responding",
+      { interactionId: interaction.id, error },
+    );
+    return timedOut ? "timed_out" : "failed";
   }
 };
-
-export async function respondToClosingSession(
-  interaction: RepliableInteraction,
-  closing: SessionControlClosing,
-) {
-  const deadline = interaction.createdTimestamp + 2500;
-  const remainingMs = deadline - Date.now();
-  if (remainingMs <= 0) {
-    console.warn("Closing interaction response deadline expired");
-    return;
-  }
-  let response: RuntimeWorkClaim;
-  try {
-    response = beginRuntimeWorkClaim(
-      "interaction_response",
-      interaction.id,
-      closing.reservation,
-    );
-  } catch {
-    console.warn("Closing interaction response admission refused");
-    return;
-  }
-  const timeout = setTimeout(() => response.fence(), remainingMs);
-  await response.trackPromise(async () => {
-    let receiptStarted = false;
-    let receiptClaimed = false;
-    let replyStarted = false;
-    try {
-      const authority = await response.authority();
-      const claimed = await response.trackEffect(() => {
-        receiptStarted = true;
-        return tryClaimInteraction(interaction, authority);
-      });
-      if (!claimed) {
-        response.acknowledgeInteractionResponseNotAdmitted();
-        return;
-      }
-      receiptClaimed = true;
-      response.acknowledgeInteractionReceipt();
-      await response.trackEffect(() => {
-        if (Date.now() >= deadline)
-          throw new Error("Closing interaction response deadline expired");
-        replyStarted = true;
-        return interaction.reply({
-          content:
-            "This meeting is already finishing. Please wait for processing to finish.",
-          ephemeral: true,
-        });
-      });
-      response.acknowledgeInteractionResponse();
-    } catch {
-      if (!receiptStarted) response.acknowledgeInteractionResponseNotAdmitted();
-      else if (receiptClaimed && !replyStarted)
-        response.acknowledgeInteractionResponseNotStarted();
-      response.fence();
-      console.warn("Closing interaction response could not be confirmed");
-    } finally {
-      clearTimeout(timeout);
-      await response.settle();
-    }
-  });
-}

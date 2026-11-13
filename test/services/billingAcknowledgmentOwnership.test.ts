@@ -2,8 +2,6 @@
 import "../deployment/coldNetworkGuard.cjs";
 import { config } from "../../src/services/configService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
-import { context, control, runtime } from "../deployment/controlFixtures";
-import { getRuntimeWorkAdmissionCheckpoints } from "../../src/services/runtimeWorkAdmissionService";
 import { readBillingChange } from "../../src/services/billingChangeService";
 import * as subscriptionRepository from "../../src/repositories/subscriptionRepository";
 import * as changeRepository from "../../src/repositories/billingChangeRepository";
@@ -24,10 +22,6 @@ import {
 } from "../fixtures/renewalStripeClient";
 import { fundedInvoice, sourceSubscription } from "../fixtures/renewalStripe";
 import { UnresolvedBillingMutation } from "../../src/services/runtimeBillingOperationService";
-jest.mock("../../src/services/runtimeLifecycleService", () => ({
-  beginRuntimeWork: () => ({ settle: jest.fn(), transition: jest.fn() }),
-  getRuntimeAdmissionContext: async () => context,
-}));
 const original = {
   mock: config.mock.enabled,
   renewal: config.stripe.renewalReactivationEnabled,
@@ -36,11 +30,6 @@ beforeEach(() => {
   config.mock.enabled = true;
   config.stripe.renewalReactivationEnabled = true;
   resetMockStore();
-  for (const row of [control, runtime("old")])
-    getMockStore().deploymentControlRecords.set(
-      JSON.stringify([row.pk, row.sk]),
-      structuredClone(row),
-    );
 });
 afterEach(() => {
   jest.restoreAllMocks();
@@ -76,7 +65,6 @@ test("an acknowledged funding invoice with a losing receipt CAS retains the actu
     });
     return false;
   });
-  const prior = getRuntimeWorkAdmissionCheckpoints().length;
   await expect(
     readBillingChange({
       stripe: f.stripe,
@@ -90,7 +78,6 @@ test("an acknowledged funding invoice with a losing receipt CAS retains the actu
     revision: "concurrent-without-receipt",
     draftInvoiceId: null,
   });
-  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(prior + 1);
 });
 
 test.each(["throw", "false"])(
@@ -123,7 +110,6 @@ test.each(["throw", "false"])(
           throw new Error("Synthetic receipt unavailable");
         return false;
       });
-    const prior = getRuntimeWorkAdmissionCheckpoints().length;
     await expect(
       restoreRenewal({
         stripe: f.stripe,
@@ -138,7 +124,6 @@ test.each(["throw", "false"])(
     expect([...getMockStore().renewalOperations.values()][0].state).toBe(
       "applying",
     );
-    expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(prior + 1);
   },
 );
 
@@ -187,7 +172,6 @@ test("readback-only funding receipt ACK retains a later projection read failure"
   const error = new Error("projection GET failed after receipt");
   jest.spyOn(repository, "get").mockRejectedValue(error);
   const providerWrite = jest.spyOn(f.stripe.invoices, "finalizeInvoice");
-  const prior = getRuntimeWorkAdmissionCheckpoints().length;
   await expect(
     readBillingChange({
       stripe: f.stripe,
@@ -199,5 +183,4 @@ test("readback-only funding receipt ACK retains a later projection read failure"
   expect(f.invoice).toHaveBeenCalledTimes(1);
   expect(providerWrite).not.toHaveBeenCalled();
   expect(store.billingChangeOperations.get(key)?.state).toBe("review");
-  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(prior + 1);
 });

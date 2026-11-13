@@ -5,11 +5,10 @@ import type {
   RecordingCaptureState,
 } from "./recordingCheckpoint";
 import type { RecordingLimitState } from "../services/recordingLimitService";
-import type { SessionReservation } from "./deploymentControl";
+import type { SessionReservation } from "./meetingHistoryTransition";
 import { AudioPlayer, VoiceConnection } from "@discordjs/voice";
 import {
   ButtonInteraction,
-  CommandInteraction,
   Guild,
   TextChannel,
   User,
@@ -114,15 +113,10 @@ export interface MeetingData {
   botNicknameBeforeSession?: string | null;
   botNicknameChanged?: boolean;
 
+  /** Aborted only when this worker lost the capture's lease to another meeting. */
   ownershipSignal?: AbortSignal;
-  finalizationFenced?: boolean;
-  finalization?: {
-    promise: Promise<void>;
-    controller: AbortController;
-    disposition: "pending" | "durable" | "unresolved";
-    preservation?: Promise<boolean>;
-    historyDisposition?: "complete" | "cancelled" | "failed";
-  };
+  /** Aborts `ownershipSignal`, for a loss that close discovers before renewal does. */
+  abortOwnership?: (reason: Error) => void;
   finishing: boolean;
   // Used for functions that are waiting for the meeting to be completely over
   isFinished: Promise<void>;
@@ -161,11 +155,11 @@ export interface MeetingData {
   recordingLimitNotice?: RecordingLimitState;
   messagesToDelete?: string[];
   leaseOwnerInstanceId?: string;
-  leaseHeartbeatTimer?: ReturnType<typeof setInterval>;
-}
-
-export interface MeetingSetup {
-  interaction: CommandInteraction;
+  /**
+   * Settles once the processing state edit on the recording message has
+   * landed or failed, and never rejects; delivery edits the same message.
+   */
+  processingMessageShown?: Promise<void>;
 }
 
 /** Plain content and processing state, explicitly prepared for live or recovered notes. */
@@ -188,7 +182,6 @@ export type MeetingNotesInput = Pick<
   | "attendance"
   | "langfuseParentSpanContext"
 > & {
-  observeGeneration?: import("./fixtureEvidence").GenerationObserver;
   recentMeetingNames?: string;
   creator: Pick<User, "id">;
   guild: Pick<Guild, "id" | "name" | "description">;

@@ -14,6 +14,7 @@ import type { TranscriptPayload, TranscriptSegment } from "../types/transcript";
 import {
   INTERRUPTED_CAPTURE_NOTICE,
   InvalidRecoveryContent,
+  liveShapedNotesInput,
   readRecoveryContent,
   recoveryNotesInput,
   retranscribeOmittedRanges,
@@ -56,9 +57,17 @@ type RunInput = {
   history: MeetingHistory;
   job: ProcessingRetryJob;
   signal: AbortSignal;
-  effect: TranscriptionContentInput["effect"];
   reader: RecoveryReader;
 };
+type Effect = TranscriptionContentInput["effect"];
+
+/** A stopped job starts no further provider call or write. */
+function effectOf(input: RunInput): Effect {
+  return async (run) => {
+    input.signal.throwIfAborted();
+    return run();
+  };
+}
 type Transcript = {
   text: string;
   source: ProcessingRetryJob["transcriptSource"];
@@ -100,7 +109,7 @@ async function checkpointTranscript(
       content,
       input.reader,
       input.signal,
-      input.effect,
+      effectOf(input),
     );
     if (result.retranscribedRanges > 0)
       return { ...result, source: "checkpoint" };
@@ -130,7 +139,7 @@ async function freshTranscript(
     throw new RetryFailure(
       input.history.checkpoint ? "invalid_snapshot" : "source_missing",
     );
-  const mixed = await input.effect(() =>
+  const mixed = await effectOf(input)(() =>
     transcribeMixedRecording(audioS3Key, input.signal),
   );
   if (mixed === "source_missing") throw new RetryFailure("source_missing");
@@ -151,7 +160,7 @@ async function cleanupMixedTranscript(
 ): Promise<string> {
   if (content) {
     try {
-      const saved = await input.effect(() =>
+      const saved = await effectOf(input)(() =>
         cleanupWithSavedSettings(content, text, input.signal),
       );
       return saved.finalText;
@@ -159,7 +168,7 @@ async function cleanupMixedTranscript(
       if (!(error instanceof InvalidRecoveryContent)) throw error;
     }
   }
-  return input.effect(() =>
+  return effectOf(input)(() =>
     cleanupWithCurrentSettings(input.history, text, input.signal),
   );
 }
@@ -179,7 +188,7 @@ async function retryTranscript(
       key,
     };
   const { text, segments, source } = await freshTranscript(input, content);
-  await input.effect(() =>
+  await effectOf(input)(() =>
     storeRetryTranscript(
       key,
       { generatedAt: new Date().toISOString(), segments, text },
@@ -261,14 +270,7 @@ async function notesInputFor(
         interrupted,
       );
       return {
-        notesInput: {
-          ...notesInput,
-          meetingName: history.meetingName,
-          // A retry names an unnamed meeting like a live run does.
-          recovered: undefined,
-          // A completed capture has no gaps for the recovery notice to describe.
-          captureNotice: interrupted ? notesInput.captureNotice : undefined,
-        },
+        notesInput: liveShapedNotesInput(notesInput, history, interrupted),
         settingsSource: "snapshot",
       };
     } catch (error) {
@@ -316,9 +318,9 @@ export function clearRetriedStages(
 async function generate(input: RunInput, notesInput: MeetingNotesInput) {
   const { stages } = input.job;
   if (stages.includes("notes"))
-    await input.effect(() => ensureMeetingNotes(notesInput));
+    await effectOf(input)(() => ensureMeetingNotes(notesInput));
   if (stages.includes("summary"))
-    await input.effect(() =>
+    await effectOf(input)(() =>
       ensureMeetingSummaries(notesInput, notesInput.notesText),
     );
   const processing = notesInput.processing ?? {};

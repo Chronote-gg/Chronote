@@ -1,13 +1,4 @@
 /** @jest-environment node */
-import { seedBillingRuntime } from "../fixtures/billingRuntime";
-import { introductionFixture } from "../fixtures/productionIntroduction";
-import { control } from "../deployment/controlFixtures";
-import {
-  createServer,
-  postWebhook,
-  closeServer,
-} from "../fixtures/billingWebhook";
-import { stripeTransport } from "../fixtures/stripeTransport";
 import { config } from "../../src/services/configService";
 import { resetMockStore, getMockStore } from "../../src/repositories/mockStore";
 import { getStripeWebhookRepository } from "../../src/repositories/stripeWebhookRepository";
@@ -16,76 +7,16 @@ import {
   receiptBirth,
 } from "../../src/services/stripeWebhookReceiptService";
 import { persistBillingAcknowledgment } from "../../src/services/runtimeBillingOperationService";
-import { getRuntimeWorkAdmissionCheckpoints } from "../../src/services/runtimeWorkAdmissionService";
-import type { StripeEvent } from "../../src/types/stripe";
 import { randomUUID } from "node:crypto";
-const held = { holdId: "hold", introductionId: "introduction", revision: 1 };
+import * as runtimeInstanceService from "../../src/services/runtimeInstanceService";
+import { getWorkerIdentity } from "../../src/services/runtimeInstanceService";
 beforeEach(() => {
   config.mock.enabled = true;
   config.stripe.webhookSecret = "dummy-signature-secret";
   resetMockStore();
-  seedBillingRuntime();
   getMockStore().subscriptions.clear();
 });
 afterEach(() => jest.restoreAllMocks());
-const event = (type: string): StripeEvent =>
-  ({
-    id: randomUUID(),
-    type,
-    data: {
-      object: {
-        id: "fixture",
-        metadata: { guild_id: "guild", purchase_attempt_id: "purchase" },
-        subscription: "subscription",
-        parent: { subscription_details: { subscription: "subscription" } },
-      },
-    },
-  }) as unknown as StripeEvent;
-test.each([
-  "checkout.session.expired",
-  "checkout.session.completed",
-  "invoice.payment_failed",
-  "invoice.payment_succeeded",
-  "invoice.paid",
-  "customer.subscription.created",
-  "customer.subscription.updated",
-  "customer.subscription.deleted",
-])(
-  "held %s persists raw receipt and never invokes the handler",
-  async (type) => {
-    const provider = jest.fn(() => {
-      throw new Error("Prohibited provider request");
-    });
-    const { stripe } = stripeTransport(provider);
-    const incoming = event(type);
-    jest.spyOn(stripe.webhooks, "constructEvent").mockReturnValue(incoming);
-    getMockStore().deploymentControlRecords.set(
-      JSON.stringify(["ENV", "CONTROL"]),
-      { ...control, maintenance: held },
-    );
-    getMockStore().deploymentControlRecords.set(
-      JSON.stringify(["ENV", "INTRODUCTION"]),
-      introductionFixture(held),
-    );
-    const { server, baseUrl } = createServer(stripe);
-    try {
-      expect((await postWebhook(baseUrl)).statusCode).toBe(503);
-      expect(provider).not.toHaveBeenCalled();
-      expect(getMockStore().paymentTransactions.size).toBe(0);
-      expect(getMockStore().subscriptions.size).toBe(0);
-      expect(getMockStore().purchaseAttempts.size).toBe(0);
-      expect(getMockStore().renewalRecoveryRecords.size).toBe(0);
-      const receipt = await getStripeWebhookRepository().get(incoming.id);
-      expect(receipt).toMatchObject({ state: "processing" });
-      expect(receipt?.birth?.hold).toEqual(held);
-      expect(receipt?.continuation).toBe("not_admitted");
-      expect(receipt?.firstAdmission).toBeUndefined();
-      expect(receipt?.expiresAt).toBeUndefined();
-    } finally {
-      await closeServer(server);
-    }
-  },
-);
 async function claimedReceipt() {
   const repo = getStripeWebhookRepository();
   const eventId = randomUUID();
@@ -102,13 +33,11 @@ async function claimedReceipt() {
 }
 test("prewrite provider read failure retries under fresh admission and preserves first admission", async () => {
   const { repo, eventId } = await claimedReceipt();
-  const before = getRuntimeWorkAdmissionCheckpoints().length;
   await expect(
     continueStripeReceipt(eventId, "token", async () => {
       throw new Error("GET failed");
     }),
   ).rejects.toThrow("GET failed");
-  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(before);
   const failed = (await repo.get(eventId))!;
   expect(failed.admission?.status).toBe("failed");
   await repo.claim({
@@ -131,7 +60,6 @@ test.each([
   "finish ACK lost",
 ])("%s retains admission and prevents replay", async (stage) => {
   const { repo, eventId } = await claimedReceipt();
-  const before = getRuntimeWorkAdmissionCheckpoints().length;
   const finish =
     stage === "finish ACK lost"
       ? jest.spyOn(repo, "finish").mockRejectedValue(new Error(stage))
@@ -153,7 +81,6 @@ test.each([
     }),
   ).rejects.toThrow(stage);
   finish?.mockRestore();
-  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(before + 1);
   const receipt = getMockStore().stripeWebhookEvents.get(eventId)!;
   expect(receipt.admission?.status).toBe("running");
   expect(receipt.expiresAt).toBeUndefined();
@@ -170,8 +97,25 @@ test.each([
   expect(replay).not.toHaveBeenCalled();
   expect(writes).toBe(1);
 });
-test("missing runtime proof persists an unproven receipt", async () => {
-  getMockStore().deploymentControlRecords.clear();
+test("birth and admission record this worker's resolved identity", async () => {
+  const { instanceId } = await getWorkerIdentity();
+  const worker = {
+    kind: "local",
+    localId: instanceId,
+    instanceId,
+    protocolVersion: 1,
+  };
+  const { repo, eventId } = await claimedReceipt();
+  await continueStripeReceipt(eventId, "token", async () => undefined);
+  const stored = await repo.get(eventId);
+  expect(stored?.state).toBe("completed");
+  expect(stored?.firstAdmission?.runtime).toEqual(worker);
+  expect(stored?.birth?.writer).toEqual(worker);
+});
+test("an unresolvable worker identity persists an unproven receipt", async () => {
+  jest
+    .spyOn(runtimeInstanceService, "getWorkerIdentity")
+    .mockRejectedValueOnce(new Error("synthetic metadata outage"));
   const { repo, eventId } = await claimedReceipt();
   const handler = jest.fn();
   await expect(
@@ -183,7 +127,6 @@ test("missing runtime proof persists an unproven receipt", async () => {
 
 test("lost failed-attempt receipt ACK stays unresolved after a prewrite read failure", async () => {
   const { repo, eventId } = await claimedReceipt();
-  const before = getRuntimeWorkAdmissionCheckpoints().length;
   jest
     .spyOn(repo, "fail")
     .mockRejectedValueOnce(new Error("failure receipt ACK lost"));
@@ -192,7 +135,6 @@ test("lost failed-attempt receipt ACK stays unresolved after a prewrite read fai
       throw new Error("GET failed");
     }),
   ).rejects.toThrow("failure receipt ACK lost");
-  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(before + 1);
   expect((await repo.get(eventId))?.admission?.status).toBe("running");
 });
 
@@ -207,7 +149,6 @@ test.each([
   "failed callback drains detached %s with %s outcome before classifying the receipt",
   async (mechanism, outcome) => {
     const { repo, eventId } = await claimedReceipt();
-    const before = getRuntimeWorkAdmissionCheckpoints().length;
     await expect(
       continueStripeReceipt(eventId, "token", async (owner) => {
         const write = async () => {
@@ -226,9 +167,6 @@ test.each([
     const retryable = mechanism === "effect" && outcome === "no-write";
     expect((await repo.get(eventId))?.admission?.status).toBe(
       retryable ? "failed" : "running",
-    );
-    expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(
-      before + (retryable ? 0 : 1),
     );
   },
 );

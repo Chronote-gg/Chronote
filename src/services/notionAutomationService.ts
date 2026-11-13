@@ -31,7 +31,6 @@ type AutomationMeetingExportKey = {
 type RunAutoExportParams = {
   meeting: MeetingHistory;
   force?: boolean;
-  recovery?: true;
   signal?: AbortSignal;
 };
 
@@ -45,15 +44,12 @@ const hasUnfinishedRecovery = (meeting: MeetingHistory) =>
     !["acknowledged", "skipped"].includes(meeting.recoveryExport.state),
   );
 
-const isCompletedMeeting = (meeting: MeetingHistory, recovery = false) =>
-  (recovery || !hasUnfinishedRecovery(meeting)) &&
+const isCompletedMeeting = (meeting: MeetingHistory) =>
+  !hasUnfinishedRecovery(meeting) &&
   ((meeting.status ?? MEETING_STATUS.COMPLETE) === MEETING_STATUS.COMPLETE ||
     (meeting.status === MEETING_STATUS.INTERRUPTED &&
-      ((meeting.recovery?.disposition === "done" &&
-        meeting.recovery.outcome === "completed") ||
-        (recovery &&
-          meeting.recovery?.stage === "export" &&
-          meeting.recoveryExport?.state === "pending"))));
+      meeting.recovery?.disposition === "done" &&
+      meeting.recovery.outcome === "completed"));
 
 const matchesChannelFilter = (
   config: NotionAutomationConfig,
@@ -85,13 +81,9 @@ const matchesPersonalAutomationOwner = (
   );
 };
 
-const isEligible = (
-  config: NotionAutomationConfig,
-  meeting: MeetingHistory,
-  recovery = false,
-) =>
+const isEligible = (config: NotionAutomationConfig, meeting: MeetingHistory) =>
   config.autoExportEnabled &&
-  isCompletedMeeting(meeting, recovery) &&
+  isCompletedMeeting(meeting) &&
   hasNotes(meeting) &&
   matchesPersonalAutomationOwner(config, meeting) &&
   matchesChannelFilter(config, meeting) &&
@@ -209,7 +201,6 @@ const getRunnableAutomationConfig = async ({
   meeting,
   force,
   signal,
-  recovery,
 }: RunAutoExportParams) => {
   if (!appConfig.notion.enabled) {
     if (force) throwNotionNotConfigured();
@@ -224,7 +215,7 @@ const getRunnableAutomationConfig = async ({
     return undefined;
   }
 
-  if (!isEligible(config, meeting, recovery)) {
+  if (!isEligible(config, meeting)) {
     if (force) throwAutomationNotEligible();
     return undefined;
   }
@@ -284,21 +275,13 @@ const runAutoExport = async (params: RunAutoExportParams) => {
   );
   params.signal?.throwIfAborted();
   if (existing?.status === "exported" && !params.force) return existing;
-  if (existing && !params.force) {
-    if (params.recovery)
-      throw new Error("Existing Notion export requires reconciliation");
-    return existing;
-  }
+  if (existing && !params.force) return existing;
 
   const reserved = await runNotionMutation(params.signal, () =>
     reserveNewAutomationExport({ existing, key, signal: params.signal }),
   );
   params.signal?.throwIfAborted();
-  if (!reserved) {
-    if (params.recovery)
-      throw new Error("Notion reservation outcome requires reconciliation");
-    return undefined;
-  }
+  if (!reserved) return undefined;
 
   try {
     const exported = await writeNotionAutomationExport({
@@ -312,7 +295,6 @@ const runAutoExport = async (params: RunAutoExportParams) => {
     return exported;
   } catch (error) {
     assertNotionOutcomeKnown(error, params.signal);
-    if (params.recovery) throw error;
     await writeFailure({
       config,
       meeting: params.meeting,
@@ -339,23 +321,6 @@ export const maybeAutoExportCompletedMeeting = async (
       error,
     });
   }
-};
-
-/** Recovery must distinguish disabled rules from a swallowed read/export failure. */
-export const autoExportRecoveredMeeting = async (
-  meeting: MeetingHistory,
-  signal?: AbortSignal,
-): Promise<"acknowledged" | "skipped"> => {
-  if (
-    meeting.recovery?.stage !== "export" ||
-    meeting.recoveryExport?.state !== "pending"
-  )
-    throw new Error("Recovery export is not pending");
-  const exported = await runAutoExport({ meeting, signal, recovery: true });
-  if (!exported) return "skipped";
-  if (exported.status !== "exported" || !exported.notionPageId)
-    throw new Error("Notion export acknowledgment missing");
-  return "acknowledged";
 };
 
 export const retryNotionAutomationExport = async (meeting: MeetingHistory) => {

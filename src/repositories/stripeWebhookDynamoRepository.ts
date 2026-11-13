@@ -8,31 +8,36 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import type { StripeWebhookEvent } from "../types/db";
-import type {
-  AdmissionContext,
-  ControlTableNames,
-} from "../types/deploymentControl";
 import {
   stripeReceiptBirthSchema,
   canAdmitStripeReceipt,
   stripeReceiptAdmissionSchema,
   STRIPE_RECEIPT_RETENTION_SECONDS,
+  type StripeReceiptAdmission,
 } from "../types/stripeWebhookReceipt";
-import { buildRuntimeAdmissionChecks } from "../services/deploymentControlTransactions";
-import { classifyDeploymentTransactionError } from "./deploymentControlErrors";
-async function conditional(write: () => Promise<unknown>): Promise<boolean> {
-  try {
-    await write();
-    return true;
-  } catch (error) {
-    if (classifyDeploymentTransactionError(error) === "stale") return false;
-    throw error;
-  }
+import type { RuntimeIdentity } from "../types/deploymentControl";
+import { config } from "../services/configService";
+import { conditionalWrite } from "./conditionalWrite";
+/**
+ * The schema requires `runtime` and `generation`, and stored receipts must keep parsing, so they
+ * record the admitting worker's identity and release instead of deployment admission state.
+ */
+export function buildStripeReceiptAdmission(
+  attemptId: string,
+  leaseToken: string,
+  runtime: RuntimeIdentity,
+): StripeReceiptAdmission {
+  return stripeReceiptAdmissionSchema.parse({
+    attemptId,
+    leaseToken,
+    runtime,
+    generation: config.runtime.release,
+    admittedAt: Math.floor(Date.now() / 1000),
+  });
 }
 export function createStripeWebhookDynamoRepository(
   client: DynamoDBClient,
   table: string,
-  tables: ControlTableNames,
 ) {
   const get = async (
     eventId: string,
@@ -49,7 +54,7 @@ export function createStripeWebhookDynamoRepository(
       : undefined;
   };
   const tryCreate = (event: StripeWebhookEvent) =>
-    conditional(() =>
+    conditionalWrite(() =>
       client.send(
         new PutItemCommand({
           TableName: table,
@@ -70,7 +75,7 @@ export function createStripeWebhookDynamoRepository(
       const { expiresAt, ...retained } = event;
       void expiresAt;
       if (await tryCreate(retained)) return true;
-      return conditional(() =>
+      return conditionalWrite(() =>
         client.send(
           new UpdateItemCommand({
             TableName: table,
@@ -93,24 +98,24 @@ export function createStripeWebhookDynamoRepository(
       eventId: string,
       leaseToken: string,
       attemptId: string,
-      context: AdmissionContext,
+      runtime: RuntimeIdentity,
     ) {
       const event = await get(eventId);
       const birth = stripeReceiptBirthSchema.safeParse(event?.birth);
       if (!birth.success || !event || !canAdmitStripeReceipt(event))
         return false;
-      const admission = stripeReceiptAdmissionSchema.parse({
+      const admission = buildStripeReceiptAdmission(
         attemptId,
         leaseToken,
-        runtime: context.identity,
-        generation: context.authorizedGeneration,
-        admittedAt: context.now,
-      });
-      return conditional(() =>
+        runtime,
+      );
+      const admitted = await conditionalWrite(() =>
         client.send(
           new TransactWriteItemsCommand({
+            // An SDK retry of a write whose response was lost succeeds instead of failing its own
+            // condition. The schema makes the attempt id a uuid, inside the 36 character limit.
+            ClientRequestToken: admission.attemptId,
             TransactItems: [
-              ...buildRuntimeAdmissionChecks(context, tables),
               {
                 Update: {
                   TableName: table,
@@ -146,9 +151,12 @@ export function createStripeWebhookDynamoRepository(
           }),
         ),
       );
+      if (admitted) return true;
+      // A retry after the token window fails its own condition; the stored attempt says it landed.
+      return (await get(eventId))?.admission?.attemptId === attemptId;
     },
     finish(eventId: string, leaseToken: string, release = false) {
-      return conditional(() =>
+      return conditionalWrite(() =>
         client.send(
           new UpdateItemCommand({
             TableName: table,
@@ -177,7 +185,7 @@ export function createStripeWebhookDynamoRepository(
       );
     },
     fail(eventId: string, leaseToken: string) {
-      return conditional(() =>
+      return conditionalWrite(() =>
         client.send(
           new UpdateItemCommand({
             TableName: table,

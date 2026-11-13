@@ -18,10 +18,79 @@ const metricFilter =
   "aws_cloudwatch_log_metric_filter.processing_retry_worker_failed[0]";
 const alarm = "aws_cloudwatch_metric_alarm.processing_retry_worker_failed[0]";
 const kmsKey = "aws_kms_key.app_general";
+const notBreaching = "notBreaching";
+const atLeast = "GreaterThanOrEqualToThreshold";
+// Mirrors _infra/alerts-lifecycle.tf. The patterns must stay byte-identical to
+// the *_LOG constants in src/metrics.ts; lifecycleAlarms.test.ts checks both.
+const lifecycleAlarms = {
+  meeting_lifecycle_stuck: {
+    pattern: '?"Meeting lifecycle stuck" ?"Meeting lifecycle abandoned"',
+    metric: "MeetingLifecycleStuck",
+    threshold: 1,
+    comparison: atLeast,
+    periods: 1,
+    missing: notBreaching,
+  },
+  meeting_finish_failed: {
+    pattern:
+      '?"Meeting finish failed after retries" ?"Meeting delivery failed after retries"',
+    metric: "MeetingFinishFailed",
+    threshold: 1,
+    comparison: atLeast,
+    periods: 1,
+    missing: notBreaching,
+  },
+  task_protection_failing: {
+    pattern: '"Task protection failed during capture"',
+    metric: "TaskProtectionFailed",
+    threshold: 3,
+    comparison: atLeast,
+    periods: 1,
+    missing: notBreaching,
+  },
+  no_eligible_worker: {
+    pattern: '"Worker eligible heartbeat"',
+    metric: "WorkerEligibleHeartbeat",
+    threshold: 1,
+    comparison: "LessThanThreshold",
+    periods: 1,
+    missing: "breaching",
+  },
+  finisher_scan_missing: {
+    pattern: '"Meeting finisher scan completed"',
+    metric: "MeetingFinisherScanCompleted",
+    threshold: 1,
+    comparison: "LessThanThreshold",
+    periods: 2,
+    missing: "breaching",
+  },
+  renewal_recovery_stalled: {
+    pattern: '"Renewal recovery poll skipped after a lease error"',
+    metric: "RenewalRecoveryStalled",
+    threshold: 1,
+    comparison: atLeast,
+    periods: 3,
+    missing: notBreaching,
+  },
+};
+const lifecycleFilter = (key) =>
+  `aws_cloudwatch_log_metric_filter.lifecycle["${key}"]`;
+const lifecycleAlarm = (key) =>
+  `aws_cloudwatch_metric_alarm.lifecycle["${key}"]`;
+const drainAlarm = "aws_cloudwatch_metric_alarm.deploy_drain_timeout[0]";
+const drainMetric = "DrainWaitTimedOut";
+const lifecycleAddresses = [
+  ...Object.keys(lifecycleAlarms).flatMap((key) => [
+    lifecycleFilter(key),
+    lifecycleAlarm(key),
+  ]),
+  drainAlarm,
+];
 const processingRetryTargets = new Map([
   [table, ["update"]],
   [metricFilter, ["create"]],
   [alarm, ["create"]],
+  ...lifecycleAddresses.map((address) => [address, ["create"]]),
 ]);
 const prefixes = {
   production: "meeting-notes-prod",
@@ -37,16 +106,13 @@ const retryIndex = {
   range_key: "processingRetryDueAt",
   projection_type: "KEYS_ONLY",
 };
-const metric = { name: "ProcessingRetryWorkerFailed", value: "1" };
-const alarmSettings = {
-  metric_name: metric.name,
-  statistic: "Sum",
-  period: 300,
-  evaluation_periods: 1,
+const retryAlarm = {
+  pattern: '"Processing retry worker failed"',
+  metric: "ProcessingRetryWorkerFailed",
   threshold: 1,
-  comparison_operator: "GreaterThanOrEqualToThreshold",
-  treat_missing_data: "notBreaching",
-  actions_enabled: true,
+  comparison: atLeast,
+  periods: 1,
+  missing: notBreaching,
 };
 const empty = (value) => value == null || Object.keys(value).length === 0;
 // A create may leave unknown only the fields AWS 6.70 learns on creation.
@@ -71,25 +137,26 @@ function checkTable(change, names) {
   });
 }
 
-function checkMetricFilter(change, names) {
+function checkMetricFilter(change, names, name, spec) {
   knownExcept(change, ["id", "apply_on_transformed_logs"]);
   const { after } = change;
-  assert.equal(after.name, names.failure);
+  assert.equal(after.name, name);
   assert.equal(after.log_group_name, names.logGroup);
   assert.equal(after.region, "us-east-1");
-  assert.equal(after.pattern, '"Processing retry worker failed"');
+  assert.equal(after.pattern, spec.pattern);
   const [transformation, ...extra] = after.metric_transformation;
   assert.equal(extra.length, 0);
   assert.deepEqual(
     without(transformation, ["default_value", "dimensions", "unit"]),
-    { ...metric, namespace: names.namespace },
+    { name: spec.metric, value: "1", namespace: names.namespace },
   );
   assert.equal(transformation.default_value ?? null, null);
   assert.ok(empty(transformation.dimensions));
   assert.ok([null, undefined, "None"].includes(transformation.unit));
 }
 
-function checkAlarm(change, names) {
+// An unset datapoints_to_alarm means every evaluation period, as equal does.
+function checkAlarm(change, names, alarmName, namespace, spec) {
   knownExcept(change, [
     "arn",
     "id",
@@ -97,11 +164,22 @@ function checkAlarm(change, names) {
     "tags_all",
   ]);
   const { after } = change;
-  assert.equal(after.alarm_name, names.failure);
-  assert.equal(after.namespace, names.namespace);
+  assert.equal(after.alarm_name, alarmName);
+  assert.equal(after.namespace, namespace);
   assert.equal(after.region, "us-east-1");
-  for (const [key, value] of Object.entries(alarmSettings))
+  const settings = {
+    metric_name: spec.metric,
+    statistic: "Sum",
+    period: 300,
+    evaluation_periods: spec.periods,
+    threshold: spec.threshold,
+    comparison_operator: spec.comparison,
+    treat_missing_data: spec.missing,
+    actions_enabled: true,
+  };
+  for (const [key, value] of Object.entries(settings))
     assert.equal(after[key], value);
+  assert.ok([null, spec.periods].includes(after.datapoints_to_alarm ?? null));
   assert.deepEqual(after.alarm_actions, [names.topicArn]);
   assert.deepEqual(after.ok_actions, [names.topicArn]);
   assert.ok(empty(after.insufficient_data_actions));
@@ -128,11 +206,27 @@ function present(plan, address) {
 }
 
 // Production always alarms. Sandbox may run without alerting, in which case
-// the counted filter and alarm have no instance and must both be absent.
+// the counted filter and alarm have no instance and must both be absent. A plan
+// from source before the lifecycle alarms has none of them; any other plan has
+// all of them, exactly when the retry pair is present, except that a parked
+// Sandbox (desired count 0) omits the pairs that alarm on worker silence.
+// Production cannot park, because ECS_DESIRED_COUNT refuses 0 there.
+const parkedAddresses = ["no_eligible_worker", "finisher_scan_missing"].flatMap(
+  (key) => [lifecycleFilter(key), lifecycleAlarm(key)],
+);
 function alerting(plan, environment) {
   const pair = [metricFilter, alarm].map((a) => present(plan, a));
   assert.equal(pair[0], pair[1]);
   assert.ok(pair[0] || environment === "sandbox");
+  const missing = lifecycleAddresses.filter((a) => !present(plan, a));
+  const parked =
+    environment === "sandbox" &&
+    missing.length === parkedAddresses.length &&
+    parkedAddresses.every((a) => missing.includes(a));
+  assert.ok(
+    missing.length === lifecycleAddresses.length ||
+      (pair[0] && (missing.length === 0 || parked)),
+  );
   return pair[0];
 }
 
@@ -154,16 +248,38 @@ function validateProcessingRetryPlan(plan, { accountId, environment }) {
   alerting(plan, environment);
   const checks = {
     [table]: (change) => checkTable(change, names),
-    [metricFilter]: (change) => checkMetricFilter(change, names),
-    [alarm]: (change) => checkAlarm(change, names),
+    [metricFilter]: (change) =>
+      checkMetricFilter(change, names, names.failure, retryAlarm),
+    [alarm]: (change) =>
+      checkAlarm(change, names, names.failure, names.namespace, retryAlarm),
+    [drainAlarm]: (change) =>
+      checkAlarm(
+        change,
+        names,
+        `${prefix}-deploy-drain-timeout`,
+        `${prefix}/Deploy`,
+        { ...retryAlarm, metric: drainMetric },
+      ),
   };
+  for (const [key, spec] of Object.entries(lifecycleAlarms)) {
+    const name = `${prefix}-${key.replaceAll("_", "-")}`;
+    checks[lifecycleFilter(key)] = (change) =>
+      checkMetricFilter(change, names, name, spec);
+    checks[lifecycleAlarm(key)] = (change) =>
+      checkAlarm(change, names, name, names.namespace, spec);
+  }
   return validateScopedPlan(plan, {
     targets: processingRetryTargets,
     requiredNoOp: [kmsKey],
     check: ({ address, change }) => checks[address](change),
   });
 }
-module.exports = { validateProcessingRetryPlan, processingRetryTargets };
+module.exports = {
+  validateProcessingRetryPlan,
+  processingRetryTargets,
+  lifecycleAlarms,
+  drainMetric,
+};
 if (require.main === module)
   runCli(
     (plan) =>

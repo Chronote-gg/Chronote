@@ -1,10 +1,3 @@
-import {
-  isFixture,
-  fixtureParticipants,
-  fixtureLabels,
-  fixtureGenerationObserver,
-  assertFixtureFinalization,
-} from "./fixtureInputService";
 import type { MeetingData, MeetingNotesInput } from "../types/meeting-data";
 import {
   ensureMeetingNotes,
@@ -14,14 +7,7 @@ import { prepareLiveNotesPrompt } from "./notesPromptService";
 import { getMeetingProcessingSignal } from "./meetingProcessingLifetime";
 
 export function liveMeetingNotesInput(meeting: MeetingData): MeetingNotesInput {
-  const fixture = isFixture(meeting);
   return {
-    ...(fixture
-      ? {
-          observeGeneration: fixtureGenerationObserver(meeting),
-          recentMeetingNames: "",
-        }
-      : {}),
     meetingId: meeting.meetingId,
     guildId: meeting.guildId,
     channelId: meeting.channelId,
@@ -34,23 +20,19 @@ export function liveMeetingNotesInput(meeting: MeetingData): MeetingNotesInput {
     summarySentence: meeting.summarySentence,
     summaryLabel: meeting.summaryLabel,
     meetingName: meeting.meetingName,
-    tags: fixture ? [] : meeting.tags,
-    participants: fixture
-      ? new Map(fixtureParticipants(meeting)!.map((p) => [p.id, p]))
-      : meeting.participants,
+    tags: meeting.tags,
+    participants: meeting.participants,
     attendance: meeting.attendance,
     langfuseParentSpanContext: meeting.langfuseParentSpanContext,
     creator: { id: meeting.creator.id },
     guild: {
       id: meeting.guild.id,
-      name: fixture ? fixtureLabels.serverName : meeting.guild.name,
-      description: fixture ? "" : meeting.guild.description,
+      name: meeting.guild.name,
+      description: meeting.guild.description,
     },
     voiceChannel: {
       id: meeting.voiceChannel.id,
-      name: fixture
-        ? fixtureLabels.voiceChannelName
-        : meeting.voiceChannel.name,
+      name: meeting.voiceChannel.name,
     },
     runtimeConfig: meeting.runtimeConfig
       ? {
@@ -70,8 +52,10 @@ function applyNotes(meeting: MeetingData, input: MeetingNotesInput) {
   meeting.summaryLabel = input.summaryLabel;
   meeting.meetingName = input.meetingName;
 }
-export async function ensureLiveMeetingNotes(meeting: MeetingData) {
-  assertFixtureFinalization(meeting);
+/** The live notes input with its notes prompt prepared when notes are due. */
+export async function prepareLiveMeetingNotesInput(
+  meeting: MeetingData,
+): Promise<MeetingNotesInput> {
   const input = liveMeetingNotesInput(meeting);
   if (
     input.generateNotes &&
@@ -87,6 +71,10 @@ export async function ensureLiveMeetingNotes(meeting: MeetingData) {
       console.error("Error preparing meeting notes:", error);
     }
   }
+  return input;
+}
+export async function ensureLiveMeetingNotes(meeting: MeetingData) {
+  const input = await prepareLiveMeetingNotesInput(meeting);
   const result = await ensureMeetingNotes(input);
   applyNotes(meeting, input);
   return result;
@@ -95,7 +83,6 @@ export async function ensureLiveMeetingSummaries(
   meeting: MeetingData,
   notes: string | undefined,
 ) {
-  assertFixtureFinalization(meeting);
   const input = liveMeetingNotesInput(meeting);
   const result = await ensureMeetingSummaries(input, notes);
   applyNotes(meeting, input);

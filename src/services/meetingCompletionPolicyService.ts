@@ -1,11 +1,7 @@
-import type { MeetingHistory } from "../types/db";
 import { performance } from "node:perf_hooks";
-import { isDeepStrictEqual } from "node:util";
 import type { MeetingData } from "../types/meeting-data";
-import type { SessionReservation } from "../types/deploymentControl";
+import type { SessionReservation } from "../types/meetingHistoryTransition";
 import type { CompletionPolicy } from "../types/meetingCompletionPolicy";
-import { getDeploymentControlRepository } from "../db";
-import { getMeetingProcessingSignal } from "./meetingProcessingLifetime";
 import { config } from "./configService";
 
 type CompletionInput = Pick<
@@ -107,86 +103,4 @@ export function resolveCompletionPolicy(
   )
     return "proceed";
   return "unknown";
-}
-function originalHistory(
-  row: MeetingHistory | undefined,
-  original: SessionReservation,
-): row is MeetingHistory {
-  return Boolean(
-    row &&
-    row.meetingId === original.meetingId &&
-    row.ownerInstanceId === original.ownerInstanceId &&
-    row.executionVersion === original.executionVersion,
-  );
-}
-function matchesIntention(row: MeetingHistory, patch: Partial<MeetingHistory>) {
-  return (
-    isDeepStrictEqual(row.completionPolicy, patch.completionPolicy) &&
-    (patch.status !== "cancelled" ||
-      (row.status === patch.status &&
-        row.endReason === patch.endReason &&
-        row.cancellationReason === patch.cancellationReason))
-  );
-}
-/** Durable intention is separate from notification ACK and resource settlement. */
-export async function publishCompletionPolicy(
-  meeting: CompletionInput &
-    Pick<
-      MeetingData,
-      "reservation" | "ownershipSignal" | "finalization" | "cancellationReason"
-    >,
-  decision: CompletionPolicy["decision"] = "undecided",
-) {
-  const original = meeting.reservation;
-  const snapshot = completionSnapshot(meeting);
-  if (!original || original.sessionMode !== "meeting") return;
-  if (!snapshot) throw new Error("Original completion policy is unavailable");
-  const signal = getMeetingProcessingSignal(meeting);
-  signal.throwIfAborted();
-  const repository = getDeploymentControlRepository();
-  const row = await repository.getMeetingHistory(original.historyKey, signal);
-  if (!originalHistory(row, original) || !row.status)
-    throw new Error("Completion intention lost original ownership");
-  const completionPolicy = { ...snapshot, decision };
-  const patch = {
-    completionPolicy,
-    ...(decision === "cancel"
-      ? {
-          status: "cancelled" as const,
-          endReason: meeting.endReason,
-          cancellationReason: meeting.cancellationReason,
-        }
-      : {}),
-  };
-  try {
-    const result = await repository.transitionMeetingHistory({
-      key: original.historyKey,
-      expectedMeetingId: original.meetingId,
-      expectedOwnerInstanceId: original.ownerInstanceId,
-      expectedExecutionVersion: original.executionVersion,
-      expectedStatus: row.status,
-      expectedCheckpointRevision: row.checkpoint?.revision ?? 0,
-      signal,
-      completionPolicyProof: {
-        kind: "completion_policy",
-        ownership: original,
-        now: Math.floor(Date.now() / 1000),
-      },
-      patch,
-    });
-    if (result !== "applied")
-      throw new Error("Completion intention was fenced");
-  } catch (error) {
-    signal.throwIfAborted();
-    const current = await repository.getMeetingHistory(
-      original.historyKey,
-      signal,
-    );
-    if (
-      !originalHistory(current, original) ||
-      !matchesIntention(current, patch)
-    )
-      throw error;
-  }
-  signal.throwIfAborted();
 }

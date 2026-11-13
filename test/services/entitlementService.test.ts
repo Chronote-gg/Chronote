@@ -1,5 +1,4 @@
 /** @jest-environment node */
-import { seedBillingRuntime } from "../fixtures/billingRuntime";
 import { beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { getEntitlementGrantRepository } from "../../src/repositories/entitlementGrantRepository";
 import { getSubscriptionRepository } from "../../src/repositories/subscriptionRepository";
@@ -20,7 +19,6 @@ const paidBasicGuildId = "1249723747896918109";
 describe("entitlement grants", () => {
   beforeEach(() => {
     resetMockStore();
-    seedBillingRuntime();
     clearGuildSubscriptionCache();
   });
 

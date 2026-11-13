@@ -1,7 +1,3 @@
-import type {
-  SessionReservationInput,
-  SessionReservationWriteResult,
-} from "../types/deploymentControl";
 import { z } from "zod";
 export type ConditionalResult = "applied" | "stale";
 const errorSchema = z.object({
@@ -43,6 +39,9 @@ export class DeploymentControlError extends Error {
     super(`Deployment control ${kind}`);
   }
 }
+export function isDeploymentConflict(error: unknown): boolean {
+  return error instanceof DeploymentControlError && error.kind === "conflict";
+}
 export async function conditional(
   operation: () => Promise<unknown>,
 ): Promise<ConditionalResult> {
@@ -76,33 +75,4 @@ export function completeConditionalCancellation(
   )
     return undefined;
   return reasons;
-}
-
-export function sessionReservationFailure(
-  error: unknown,
-  input: SessionReservationInput,
-): SessionReservationWriteResult {
-  const count = input.scope?.kind === "fixture" ? 3 : 2;
-  const reasons = completeConditionalCancellation(
-    error,
-    count +
-      2 +
-      Number(Boolean(input.history)) +
-      Number(Boolean(input.suppression)),
-  );
-  if (!reasons) return { kind: "blocked", reason: "unavailable" };
-  const failed = (index: number) =>
-    reasons[index]?.Code === "ConditionalCheckFailed";
-  if (
-    reasons
-      .slice(0, count)
-      .some((reason) => reason.Code === "ConditionalCheckFailed")
-  )
-    return { kind: "blocked", reason: "not_serving" };
-  if (failed(count + 1)) return { kind: "blocked", reason: "voice_uncertain" };
-  if (failed(count) || (input.history && failed(count + 2)))
-    return { kind: "blocked", reason: "active_session" };
-  if (input.suppression && failed(count + (input.history ? 3 : 2)))
-    return { kind: "blocked", reason: "suppressed" };
-  return { kind: "blocked", reason: "unavailable" };
 }

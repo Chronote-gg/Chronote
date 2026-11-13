@@ -15,7 +15,6 @@ import {
 } from "../../src/db";
 import { config } from "../../src/services/configService";
 import type { PersonalMediaUploadJobRecord } from "../../src/types/db";
-import { context } from "../deployment/controlFixtures";
 const job: PersonalMediaUploadJobRecord = {
   uploadId: "synthetic",
   ownerUserId: "owner",
@@ -56,7 +55,6 @@ test("same-claim shortcut refuses a malformed pause record", async () => {
       claimExpiresAt: 200,
       updatedAt: "now",
       maxAttempts: 3,
-      context,
       claimId: "claim",
       expectedAttempts: 1,
     }),
@@ -83,7 +81,6 @@ test.each(["paused", "owner mismatch", "read unavailable", "unpaused"])(
       claimExpiresAt: 200,
       updatedAt: "now",
       maxAttempts: 3,
-      context,
       claimId: "claim",
       expectedAttempts: 1,
     });
@@ -100,17 +97,15 @@ test("submission classifies an atomic marker refusal without falling back to put
         $metadata: {},
         message: "synthetic conditional cancellation",
         CancellationReasons: [
-          { Code: "None" },
-          { Code: "None" },
           { Code: "ConditionalCheckFailed" },
           { Code: "None" },
         ],
       });
     return {};
   });
-  expect(
-    await submitPersonalMediaUploadJob({ ...job, status: "queued" }, context),
-  ).toBe(false);
+  expect(await submitPersonalMediaUploadJob({ ...job, status: "queued" })).toBe(
+    false,
+  );
 });
 
 test("queue pages through paused and empty filtered pages before the batch limit", async () => {
@@ -169,12 +164,9 @@ test.each(["malformed", "unavailable"])(
 
 test.each([
   ["missing", undefined],
-  ["short", ["None", "None", "ConditionalCheckFailed"]],
-  ["all none", ["None", "None", "None", "None"]],
-  [
-    "mixed unknown",
-    ["None", "None", "ConditionalCheckFailed", "ValidationError"],
-  ],
+  ["short", ["ConditionalCheckFailed"]],
+  ["all none", ["None", "None"]],
+  ["mixed unknown", ["ConditionalCheckFailed", "ValidationError"]],
 ])(
   "incomplete or uncertain %s cancellation cannot settle a personal submission or claim",
   async (_name, codes) => {
@@ -185,7 +177,7 @@ test.each([
     });
     mockSend.mockRejectedValue(failure);
     await expect(
-      submitPersonalMediaUploadJob({ ...job, status: "queued" }, context),
+      submitPersonalMediaUploadJob({ ...job, status: "queued" }),
     ).rejects.toThrow();
     mockSend
       .mockReset()
@@ -206,11 +198,10 @@ test.each([
         claimExpiresAt: 200,
         updatedAt: "later",
         maxAttempts: 3,
-        context,
         claimId: "new-claim",
         expectedAttempts: 1,
       }),
     ).rejects.toBe(failure);
-    expect(mockSend.mock.calls.at(-1)?.[0].input.TransactItems).toHaveLength(4);
+    expect(mockSend.mock.calls.at(-1)?.[0].input.TransactItems).toHaveLength(2);
   },
 );

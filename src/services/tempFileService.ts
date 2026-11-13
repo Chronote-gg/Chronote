@@ -2,6 +2,7 @@ import path from "node:path";
 import { mkdirSync, promises as fs } from "node:fs";
 import type { MeetingData } from "../types/meeting-data";
 import { config } from "./configService";
+import { LIFECYCLE } from "./lifecycleTiming";
 
 const BASE_TEMP_DIR = path.resolve(config.paths.meetingTempDir);
 const RETAINED_TEMP_DIR = path.join(
@@ -27,12 +28,6 @@ export function getMeetingTempDir(
   return path.join(BASE_TEMP_DIR, "m", meeting.meetingId);
 }
 
-export function getRetainedMeetingTempDir(
-  meeting: Pick<MeetingData, "meetingId">,
-): string {
-  return path.join(RETAINED_TEMP_DIR, meeting.meetingId);
-}
-
 export async function ensureMeetingTempDir(
   meeting: Pick<MeetingData, "meetingId">,
 ): Promise<string> {
@@ -49,111 +44,107 @@ export function ensureMeetingTempDirSync(
   return dir;
 }
 
-export async function cleanupTempBaseDir(): Promise<void> {
-  const { localArtifactCleanup, removeEmptyArtifactDirectories } =
-    await import("./meetingArtifactCleanupService");
-  for (const root of [
-    path.join(BASE_TEMP_DIR, "m"),
-    path.join(BASE_TEMP_DIR, "r"),
-    RETAINED_TEMP_DIR,
-  ]) {
-    try {
-      const stat = await fs.lstat(root);
-      if (!stat.isDirectory() || stat.isSymbolicLink())
-        throw new Error("Artifact root is not ordinary");
-      for await (const entry of await fs.opendir(root)) {
-        if (entry.isDirectory() && !entry.isSymbolicLink())
-          await localArtifactCleanup.enqueue(path.join(root, entry.name));
-      }
-    } catch (error) {
-      if (!(
-        error !== null &&
-        typeof error === "object" &&
-        "code" in error &&
-        error.code === "ENOENT"
-      ))
-        console.warn(
-          "Local artifact reconciliation could not inspect a root",
-          error,
-        );
-    }
-  }
-  await removeEmptyArtifactDirectories(BASE_TEMP_DIR);
-}
-
-export async function cleanupMeetingTempDir(
-  meeting: import("./meetingArtifactCleanupService").CleanupMeeting,
-): Promise<void> {
-  const { localArtifactCleanup } =
-    await import("./meetingArtifactCleanupService");
-  const result = await localArtifactCleanup.enqueue(
-    getMeetingTempDir(meeting),
-    meeting,
+// Not `instanceof Error`: file system errors can come from another realm under the test runner.
+function isMissing(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    error.code === "ENOENT"
   );
-  if (result.kind !== "cleaned")
-    console.warn("Local meeting files retained for reconciliation", {
-      kind: result.kind,
-    });
 }
 
-export async function retainMeetingTempDir(
-  meeting: Pick<MeetingData, "meetingId" | "guildId" | "channelId">,
-  reason: string,
-): Promise<string | undefined> {
-  const sourceDir = getMeetingTempDir(meeting);
-  const retainedDir = getRetainedMeetingTempDir(meeting);
-  let lock: Awaited<ReturnType<typeof fs.open>> | undefined;
-  const lockDir = path.join(path.dirname(BASE_TEMP_DIR), "retention-locks");
-  const lockPath = path.join(lockDir, `${meeting.meetingId}.lock`);
+const RECOVERY_MIX_PREFIX = "recovery-mix-";
+// mkdtemp appends a dash-free six character suffix after the prefix's trailing dash.
+const MKDTEMP_SUFFIX_LENGTH = 7;
+const PROCESSING_RETRY_PREFIX = "processing-retry-";
+
+type SweepCandidate = { dir: string; meetingId?: string };
+
+/** The names under `root`, or none when it is missing or not a real directory (a symlink is never followed). */
+async function listDirs(root: string): Promise<string[]> {
   try {
-    const source = await fs.lstat(sourceDir);
-    if (!source.isDirectory() || source.isSymbolicLink())
-      throw new Error("Retention source is not ordinary");
-    await fs.mkdir(RETAINED_TEMP_DIR, { recursive: true });
-    await fs.mkdir(lockDir, { recursive: true });
-    lock = await fs.open(lockPath, "wx");
-    try {
-      await fs.lstat(retainedDir);
-      throw new Error("Retained meeting already exists");
-    } catch (error) {
-      if (!(
-        error !== null &&
-        typeof error === "object" &&
-        "code" in error &&
-        error.code === "ENOENT"
-      ))
-        throw error;
-    }
-    await fs.writeFile(
-      path.join(sourceDir, "retention.json"),
-      JSON.stringify(
-        {
-          retainedAt: new Date().toISOString(),
-          reason,
-          meetingId: meeting.meetingId,
-          guildId: meeting.guildId,
-          channelId: meeting.channelId,
-        },
-        null,
-        2,
-      ),
-      { flag: "wx" },
-    );
-    await fs.rename(sourceDir, retainedDir);
-    return retainedDir;
+    const stat = await fs.lstat(root);
+    if (!stat.isDirectory()) return [];
+    return await fs.readdir(root);
   } catch (error) {
-    console.error("Failed to retain meeting temp directory", {
-      meetingId: meeting.meetingId,
-      sourceDir,
-      retainedDir,
-      reason,
-      error,
-    });
-    return undefined;
-  } finally {
-    if (lock) {
-      await lock.close();
-      await fs.unlink(lockPath);
+    if (isMissing(error)) return [];
+    throw error;
+  }
+}
+
+/**
+ * Every per-meeting directory this code creates under the temp base. Only
+ * directories named by meeting id can be checked against live work; the
+ * recovery scopes under `r/` and the processing retry directories belong to
+ * one finish or retry attempt, which ends long before the sweep age.
+ */
+async function sweepCandidates(): Promise<SweepCandidate[]> {
+  const meetings = (await listDirs(path.join(BASE_TEMP_DIR, "m"))).map(
+    (meetingId) => ({
+      dir: path.join(BASE_TEMP_DIR, "m", meetingId),
+      meetingId,
+    }),
+  );
+  const scopes = (await listDirs(path.join(BASE_TEMP_DIR, "r"))).map(
+    (name) => ({ dir: path.join(BASE_TEMP_DIR, "r", name) }),
+  );
+  const top = (await listDirs(BASE_TEMP_DIR)).flatMap(
+    (name): SweepCandidate[] => {
+      const dir = path.join(BASE_TEMP_DIR, name);
+      if (name.startsWith(RECOVERY_MIX_PREFIX))
+        return [
+          {
+            dir,
+            meetingId: name.slice(
+              RECOVERY_MIX_PREFIX.length,
+              -MKDTEMP_SUFFIX_LENGTH,
+            ),
+          },
+        ];
+      return name.startsWith(PROCESSING_RETRY_PREFIX) ? [{ dir }] : [];
+    },
+  );
+  return [...meetings, ...scopes, ...top];
+}
+
+/** Removes per-meeting directories older than `localSweepAgeMs` that no capture or finish in this process holds. */
+export async function sweepLocalMeetingDirs(
+  isLive: (meetingId: string) => boolean,
+  nowMs: number,
+): Promise<void> {
+  const live = (candidate: SweepCandidate) =>
+    candidate.meetingId !== undefined && isLive(candidate.meetingId);
+  for (const candidate of await sweepCandidates()) {
+    if (live(candidate)) continue;
+    try {
+      const stat = await fs.lstat(candidate.dir);
+      if (!stat.isDirectory()) continue;
+      if (nowMs - stat.mtimeMs <= LIFECYCLE.localSweepAgeMs) continue;
+      // Checked again just before removal: a finish may have started during the scan.
+      if (live(candidate)) continue;
+      await fs.rm(candidate.dir, { recursive: true, force: true });
+    } catch (error) {
+      if (!isMissing(error))
+        console.warn("Local meeting directory sweep failed", {
+          dir: candidate.dir,
+          error,
+        });
     }
   }
+}
+
+/** Sweeps now and then every `localSweepMs`; returns the stop function. */
+export function startLocalSweep(
+  isLive: (meetingId: string) => boolean,
+): () => void {
+  const sweep = () => {
+    void sweepLocalMeetingDirs(isLive, Date.now()).catch((error: unknown) =>
+      console.warn("Local meeting directory sweep failed", error),
+    );
+  };
+  sweep();
+  const timer = setInterval(sweep, LIFECYCLE.localSweepMs);
+  timer.unref();
+  return () => clearInterval(timer);
 }

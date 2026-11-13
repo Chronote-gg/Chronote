@@ -1,21 +1,19 @@
 /** @jest-environment node */
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
-jest.mock("../../src/services/transcriptionService", () => ({
-  ...jest.requireActual("../../src/services/transcriptionService"),
-  transcribeContentSnippet: jest.fn(async () => ({
-    status: "succeeded",
-    text: "Recovered discussion.",
-  })),
-}));
+jest.mock("../../src/services/transcriptionService", () =>
+  jest
+    .requireActual("./recoveredDiscussionTranscription")
+    .transcriptionServiceMock(),
+);
 jest.mock("../../src/services/recoveryTranscriptionProcessing", () => ({
   processRecoveryTranscript: jest.fn(async () => "Recovered discussion."),
 }));
 import { transcribeContentSnippet } from "../../src/services/transcriptionService";
 import { processRecoveryTranscript } from "../../src/services/recoveryTranscriptionProcessing";
-import { getCheckpointPcmBudget } from "../../src/services/recordingCheckpointCapture";
 import {
   readRecoveryContent,
   recoverTranscript,
+  recoveryPcmBudget,
 } from "../../src/services/meetingRecoveryContent";
 import {
   pcmArtifact,
@@ -173,11 +171,11 @@ test.each(["missing", "cancelled"])(
         }
         return read(...args);
       });
-    const before = getCheckpointPcmBudget().reservedBytes;
+    const before = recoveryPcmBudget.snapshot().reservedBytes;
     await expect(
       recoverTranscript(content, f.reader, controller.signal, (run) => run()),
     ).rejects.toThrow();
-    expect(getCheckpointPcmBudget().reservedBytes).toBe(before);
+    expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(before);
     expect(transcribeContentSnippet).not.toHaveBeenCalled();
   },
 );

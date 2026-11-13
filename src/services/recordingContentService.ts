@@ -5,11 +5,6 @@ import {
 import type { AudioSnippet } from "../types/audio";
 import type { SpeechCoverage, SpeechPhase } from "./speechDetectionTypes";
 import { recordingPromptLabels } from "./recordingMetadataService";
-import {
-  isFixture,
-  fixtureLabels,
-  fixtureParticipants,
-} from "./fixtureInputService";
 import type { AudioFileData } from "../types/audio";
 import type { TranscriptCorrespondence } from "../types/transcriptCorrespondence";
 import {
@@ -149,10 +144,7 @@ function snapshotDynamic(
   meeting: MeetingData,
   frozen: Frozen,
 ): GenerationContextCheckpoint {
-  const fixture = isFixture(meeting);
-  const selected =
-    fixtureParticipants(meeting) ?? Array.from(meeting.participants.values());
-  const participants = Array.from(selected, (p) => ({
+  const participants = Array.from(meeting.participants.values(), (p) => ({
     id: p.id,
     username: p.username,
     displayName: p.displayName,
@@ -160,12 +152,10 @@ function snapshotDynamic(
     tag: p.tag,
     roleIds: p.roleIds,
   }));
-  const roles = fixture
-    ? []
-    : meeting.guild.roles
-        .valueOf()
-        .filter((role) => isMentionableRole(role, meeting.guildId))
-        .map((role) => ({ id: role.id, name: role.name }));
+  const roles = meeting.guild.roles
+    .valueOf()
+    .filter((role) => isMentionableRole(role, meeting.guildId))
+    .map((role) => ({ id: role.id, name: role.name }));
   return generationContextSchema.parse({
     schemaVersion: 1,
     kind: "generation_context",
@@ -175,10 +165,11 @@ function snapshotDynamic(
     captureIncomplete: meeting.audioData.captureIncomplete,
     creatorId: meeting.creator.id,
     ...recordingPromptLabels(meeting),
-    botNames: fixture
-      ? [fixtureLabels.botDisplayName]
-      : getBotNameVariants(meeting.guild.members.me, meeting.guild.client.user),
-    tags: fixture ? [] : [...(meeting.tags ?? [])],
+    botNames: getBotNameVariants(
+      meeting.guild.members.me,
+      meeting.guild.client.user,
+    ),
+    tags: [...(meeting.tags ?? [])],
     participants,
     attendance: [...meeting.attendance],
     mentionableRoles: roles,
@@ -191,19 +182,17 @@ function snapshotDynamic(
         new Map(roles.map((role) => [role.id, role.name])),
       ) ?? "No participant roster captured.",
     roleRoster: formatRoleRoster(roles, participants),
-    chatContext: fixture
-      ? ""
-      : (formatChatLogForPrompt({
-          chatLog: meeting.chatLog,
-          runtimeConfig:
-            frozen.settings.availability === "available" &&
-            meeting.runtimeConfig
-              ? {
-                  ...meeting.runtimeConfig,
-                  visionCaptions: frozen.settings.value.visionCaptions,
-                }
-              : undefined,
-        }) ?? ""),
+    chatContext:
+      formatChatLogForPrompt({
+        chatLog: meeting.chatLog,
+        runtimeConfig:
+          frozen.settings.availability === "available" && meeting.runtimeConfig
+            ? {
+                ...meeting.runtimeConfig,
+                visionCaptions: frozen.settings.value.visionCaptions,
+              }
+            : undefined,
+      }) ?? "",
     settings: frozen.settings,
     context: frozen.context,
     prompts: frozen.prompts,
@@ -539,13 +528,11 @@ async function captureContext(
     try {
       frozen.recentMeetingNames = {
         availability: "available",
-        value: isFixture(meeting)
-          ? ""
-          : await listRecentMeetingNamesForPrompt({
-              guildId: meeting.guildId,
-              excludeMeetingId: meeting.meetingId,
-              signal,
-            }),
+        value: await listRecentMeetingNamesForPrompt({
+          guildId: meeting.guildId,
+          excludeMeetingId: meeting.meetingId,
+          signal,
+        }),
       };
     } catch {
       frozen.recentMeetingNames = { availability: "unavailable" };
@@ -554,7 +541,7 @@ async function captureContext(
 }
 /** The actual bounded lookup promise is exposed to R3; capture never awaits it. */
 function initialContextValue(meeting: MeetingData) {
-  return isFixture(meeting) ? undefined : meeting.meetingContext;
+  return meeting.meetingContext;
 }
 export function startRecordingContentCheckpoint(meeting: MeetingData): void {
   if (

@@ -12,7 +12,7 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 **Causes and fixes**:
 
 1. **Missing permissions.** Chronote needs **Connect** and **Speak** permissions in the voice channel. Check the channel's permission overrides and make sure the Chronote bot role is not denied these permissions.
-2. **Another meeting is active.** Only one meeting can run per server at a time. End the current meeting first.
+2. **Another meeting is recording.** Only one meeting can record per server at a time. End the current meeting first. A meeting whose recording has stopped does not block a new one, even while its notes are processing.
 3. **Weekly minutes exhausted.** Your plan's weekly meeting minutes are used up. Wait for the next billing cycle or upgrade your plan.
 4. **You are not in a voice channel.** You must be in the voice channel you want to record before running `/startmeeting`.
 
@@ -20,11 +20,11 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 
 If an end or leave control says the meeting is already finishing, it has not started another stop attempt. This response does not confirm that transcription, notes or delivery have finished. Check the meeting's processing status before relying on its output.
 
-If Chronote has left voice but `/startmeeting` still says a meeting is active, the previous session may be waiting for confirmation that it ended safely. A delayed disconnect confirmation can let Chronote finish cleanup automatically. This cleanup does not create another recording or rewrite saved notes.
+Once a recording stops, the server can start a new meeting right away, even while the previous meeting's notes are still processing. If `/startmeeting` says a meeting is active, a recording is still running in that server. End it with the meeting's end button, `/leave confirm:true`, or **Stop recording**.
 
-If processing fails after you use the meeting's end button, `/leave confirm:true`, or **Stop recording**, Chronote can finish cleanup automatically once it confirms that the available recording data is preserved and the session has ended. Cleanup does not retry transcription or generate missing notes.
+If Chronote stopped unexpectedly while recording, the server becomes available again within about a minute, and Chronote finishes the interrupted meeting automatically. See [Interrupted recordings](/core-concepts/meeting-lifecycle/#interrupted-recordings).
 
-Try `/startmeeting` again after a short wait. If the active-meeting message persists, use **Support** in the portal sidebar and include the server name and approximate recording end time. Chronote keeps the server unavailable when it cannot confirm that the previous session ended safely.
+If the active-meeting message persists after a few minutes, use **Support** in the portal sidebar and include the server name and approximate recording end time.
 
 ## Auto-record does not start
 

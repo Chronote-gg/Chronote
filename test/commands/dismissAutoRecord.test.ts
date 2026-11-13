@@ -16,7 +16,6 @@ import { handleEndMeetingOther } from "../../src/commands/endMeeting";
 import { MEETING_END_REASONS } from "../../src/types/meetingLifecycle";
 
 jest.mock("../../src/meetings", () => ({
-  getPendingMeetingInitializations: () => [],
   getMeeting: jest.fn(),
 }));
 jest.mock("../../src/services/unifiedConfigService", () => ({
@@ -104,12 +103,7 @@ async function expectAllowedStop(
   meeting: MeetingData,
 ) {
   await handleDismissAutoRecord(client, interaction);
-  expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(
-    client,
-    meeting,
-    undefined,
-    undefined,
-  );
+  expect(mockedHandleEndMeetingOther).toHaveBeenCalledWith(client, meeting);
 }
 describe("handleDismissAutoRecord", () => {
   beforeEach(() => {

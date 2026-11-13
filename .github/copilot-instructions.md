@@ -43,6 +43,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Dev/QA commands: `yarn start` (bot via nodemon+ts-node), `yarn dev` (starts local Dynamo + init + bot), `yarn frontend:dev`, `yarn docs:dev`, `yarn build`, `yarn build:web`, `yarn build:all`, `yarn docs:build`, `yarn docs:check`, `yarn test`, `yarn lint`, `yarn prettier`, `yarn terraform:init|plan|apply`, `yarn prompts:push`, `yarn prompts:pull`, `yarn prompts:check`.
 - Meeting lifecycle: `meetings.ts`, `commands/startMeeting.ts`, `commands/endMeeting.ts`.
   - Records audio, chat log, attendance; splits audio; transcribes; generates notes; saves MeetingHistory (with transcript, notes versioning).
+  - The per-server lease covers capture only and close always frees the server. One finish pipeline saves and delivers every meeting, including those another worker finishes from the S3 checkpoint.
 - Transcription, notes, and image generation: `src/services/transcriptionService.ts`, `src/services/notesService.ts`, `src/services/imageService.ts`.
   - Prompt builders live in `src/services/*PromptService.ts`.
   - Builds context from server/channel/meeting and recent history (`services/contextService.ts`).
@@ -55,7 +56,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
   - "Suggest correction" button -> modal (single textarea).
   - Fetches saved notes + transcript from DB, uses the notes-correction model with a "minimal edits, do not copy transcript" prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), saves canonical MeetingHistory plus durable update intent through the shared action and bumps version/last editor. The worker verifies later Discord delivery separately, preserving existing approval and Notion rules.
 - Context management: `commands/context.ts` writes/reads ServerContext and ChannelContext.
-- Meeting history persistence: `commands/saveMeetingHistory.ts`, `db.ts` helpers.
+- Meeting history persistence: start writes the initial row through `repositories/meetingHistoryTransitions.ts`; close's capture-end write and the finish pipeline's terminal save go through `repositories/meetingFinishRepository.ts`; other reads and updates use `db.ts` helpers.
   - Optional `processing` metadata records transcription, notes, and summary outcomes independently of lifecycle status. Missing outcomes are unknown. Never infer transcription failure from an unrelated upload error or insert processing notices into stored notes.
 - Web server: `webserver.ts` (health check, optional Discord OAuth scaffolding).
 
@@ -107,7 +108,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Variables (tfvars.example): Discord IDs/tokens, OpenAI keys, OAuth secrets, ENABLE_OAUTH (false by default in example), AWS/GitHub tokens.
 - ECS task environment passes all relevant vars from Terraform; OpenAI org/project optional; OAuth vars included but can be blank if disabled.
 - Terraform plan/apply is manual via `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`; merges do not auto-apply Terraform. Apply uses an exact private saved-plan bundle, whole-bundle digest and verified native GitHub environment approval. See `docs/terraform-private-delivery.md`; missing approved storage or supported protection metadata refuses execution. Production uses GitHub environment `production` with Terraform workspace `default`; sandbox uses GitHub environment `sandbox` with Terraform workspace `sandbox`.
-- Backend deploy workflows protect the serving runtime, warm a compatible candidate, promote exact ready members, and wait for runtime-owned work/voice settlement and durable protection release before retirement. Keep production and Sandbox coordinator guards aligned. First legacy production activation uses the [cold cutover](../docs/production-introduction.md#cold-cutover), which proceeds only when no work is in flight.
+- Backend deploys run `scripts/deployment/deploy.cjs` in production and Sandbox: wait for any older task still recording (bounded), roll out a new revision, wait for a ready worker, roll back on failure. Identical workers register themselves and the newest ready release takes new meetings, so starts stay available during a deployment. Nothing a meeting does may block a worker or a deployment. See [deployment](../docs/deployment.md).
 - Future work suggestion: keep cache and Redis Terraform resources in `_infra/cache.tf`, and add new cache infrastructure there.
 
 ## Known nuances / gotchas

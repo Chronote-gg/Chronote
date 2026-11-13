@@ -3,6 +3,8 @@ import {
   ContextMenuCommandBuilder,
   PermissionFlagsBits,
   type Client,
+  type Collection,
+  type GuildMember,
   type UserContextMenuCommandInteraction,
 } from "discord.js";
 import { CONFIG_KEYS } from "../config/keys";
@@ -11,12 +13,8 @@ import { resolveConfigEnum } from "../services/unifiedConfigService";
 import { MEETING_END_REASONS } from "../types/meetingLifecycle";
 import type { MeetingData } from "../types/meeting-data";
 import { canUserEndMeeting } from "../utils/meetingPermissions";
-import type { RuntimeWorkClaim } from "../services/runtimeWorkAdmissionService";
-import { deferMeetingStopInteraction } from "../services/meetingStopInterruption";
-import {
-  handleEndMeetingOther,
-  persistExplicitMeetingStop,
-} from "./endMeeting";
+import { dismissalCancellationReason } from "../utils/meetingLifecycle";
+import { handleEndMeetingOther } from "./endMeeting";
 
 export const DISMISS_AUTORECORD_COMMAND_NAME = "Stop recording";
 
@@ -78,21 +76,46 @@ function resolveStopRecordingPermission(options: {
 type DismissAutoRecordContext = {
   meeting: MeetingData;
   invokerId: string;
-} & (
-  | {
-      isAutoRecording: true;
-      policy: DismissPolicy;
-      admin: boolean;
-      soloNonBot: boolean;
-    }
-  | {
-      isAutoRecording: false;
-    }
-);
+};
 
 type DismissAutoRecordCheckResult =
   | { ok: true; context: DismissAutoRecordContext }
   | { ok: false; message: string };
+
+/** Why this member may not stop an auto-recording under the server's dismiss policy, or undefined when they may. */
+export async function autoRecordStopRefusal(
+  interaction: UserContextMenuCommandInteraction,
+  session: {
+    guildId: string;
+    startTriggeredByUserId?: string;
+    voiceMembers: Collection<string, GuildMember>;
+  },
+): Promise<string | undefined> {
+  const invokerId = interaction.user.id;
+  if (!session.voiceMembers.has(invokerId))
+    return "Join the meeting voice channel to stop recording.";
+  const nonBotMembers = session.voiceMembers.filter(
+    (member) => !member.user.bot,
+  );
+  const policy =
+    (await resolveConfigEnum(
+      { guildId: session.guildId },
+      CONFIG_KEYS.autorecord.dismissPolicy,
+      DISMISS_POLICY_OPTIONS,
+      DEFAULT_DISMISS_POLICY,
+      { logLabel: "Failed to resolve auto-record dismiss policy" },
+    )) ?? DEFAULT_DISMISS_POLICY;
+  const decision = resolveStopRecordingPermission({
+    policy,
+    invokerId,
+    admin: hasAdminPermissions(interaction),
+    soloNonBot: nonBotMembers.size === 1 && nonBotMembers.has(invokerId),
+    startTriggeredByUserId: session.startTriggeredByUserId,
+  });
+  return decision.allowed
+    ? undefined
+    : `You do not have permission to stop this auto-record. ${decision.hint}`;
+}
 
 async function resolveDismissAutoRecordContext(
   client: Client,
@@ -117,58 +140,28 @@ async function resolveDismissAutoRecordContext(
   }
 
   const invokerId = interaction.user.id;
-  if (!meeting.isAutoRecording) {
-    return {
-      ok: true,
-      context: {
-        meeting,
-        invokerId,
-        isAutoRecording: false,
-      },
-    };
-  }
+  if (!meeting.isAutoRecording)
+    return canUserEndMeeting(meeting, invokerId)
+      ? { ok: true, context: { meeting, invokerId } }
+      : {
+          ok: false,
+          message: "You do not have permission to end this meeting.",
+        };
 
-  const invokerMember = meeting.voiceChannel.members.get(invokerId);
-  if (!invokerMember) {
-    return {
-      ok: false,
-      message: "Join the meeting voice channel to stop recording.",
-    };
-  }
-
-  const admin = hasAdminPermissions(interaction);
-  const nonBotMembers = meeting.voiceChannel.members.filter(
-    (member) => !member.user.bot,
-  );
-  const soloNonBot = nonBotMembers.size === 1 && nonBotMembers.has(invokerId);
-
-  const policy =
-    (await resolveConfigEnum(
-      { guildId: interaction.guildId },
-      CONFIG_KEYS.autorecord.dismissPolicy,
-      DISMISS_POLICY_OPTIONS,
-      DEFAULT_DISMISS_POLICY,
-      { logLabel: "Failed to resolve auto-record dismiss policy" },
-    )) ?? DEFAULT_DISMISS_POLICY;
-
-  return {
-    ok: true,
-    context: {
-      meeting,
-      invokerId,
-      isAutoRecording: true,
-      policy,
-      admin,
-      soloNonBot,
-    },
-  };
+  const refusal = await autoRecordStopRefusal(interaction, {
+    guildId: interaction.guildId,
+    startTriggeredByUserId: meeting.startTriggeredByUserId,
+    voiceMembers: meeting.voiceChannel.members,
+  });
+  return refusal
+    ? { ok: false, message: refusal }
+    : { ok: true, context: { meeting, invokerId } };
 }
 
 export async function handleDismissAutoRecord(
   client: Client,
   interaction: UserContextMenuCommandInteraction,
   signal?: AbortSignal,
-  work?: RuntimeWorkClaim,
 ) {
   const contextResult = await resolveDismissAutoRecordContext(
     client,
@@ -185,61 +178,26 @@ export async function handleDismissAutoRecord(
 
   const { meeting, invokerId } = contextResult.context;
 
-  if (contextResult.context.isAutoRecording) {
-    const { policy, admin, soloNonBot } = contextResult.context;
-    const permissionDecision = resolveStopRecordingPermission({
-      policy,
-      invokerId,
-      admin,
-      soloNonBot,
-      startTriggeredByUserId: meeting.startTriggeredByUserId,
-    });
-
-    if (!permissionDecision.allowed) {
-      signal?.throwIfAborted();
-      await interaction.reply({
-        content: `You do not have permission to stop this auto-record. ${permissionDecision.hint}`,
-        ephemeral: true,
-      });
-      return;
-    }
-  } else if (!canUserEndMeeting(meeting, invokerId)) {
-    signal?.throwIfAborted();
-    await interaction.reply({
-      content: "You do not have permission to end this meeting.",
-      ephemeral: true,
-    });
-    return;
-  }
-
   signal?.throwIfAborted();
-  await deferMeetingStopInteraction(work, () =>
-    interaction.deferReply({ ephemeral: true }),
-  );
-  signal?.throwIfAborted();
-  await persistExplicitMeetingStop(meeting, MEETING_END_REASONS.DISMISSED);
+  await interaction.deferReply({ ephemeral: true });
   if (meeting.finishing) {
     signal?.throwIfAborted();
     await interaction.editReply("This meeting is already ending.");
     return;
   }
 
-  meeting.endReason = contextResult.context.isAutoRecording
+  meeting.endReason = meeting.isAutoRecording
     ? MEETING_END_REASONS.DISMISSED
     : MEETING_END_REASONS.BUTTON;
   meeting.endTriggeredByUserId = invokerId;
 
-  if (contextResult.context.isAutoRecording) {
+  if (meeting.isAutoRecording) {
     meeting.cancelled = true;
-    meeting.cancellationReason = `Stopped by <@${invokerId}>`;
+    meeting.cancellationReason = dismissalCancellationReason(invokerId);
   }
 
-  signal?.throwIfAborted();
-  await handleEndMeetingOther(client, meeting, signal, work);
-  signal?.throwIfAborted();
+  await handleEndMeetingOther(client, meeting);
   await interaction.editReply(
-    contextResult.context.isAutoRecording
-      ? "Stopped recording."
-      : "Ended meeting.",
+    meeting.isAutoRecording ? "Stopped recording." : "Ended meeting.",
   );
 }

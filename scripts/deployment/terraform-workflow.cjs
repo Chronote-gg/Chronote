@@ -83,21 +83,6 @@ const scopeBinding = (options, invocation) =>
           ...options.binding,
           environment: invocation.environment,
         };
-const prerequisites = new WeakMap();
-function privatePrerequisiteVerified(token, config) {
-  const binding = prerequisites.get(token);
-  if (!binding || JSON.stringify(binding.config) !== JSON.stringify(config))
-    return false;
-  try {
-    require("./production-writer-guard.cjs").assertPrerequisitePlan(
-      binding.plan,
-      config.table,
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function execution(options, invocation) {
   const output = [],
@@ -298,8 +283,6 @@ async function plan(options, invocation, e) {
   };
 }
 async function apply(options, invocation, e, startApply) {
-  if (invocation.environment === "production")
-    await require("./production-writer-guard.cjs").runGuard(options.env, true);
   const proof = await verifyApproval(options.get, invocation, options);
   // The plan may come from an earlier master commit; its own run names it.
   const planRun = await options.get(
@@ -383,26 +366,14 @@ async function apply(options, invocation, e, startApply) {
       { directory: options.directory, sourceSha: invocation.sourceSha },
     );
   }
-  let prerequisite;
-  if (invocation.environment === "production") {
-    const {
-      runGuard,
-      guardConfiguration,
-    } = require("./production-writer-guard.cjs");
-    if (invocation.scope === "deployment-prerequisites") {
-      const shown = await e.terraform(["show", "-json", "tfplan"]);
-      const plan = JSON.parse(Buffer.from(shown.stdout, "base64").toString());
-      const config = guardConfiguration(options.env);
-      validatePrerequisitePlan(plan);
-      // Only this authenticated, restored bundle can authorize a missing Control table.
-      assert.deepEqual(
-        readFileSync(join(options.directory, "_infra/tfplan")),
-        files.get("tfplan"),
-      );
-      prerequisite = {};
-      prerequisites.set(prerequisite, { config, plan });
-    }
-    await runGuard(options.env, false, prerequisite);
+  if (
+    invocation.environment === "production" &&
+    invocation.scope === "deployment-prerequisites"
+  ) {
+    const shown = await e.terraform(["show", "-json", "tfplan"]);
+    validatePrerequisitePlan(
+      JSON.parse(Buffer.from(shown.stdout, "base64").toString()),
+    );
   }
   await verifyDelivery(e, options, invocation);
   assert.equal(
@@ -482,4 +453,4 @@ async function runTerraform(options) {
   }
   return result;
 }
-module.exports = { runTerraform, privatePrerequisiteVerified };
+module.exports = { runTerraform };

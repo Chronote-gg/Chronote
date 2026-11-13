@@ -1,14 +1,9 @@
-import { randomUUID } from "node:crypto";
 import { TransactWriteItemsCommand } from "@aws-sdk/client-dynamodb";
-import {
-  buildPersonalMediaClaimTransaction,
-  buildPersonalClaimCheck,
-} from "../../src/services/deploymentControlTransactions";
+import { buildPersonalClaimCheck } from "../../src/services/personalUploadTransactions";
 import { personalClaimMatches } from "../../src/types/meetingCanonicalWriter";
 import {
   beforeCanonicalWrite,
   featurePersonalRow,
-  promoteWithRetainedPeer,
 } from "./mixedVersionCanonical.fixture";
 /** @jest-environment node */
 jest.mock("../../src/services/notionAutomationService", () => ({
@@ -86,7 +81,6 @@ test("old personal generated-field transaction cannot overwrite an acknowledged 
 });
 
 test("personal takeover between producer read and commit invalidates the former writer proof", async () => {
-  await promoteWithRetainedPeer(fixture, Math.floor(Date.now() / 1000), true);
   const claim = personalClaim();
   const row = {
     ...history(),
@@ -137,81 +131,12 @@ test("completed legacy canonical content remains editable without a writer proof
   });
 });
 
-// Forward promotion can retain another old worker with fully valid new-work admission.
-test("retained pre-feature serving peer cannot later overwrite an acknowledged personal edit", async () => {
-  const now = Math.floor(Date.now() / 1000);
-  const { retainedContext } = await promoteWithRetainedPeer(
-    fixture,
-    now,
-    false,
-  );
-  const claim = { ...personalClaim(), instanceId: "new" };
-  const row = featurePersonalRow(claim);
-  await fixture.put(fixture.tables.personalMediaUpload, {
-    ...personalJob(claim),
-    claimExpiresAt: now + 1,
-  });
-  await fixture.put(fixture.tables.meetingHistory, row);
-  const result = await edit();
-  const takeover = {
-    ...claim,
-    instanceId: "retained",
-    claimId: randomUUID(),
-    attempt: 2,
-    nowEpochSeconds: now + 2,
-  };
-  await fixture.client.send(
-    new TransactWriteItemsCommand(
-      buildPersonalMediaClaimTransaction(
-        {
-          job: personalJob(takeover),
-          context: { ...retainedContext, now: now + 2 },
-          expectedAttempts: 1,
-          maxAttempts: 4,
-          claimId: takeover.claimId,
-        },
-        fixture.tables,
-      ),
-    ),
-  );
-  await oldPersonalTerminal(fixture, row, takeover);
-  expect(await fixture.read()).toMatchObject(oldGenerated);
-  expect(result.kind).toBe("conflict");
-});
-
-test("all feature-aware serving peers admit a new processing edit", async () => {
-  await promoteWithRetainedPeer(fixture, Math.floor(Date.now() / 1000), true);
+test("a processing personal edit with a live writer claim saves", async () => {
   const claim = { ...personalClaim(), instanceId: "new" };
   await fixture.put(fixture.tables.personalMediaUpload, personalJob(claim));
   await fixture.put(fixture.tables.meetingHistory, featurePersonalRow(claim));
   expect((await edit()).kind).toBe("saved");
 });
-
-test.each(["roster", "capability"] as const)(
-  "peer %s change between admission read and commit fences the save",
-  async (change) => {
-    const now = Math.floor(Date.now() / 1000);
-    const peers = await promoteWithRetainedPeer(fixture, now, true);
-    const claim = { ...personalClaim(), instanceId: "new" };
-    await fixture.put(fixture.tables.personalMediaUpload, personalJob(claim));
-    await fixture.put(fixture.tables.meetingHistory, featurePersonalRow(claim));
-    const isArmed = beforeCanonicalWrite(
-      fixture,
-      "syntheticPeerChange",
-      async () => {
-        await fixture.put(
-          fixture.tables.deploymentControl,
-          change === "roster"
-            ? { ...peers.promotedControl, servingGeneration: 9 }
-            : peers.retainedWithoutCapability,
-        );
-      },
-    );
-    expect((await edit()).kind).toBe("conflict");
-    expect(isArmed()).toBe(false);
-    expect(await fixture.read()).toMatchObject({ notes: history().notes });
-  },
-);
 
 test.each([
   {

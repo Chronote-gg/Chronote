@@ -1,9 +1,5 @@
-import { getRuntimeAdmissionContext } from "./runtimeLifecycleService";
 import crypto from "node:crypto";
-import {
-  getActiveMeetingLeaseForGuild,
-  isLeaseActive,
-} from "./activeMeetingLeaseService";
+import { getActiveMeetingLeaseForGuild, isLeaseActive } from "./meetingLease";
 import { getMeetingControlCommandRepository } from "../repositories/meetingControlCommandRepository";
 import type {
   MeetingControlCommand,
@@ -52,10 +48,13 @@ const toSnapshot = (
   error: command.error,
 });
 
-export async function resolveTargetOwnerForGuild(guildId?: string) {
+/** The live meeting a server command is addressed to, read once at enqueue so a late execution cannot reach a newer meeting. */
+export async function resolveLiveMeetingTarget(guildId?: string) {
   if (!guildId) return undefined;
   const lease = await getActiveMeetingLeaseForGuild(guildId);
-  return lease && isLeaseActive(lease) ? lease.ownerInstanceId : undefined;
+  return lease && isLeaseActive(lease)
+    ? { ownerInstanceId: lease.ownerInstanceId, meetingId: lease.meetingId }
+    : undefined;
 }
 
 export async function enqueueMeetingControlCommand(
@@ -73,12 +72,7 @@ export async function enqueueMeetingControlCommand(
     updatedAt: createdAt,
     expiresAt: epochSeconds() + COMMAND_TTL_SECONDS,
   };
-  await getMeetingControlCommandRepository().writeCommand(
-    command,
-    command.commandType === "start_meeting"
-      ? await getRuntimeAdmissionContext()
-      : undefined,
-  );
+  await getMeetingControlCommandRepository().writeCommand(command);
   return command;
 }
 

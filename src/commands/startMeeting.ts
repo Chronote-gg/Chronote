@@ -1,4 +1,3 @@
-import type { NewWorkScope } from "../types/productionIntroduction";
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -47,6 +46,7 @@ import {
   getRollingWindowMs,
 } from "../services/meetingUsageService";
 import {
+  MEETING_END_REASONS,
   MEETING_START_REASONS,
   type AutoRecordRule,
   type MeetingStartReason,
@@ -55,7 +55,7 @@ import type { MeetingData } from "../types/meeting-data";
 import {
   getActiveMeetingLeaseForGuild,
   isLeaseActive,
-} from "../services/activeMeetingLeaseService";
+} from "../services/meetingLease";
 import { fetchGuildMember } from "../utils/guildMembers";
 import type { ChatTtsSpeakerPrefixMode } from "../utils/ttsText";
 import { resolveServerMeetingArtifactAccess } from "../services/meetingArtifactAccessService";
@@ -63,7 +63,8 @@ import {
   assertMemberCanAccessNotesChannel,
   resolveMeetingNotesChannel,
 } from "../services/meetingNotesDestinationService";
-import { interruptOwnedMeeting } from "../services/ownedMeetingInterruption";
+import { closeMeeting } from "../services/meetingClose";
+import { saveStartMessageId } from "../services/meetingStartMessage";
 
 type GuildLimits = Awaited<ReturnType<typeof getGuildLimits>>["limits"];
 
@@ -76,8 +77,6 @@ type StartMeetingOptions = {
 };
 
 type StartManualMeetingFromChannelsOptions = {
-  scope?: NewWorkScope;
-  assertStartAllowed?: () => Promise<void>;
   startSignal?: AbortSignal;
   client: Client;
   guild: Guild;
@@ -305,7 +304,7 @@ const ensureNoActiveMeeting = async (guildId: string) => {
     if (meeting && !meeting.finished) {
       return "A meeting is already active in this server.";
     }
-    deleteMeeting(guildId);
+    if (meeting) deleteMeeting(meeting);
   }
 
   const lease = await getActiveMeetingLeaseForGuild(guildId);
@@ -328,8 +327,6 @@ const resolveMemberVoiceChannel = (member: GuildMember): VoiceChannelResult => {
 };
 
 export async function startManualMeetingFromChannels({
-  scope,
-  assertStartAllowed,
   startSignal,
   client,
   guild,
@@ -396,12 +393,9 @@ export async function startManualMeetingFromChannels({
   } = await resolveMeetingVoiceSettings(guildId, voiceChannel.id, limits);
 
   const artifactAccess = await resolveServerMeetingArtifactAccess(guildId);
-  const meetingId = scope?.kind === "fixture" ? scope.meetingId : randomUUID();
-  await assertStartAllowed?.();
+  const meetingId = randomUUID();
   startSignal?.throwIfAborted();
   const meeting = await initializeMeeting({
-    scope,
-    assertStartAllowed,
     startSignal,
     meetingId,
     voiceChannel,
@@ -501,7 +495,7 @@ export async function publishManualMeetingStartedMessage(
     const message = await meeting.textChannel.send(
       buildManualMeetingStartedMessage(meeting, liveMeetingUrl),
     );
-    meeting.startMessageId = message.id;
+    await recordStartMessage(meeting, message.id);
     return message;
   } catch (error) {
     console.warn("Failed to publish meeting start", {
@@ -509,12 +503,24 @@ export async function publishManualMeetingStartedMessage(
       meetingId: meeting.meetingId,
       error,
     });
-    await interruptOwnedMeeting(meeting, {
-      reason: "processing_failure",
-      deadline: Date.now() + 100_000,
+    await closeMeeting(meeting, {
+      endReason: MEETING_END_REASONS.UNKNOWN,
+      abnormal: true,
     });
     throw error;
   }
+}
+
+/**
+ * Saves the start message id to the row, so whichever worker finishes the
+ * meeting replaces that message and its End button. Best effort.
+ */
+export async function recordStartMessage(
+  meeting: MeetingData,
+  messageId: string,
+): Promise<void> {
+  meeting.startMessageId = messageId;
+  await saveStartMessageId(meeting, messageId);
 }
 
 export async function handleRequestStartMeeting(
@@ -726,7 +732,7 @@ export async function handleAutoStartMeeting(
       return false;
     }
     // Clean up finished meeting
-    deleteMeeting(guildId);
+    deleteMeeting(meeting);
   }
 
   const meetingId = randomUUID();
@@ -806,7 +812,7 @@ export async function handleAutoStartMeeting(
     embeds: [embed],
     components: [row],
   });
-  meeting.startMessageId = message.id;
+  await recordStartMessage(meeting, message.id);
 
   return true;
 }

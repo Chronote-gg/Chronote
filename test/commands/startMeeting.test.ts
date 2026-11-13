@@ -12,14 +12,7 @@ import {
   PermissionsBitField,
   TextChannel,
 } from "discord.js";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import vm from "node:vm";
-import ts from "typescript";
-import {
-  updateMeetingProcessingMessage,
-  updateMeetingSummaryMessage,
-} from "../../src/embed";
+import { updateMeetingProcessingMessage } from "../../src/embed";
 import { getRollingUsageForGuild } from "../../src/services/meetingUsageService";
 import {
   encounterRecordingLimit,
@@ -28,13 +21,14 @@ import {
 import { deleteMeeting, initializeMeeting } from "../../src/meetings";
 import { listConfigOverridesForScope } from "../../src/services/configOverridesService";
 import { handleRequestStartMeeting } from "../../src/commands/startMeeting";
-import { interruptOwnedMeeting } from "../../src/services/ownedMeetingInterruption";
+import { closeMeeting } from "../../src/services/meetingClose";
 import { resolveMeetingVoiceSettings } from "../../src/services/meetingVoiceSettingsService";
 import { resolveServerMeetingArtifactAccess } from "../../src/services/meetingArtifactAccessService";
-import { getActiveMeetingLeaseForGuild } from "../../src/services/activeMeetingLeaseService";
+import { getActiveMeetingLeaseForGuild } from "../../src/services/meetingLease";
 import { getGuildLimits } from "../../src/services/subscriptionService";
 import { checkBotPermissions } from "../../src/utils/permissions";
 import type { MeetingData } from "../../src/types/meeting-data";
+import { getMeetingHistoryTransitionRepository } from "../../src/repositories/meetingHistoryTransitions";
 
 const { client, guild, creator, bot, botMember, voice, notes, resetStart } =
   createMeetingStartDiscordFixture();
@@ -224,9 +218,9 @@ test("publication_failure_preserves_owned_capture", async () => {
   const request = interaction();
   await handleRequestStartMeeting(request);
   const meeting = await currentMeeting();
-  expect(interruptOwnedMeeting).toHaveBeenCalledWith(meeting, {
-    reason: "processing_failure",
-    deadline: expect.any(Number),
+  expect(closeMeeting).toHaveBeenCalledWith(meeting, {
+    endReason: "unknown",
+    abnormal: true,
   });
   expect(meeting.startMessageId).toBeUndefined();
   expect(deleteMeeting).not.toHaveBeenCalled();
@@ -245,7 +239,7 @@ test("ack_failure_keeps_published_recording", async () => {
     .mocked(request.editReply)
     .mockRejectedValueOnce(new Error("expired interaction"));
   await handleRequestStartMeeting(request);
-  expect(interruptOwnedMeeting).not.toHaveBeenCalled();
+  expect(closeMeeting).not.toHaveBeenCalled();
   expect((await currentMeeting()).startMessageId).toBe(published.id);
   expect(send).toHaveBeenCalledTimes(1);
   expect(request.editReply).toHaveBeenCalledTimes(1);
@@ -265,9 +259,6 @@ test("running_destination_is_frozen", async () => {
   expect(fetchChannel).toHaveBeenCalledTimes(1);
   expect(initializeMeeting).toHaveBeenCalledTimes(1);
   meeting.attendance = new Set();
-  meeting.endTime = new Date("2026-10-16T00:05:00Z");
-  meeting.notesText = "Finished notes";
-  meeting.generateNotes = true;
   const fetchPublished = jest
     .spyOn(notes.messages, "fetch")
     .mockResolvedValue(published);
@@ -275,12 +266,9 @@ test("running_destination_is_frozen", async () => {
     .spyOn(published, "edit")
     .mockResolvedValue(published);
   await updateMeetingProcessingMessage(meeting);
-  await updateMeetingSummaryMessage(meeting);
-  expect(fetchPublished).toHaveBeenNthCalledWith(1, published.id);
-  expect(fetchPublished).toHaveBeenNthCalledWith(2, published.id);
-  expect(editPublished).toHaveBeenCalledTimes(2);
-  expect(send).toHaveBeenCalledTimes(2);
-  expect(meeting.notesChannelId).toBe(notes.id);
+  expect(fetchPublished).toHaveBeenCalledWith(published.id);
+  expect(editPublished).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledTimes(1);
   expect(invocation.send).not.toHaveBeenCalled();
 });
 
@@ -325,7 +313,7 @@ test.each([
     expect(initializeMeeting).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
     expect(invocation.send).not.toHaveBeenCalled();
-    expect(interruptOwnedMeeting).not.toHaveBeenCalled();
+    expect(closeMeeting).not.toHaveBeenCalled();
   },
 );
 
@@ -344,53 +332,21 @@ test("a live lease rejects admission before publication", async () => {
 
 test("initial recovery history and lease retain the routed text channel", async () => {
   await handleRequestStartMeeting(interaction());
-  const source = ts.createSourceFile(
-    "meetings.ts",
-    readFileSync(path.join(__dirname, "../../src/meetings.ts"), "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-  );
-  const declaration = source.statements.find(
-    (node) =>
-      ts.isFunctionDeclaration(node) &&
-      node.name?.text === "initializeNewMeeting",
-  );
-  const fixtureOptions = source.statements.find(
-    (node) =>
-      ts.isFunctionDeclaration(node) &&
-      node.name?.text === "assertFixtureStartOptions",
-  );
-  if (!declaration || !fixtureOptions)
-    throw new Error("Missing initializer guards");
-  const acquire = jest.fn(async () => ({
-    kind: "blocked",
-    reason: "deployment",
-  }));
-  const context = vm.createContext({
-    options: jest.mocked(initializeMeeting).mock.calls[0][0],
-    reservationTimingReceipt: () => undefined,
-    tryAcquireMeetingLease: acquire,
+  const { sessionLeaseInput } =
+    jest.requireActual<typeof import("../../src/meetings")>(
+      "../../src/meetings",
+    );
+  const input = sessionLeaseInput({
+    ...jest.mocked(initializeMeeting).mock.calls[0][0],
+    meetingId: "meeting-1",
   });
-  await expect(
-    vm.runInContext(
-      ts.transpileModule(
-        fixtureOptions.getText(source) +
-          "\n" +
-          declaration.getText(source) +
-          "\ninitializeNewMeeting(options);",
-        { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
-      ).outputText,
-      context,
-    ),
-  ).rejects.toThrow("admission blocked");
-  expect(acquire).toHaveBeenCalledWith(
+  expect(input).toEqual(
     expect.objectContaining({
       textChannelId: notes.id,
       history: expect.objectContaining({ textChannelId: notes.id }),
     }),
   );
 });
-
 test("rolling limits use the deferred delivery policy before publication", async () => {
   const resolved = await getGuildLimits(guild.id);
   jest.mocked(getGuildLimits).mockResolvedValueOnce({
@@ -464,7 +420,7 @@ test("initialization rejection does not publish or invent a success link", async
     "Failed to prepare or start meeting",
     expect.objectContaining({ error: expect.any(Error) }),
   );
-  expect(interruptOwnedMeeting).not.toHaveBeenCalled();
+  expect(closeMeeting).not.toHaveBeenCalled();
 });
 
 test("accessible destination bot permissions are checked at that destination", async () => {
@@ -511,4 +467,54 @@ test("routed starts preserve context, tags, controls and live transcript access"
       url: expect.stringContaining("/live/guild-1/meeting-1"),
     }),
   ]);
+});
+
+test("startMessageId is saved after the start message is posted", async () => {
+  const order: string[] = [];
+  send.mockImplementation(async () => {
+    order.push("posted");
+    return published;
+  });
+  const transition = jest.mocked(
+    getMeetingHistoryTransitionRepository().transitionMeetingHistory,
+  );
+  transition.mockImplementation(async () => {
+    order.push("saved");
+    return "applied";
+  });
+  const historyKey = {
+    guildId: guild.id,
+    channelId_timestamp: `${voice.id}#synthetic-start`,
+  };
+  jest.mocked(initializeMeeting).mockResolvedValueOnce({
+    guildId: guild.id,
+    meetingId: "meeting-1",
+    voiceChannel: voice,
+    textChannel: notes,
+    startTime: new Date("2026-10-16T00:00:00Z"),
+    reservation: {
+      sessionMode: "meeting",
+      guildId: guild.id,
+      meetingId: "meeting-1",
+      ownerInstanceId: "synthetic-owner",
+      executionVersion: 1,
+      voiceOperationAttemptId: "synthetic-attempt",
+      reservedAt: Date.parse("2026-10-16T00:00:00Z"),
+      historyKey,
+    },
+  } as MeetingData);
+
+  await handleRequestStartMeeting(interaction());
+
+  expect(order).toEqual(["posted", "saved"]);
+  expect(transition).toHaveBeenCalledWith(
+    expect.objectContaining({
+      key: historyKey,
+      expectedMeetingId: "meeting-1",
+      expectedOwnerInstanceId: "synthetic-owner",
+      expectedExecutionVersion: 1,
+      expectedStatus: "in_progress",
+      patch: expect.objectContaining({ startMessageId: published.id }),
+    }),
+  );
 });

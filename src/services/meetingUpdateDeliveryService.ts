@@ -32,7 +32,6 @@ import type {
 export type {
   MeetingDeliveryRunResult,
   MeetingDeliveryRunInput,
-  MeetingDeliveryDurableOutcome,
 } from "./meetingUpdateDeliveryTypes";
 export { MAX_CONSECUTIVE_KNOWN_FAILURES } from "./meetingUpdateDeliveryTypes";
 
@@ -183,11 +182,10 @@ async function acquireRetained(
       : [];
     return { ...ctx.result("uncertain", await ctx.read()), observations };
   }
-  const authority = await ctx.input.work.authority();
-  const result = await ctx.acquireAttempt(row, retained.attempt, authority);
+  const result = await ctx.acquireAttempt(row, retained.attempt);
   if (result !== "claimed") return ctx.result("superseded", await ctx.read());
   const claimed = await ctx.read();
-  ctx.capture(claimed, retained.attempt, authority);
+  ctx.capture(claimed, retained.attempt);
   ctx.startRenewals();
   return reconcileClaimed(ctx);
 }
@@ -202,11 +200,10 @@ async function acquireFresh(ctx: DeliveryContext, row: DeliveryHistory) {
   });
   if (plan.kind === "idle") return ctx.result("settled", row);
   if (plan.kind === "blocked") throw new MeetingUpdatePlanBlocked(plan.reason);
-  const authority = await ctx.input.work.authority();
-  const claimed = await ctx.acquireAttempt(row, plan.attempt, authority);
+  const claimed = await ctx.acquireAttempt(row, plan.attempt);
   if (claimed !== "claimed") return ctx.result("superseded", await ctx.read());
   const exact = await ctx.read();
-  ctx.capture(exact, plan.attempt, authority);
+  ctx.capture(exact, plan.attempt);
   ctx.startRenewals();
   for (let index = 0; index < plan.attempt.operations.length; index++) {
     await executeDeliveryOperation(ctx, index, plan.payloads);
@@ -264,11 +261,7 @@ async function claimedFailure(
       }),
       error.message,
     );
-  if (
-    error instanceof MeetingDeliveryStopped ||
-    ctx.input.work.signal.aborted ||
-    ctx.input.signal?.aborted
-  )
+  if (error instanceof MeetingDeliveryStopped || ctx.signal.aborted)
     return retireSuperseded(ctx, row, providerRetryAfter(error));
   return retireKnownFailure(ctx, row, providerRetryAfter(error));
 }
@@ -356,20 +349,7 @@ export function createMeetingUpdateDeliveryService(
       result = await failed(ctx, error);
     }
     const renewed = await ctx.stopRenewals();
-    if (!renewed) return ctx.result("uncertain");
-    if (!result.durable) return result;
-    try {
-      const latest = await ctx.read(true);
-      return {
-        ...result,
-        durable: {
-          deliveryRevision: latest.updateDelivery.revision,
-          claim: ctx.claim,
-        },
-      };
-    } catch {
-      return ctx.result("uncertain");
-    }
+    return renewed ? result : ctx.result("uncertain");
   }
   return {
     deliverMeetingUpdate: (input: MeetingDeliveryRunInput) => run(input, false),

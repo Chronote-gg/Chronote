@@ -9,14 +9,13 @@ import {
   failStripeWebhookEvent,
 } from "../db";
 import type { StripeWebhookEvent } from "../types/db";
-import type { AdmissionContext } from "../types/deploymentControl";
+import type { RuntimeIdentity } from "../types/deploymentControl";
 import {
   stripeReceiptBirthSchema,
   canAdmitStripeReceipt,
-  stripeReceiptAdmissionSchema,
   STRIPE_RECEIPT_RETENTION_SECONDS,
 } from "../types/stripeWebhookReceipt";
-import { mockWorkAdmissionAllowed } from "./deploymentControlRepository";
+import { buildStripeReceiptAdmission } from "./stripeWebhookDynamoRepository";
 import { getMockStore } from "./mockStore";
 export type StripeWebhookRepository = {
   claim(event: StripeWebhookEvent): Promise<boolean>;
@@ -24,7 +23,7 @@ export type StripeWebhookRepository = {
     eventId: string,
     token: string,
     attemptId: string,
-    context: AdmissionContext,
+    runtime: RuntimeIdentity,
   ): Promise<boolean>;
   fail(eventId: string, token: string): Promise<boolean>;
   finish(eventId: string, token: string, release?: boolean): Promise<boolean>;
@@ -75,30 +74,15 @@ const mockRepository: StripeWebhookRepository = {
     events.set(event.eventId, next);
     return true;
   },
-  async admit(eventId, token, attemptId, context) {
-    const store = getMockStore(),
-      event = store.stripeWebhookEvents.get(eventId);
+  async admit(eventId, token, attemptId, runtime) {
+    const event = getMockStore().stripeWebhookEvents.get(eventId);
     if (
       !owns(event, token) ||
       !stripeReceiptBirthSchema.safeParse(event.birth).success
     )
       return false;
     if (!canAdmitStripeReceipt(event)) return false;
-    if (
-      !mockWorkAdmissionAllowed(
-        { kind: "serving", context },
-        store.deploymentControlRecords,
-        store.activeMeetingLeases,
-      )
-    )
-      return false;
-    const admission = stripeReceiptAdmissionSchema.parse({
-      attemptId,
-      leaseToken: token,
-      runtime: context.identity,
-      generation: context.authorizedGeneration,
-      admittedAt: context.now,
-    });
+    const admission = buildStripeReceiptAdmission(attemptId, token, runtime);
     event.firstAdmission ??= structuredClone(admission);
     event.admission = { ...admission, status: "running" };
     event.continuation = "admitted";

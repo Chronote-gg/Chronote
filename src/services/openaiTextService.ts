@@ -25,8 +25,6 @@ export type OpenAITextFormat =
   | { kind: "json_schema"; name: string; schema: Record<string, unknown> };
 
 type TextGenerationOptions = {
-  observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
-  generationOperation?: string;
   model: string;
   modelParamRole?: ModelParamRole;
   input: readonly ResponseInputItem[];
@@ -95,11 +93,6 @@ async function requestTextResponse(
   input: ResponseInputItem[],
 ): Promise<Response> {
   request.signal?.throwIfAborted();
-  const acknowledge = request.observeGeneration?.(
-    request.generationOperation ?? request.tracing?.generationName ?? "text",
-    request.model,
-    request.tracing?.langfusePrompt,
-  );
   const response = await request.client.responses.create(
     {
       model: request.model,
@@ -118,7 +111,6 @@ async function requestTextResponse(
     request.signal ? { signal: request.signal } : undefined,
   );
   request.signal?.throwIfAborted();
-  acknowledge?.(response.model ?? null);
   return response;
 }
 

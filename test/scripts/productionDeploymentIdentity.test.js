@@ -104,7 +104,12 @@ test("runtime Exec grants exactly four channel actions and no session authority"
   expect(runtime).toMatch(/role\s*=\s*aws_iam_role.ecs_task_app_role.id/);
   expect(runtime).toMatch(/Resource\s*=\s*"\*"/);
   expect(source).not.toMatch(
-    /ssm:StartSession|secretsmanager:GetSecretValue|ecs:StopTask|ecs:RunTask/,
+    /ssm:StartSession|secretsmanager:GetSecretValue|ecs:RunTask/,
+  );
+  // StopTask exists only for an explicitly enabled retiring deploy.
+  expect(source.match(/ecs:StopTask/g)).toHaveLength(1);
+  expect(source).toMatch(
+    /var\.ENABLE_DEPLOY_RETIRE \? \[\s*\{\s*Sid\s*=\s*"RetireOlderTasks",\s*Effect\s*=\s*"Allow",\s*Action\s*=\s*\["ecs:StopTask"\],/,
   );
 });
 

@@ -7,61 +7,79 @@ import {
 import type { StripeClient } from "../types/stripe";
 import { config } from "./configService";
 import { reconcileRenewalRecovery } from "./renewalRecoveryService";
-import { beginRuntimeWorkClaim } from "./runtimeWorkAdmissionService";
-import { getRuntimeAdmissionContext } from "./runtimeLifecycleService";
+import { operationSignal } from "./shutdownSignal";
+import { getJobLeaseRepository } from "../repositories/jobLeaseRepository";
+import { RENEWAL_RECOVERY_STALLED_LOG } from "../metrics";
+import { getRuntimeInstanceId } from "./runtimeInstanceService";
+import { LIFECYCLE } from "./lifecycleTiming";
+import { isEligible } from "./workerRegistry";
 
 let timer: ReturnType<typeof setInterval> | undefined;
 let pending: Promise<void> | undefined;
 let controller: AbortController | undefined;
 type Poll = { stripe: StripeClient; now: number; signal: AbortSignal };
 async function processRecovery(key: string, input: Poll): Promise<void> {
-  let work;
-  try {
-    work = beginRuntimeWorkClaim("billing", key);
-  } catch {
+  const record = await getRenewalRecoveryRepository().get(key);
+  const due = record ? renewalRecoveryNextCheck(record) : undefined;
+  if (
+    !record ||
+    record.mode !== config.subscription.stripeMode ||
+    due === undefined ||
+    due > input.now
+  )
     return;
+  const current = await getRenewalRecoveryRepository().getCurrent(
+    record.guildId,
+  );
+  if (!current || renewalRecoveryKey(current) !== key) return;
+  const signal = operationSignal(input.signal);
+  await runBillingWorkerOperation(signal, (owner) =>
+    reconcileRenewalRecovery({
+      stripe: input.stripe,
+      guildId: record.guildId,
+      now: input.now,
+      signal,
+      owner,
+      effect: owner.effect,
+    }),
+  );
+}
+const RENEWAL_RECOVERY_JOB = "renewal-recovery";
+const renewalRecoveryLease = () => ({
+  name: RENEWAL_RECOVERY_JOB,
+  owner: getRuntimeInstanceId(),
+});
+/**
+ * Two overlapping polls can decide from a stale invoice read, so only the lease holder polls.
+ * Taken at the start of a poll and again before every due record, so a poll that outlives its
+ * lease stops at the next record instead of overlapping the next owner.
+ */
+async function holdsRenewalRecoveryLease(): Promise<boolean> {
+  try {
+    const held = await getJobLeaseRepository().tryAcquireJobLease({
+      ...renewalRecoveryLease(),
+      now: Math.floor(Date.now() / 1000),
+      ttlSeconds: LIFECYCLE.renewalRecoveryLeaseSeconds,
+    });
+    if (!held) console.debug("Renewal recovery poll skipped: lease held");
+    return held;
+  } catch (error) {
+    console.warn(
+      RENEWAL_RECOVERY_STALLED_LOG,
+      error instanceof Error ? error.name : "unknown",
+    );
+    return false;
   }
-  await work.trackPromise(async () => {
-    try {
-      await work.authority();
-      const record = await work.trackEffect(() =>
-        getRenewalRecoveryRepository().get(key),
-      );
-      const due = record ? renewalRecoveryNextCheck(record) : undefined;
-      if (
-        !record ||
-        record.mode !== config.subscription.stripeMode ||
-        due === undefined ||
-        due > input.now
-      )
-        return;
-      const current = await work.trackEffect(() =>
-        getRenewalRecoveryRepository().getCurrent(record.guildId),
-      );
-      if (!current || renewalRecoveryKey(current) !== key) return;
-      const signal = AbortSignal.any([input.signal, work.signal]);
-      await runBillingWorkerOperation(work, signal, async (owner) => {
-        work.acknowledgeDurableBillingRecovery(key);
-        await reconcileRenewalRecovery({
-          stripe: input.stripe,
-          guildId: record.guildId,
-          now: input.now,
-          signal,
-          owner,
-          effect: owner.effect,
-        });
-      });
-    } finally {
-      work.acknowledgeReadOnlyRecoveryPoll();
-      await work.settle();
-    }
-  });
+}
+/** For orderly shutdown, after the worker has stopped, so the next worker need not wait out the lease. */
+export function releaseRenewalRecoveryLease(): Promise<void> {
+  return getJobLeaseRepository().releaseJobLease(renewalRecoveryLease());
 }
 export async function runRenewalRecoveryPoll(input: Poll): Promise<void> {
   input.signal.throwIfAborted();
-  await getRuntimeAdmissionContext();
   const mode = config.subscription.stripeMode;
   if (mode !== "test" && mode !== "live") return;
+  if (!(await holdsRenewalRecoveryLease())) return;
   let cursor: string | undefined;
   do {
     input.signal.throwIfAborted();
@@ -73,6 +91,7 @@ export async function runRenewalRecoveryPoll(input: Poll): Promise<void> {
     });
     for (const key of page.keys) {
       input.signal.throwIfAborted();
+      if (!(await holdsRenewalRecoveryLease())) return;
       try {
         await processRecovery(key, input);
       } catch (error) {
@@ -103,7 +122,7 @@ export function startRenewalRecoveryWorker(stripe: StripeClient): void {
   controller = new AbortController();
   const signal = controller.signal;
   const poll = () => {
-    if (pending || signal.aborted) return;
+    if (pending || signal.aborted || !isEligible()) return;
     pending = runRenewalRecoveryPoll({
       stripe,
       now: Math.floor(Date.now() / 1000),

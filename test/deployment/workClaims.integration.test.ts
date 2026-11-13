@@ -1,15 +1,14 @@
 import {
   buildPendingSegmentTransaction,
+  buildPersonalMediaClaimTransaction,
   buildPersonalUploadSubmissionTransaction,
   buildPersonalSegmentTransitionTransaction,
 } from "../../src/services/personalUploadTransactions";
-import { transactPersonalAdmission } from "../../src/services/personalAdmissionTransaction";
 import { buildPausedDesktopDraftMarker } from "../../src/testSupport/personalMediaUploadFixtures";
 import { randomUUID } from "node:crypto";
 import {
   CreateTableCommand,
   DeleteTableCommand,
-  DeleteItemCommand,
   DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
@@ -18,21 +17,15 @@ import {
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { createDynamoDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
 import { createDynamoMeetingControlCommandRepository } from "../../src/repositories/meetingControlCommandRepository";
-import {
-  buildPersonalClaimCheck,
-  buildPersonalMediaClaimTransaction,
-  buildWorkAdmissionChecks,
-} from "../../src/services/deploymentControlTransactions";
-import { context, control, runtime, promotion } from "./controlFixtures";
+import { buildPersonalClaimCheck } from "../../src/services/personalUploadTransactions";
 import { config } from "../../src/services/configService";
+import { getRuntimeInstanceId } from "../../src/services/runtimeInstanceService";
 import type {
   PersonalMediaUploadJobRecord,
   PersonalRecordingSegmentRecord,
 } from "../../src/types/db";
-import type {
-  SuppressionRecord,
-  WorkAdmissionAuthority,
-} from "../../src/types/deploymentControl";
+import type { SuppressionRecord } from "../../src/types/deploymentControl";
+import { expectSuppressionWriteOutcomes } from "../fixtures/suppressionWrites";
 
 const prefix = `work-claims-${randomUUID()}-`;
 const tables = {
@@ -45,7 +38,7 @@ const tables = {
   personalRecordingSegment: `${prefix}Segment`,
 };
 const client = new DynamoDBClient({
-  endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
+  endpoint: process.env.TEST_DYNAMODB_ENDPOINT,
   region: "local",
   credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
 });
@@ -53,7 +46,6 @@ const repository = createDynamoDeploymentControlRepository(client, tables);
 const commands = createDynamoMeetingControlCommandRepository(
   client,
   tables.command,
-  tables,
 );
 const put = (table: string, row: object) =>
   client.send(new PutItemCommand({ TableName: table, Item: marshall(row) }));
@@ -87,10 +79,6 @@ afterAll(async () => {
   for (const TableName of Object.values(tables))
     await client.send(new DeleteTableCommand({ TableName }));
   client.destroy();
-});
-beforeEach(async () => {
-  for (const row of [control, runtime("old"), runtime("new", "candidate")])
-    await put(tables.deploymentControl, row);
 });
 
 it("loads synthetic application configuration without enabling mock repositories", () => {
@@ -238,7 +226,8 @@ function claimInput(job: PersonalMediaUploadJobRecord) {
     claimId,
     expectedAttempts: 0,
     maxAttempts: 3,
-    context,
+    instanceId: "old",
+    nowEpochSeconds: 100,
   };
 }
 test("a durable pause blocks first claim after a late unconditional queued write", async () => {
@@ -266,17 +255,11 @@ test("a durable pause blocks first claim after a late unconditional queued write
 });
 test.each(
   (["submission", "prepare", "transition"] as const).flatMap((operation) =>
-    [false, true].flatMap((held) =>
-      ["absent", "valid", "malformed"].map((marker) => ({
-        operation,
-        held,
-        marker,
-      })),
-    ),
+    ["absent", "valid", "malformed"].map((marker) => ({ operation, marker })),
   ),
 )(
-  "$operation with held=$held marker=$marker uses actual atomic admission",
-  async ({ operation, held, marker }) => {
+  "$operation with marker=$marker commits only on its own atomic conditions",
+  async ({ operation, marker }) => {
     const job = { ...upload(), status: "pending_upload" as const };
     const segment: PersonalRecordingSegmentRecord = {
       uploadId: job.uploadId,
@@ -299,11 +282,6 @@ test.each(
     };
     await put(tables.personalMediaUpload, job);
     await put(tables.personalRecordingSegment, segment);
-    if (held)
-      await put(tables.deploymentControl, {
-        ...control,
-        maintenance: { holdId: "held", introductionId: "intro", revision: 1 },
-      });
     if (marker !== "absent")
       await put(
         tables.deploymentControl,
@@ -331,16 +309,15 @@ test.each(
         tables,
       ),
     };
-    const result = transactPersonalAdmission(
-      client,
-      context,
-      prefix,
-      transactions[operation].TransactItems!,
+    const result = client.send(
+      new TransactWriteItemsCommand(transactions[operation]),
     );
-    const applied = !held && marker === "absent";
-    if (held)
-      await expect(result).rejects.toThrow("Runtime is not accepting work");
-    else await expect(result).resolves.toBe(applied);
+    const applied = marker === "absent";
+    if (applied) await expect(result).resolves.toBeDefined();
+    else
+      await expect(result).rejects.toMatchObject({
+        name: "TransactionCanceledException",
+      });
     const parentResult = await client.send(
       new GetItemCommand({
         TableName: tables.personalMediaUpload,
@@ -370,123 +347,6 @@ test.each(
     );
   },
 );
-function pausePair(job: PersonalMediaUploadJobRecord) {
-  const expectedParent = { ...job, uploadOrigin: "desktop_recording" as const };
-  const record = buildPausedDesktopDraftMarker(job);
-  return { record, expectedParent };
-}
-test.each([
-  "install first",
-  "claim first",
-  "marker conflict",
-  "parent changed",
-  "control changed",
-])("two-draft atomic installation: %s", async (order) => {
-  const pairs = [pausePair(upload()), pausePair(upload())] as const;
-  for (const pair of pairs)
-    await put(tables.personalMediaUpload, pair.expectedParent);
-  if (order === "claim first")
-    await client.send(
-      new TransactWriteItemsCommand(
-        buildPersonalMediaClaimTransaction(
-          claimInput(pairs[0].expectedParent),
-          tables,
-        ),
-      ),
-    );
-  const closed = { ...control, servingMembers: {} };
-  await put(tables.deploymentControl, closed);
-  if (order === "marker conflict")
-    await put(tables.deploymentControl, {
-      ...pairs[0].record,
-      operationId: "other",
-    });
-  if (order === "parent changed")
-    await put(tables.personalMediaUpload, {
-      ...pairs[1].expectedParent,
-      fileSize: 99,
-    });
-  if (order === "control changed")
-    await put(tables.deploymentControl, { ...closed, coordinatorEpoch: 4 });
-  const result = await repository.installPausedDesktopDrafts({
-    control: closed,
-    coordinatorToken: closed.coordinatorToken,
-    coordinatorEpoch: closed.coordinatorEpoch,
-    pairs,
-    now: 100,
-  });
-  expect(result).toBe(order === "install first" ? "applied" : "stale");
-  expect(
-    await repository.getRecord(pairs[1].record.pk, "PAUSED_DRAFT"),
-  ).toEqual(order === "install first" ? pairs[1].record : undefined);
-  if (order === "install first") {
-    await put(tables.deploymentControl, control);
-    for (const pair of pairs) {
-      await put(tables.personalMediaUpload, pair.expectedParent);
-      await put(tables.personalRecordingSegment, {
-        uploadId: pair.expectedParent.uploadId,
-        segmentKey: "late-segment",
-        status: "uploaded",
-      });
-      await expect(
-        client.send(
-          new TransactWriteItemsCommand(
-            buildPersonalMediaClaimTransaction(
-              claimInput(pair.expectedParent),
-              tables,
-            ),
-          ),
-        ),
-      ).rejects.toMatchObject({ name: "TransactionCanceledException" });
-      const expired = {
-        ...claimInput(pair.expectedParent).job,
-        claimExpiresAt: 99,
-      };
-      await put(tables.personalMediaUpload, expired);
-      const takeover = {
-        ...claimInput(pair.expectedParent),
-        expectedAttempts: 1,
-      };
-      takeover.job.attempts = 2;
-      await expect(
-        client.send(
-          new TransactWriteItemsCommand(
-            buildPersonalMediaClaimTransaction(takeover, tables),
-          ),
-        ),
-      ).rejects.toMatchObject({ name: "TransactionCanceledException" });
-      expect(
-        await repository.getRecord(pair.record.pk, pair.record.sk),
-      ).toEqual(pair.record);
-    }
-    const ordinary = upload();
-    await put(tables.personalMediaUpload, ordinary);
-    await client.send(
-      new TransactWriteItemsCommand(
-        buildPersonalMediaClaimTransaction(claimInput(ordinary), tables),
-      ),
-    );
-  }
-});
-test.each(["retired", "expired protection", "foreign member"])(
-  "personal claim refuses %s in its transaction",
-  async (reason) => {
-    const job = upload();
-    await put(tables.personalMediaUpload, job);
-    const row = runtime("old");
-    if (reason === "retired") row.role = "retired";
-    if (reason === "expired protection") row.protection.expiresAt = 99;
-    if (reason === "foreign member") row.identity.taskArn += "-replacement";
-    await put(tables.deploymentControl, row);
-    await expect(
-      client.send(
-        new TransactWriteItemsCommand(
-          buildPersonalMediaClaimTransaction(claimInput(job), tables),
-        ),
-      ),
-    ).rejects.toMatchObject({ name: "TransactionCanceledException" });
-  },
-);
 test("old attempt cannot write after a newer claim wins, and duplicate intake cannot reset it", async () => {
   const job = upload();
   await put(tables.personalMediaUpload, job);
@@ -500,7 +360,7 @@ test("old attempt cannot write after a newer claim wins, and duplicate intake ca
     ...first,
     claimId: randomUUID(),
     expectedAttempts: 1,
-    context: { ...context, now: 161 },
+    nowEpochSeconds: 161,
     job: { ...first.job, attempts: 2, claimExpiresAt: 190 },
   };
   next.job.processingClaimId = next.claimId;
@@ -559,38 +419,38 @@ async function ownedSession() {
     voiceOperationAttemptId: randomUUID(),
   };
   await put(tables.activeMeeting, { ...ownership, leaseExpiresAt: 180 });
-  await repository.promote(promotion);
   return { kind: "session", ownership, now: 100 } as const;
 }
-test("old owner claims and renews a targeted stop after promotion, while new starts are rejected", async () => {
-  const authority = await ownedSession();
+test("the owner claims and renews a targeted stop, and a foreign claim cannot complete it", async () => {
+  const owner = getRuntimeInstanceId();
   const requestId = randomUUID();
+  const serverId = randomUUID();
+  const meetingId = randomUUID();
   await commands.writeCommand({
     requestId,
     queueStatus: "pending",
     commandType: "stop_meeting",
     userId: "synthetic-user",
-    input: {
-      serverId: authority.ownership.guildId,
-      meetingId: authority.ownership.meetingId,
-    },
-    targetOwnerInstanceId: "old",
+    input: { serverId, meetingId },
+    targetOwnerInstanceId: owner,
     createdAt: "now",
     updatedAt: "now",
     expiresAt: 200,
   });
   const input = {
     requestId,
-    instanceId: "old",
+    instanceId: owner,
     claimId: randomUUID(),
     nowEpochSeconds: 100,
     claimExpiresAt: 150,
     updatedAt: "now",
-    authority,
   };
   expect(await commands.claimCommand(input)).toMatchObject({
-    claimedByInstanceId: "old",
+    claimedByInstanceId: owner,
   });
+  expect(
+    await commands.claimCommand({ ...input, claimId: randomUUID() }),
+  ).toBeUndefined();
   expect(
     await commands.renewCommand({
       ...input,
@@ -603,43 +463,69 @@ test("old owner claims and renews a targeted stop after promotion, while new sta
       ...input,
       claimId: "foreign",
       nowEpochSeconds: 121,
-      result: {
-        status: "stopping",
-        serverId: authority.ownership.guildId,
-        meetingId: authority.ownership.meetingId,
-      },
+      result: { status: "stopping", serverId, meetingId },
     }),
   ).toBe(false);
-  const nextId = randomUUID();
-  await commands.writeCommand(
-    {
-      requestId: nextId,
-      queueStatus: "pending",
-      commandType: "start_meeting",
-      userId: "synthetic-user",
-      input: {},
-      createdAt: "now",
-      updatedAt: "now",
-      expiresAt: 200,
-    },
-    {
-      ...context,
-      instanceId: "new",
-      identity: runtime("new").identity,
-      authorizedGeneration: 8,
-    },
-  );
+});
+test("a targeted command is refused to a worker that does not own the meeting", async () => {
+  const requestId = randomUUID();
+  await commands.writeCommand({
+    requestId,
+    queueStatus: "pending",
+    commandType: "stop_meeting",
+    userId: "synthetic-user",
+    input: { serverId: randomUUID() },
+    targetOwnerInstanceId: "synthetic-other-owner",
+    createdAt: "now",
+    updatedAt: "now",
+    expiresAt: 200,
+  });
   expect(
     await commands.claimCommand({
-      ...input,
-      requestId: nextId,
+      requestId,
+      instanceId: getRuntimeInstanceId(),
       claimId: randomUUID(),
-      authority: { kind: "serving", context },
+      nowEpochSeconds: 100,
+      claimExpiresAt: 150,
+      updatedAt: "now",
     }),
   ).toBeUndefined();
+  expect(
+    await commands.claimCommand({
+      requestId,
+      instanceId: getRuntimeInstanceId(),
+      claimId: randomUUID(),
+      nowEpochSeconds: 100,
+      claimExpiresAt: 150,
+      updatedAt: "now",
+      takeOverFrom: "synthetic-other-owner",
+    }),
+  ).toMatchObject({ claimedByInstanceId: getRuntimeInstanceId() });
+});
+test("a retried enqueue is idempotent, a different command under the same request id is refused, and a start enqueues with no deployment control record", async () => {
+  const requestId = randomUUID();
+  const start = {
+    requestId,
+    queueStatus: "pending" as const,
+    commandType: "start_meeting" as const,
+    userId: "synthetic-user",
+    input: {},
+    createdAt: "now",
+    updatedAt: "now",
+    expiresAt: 200,
+  };
+  await commands.writeCommand(start);
+  await commands.writeCommand(start);
+  await expect(
+    commands.writeCommand({ ...start, userId: "synthetic-other-user" }),
+  ).rejects.toThrow();
+  expect(await commands.getCommand(requestId)).toMatchObject({
+    commandType: "start_meeting",
+    userId: "synthetic-user",
+  });
 });
 function suppression(
-  authority: Extract<WorkAdmissionAuthority, { kind: "session" }>,
+  authority: Awaited<ReturnType<typeof ownedSession>>,
 ): SuppressionRecord {
   const { guildId, meetingId } = authority.ownership;
   return {
@@ -659,147 +545,18 @@ function suppression(
 test("late stop persists before lease release and stale clear cannot erase a newer stop", async () => {
   const authority = await ownedSession();
   const record = suppression(authority);
-  expect(await repository.writeSuppression({ record, authority })).toBe(
-    "applied",
-  );
-  expect(
-    await repository.writeSuppression({
-      record: { ...record, version: 2, suppressed: false },
-      authority,
-      expectedVersion: 1,
-    }),
-  ).toBe("applied");
-  expect(
-    await repository.writeSuppression({
-      record: { ...record, version: 3 },
-      authority,
-      expectedVersion: 2,
-    }),
-  ).toBe("applied");
-  expect(
-    await repository.writeSuppression({
-      record: { ...record, version: 2, suppressed: false },
-      authority,
-      expectedVersion: 1,
-    }),
-  ).toBe("stale");
+  const clear = {
+    record: { ...record, version: 2, suppressed: false },
+    expectedVersion: 1,
+  };
+  await expectSuppressionWriteOutcomes(repository, [
+    [{ record }, "applied"],
+    [clear, "applied"],
+    [{ record: { ...record, version: 3 }, expectedVersion: 2 }, "applied"],
+    [clear, "stale"],
+  ]);
   expect(await repository.getRecord(record.pk, record.sk)).toMatchObject({
     version: 3,
     suppressed: true,
   });
-});
-test("released ownership rejects a late explicit stop without creating suppression", async () => {
-  const authority = await ownedSession();
-  const record = suppression(authority);
-  await client.send(
-    new DeleteItemCommand({
-      TableName: tables.activeMeeting,
-      Key: marshall({ guildId: record.guildId }),
-    }),
-  );
-  expect(await repository.writeSuppression({ record, authority })).toBe(
-    "stale",
-  );
-  expect(await repository.getRecord(record.pk, record.sk)).toBeUndefined();
-});
-
-test("suppression and lease release race produces only a committed stop or a rejected stop", async () => {
-  const authority = await ownedSession();
-  const record = suppression(authority);
-  const [result] = await Promise.all([
-    repository.writeSuppression({ record, authority }),
-    client.send(
-      new DeleteItemCommand({
-        TableName: tables.activeMeeting,
-        Key: marshall({ guildId: record.guildId }),
-      }),
-    ),
-  ]);
-  const persisted = await repository.getRecord(record.pk, record.sk);
-  if (result === "applied")
-    expect(persisted).toMatchObject({
-      suppressed: true,
-      meetingId: record.meetingId,
-    });
-  else {
-    expect(result).toBe("stale");
-    expect(persisted).toBeUndefined();
-  }
-});
-test("warm runtime receipt transaction leaves the interaction for its exact old owner", async () => {
-  const authority = await ownedSession();
-  const interactionId = randomUUID();
-  const receipt = {
-    Put: {
-      TableName: tables.receipt,
-      Item: marshall({ interactionId }),
-      ConditionExpression: "attribute_not_exists(interactionId)",
-    },
-  };
-  const warm = {
-    kind: "serving" as const,
-    context: {
-      ...context,
-      instanceId: "new",
-      identity: runtime("new").identity,
-    },
-  };
-  await expect(
-    client.send(
-      new TransactWriteItemsCommand({
-        TransactItems: [...buildWorkAdmissionChecks(warm, tables), receipt],
-      }),
-    ),
-  ).rejects.toMatchObject({ name: "TransactionCanceledException" });
-  await client.send(
-    new TransactWriteItemsCommand({
-      TransactItems: [...buildWorkAdmissionChecks(authority, tables), receipt],
-    }),
-  );
-  expect(
-    (
-      await client.send(
-        new GetItemCommand({
-          TableName: tables.receipt,
-          Key: marshall({ interactionId }),
-        }),
-      )
-    ).Item,
-  ).toBeDefined();
-});
-
-test("real personal transaction commit followed by lost ACK remains unknown", async () => {
-  const job = { ...upload(), status: "pending_upload" as const };
-  await put(tables.personalMediaUpload, job);
-  const failure = new Error("synthetic lost atomic acknowledgment");
-  const send = client.send.bind(client);
-  const intercepted = jest
-    .spyOn(client, "send")
-    .mockImplementationOnce(async (command) => {
-      await send(command);
-      throw failure;
-    });
-  try {
-    await expect(
-      transactPersonalAdmission(
-        client,
-        context,
-        prefix,
-        buildPersonalUploadSubmissionTransaction(
-          { ...job, status: "queued" },
-          tables,
-        ).TransactItems!,
-      ),
-    ).rejects.toBe(failure);
-  } finally {
-    intercepted.mockRestore();
-  }
-  const persisted = await client.send(
-    new GetItemCommand({
-      TableName: tables.personalMediaUpload,
-      Key: marshall({ uploadId: job.uploadId }),
-      ConsistentRead: true,
-    }),
-  );
-  expect(unmarshall(persisted.Item!).status).toBe("queued");
 });

@@ -88,7 +88,6 @@ export async function ensureMeetingSummaries(
       signal: meeting.signal,
       savedPrompt: meeting.savedSummary,
       recentMeetingNames: meeting.recentMeetingNames,
-      observeGeneration: meeting.observeGeneration,
       frozenModel: meeting.frozenModels?.meetingSummary,
       captureNotice: meeting.captureNotice,
     });
@@ -115,13 +114,7 @@ async function assignMeetingName(
   meeting: MeetingNotesInput,
   summaries: MeetingSummaries,
 ) {
-  if (!meeting.meetingName && meeting.observeGeneration)
-    meeting.meetingName = summaries.summaryLabel;
-  if (
-    !meeting.meetingName &&
-    !meeting.recovered &&
-    !meeting.observeGeneration
-  ) {
+  if (!meeting.meetingName && !meeting.recovered) {
     try {
       meeting.meetingName = await resolveMeetingNameFromSummary({
         guildId: meeting.guildId,

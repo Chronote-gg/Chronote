@@ -14,12 +14,16 @@ import {
   updateMeetingTagsService,
 } from "../services/meetingHistoryService";
 
-const TAG_MODAL_ID = "edit_tags_modal";
+import {
+  EDIT_TAGS_BUTTON_ID,
+  EDIT_TAGS_MODAL_ID as TAG_MODAL_ID,
+} from "../botInteractionScope";
+
 const TAG_INPUT_ID = "tags_input";
 const TAG_HISTORY_PREFIX = "edit_tags_history";
 
 export function isEditTagsButton(customId: string) {
-  return customId === "edit_tags";
+  return customId === EDIT_TAGS_BUTTON_ID;
 }
 
 export function isEditTagsModal(customId: string) {

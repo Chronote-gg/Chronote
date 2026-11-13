@@ -1,4 +1,3 @@
-import { fixtureGenerationObserver } from "./fixtureInputService";
 import { getMeetingProcessingSignal } from "./meetingProcessingLifetime";
 import type { SpanContext } from "@opentelemetry/api";
 import type { MeetingData, MeetingNotesInput } from "../types/meeting-data";
@@ -30,10 +29,9 @@ type ChatOptions = {
 
 export type ChatMeetingInput = Pick<
   MeetingData,
-  "meetingId" | "ownershipSignal" | "finalization" | "reservation"
+  "meetingId" | "ownershipSignal" | "reservation"
 > &
   Pick<MeetingNotesInput, "runtimeConfig"> & {
-    observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
     creator: { id: string };
     guild: { id: string };
     voiceChannel: { id: string };
@@ -71,9 +69,6 @@ export async function chat(
     options,
   );
   return generateOpenAIText({
-    observeGeneration:
-      meeting.observeGeneration ?? fixtureGenerationObserver(meeting),
-    generationOperation: traceName,
     model,
     input: body.messages,
     modelParams,

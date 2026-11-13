@@ -1,7 +1,16 @@
 /** @jest-environment node */
 import { startRuntimeHealthServer } from "../../src/services/runtimeHealthServer";
-import { createRuntimeProtectionService } from "../../src/services/runtimeProtectionService";
 import { createConnection } from "node:net";
+
+const mockReady = { hasBeenReady: false, eligible: true };
+jest.mock("../../src/services/workerRegistry", () => ({
+  hasBeenReady: () => mockReady.hasBeenReady,
+  isEligible: () => mockReady.eligible,
+}));
+beforeEach(() => {
+  mockReady.hasBeenReady = false;
+  mockReady.eligible = true;
+});
 
 function malformedRequest(port: number): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -35,6 +44,7 @@ test("malformedRawTargetsCannotCrashTheListenerBeforeOrAfterActivation", async (
     response.end();
   });
   try {
+    mockReady.hasBeenReady = true;
     expect(await malformedRequest(address.port)).toMatch(/^HTTP\/1.1 400 /);
     expect((await fetch(`${origin}/health`)).status).toBe(200);
     server.activate(application);
@@ -48,66 +58,43 @@ test("malformedRawTargetsCannotCrashTheListenerBeforeOrAfterActivation", async (
   }
 });
 
-test("healthOnlyListenerRejectsEveryApplicationPathUntilNativeConfirmation", async () => {
+test("503 before the first ready write, 200 after, 200 after ready turns false", async () => {
+  const server = await startRuntimeHealthServer(0);
+  const address = server.server.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing test address");
+  const health = async () =>
+    (await fetch(`http://127.0.0.1:${address.port}/health`)).status;
+  try {
+    expect(await health()).toBe(503);
+    mockReady.hasBeenReady = true;
+    expect(await health()).toBe(200);
+    // The latch is the registry's; a later ready:false write leaves it set.
+    mockReady.eligible = false;
+    expect(await health()).toBe(200);
+  } finally {
+    await server.close();
+  }
+});
+
+test("the ready route is gone and application paths answer 503 until activation", async () => {
+  mockReady.hasBeenReady = true;
   const server = await startRuntimeHealthServer(0);
   const address = server.server.address();
   if (!address || typeof address === "string")
     throw new Error("Missing test address");
   const origin = `http://127.0.0.1:${address.port}`;
-  const identity = {
-    kind: "ecs" as const,
-    instanceId: "health-test",
-    protocolVersion: 1 as const,
-    taskArn: "arn:aws:ecs:us-east-1:123456789012:task/test/health",
-    imageDigest: "digest",
-    candidateId: "health",
-  };
-  let allowed = false;
-  const service = createRuntimeProtectionService({
-    identity,
-    agentUri: "http://fixture",
-    onUnsafe: jest.fn(),
-    initialRetry: async () => {
-      expect((await fetch(`${origin}/health`)).status).toBe(200);
-      expect((await fetch(`${origin}/ready`)).status).toBe(503);
-      for (const path of [
-        "/trpc/start",
-        "/api/billing/webhook",
-        "/api/desktop",
-        "/auth/discord",
-        "/mcp",
-      ])
-        expect(
-          (await fetch(`${origin}${path}`, { method: "POST" })).status,
-        ).toBe(503);
-      allowed = true;
-    },
-    request: async () =>
-      allowed
-        ? Response.json({
-            protection: {
-              TaskArn: identity.taskArn,
-              ProtectionEnabled: true,
-              ExpirationDate: new Date(Date.now() + 600000).toISOString(),
-            },
-          })
-        : Response.json({
-            failure: { Arn: identity.taskArn, Reason: "DEPLOYMENT_BLOCKED" },
-          }),
-  });
   try {
-    await service.start();
-    expect(service.isSafe()).toBe(true);
-    const application = jest.fn((_req, res) => {
-      res.writeHead(204);
-      res.end();
+    for (const path of ["/ready", "/trpc/start", "/api/billing/webhook"])
+      expect((await fetch(`${origin}${path}`, { method: "POST" })).status).toBe(
+        503,
+      );
+    server.activate((_request, response) => {
+      response.writeHead(204);
+      response.end();
     });
-    server.activate(application);
-    expect((await fetch(`${origin}/application`)).status).toBe(204);
-    expect(application).toHaveBeenCalledTimes(1);
-    expect(server.server.address()).toEqual(address);
+    expect((await fetch(`${origin}/ready`)).status).toBe(204);
   } finally {
-    service.stop();
     await server.close();
   }
 });

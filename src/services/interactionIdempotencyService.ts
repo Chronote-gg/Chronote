@@ -1,5 +1,4 @@
 import { tryCreateInteractionReceipt } from "../db";
-import type { WorkAdmissionAuthority } from "../types/deploymentControl";
 
 const INTERACTION_RECEIPT_TTL_SECONDS = 60 * 60;
 
@@ -7,14 +6,15 @@ type ClaimInteractionInput = {
   interactionId: string;
   interactionKind: string;
   guildId?: string;
-  authority: WorkAdmissionAuthority;
+  /** Bounds the write; its owner decides what a timeout means. */
+  signal: AbortSignal;
 };
 
 export async function claimInteractionReceipt({
   interactionId,
   interactionKind,
   guildId,
-  authority,
+  signal,
 }: ClaimInteractionInput): Promise<boolean> {
   const now = Date.now();
   const createdAt = new Date(now).toISOString();
@@ -27,5 +27,5 @@ export async function claimInteractionReceipt({
     createdAt,
     expiresAt,
   };
-  return tryCreateInteractionReceipt(receipt, undefined, authority);
+  return tryCreateInteractionReceipt(receipt, undefined, signal);
 }

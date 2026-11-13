@@ -16,6 +16,7 @@ const loadModule = async (options: LoadOptions = {}) => {
   const config = {
     mock: { enabled: options.mockEnabled ?? false },
     server: { nodeEnv: options.nodeEnv ?? "production" },
+    runtime: { metadataUri: "" },
     database: {
       useLocalDynamoDB: false,
       tablePrefix: "",
@@ -399,6 +400,104 @@ test("actual automatic cancellation provider failure is propagated for durable f
   } finally {
     errorOutput.mockRestore();
   }
+});
+
+describe("decideAutoRecordCancellation", () => {
+  const POLICY = {
+    enabled: true,
+    maximumSeconds: 90,
+    maximumWords: 50,
+    maximumChatMessages: 1,
+    dismissedMinimumMilliseconds: 600_000,
+    dismissedMinimumChatMessages: 2,
+  };
+  const facts = (
+    overrides: Partial<{
+      policy: typeof POLICY;
+      durationSeconds: number;
+      chatMessageCount: number;
+      transcriptText: string;
+    }> = {},
+  ) => {
+    const content = jest.fn(async () => ({
+      transcriptText: overrides.transcriptText ?? "hello",
+      chatLines: ["Synthetic chat line"],
+    }));
+    return {
+      content,
+      input: {
+        policy: overrides.policy ?? POLICY,
+        durationSeconds: overrides.durationSeconds ?? 30,
+        chatMessageCount: overrides.chatMessageCount ?? 0,
+        content,
+        meetingId: "meeting-1",
+        guildId: "guild-1",
+        channelId: "voice-1",
+      },
+    };
+  };
+
+  test("cancels with the model's reason", async () => {
+    const { decideAutoRecordCancellation, responsesCreate } = await loadModule({
+      responseContent: '{"cancel":true,"reason":"Synthetic reason"}',
+    });
+    const { input } = facts();
+    await expect(decideAutoRecordCancellation(input)).resolves.toEqual({
+      cancel: true,
+      reason: "Synthetic reason",
+    });
+    expect(JSON.stringify(responsesCreate.mock.calls)).toContain(
+      "Synthetic chat line",
+    );
+  });
+
+  test("proceeds when the model keeps the meeting", async () => {
+    const { decideAutoRecordCancellation } = await loadModule({
+      responseContent: '{"cancel":false}',
+    });
+    await expect(decideAutoRecordCancellation(facts().input)).resolves.toEqual({
+      cancel: false,
+    });
+  });
+
+  test.each([
+    ["over the duration bound", { durationSeconds: 91 }],
+    ["over the chat bound", { chatMessageCount: 2 }],
+    ["policy disabled", { policy: { ...POLICY, enabled: false } }],
+  ])(
+    "proceeds without reading content or calling the model when %s",
+    async (_name, overrides) => {
+      const { decideAutoRecordCancellation, responsesCreate } =
+        await loadModule({ responseContent: '{"cancel":true}' });
+      const { input, content } = facts(overrides);
+      await expect(decideAutoRecordCancellation(input)).resolves.toEqual({
+        cancel: false,
+      });
+      expect(content).not.toHaveBeenCalled();
+      expect(responsesCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  test("proceeds without calling the model when over the word bound", async () => {
+    const { decideAutoRecordCancellation, responsesCreate } = await loadModule({
+      responseContent: '{"cancel":true}',
+    });
+    const { input } = facts({ transcriptText: "word ".repeat(51) });
+    await expect(decideAutoRecordCancellation(input)).resolves.toEqual({
+      cancel: false,
+    });
+    expect(responsesCreate).not.toHaveBeenCalled();
+  });
+
+  test("keeps the meeting when the model output is blank", async () => {
+    const { decideAutoRecordCancellation, responsesCreate } = await loadModule({
+      responseContent: " ",
+    });
+    await expect(decideAutoRecordCancellation(facts().input)).resolves.toEqual({
+      cancel: false,
+    });
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+  });
 });
 
 test("an ordinary empty-output error still propagates as a provider failure", async () => {

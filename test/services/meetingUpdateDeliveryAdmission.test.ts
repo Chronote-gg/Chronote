@@ -39,7 +39,8 @@ test.each([false, true])(
         expectedContentRevision: 1,
         expectedDeliveryRevision: f.input.history.updateDelivery.revision,
         attempt: plan.attempt,
-        authority: f.authority,
+        ownerInstanceId: "old",
+        now,
       });
       jest.spyOn(Date, "now").mockReturnValue((now + 61) * 1000);
     }
@@ -66,14 +67,8 @@ test.each([false, true])(
               expectedContentRevision: 1,
               expectedDeliveryRevision: row.updateDelivery.revision,
               attempt: row.updateDelivery.progress.attempt,
-              authority: {
-                kind: "serving",
-                context: {
-                  ...f.authority.context,
-                  instanceId: "second-owner",
-                  now: takeoverAt,
-                },
-              },
+              ownerInstanceId: "second-owner",
+              now: takeoverAt,
             }),
           ).toBe("claimed");
         }
@@ -81,13 +76,10 @@ test.each([false, true])(
       });
     const transitions = jest.spyOn(f.repository, "transition");
     const invocation = run(f, retained, 10000, { renewalIntervalMs: 1 });
-    const checkpoints = jest.spyOn(invocation.work, "recordClaim");
     const result = await invocation.promise;
     expect(takenOver).toBe(true);
-    expect(checkpoints).not.toHaveBeenCalled();
     expect(transitions).not.toHaveBeenCalled();
     expect(result.kind).toBe("uncertain");
-    expect(result.durable).toBeUndefined();
     expect(f.requests).toEqual([]);
     const final = await f.read();
     expect(final.updateDelivery.progress).toMatchObject({
@@ -97,7 +89,7 @@ test.each([false, true])(
   },
 );
 
-test.each(["held-policy", "work-fence"] as const)(
+test.each(["held-policy", "worker-stop"] as const)(
   "renewal cannot invoke a write after final admission changes: %s",
   async (stop) => {
     const f = deliveryFixture();
@@ -131,7 +123,7 @@ test.each(["held-policy", "work-fence"] as const)(
     const transitions = jest.spyOn(f.repository, "transition");
     jest.spyOn(Date, "now").mockReturnValue((now + 20) * 1000);
     await entered.promise;
-    if (stop === "work-fence") invocation.work.fence();
+    if (stop === "worker-stop") invocation.controller.abort();
     else {
       const row = await originalRead(key);
       if (!row?.updateDelivery || !("attempt" in row.updateDelivery.progress))

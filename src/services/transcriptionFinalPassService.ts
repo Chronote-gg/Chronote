@@ -536,8 +536,6 @@ const processChunk = async (input: {
   );
 
   const signal = input.meeting.signal;
-  const write = input.meeting.beginArtifactWrite?.(chunkFilePath);
-  let rendered = false;
   try {
     signal.throwIfAborted();
     await input.dependencies.renderAudioChunk({
@@ -547,7 +545,6 @@ const processChunk = async (input: {
       durationSeconds: input.chunk.endSeconds - input.chunk.startSeconds,
       signal,
     });
-    rendered = true;
 
     signal.throwIfAborted();
     const chunkTranscription = await input.dependencies.transcribeChunk({
@@ -608,11 +605,7 @@ const processChunk = async (input: {
       nextTail: input.previousChunkTail,
     };
   } finally {
-    try {
-      await input.dependencies.deleteTempFile(chunkFilePath);
-    } finally {
-      write?.settle(rendered ? "known" : "uncertain");
-    }
+    await input.dependencies.deleteTempFile(chunkFilePath);
   }
 };
 
@@ -801,11 +794,6 @@ const defaultDependencies: FinalPassDependencies = {
       ...(combinedPrompt ? { prompt: combinedPrompt } : {}),
     };
 
-    const acknowledge = input.meeting.observeGeneration?.(
-      "transcription-audio-final-pass",
-      modelChoice.model,
-      combinedPrompt ? langfusePrompt : null,
-    );
     const result = await withTranscriptionInput(input.chunkFilePath, (file) =>
       openAIClient.audio.transcriptions.create(
         { ...request, file },
@@ -813,7 +801,6 @@ const defaultDependencies: FinalPassDependencies = {
       ),
     );
     signal.throwIfAborted();
-    acknowledge?.(null);
     return {
       text: result.text ?? "",
       logprobs: result.logprobs ?? [],

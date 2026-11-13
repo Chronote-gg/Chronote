@@ -43,17 +43,8 @@ import { resolveMeetingNameFromSummary } from "../meetingNameService";
 import { recordPersonalUploadTerminal } from "../../observability/personalUploadTrace";
 import { writeMeetingUserIndexForMeetingService } from "../meetingUserIndexService";
 import { processPersonalMediaUploadJob } from "../personalMediaUploadWorkerService";
-import {
-  createRuntimeLifecycle,
-  installRuntimeLifecycle,
-} from "../runtimeLifecycleService";
-import { createRuntimeProtectionService } from "../runtimeProtectionService";
-import { getRuntimeInstanceId } from "../runtimeInstanceService";
-import { getDeploymentControlRepository } from "../../db";
-import { getRuntimeWorkAdmissionCheckpoints } from "../runtimeWorkAdmissionService";
 import { PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS } from "../../constants";
 import type { PersonalMediaUploadRepository } from "../../repositories/personalMediaUploadRepository";
-import { getMockStore } from "../../repositories/mockStore";
 
 let mockWorkerJob: PersonalMediaUploadJobRecord | undefined;
 let mockCanonicalCompletion = false;
@@ -561,55 +552,8 @@ describe("personalMediaUploadProcessingService", () => {
     },
   );
 
-  it("keeps held indexing counted and retains an unknown subsequent automatic export", async () => {
+  it("keeps held indexing running after the terminal write and tolerates an unknown subsequent automatic export", async () => {
     jest.useFakeTimers({ now: 100_000 });
-    getMockStore().deploymentControlRecords.clear();
-    const identity = {
-      kind: "local" as const,
-      instanceId: getRuntimeInstanceId(),
-      localId: "terminal-index-fixture",
-      protocolVersion: 1 as const,
-    };
-    const repository = getDeploymentControlRepository();
-    await repository.initializeControl({
-      pk: "ENV",
-      sk: "CONTROL",
-      recordType: "control",
-      runtimeEnvironment: "local",
-      protocolVersion: 1,
-      coordinatorToken: "fixture",
-      coordinatorEpoch: 1,
-      coordinatorExpiresAt: 1000,
-      servingGeneration: 0,
-      servingMembers: {},
-    });
-    const lifecycle = createRuntimeLifecycle({
-      identity,
-      repository,
-      protection: createRuntimeProtectionService({
-        identity,
-        onUnsafe: jest.fn(() => undefined),
-      }),
-      probeReadiness: async () => ({
-        gatewayReady: true,
-        cacheReady: true,
-        dependenciesReady: true,
-      }),
-      checkpointAndFence: jest.fn(async () => undefined),
-    });
-    installRuntimeLifecycle(lifecycle);
-    await lifecycle.start();
-    await repository.promote({
-      candidateRuntimeMode: "all",
-      coordinatorToken: "fixture",
-      coordinatorEpoch: 1,
-      expectedServingGeneration: 0,
-      expectedServingMembers: [],
-      candidate: identity,
-      proposedGeneration: 1,
-      now: 100,
-    });
-    await lifecycle.getRuntimeAdmissionContext();
     mockWorkerClaim.mockImplementationOnce(async (input) => {
       mockWorkerJob = {
         ...buildJob(),
@@ -645,24 +589,16 @@ describe("personalMediaUploadProcessingService", () => {
       provider.release();
       await held.started;
       expect(mockWorkerJob?.status).toBe("complete");
-      expect(lifecycle.getWorkCounts()).toMatchObject({
-        personal_processing: 0,
-        ancillary_delivery: 1,
-      });
       await jest.advanceTimersByTimeAsync(
         PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS + 1,
       );
       finishRenewal(false);
       await Promise.resolve();
       expect(mockWorkerRenew).toHaveBeenCalledTimes(1);
-      expect(getRuntimeWorkAdmissionCheckpoints()).toMatchObject([
-        { domain: "ancillary", fenced: false },
-      ]);
       held.release();
       provider.release();
       await processing;
-      expect(lifecycle.getWorkCounts().ancillary_delivery).toBe(0);
-      expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(0);
+      expect(writeMeetingUserIndexForMeetingService).toHaveBeenCalledTimes(2);
       jest
         .mocked(maybeAutoExportCompletedMeeting)
         .mockRejectedValueOnce(
@@ -677,18 +613,12 @@ describe("personalMediaUploadProcessingService", () => {
         };
         return mockWorkerJob;
       });
-      await processPersonalMediaUploadJob(buildJob());
-      expect(lifecycle.getWorkCounts().ancillary_delivery).toBe(1);
-      expect(getRuntimeWorkAdmissionCheckpoints()).toMatchObject([
-        {
-          fenced: true,
-          localSettled: true,
-          terminalAcknowledged: { claimId: mockWorkerJob!.processingClaimId },
-        },
-      ]);
+      await expect(
+        processPersonalMediaUploadJob(buildJob()),
+      ).resolves.toBeUndefined();
+      expect(mockWorkerJob?.status).toBe("complete");
     } finally {
       held.release();
-      lifecycle.stop();
       jest.useRealTimers();
     }
   });

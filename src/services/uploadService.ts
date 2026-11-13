@@ -1,10 +1,4 @@
 import { isAudioFileSpeechRejected } from "../utils/audioTranscript";
-import { createHash } from "node:crypto";
-import {
-  isFixture,
-  fixtureParticipant,
-  recordFixtureTranscript,
-} from "./fixtureInputService";
 import { promises as fs } from "node:fs";
 import { MeetingData } from "../types/meeting-data";
 import { uploadVerifiedObjectToS3 } from "./storageService";
@@ -65,7 +59,6 @@ async function ensureParticipant(
   meeting: MeetingData,
   userId: string,
 ): Promise<Participant | undefined> {
-  if (isFixture(meeting)) return fixtureParticipant(meeting, userId);
   const existing = meeting.participants.get(userId);
   if (existing) return existing;
 
@@ -120,9 +113,7 @@ function buildTranscriptJson(
     ].sort((a, b) => a.timestamp - b.timestamp);
 
   const formattedSegments = builtSegments.map((seg) => {
-    const participant = isFixture(meeting)
-      ? fixtureParticipant(meeting, seg.userId)
-      : meeting.participants.get(seg.userId);
+    const participant = meeting.participants.get(seg.userId);
     return {
       userId: seg.userId,
       username: participant?.username,
@@ -174,6 +165,31 @@ export interface UploadMeetingArtifactsResult {
   transcriptS3Key?: string;
 }
 
+/** Resolves a participant for every audio speaker so transcript segments carry names. */
+export async function ensureSpeakerParticipants(
+  meeting: MeetingData,
+): Promise<void> {
+  for (const file of meeting.audioData.audioFiles) {
+    await ensureParticipant(meeting, file.userId);
+  }
+  if (meeting.audioData.cueEvents) {
+    for (const cue of meeting.audioData.cueEvents) {
+      await ensureParticipant(meeting, cue.userId);
+    }
+  }
+}
+
+/** The stored transcript object for a live meeting: its key and JSON body. */
+export function meetingTranscriptObject(
+  meeting: MeetingData,
+  transcriptText: string,
+): { key: string; body: string } {
+  return {
+    key: `${getMeetingFolder(meeting)}transcript.json`,
+    body: JSON.stringify(buildTranscriptJson(meeting, transcriptText), null, 2),
+  };
+}
+
 export async function uploadMeetingArtifacts(
   meeting: MeetingData,
   opts: UploadArtifactsOptions,
@@ -193,15 +209,7 @@ export async function uploadMeetingArtifacts(
 
   const folder = getMeetingFolder(meeting);
 
-  // Ensure participants for any audio speakers
-  for (const file of meeting.audioData.audioFiles) {
-    await ensureParticipant(meeting, file.userId);
-  }
-  if (meeting.audioData.cueEvents) {
-    for (const cue of meeting.audioData.cueEvents) {
-      await ensureParticipant(meeting, cue.userId);
-    }
-  }
+  await ensureSpeakerParticipants(meeting);
 
   // Audio
   if (opts.audioFilePath) {
@@ -255,18 +263,11 @@ export async function uploadMeetingArtifacts(
   // Transcript
   if (opts.transcriptText) {
     try {
-      const transcriptJsonKey = `${folder}transcript.json`;
-
-      const body = JSON.stringify(
-        buildTranscriptJson(meeting, opts.transcriptText),
-        null,
-        2,
-      );
-      const uploaded = await uploadFinalTranscript(
+      const { key, body } = meetingTranscriptObject(
         meeting,
-        transcriptJsonKey,
-        body,
+        opts.transcriptText,
       );
+      const uploaded = await uploadFinalTranscript(meeting, key, body);
 
       if (uploaded) {
         meeting.transcriptS3Key = uploaded;
@@ -285,41 +286,10 @@ async function uploadFinalTranscript(
   transcriptJsonKey: string,
   body: string,
 ) {
-  const receipt = isFixture(meeting)
-    ? {
-        key: transcriptJsonKey,
-        checksumSha256: createHash("sha256").update(body).digest("hex"),
-        byteLength: Buffer.byteLength(body),
-      }
-    : undefined;
-  if (receipt)
-    recordFixtureTranscript(meeting, {
-      ...receipt,
-      acknowledgment: { state: "unknown" },
-    });
   return uploadMeetingArtifact(
     meeting,
     transcriptJsonKey,
     body,
     "application/json",
-    ...(receipt
-      ? [
-          {
-            onAcknowledged: ({
-              key,
-              versionId,
-            }: {
-              key: string;
-              versionId: string | null;
-            }) => {
-              if (key === receipt.key)
-                recordFixtureTranscript(meeting, {
-                  ...receipt,
-                  acknowledgment: { state: "acknowledged", versionId },
-                });
-            },
-          },
-        ]
-      : []),
   );
 }

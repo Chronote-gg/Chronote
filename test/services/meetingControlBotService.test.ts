@@ -1,9 +1,20 @@
 /** @jest-environment node */
 import { createMeetingStartDiscordFixture } from "../fixtures/meetingStart";
 import { Message, PermissionFlagsBits, PermissionsBitField } from "discord.js";
-import { interruptOwnedMeeting } from "../../src/services/ownedMeetingInterruption";
+import { closeMeeting } from "../../src/services/meetingClose";
 import { resolveServerMeetingArtifactAccess } from "../../src/services/meetingArtifactAccessService";
-import { initializeMeeting } from "../../src/meetings";
+import { getMeeting, initializeMeeting } from "../../src/meetings";
+import { getActiveMeetingLeaseForGuild } from "../../src/services/meetingLease";
+import {
+  persistExplicitMeetingStop,
+  runEndMeetingFlow,
+} from "../../src/commands/endMeeting";
+import { stopMcpMeetingControl } from "../../src/services/mcpMeetingControlService";
+import { processMeetingControlCommand } from "../../src/services/meetingControlWorkerService";
+import { getMeetingControlCommandRepository } from "../../src/repositories/meetingControlCommandRepository";
+import { getRuntimeInstanceId } from "../../src/services/runtimeInstanceService";
+import type { ActiveMeetingLease } from "../../src/types/db";
+import type { MeetingData } from "../../src/types/meeting-data";
 import { getGlobalConfigValues } from "../../src/services/appConfigService";
 import { executeMeetingControlCommand } from "../../src/services/meetingControlBotService";
 import { checkBotPermissions } from "../../src/utils/permissions";
@@ -142,10 +153,10 @@ test("remote uncertain publication preserves once without retrying", async () =>
     executeMeetingControlCommand(fixture.client, command()),
   ).rejects.toThrow("timed out");
   const meeting = await jest.mocked(initializeMeeting).mock.results[0].value;
-  expect(interruptOwnedMeeting).toHaveBeenCalledTimes(1);
-  expect(interruptOwnedMeeting).toHaveBeenCalledWith(meeting, {
-    reason: "processing_failure",
-    deadline: expect.any(Number),
+  expect(closeMeeting).toHaveBeenCalledTimes(1);
+  expect(closeMeeting).toHaveBeenCalledWith(meeting, {
+    endReason: "unknown",
+    abnormal: true,
   });
   expect(send).toHaveBeenCalledTimes(1);
   expect(meeting.startMessageId).toBeUndefined();
@@ -155,11 +166,11 @@ test("remote ownership lost after initialization preserves before publication", 
   let checks = 0;
   await expect(
     executeMeetingControlCommand(fixture.client, command(), async () => {
-      if (++checks === 4) throw new Error("claim lost");
+      if (++checks === 3) throw new Error("claim lost");
     }),
   ).rejects.toThrow("claim lost");
   expect(initializeMeeting).toHaveBeenCalledTimes(1);
-  expect(interruptOwnedMeeting).toHaveBeenCalledTimes(1);
+  expect(closeMeeting).toHaveBeenCalledTimes(1);
   expect(send).not.toHaveBeenCalled();
 });
 
@@ -174,76 +185,91 @@ test("remote artifact lookup failure never initializes", async () => {
   expect(send).not.toHaveBeenCalled();
 });
 
-const fixtureScope = {
-  kind: "fixture" as const,
-  reference: {
-    holdId: "hold",
-    introductionId: "intro",
-    revision: 1,
-    grantId: "fixture:11111111-1111-4111-8111-111111111111",
-  },
-  commandId: "fixture:11111111-1111-4111-8111-111111111111",
-  meetingId: "preassigned-fixture",
-  guildId: "guild-1",
-  voiceChannelId: "voice-1",
-  textChannelId: "voice-notes",
-  actorUserId: "user-1",
-  inputProfile: "manual_script_v1",
-  scriptSha256: "a".repeat(64),
-  checklistSha256: "b".repeat(64),
-  sessionMode: "meeting" as const,
-};
-const fixtureCommand = (): MeetingControlCommand => ({
-  ...command("voice-notes"),
-  requestId: "fixture:11111111-1111-4111-8111-111111111111",
-  input: {
-    serverId: "guild-1",
-    voiceChannelId: "voice-1",
-    textChannelId: "voice-notes",
-  },
+const LEASE_SECONDS = 600;
+const liveLease = (meetingId: string) =>
+  ({
+    guildId: fixture.guild.id,
+    meetingId,
+    ownerInstanceId: getRuntimeInstanceId(),
+    leaseExpiresAt: Math.floor(Date.now() / 1000) + LEASE_SECONDS,
+    voiceChannelId: fixture.voice.id,
+    textChannelId: fixture.notes.id,
+  }) as ActiveMeetingLease;
+
+test("a stop enqueued without a meeting id is pinned to the live meeting and does not stop a newer meeting", async () => {
+  jest
+    .mocked(getActiveMeetingLeaseForGuild)
+    .mockResolvedValue(liveLease("synthetic-live-meeting"));
+  const queued = stopMcpMeetingControl({
+    userId: fixture.creator.id,
+    request: { serverId: fixture.guild.id },
+  });
+  const repository = getMeetingControlCommandRepository();
+  const listPending = () =>
+    repository.listClaimablePendingCommands({
+      instanceId: getRuntimeInstanceId(),
+      nowEpochSeconds: Math.floor(Date.now() / 1000),
+      limit: 1,
+    });
+  let pending = await listPending();
+  while (pending.length === 0) {
+    await new Promise((resolve) => setImmediate(resolve));
+    pending = await listPending();
+  }
+  expect(pending[0].input).toMatchObject({
+    meetingId: "synthetic-live-meeting",
+  });
+  const newer = {
+    meetingId: "synthetic-newer-meeting",
+    creator: fixture.creator,
+    onEndMeeting: jest.fn(),
+  } as unknown as MeetingData;
+  jest.mocked(getMeeting).mockReturnValue(newer);
+  jest
+    .mocked(getActiveMeetingLeaseForGuild)
+    .mockResolvedValue(liveLease("synthetic-newer-meeting"));
+  await processMeetingControlCommand(fixture.client, pending[0]);
+  await expect(queued).resolves.toMatchObject({
+    queueStatus: "failed",
+    error: "Meeting not found.",
+  });
+  expect(newer.onEndMeeting).not.toHaveBeenCalled();
+  expect(closeMeeting).not.toHaveBeenCalled();
+  expect(persistExplicitMeetingStop).not.toHaveBeenCalled();
 });
-test("trusted remote fixture preserves its preassigned meeting and exact reservation scope", async () => {
-  fetchChannel.mockReset();
-  fetchChannel.mockImplementation(async (id: string) =>
-    id === "voice-1" ? fixture.voice : fixture.notes,
-  );
-  await executeMeetingControlCommand(
-    fixture.client,
-    fixtureCommand(),
-    undefined,
-    undefined,
-    fixtureScope,
-  );
-  expect(initializeMeeting).toHaveBeenCalledWith(
-    expect.objectContaining({
-      meetingId: "preassigned-fixture",
-      scope: fixtureScope,
-    }),
-  );
-});
-test("a changed final notes destination refuses the fixture before initialization or publication", async () => {
-  const changed = { ...fixtureScope, textChannelId: "previous-notes" };
-  await expect(
-    executeMeetingControlCommand(
-      fixture.client,
-      fixtureCommand(),
-      undefined,
-      undefined,
-      changed,
-    ),
-  ).rejects.toThrow();
-  expect(initializeMeeting).not.toHaveBeenCalled();
-  expect(send).not.toHaveBeenCalled();
-});
-test("a copied fixture command refuses before initialization", async () => {
-  await expect(
-    executeMeetingControlCommand(
-      fixture.client,
-      { ...fixtureCommand(), requestId: "copied" },
-      undefined,
-      undefined,
-      fixtureScope,
-    ),
-  ).rejects.toThrow();
-  expect(initializeMeeting).not.toHaveBeenCalled();
+
+test("a control-queue stop of the local meeting shows processing through the end flow, after one suppression", async () => {
+  const order: string[] = [];
+  const meeting = {
+    meetingId: "synthetic-live-meeting",
+    creator: fixture.creator,
+    finishing: false,
+    finished: false,
+  } as unknown as MeetingData;
+  jest.mocked(getMeeting).mockReturnValue(meeting);
+  jest.mocked(persistExplicitMeetingStop).mockImplementation(async () => {
+    order.push("suppress");
+  });
+  jest.mocked(runEndMeetingFlow).mockImplementation(async () => {
+    order.push("end-flow");
+  });
+
+  const result = await executeMeetingControlCommand(fixture.client, {
+    ...command(),
+    commandType: MEETING_CONTROL_COMMAND_TYPES.STOP_MEETING,
+    input: { serverId: fixture.guild.id, meetingId: meeting.meetingId },
+  });
+
+  expect(result).toMatchObject({ status: "ended" });
+  expect(order).toEqual(["suppress", "end-flow"]);
+  expect(persistExplicitMeetingStop).toHaveBeenCalledTimes(1);
+  expect(runEndMeetingFlow).toHaveBeenCalledWith({
+    meeting,
+    suppressionPersisted: true,
+  });
+  expect(meeting).toMatchObject({
+    endReason: "mcp",
+    endTriggeredByUserId: fixture.creator.id,
+  });
+  expect(closeMeeting).not.toHaveBeenCalled();
 });

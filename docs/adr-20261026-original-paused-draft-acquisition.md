@@ -1,7 +1,7 @@
 # Original paused-draft preservation
 
 Date: 2026-10-26
-Status: Source contract
+Status: Superseded by adr-20261111-lifecycle-simplification
 
 The original production package can bind exactly two desktop drafts for preservation. Their identities, preparation request, exact capture reference and storage binding belong to the existing retained-disposition hash. Original rows and source objects remain untouched. New-ID recovery remains separate.
 

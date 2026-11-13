@@ -290,6 +290,79 @@ test.each([
     });
 });
 
+const deployMetric = (
+  namespace: string | undefined,
+  extra: Record<string, unknown> = {},
+) => ({
+  ...allow("cloudwatch:PutMetricData", "*"),
+  ...(namespace === undefined
+    ? {}
+    : {
+        Condition: {
+          StringEquals: { "cloudwatch:namespace": namespace },
+        },
+      }),
+  ...extra,
+});
+function withStatement(address: string, statement: object) {
+  const plan = runtimePlan();
+  Object.assign(find(plan, address).change, {
+    after: {
+      policy: JSON.stringify({ Version: "2012-10-17", Statement: [statement] }),
+    },
+  });
+  return validate(plan);
+}
+
+test("accepts the deploy role publishing its drain metric on every resource", () => {
+  expect(
+    withStatement(policies[0], deployMetric("meeting-notes-prod/Deploy"))
+      .status,
+  ).toBe(0);
+});
+
+// A writer to the Logs namespace could forge the eligible heartbeat and silence
+// the dead-man alarm, so only the deploy role may publish, and only to Deploy.
+test.each([
+  ["unconditioned", deployMetric(undefined)],
+  ["to the Logs namespace", deployMetric("meeting-notes-prod/Logs")],
+  ["to a sandbox namespace", deployMetric("meeting-notes-sandbox/Deploy")],
+  [
+    "under a looser operator",
+    {
+      ...allow("cloudwatch:PutMetricData", "*"),
+      Condition: {
+        StringLike: { "cloudwatch:namespace": "meeting-notes-prod/*" },
+      },
+    },
+  ],
+  [
+    "through a wildcard action",
+    deployMetric("meeting-notes-prod/Deploy", { Action: "CloudWatch:Put*" }),
+  ],
+  [
+    "with another action",
+    deployMetric("meeting-notes-prod/Deploy", {
+      Action: ["cloudwatch:PutMetricData", "cloudwatch:DescribeAlarms"],
+    }),
+  ],
+])("refuses deploy role metric publishing %s", (_name, statement) => {
+  const result = withStatement(policies[0], statement);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("runtime plan rejected");
+});
+
+test.each(policies.slice(1))(
+  "refuses metric publishing in %s even to the Deploy namespace",
+  (address) => {
+    const result = withStatement(
+      address,
+      deployMetric("meeting-notes-prod/Deploy"),
+    );
+    expect(result.status).toBe(1);
+  },
+);
+
 test.each([null, "", "{}", '{"Statement":[]}'])(
   "rejects an unknown or empty policy document %j",
   (policy) => {

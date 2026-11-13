@@ -5,6 +5,8 @@ import {
 } from "./meetingCompletionPolicyService";
 import { waitForFinishProcessing } from "../audio";
 import type { MeetingData } from "../types/meeting-data";
+import type { MeetingRuntimeConfig } from "../config/types";
+import type { CompletionPolicy } from "../types/meetingCompletionPolicy";
 import {
   EmptyOpenAITextOutputError,
   generateOpenAIText,
@@ -64,6 +66,21 @@ function parseCancellationDecision(content: string): CancellationDecision {
   };
 }
 
+export type AutoRecordCancellationFacts = {
+  policy: CompletionPolicy["policy"];
+  durationSeconds: number;
+  chatMessageCount: number;
+  /** Read only once the duration and chat bounds pass, since reading can wait on transcription. */
+  content: () => Promise<{ transcriptText: string; chatLines: string[] }>;
+  /** Absent means the role defaults. */
+  runtimeConfig?: Pick<MeetingRuntimeConfig, "modelChoices" | "modelParams">;
+  meetingId: string;
+  guildId: string;
+  channelId: string;
+  /** Aborts the model call; absent on the live path. */
+  signal?: AbortSignal;
+};
+
 export async function evaluateAutoRecordCancellation(
   meeting: MeetingData,
 ): Promise<CancellationDecision> {
@@ -85,10 +102,33 @@ export async function evaluateAutoRecordCancellation(
             ),
           )
         : 0;
-  const chatMessageCount = meeting.chatLog.filter(
-    (entry) => entry.type === "message",
-  ).length;
+  return decideAutoRecordCancellation({
+    policy,
+    durationSeconds,
+    chatMessageCount: meeting.chatLog.filter(
+      (entry) => entry.type === "message",
+    ).length,
+    content: async () => {
+      await waitForFinishProcessing(meeting);
+      assertMeetingProcessingSucceeded(meeting);
+      return {
+        transcriptText: collectTranscriptText(meeting),
+        chatLines: collectChatLines(meeting),
+      };
+    },
+    runtimeConfig: meeting.runtimeConfig,
+    meetingId: meeting.meetingId,
+    guildId: meeting.guild.id,
+    channelId: meeting.voiceChannel.id,
+  });
+}
 
+/** The cancellation decision over plain facts, shared by the live meeting and recovery. */
+export async function decideAutoRecordCancellation(
+  facts: AutoRecordCancellationFacts,
+): Promise<CancellationDecision> {
+  const { policy, durationSeconds, chatMessageCount } = facts;
+  if (!policy.enabled) return { cancel: false };
   if (
     durationSeconds > policy.maximumSeconds ||
     chatMessageCount > policy.maximumChatMessages
@@ -96,11 +136,10 @@ export async function evaluateAutoRecordCancellation(
     return { cancel: false };
   }
 
-  await waitForFinishProcessing(meeting);
-  assertMeetingProcessingSucceeded(meeting);
-  const transcriptText = collectTranscriptText(meeting);
+  const read = await facts.content();
+  const transcriptText = read.transcriptText;
+  const chatLines = read.chatLines.slice(0, MAX_CHAT_LINES);
   const transcriptWords = countWords(transcriptText);
-  const chatLines = collectChatLines(meeting);
 
   const isHeuristicMatch =
     durationSeconds <= policy.maximumSeconds &&
@@ -134,12 +173,12 @@ export async function evaluateAutoRecordCancellation(
   try {
     const modelChoice = getModelChoice(
       "autoRecordCancel",
-      buildModelOverrides(meeting.runtimeConfig?.modelChoices),
+      buildModelOverrides(facts.runtimeConfig?.modelChoices),
     );
     const modelParams = resolveChatParamsForRole({
       role: "autoRecordCancel",
       model: modelChoice.model,
-      config: meeting.runtimeConfig?.modelParams?.autoRecordCancel,
+      config: facts.runtimeConfig?.modelParams?.autoRecordCancel,
     });
     const content = await generateOpenAIText({
       model: modelChoice.model,
@@ -149,15 +188,16 @@ export async function evaluateAutoRecordCancellation(
       ],
       modelParams,
       maxOutputTokens: 120,
+      ...(facts.signal ? { signal: facts.signal } : {}),
       format: { kind: "json_object" },
       tracing: {
         traceName: "auto-record-cancel",
         generationName: "auto-record-cancel",
-        sessionId: meeting.meetingId,
+        sessionId: facts.meetingId,
         tags: ["feature:auto_record_cancel"],
         metadata: {
-          guildId: meeting.guild.id,
-          channelId: meeting.voiceChannel.id,
+          guildId: facts.guildId,
+          channelId: facts.channelId,
         },
       },
     });

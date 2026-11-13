@@ -1,11 +1,16 @@
 /** @jest-environment node */
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  CAPTURE_PCM_LIMIT_BYTES,
+  PCM_RESERVED_COPIES,
   createRecordingCheckpointCapture,
   getCheckpointPcmBudget,
+  releaseCheckpointPcm,
+  reserveCheckpointPcm,
 } from "../../src/services/recordingCheckpointCapture";
+import type * as LifecycleTiming from "../../src/services/lifecycleTiming";
 import type { CheckpointArtifactInput } from "../../src/types/recordingCheckpoint";
 
 let directory: string;
@@ -36,6 +41,13 @@ function fixture(
   return { capture, controller, commit, stopped };
 }
 const pcm = () => Buffer.alloc(3840, 1);
+const PRESSURE_PCM_BYTES = CAPTURE_PCM_LIMIT_BYTES / 2 / PCM_RESERVED_COPIES;
+/** Other meetings hold the budget up to `headroom` PCM bytes below the pressure line. */
+function otherMeetingsHoldBelowPressure(headroom: number) {
+  const bytes = PRESSURE_PCM_BYTES - headroom;
+  expect(reserveCheckpointPcm(bytes)).toBe(true);
+  return () => releaseCheckpointPcm(bytes);
+}
 const contextSnapshot = (sequence: number): CheckpointArtifactInput => ({
   kind: "context",
   sourceId: "context",
@@ -112,23 +124,59 @@ test("ownership loss cancels a stop waiting for its save retry", async () => {
   f.capture.releaseSettledBuffers();
 });
 
-test("a sealed artifact producer refuses local writes before file creation", async () => {
+test("a retired capture publishes, retries and reports nothing more and frees its buffers", async () => {
+  let commitSignal: AbortSignal | undefined;
+  const commit = jest.fn(
+    (_artifacts: readonly CheckpointArtifactInput[], signal: AbortSignal) => {
+      commitSignal = signal;
+      return new Promise<boolean>((resolve) =>
+        signal.addEventListener("abort", () => resolve(false), { once: true }),
+      );
+    },
+  );
+  const f = fixture(commit);
+  const before = getCheckpointPcmBudget().reservedBytes;
+  f.capture.push("user", pcm(), 0);
+  f.capture.queueContent(contextSnapshot(1));
+  await jest.advanceTimersByTimeAsync(30_000);
+  expect(commit).toHaveBeenCalled();
+
+  f.capture.retire();
+
+  expect(commitSignal?.aborted).toBe(true);
+  expect(getCheckpointPcmBudget().reservedBytes).toBe(before);
+  expect(f.capture.push("user", pcm(), 31_000)).toBe(false);
+  expect(f.capture.queueContent(contextSnapshot(2))).toBe(false);
+  const calls = commit.mock.calls.length;
+  await jest.advanceTimersByTimeAsync(120_000);
+  expect(commit).toHaveBeenCalledTimes(calls);
+  expect(f.stopped).not.toHaveBeenCalled();
+  f.controller.abort();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(f.stopped).not.toHaveBeenCalled();
+  expect(f.capture.pending()).toEqual([]);
+});
+
+test("a failed local write stops the capture", async () => {
   const stopped = jest.fn();
-  const beginWrite = jest.fn(() => {
-    throw new Error("Producer is closed");
-  });
+  const snapshot = contextSnapshot(1);
+  // The capture writes exclusively, so an existing file makes the write fail.
+  writeFileSync(
+    path.join(directory, `${snapshot.kind}-${snapshot.sequence}.json`),
+    "",
+  );
   const capture = createRecordingCheckpointCapture({
     directory,
     startedAt: 0,
     signal: new AbortController().signal,
     commit: async () => true,
     stopCapture: stopped,
-    beginWrite,
   });
-  expect(capture.queueContent(contextSnapshot(1))).toBe(false);
-  expect(beginWrite).toHaveBeenCalled();
-  expect(readdirSync(directory)).toEqual([]);
-  expect(stopped).toHaveBeenCalledWith("storage_preservation");
+  expect(capture.queueContent(snapshot)).toBe(false);
+  expect(stopped).toHaveBeenCalledWith(
+    "storage_preservation",
+    expect.objectContaining({ cause: "local_write_failed" }),
+  );
   await capture.settled();
 });
 
@@ -187,6 +235,7 @@ test("sustained storage pressure keeps new audio frames batched", async () => {
       return true;
     }),
   );
+  const releaseOthers = otherMeetingsHoldBelowPressure(8 * 1024 * 1024);
   try {
     f.capture.push("first", Buffer.alloc(5760000), 0);
     f.capture.push("second", Buffer.alloc(2650000), 0);
@@ -198,6 +247,7 @@ test("sustained storage pressure keeps new audio frames batched", async () => {
     resume();
     await f.capture.finish();
     f.capture.releaseSettledBuffers();
+    releaseOthers();
   }
   expect(
     f.commit.mock.calls
@@ -217,6 +267,37 @@ test("longOpenSnippetStillCheckpointsAtThirtySeconds", async () => {
   });
   expect(f.capture.snapshot().queuedBytes).toBe(0);
   await f.capture.finish();
+});
+
+test("a piece is sealed after the lifecycle's checkpoint segment period", async () => {
+  const segmentMs = 5_000;
+  await jest.isolateModulesAsync(async () => {
+    jest.doMock("../../src/services/lifecycleTiming", () => {
+      const actual = jest.requireActual<typeof LifecycleTiming>(
+        "../../src/services/lifecycleTiming",
+      );
+      return {
+        ...actual,
+        LIFECYCLE: { ...actual.LIFECYCLE, checkpointSegmentMs: segmentMs },
+      };
+    });
+    const capture =
+      await import("../../src/services/recordingCheckpointCapture");
+    const commit = jest.fn(async () => true);
+    const recording = capture.createRecordingCheckpointCapture({
+      directory,
+      startedAt: 0,
+      signal: new AbortController().signal,
+      commit,
+      stopCapture: jest.fn(),
+    });
+    recording.push("user", pcm(), 0);
+    await jest.advanceTimersByTimeAsync(segmentMs - 1);
+    expect(commit).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1);
+    expect(commit).toHaveBeenCalledTimes(1);
+    await recording.finish();
+  });
 });
 
 test("botAudioUsesSameDurableCoverage", async () => {
@@ -280,27 +361,111 @@ test("uploadFailureDoesNotDeleteLocalTail", async () => {
   f.capture.releaseSettledBuffers();
 });
 
-test("process budget includes queued bytes and scratch across meetings", async () => {
-  const held = jest.fn(
-    (_a: readonly CheckpointArtifactInput[], signal: AbortSignal) =>
+const heldCommit = () =>
+  jest.fn(
+    (_artifacts: readonly CheckpointArtifactInput[], signal: AbortSignal) =>
       new Promise<boolean>((resolve) =>
         signal.addEventListener("abort", () => resolve(false), { once: true }),
       ),
   );
-  const a = fixture(held);
-  const b = fixture(held);
-  const large = Buffer.alloc(5760000);
-  expect(a.capture.push("a", large, 0)).toBe(true);
-  expect(b.capture.push("b", large, 0)).toBe(true);
-  expect(a.capture.push("c", large, 0)).toBe(false);
-  expect(getCheckpointPcmBudget().reservedBytes).toBeLessThanOrEqual(
-    64 * 1024 * 1024,
-  );
-  a.controller.abort();
-  b.controller.abort();
+const largestChunk = () => Buffer.alloc(5760000);
+async function releaseHeld(...captures: Array<ReturnType<typeof fixture>>) {
+  for (const f of captures) f.controller.abort();
   await jest.advanceTimersByTimeAsync(0);
-  a.capture.releaseSettledBuffers();
-  b.capture.releaseSettledBuffers();
+  for (const f of captures) f.capture.releaseSettledBuffers();
+}
+const PCM_BYTES_PER_SECOND = 192000;
+const BUSY_MEETING_SECONDS = 43;
+
+/** One speaker's unconfirmed audio, in the largest chunks a capture accepts. */
+function holdSpeech(f: ReturnType<typeof fixture>, speaker: string) {
+  const chunk = largestChunk();
+  const tail = Buffer.alloc(
+    BUSY_MEETING_SECONDS * PCM_BYTES_PER_SECOND - chunk.length,
+  );
+  return f.capture.push(speaker, chunk, 0) && f.capture.push(speaker, tail, 0);
+}
+
+test("eight busy meetings with unconfirmed audio all fit the capture budget", async () => {
+  // At the old 64 MiB limit the third of these meetings was refused.
+  const meetings = Array.from({ length: 8 }, () => fixture(heldCommit()));
+  meetings.forEach((f, index) =>
+    expect(holdSpeech(f, `speaker${index}`)).toBe(true),
+  );
+  expect(getCheckpointPcmBudget().reservedBytes).toBe(
+    8 * BUSY_MEETING_SECONDS * PCM_BYTES_PER_SECOND * PCM_RESERVED_COPIES,
+  );
+  for (const f of meetings) expect(f.stopped).not.toHaveBeenCalled();
+  const overflow = fixture(heldCommit());
+  expect(holdSpeech(overflow, "overflow")).toBe(false);
+  expect(overflow.stopped).toHaveBeenCalledWith(
+    "storage_preservation",
+    expect.objectContaining({ cause: "shared_budget" }),
+  );
+  await releaseHeld(...meetings, overflow);
+  expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
+});
+
+test.each([
+  {
+    cause: "invalid_chunk",
+    act: (f: ReturnType<typeof fixture>) =>
+      f.capture.push("user", Buffer.alloc(3), 0),
+  },
+  {
+    cause: "source_bound",
+    act: (f: ReturnType<typeof fixture>) => {
+      f.capture.push("user", largestChunk(), 0);
+      f.capture.push("user", largestChunk(), 0);
+      f.capture.push("user", pcm(), 0);
+    },
+  },
+  {
+    cause: "unconfirmed_age",
+    act: async (f: ReturnType<typeof fixture>) => {
+      f.capture.push("user", pcm(), 0);
+      await jest.advanceTimersByTimeAsync(60000);
+    },
+  },
+  {
+    cause: "playback_tap",
+    act: (f: ReturnType<typeof fixture>) => f.capture.interrupt(),
+  },
+])(
+  "a capture stopped for $cause reports that cause",
+  async ({ cause, act }) => {
+    const f = fixture(heldCommit());
+    await act(f);
+    expect(f.stopped).toHaveBeenCalledTimes(1);
+    expect(f.stopped).toHaveBeenCalledWith(
+      "storage_preservation",
+      expect.objectContaining({
+        cause,
+        pcmLimitBytes: CAPTURE_PCM_LIMIT_BYTES,
+      }),
+    );
+    await releaseHeld(f);
+  },
+);
+
+test("a capture refused by the shared budget reports the budget and the refused chunk", async () => {
+  const a = fixture(heldCommit());
+  a.capture.push("a", largestChunk(), 0);
+  const filler =
+    (CAPTURE_PCM_LIMIT_BYTES - getCheckpointPcmBudget().reservedBytes) /
+    PCM_RESERVED_COPIES;
+  expect(reserveCheckpointPcm(filler)).toBe(true);
+
+  expect(a.capture.push("c", largestChunk(), 0)).toBe(false);
+
+  expect(a.stopped).toHaveBeenCalledWith("storage_preservation", {
+    cause: "shared_budget",
+    pcmReservedBytes: CAPTURE_PCM_LIMIT_BYTES,
+    pcmLimitBytes: CAPTURE_PCM_LIMIT_BYTES,
+    refusedChunkBytes: 5760000,
+  });
+  releaseCheckpointPcm(filler);
+  await releaseHeld(a);
   expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
 });
 
@@ -382,6 +547,10 @@ test.each(["size", "age", "pressure"])(
     const f = fixture();
     const duration =
       rotation === "age" ? 20 : rotation === "pressure" ? 15000 : 30000;
+    // Only the second meeting's chunk crosses the pressure line.
+    const releaseOthers = otherMeetingsHoldBelowPressure(
+      rotation === "pressure" ? largestChunk().length : PRESSURE_PCM_BYTES,
+    );
     f.capture.push("user", Buffer.alloc(192 * duration), 0);
     if (rotation === "age") await jest.advanceTimersByTimeAsync(30000);
     if (rotation === "pressure")
@@ -403,6 +572,7 @@ test.each(["size", "age", "pressure"])(
     expect(intervals.reduce((sum, item) => sum + item.durationMs, 0)).toBe(
       duration + 60,
     );
+    releaseOthers();
     expect(intervals.at(-1)!.startOffsetMs).toBe(duration + 1000);
     const adjusted = artifacts.find(
       (a) => a.kind === "audio" && a.timing?.maxCursorAdjustmentMs === 21,

@@ -1,24 +1,10 @@
-import { validateFixtureCapture } from "./fixtureEvidenceValidation";
-import { fixtureOutputSnapshot } from "./fixtureInputService";
-import { isDeepStrictEqual } from "node:util";
-import {
-  canonicalContentAdvanced,
-  MAX_RECORDING_CANONICAL_TRANSITION_ATTEMPTS,
-} from "./recordingCanonicalConflict";
-import { publicationSnapshot } from "../types/meetingPublication";
 import type { RuntimeApiOperation } from "./runtimeApiOperationService";
-import type { MeetingData } from "../types/meeting-data";
-import {
-  HISTORY_TRANSITION_FIELDS,
-  type HistoryTransition,
-} from "../types/deploymentControl";
 import type {
   MeetingAccessGrant,
   MeetingHistory,
   NotesEditSource,
   SuggestionHistoryEntry,
 } from "../types/db";
-import type { MeetingStatus } from "../types/meetingLifecycle";
 import { getMeetingHistoryRepository } from "../repositories/meetingHistoryRepository";
 import {
   replaceMeetingUserIndexForMeetingService,
@@ -200,18 +186,6 @@ export async function updateMeetingTagsService(
   );
 }
 
-export async function updateMeetingStatusService(params: {
-  guildId: string;
-  channelId_timestamp: string;
-  status: MeetingStatus;
-}) {
-  return getMeetingHistoryRepository().updateStatus(
-    params.guildId,
-    params.channelId_timestamp,
-    params.status,
-  );
-}
-
 export async function updateMeetingArchiveService(params: {
   guildId: string;
   channelId_timestamp: string;
@@ -241,154 +215,4 @@ export async function updateMeetingAccessGrantsService(params: {
   if (updated)
     await replaceMeetingUserIndexForMeetingService(previous, updated);
   return true;
-}
-
-function validateLiveFixtureHistory(
-  meeting: MeetingData,
-  patch: HistoryTransition["patch"],
-  row: MeetingHistory,
-) {
-  if (patch.fixtureInput) {
-    const actual = fixtureOutputSnapshot(meeting);
-    if (
-      !row.checkpoint ||
-      !isDeepStrictEqual(actual, {
-        fixtureInput: patch.fixtureInput,
-        fixtureGeneration: patch.fixtureGeneration,
-        ...(patch.fixtureTranscript
-          ? { fixtureTranscript: patch.fixtureTranscript }
-          : {}),
-      })
-    )
-      throw new Error("Fixture completion requires live original evidence");
-    validateFixtureCapture(
-      row.checkpoint.capture,
-      patch.fixtureInput,
-      row.fixtureInput,
-    );
-  }
-}
-import {
-  canonicalFieldsSupersededAfter,
-  originalCompletionExportView,
-} from "../types/meetingCanonicalContent";
-
-/** Canonical recording lifecycle writes never replace the owned history row. */
-function preserveCanonicalHistory(input: {
-  row: MeetingHistory;
-  patch: HistoryTransition["patch"];
-  canonicalBaseline: number | undefined;
-}): HistoryTransition["patch"] {
-  const { row, canonicalBaseline, patch } = input;
-  if (canonicalBaseline === undefined) return patch;
-  const superseded = canonicalFieldsSupersededAfter(row, canonicalBaseline);
-  if (!superseded)
-    throw new Error("Recording history canonical baseline is stale");
-  return Object.fromEntries(
-    Object.entries(patch).filter(([field]) => !superseded.has(field)),
-  );
-}
-function hasRecordingHistoryOwnership(
-  row: MeetingHistory | undefined,
-  reservation: NonNullable<MeetingData["reservation"]>,
-  allowedStatuses: readonly MeetingStatus[],
-): row is MeetingHistory & { status: MeetingStatus } {
-  return Boolean(
-    row &&
-    row.meetingId === reservation.meetingId &&
-    row.ownerInstanceId === reservation.ownerInstanceId &&
-    row.executionVersion === reservation.executionVersion &&
-    row.status &&
-    allowedStatuses.includes(row.status),
-  );
-}
-
-function assertOwnedHistoryNotAborted(meeting: MeetingData): void {
-  meeting.ownershipSignal?.throwIfAborted();
-  meeting.finalization?.controller.signal.throwIfAborted();
-}
-
-async function commitOwnedMeetingHistory(
-  meeting: MeetingData,
-  patch: HistoryTransition["patch"],
-  allowedStatuses: readonly MeetingStatus[],
-  canonicalBaseline?: number,
-): Promise<MeetingHistory> {
-  const reservation = meeting.reservation;
-  if (!reservation || reservation.sessionMode !== "meeting")
-    throw new Error("Recording history requires its owned reservation");
-  const repository = getMeetingHistoryRepository();
-  let previous: MeetingHistory | undefined;
-  for (
-    let attempt = 0;
-    attempt < MAX_RECORDING_CANONICAL_TRANSITION_ATTEMPTS;
-    attempt++
-  ) {
-    assertOwnedHistoryNotAborted(meeting);
-    const row = await repository.getOwned(reservation.historyKey);
-    assertOwnedHistoryNotAborted(meeting);
-    if (!hasRecordingHistoryOwnership(row, reservation, allowedStatuses))
-      throw new Error("Recording history ownership or status changed");
-    validateLiveFixtureHistory(meeting, patch, row);
-    if (previous && !canonicalContentAdvanced(previous, row))
-      throw new Error("Recording history transition was fenced");
-    const nextPatch = {
-      ...preserveCanonicalHistory({ row, patch, canonicalBaseline }),
-      updatedAt: new Date().toISOString(),
-    };
-    const result = await repository.transitionOwned({
-      expectedPublication: publicationSnapshot(row),
-      key: reservation.historyKey,
-      expectedMeetingId: reservation.meetingId,
-      expectedOwnerInstanceId: reservation.ownerInstanceId,
-      expectedExecutionVersion: reservation.executionVersion,
-      expectedStatus: row.status,
-      patch: nextPatch,
-    });
-    assertOwnedHistoryNotAborted(meeting);
-    if (result === "applied") return { ...row, ...nextPatch };
-    previous = row;
-  }
-  throw new Error("Recording history transition was fenced");
-}
-
-export async function transitionOwnedMeetingHistoryService(
-  meeting: MeetingData,
-  patch: HistoryTransition["patch"],
-  allowedStatuses: readonly MeetingStatus[],
-  canonicalBaseline?: number,
-): Promise<void> {
-  await commitOwnedMeetingHistory(
-    meeting,
-    patch,
-    allowedStatuses,
-    canonicalBaseline,
-  );
-}
-
-export async function saveOwnedMeetingHistoryService(
-  meeting: MeetingData,
-  history: MeetingHistory,
-): Promise<MeetingHistory> {
-  const patch = Object.fromEntries(
-    HISTORY_TRANSITION_FIELDS.map((key) => [key, history[key]]),
-  );
-  const committed = await commitOwnedMeetingHistory(
-    meeting,
-    patch,
-    history.status === "cancelled"
-      ? ["processing", "cancelled"]
-      : ["processing"],
-    history.contentRevision ?? 0,
-  );
-  const canonical = originalCompletionExportView(history, committed);
-  try {
-    await writeMeetingUserIndexForMeetingService(canonical);
-  } catch (error) {
-    console.error("Failed to update meeting user index", {
-      meetingId: history.meetingId,
-      error,
-    });
-  }
-  return canonical;
 }

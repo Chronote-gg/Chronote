@@ -28,13 +28,7 @@ jest.mock("../../src/services/configService", () => {
   });
   return jest.requireActual("../../src/services/configService");
 });
-import { getDeploymentControlRepository } from "../../src/db";
 import { getPersonalMediaUploadRepository } from "../../src/repositories/personalMediaUploadRepository";
-import {
-  createRuntimeLifecycle,
-  installRuntimeLifecycle,
-} from "../../src/services/runtimeLifecycleService";
-import { createRuntimeProtectionService } from "../../src/services/runtimeProtectionService";
 import { getRuntimeInstanceId } from "../../src/services/runtimeInstanceService";
 import {
   processPersonalMediaUploadJob,
@@ -44,10 +38,6 @@ import {
   createPersonalMediaProcessingMeeting,
   processPersonalMediaUpload,
 } from "../../src/services/personalMediaUploadProcessingService";
-import {
-  fenceRuntimeWorkAdmissions,
-  getRuntimeWorkAdmissionCheckpoints,
-} from "../../src/services/runtimeWorkAdmissionService";
 import { PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS } from "../../src/constants";
 import type { PersonalMediaUploadJobRecord } from "../../src/types/db";
 
@@ -63,56 +53,9 @@ function barrier() {
   return { promise, resolve };
 }
 
-test("pending claims count synchronously and claimed work renews after polling stops, then retains fenced uncertainty", async () => {
+test("claimed work renews after polling stops and aborts its run once the claim is lost", async () => {
   jest.useFakeTimers({ now: 100_000 });
   const instanceId = getRuntimeInstanceId();
-  const identity = {
-    kind: "local" as const,
-    instanceId,
-    localId: "synthetic-worker",
-    protocolVersion: 1 as const,
-  };
-  const repository = getDeploymentControlRepository();
-  await repository.initializeControl({
-    pk: "ENV",
-    sk: "CONTROL",
-    recordType: "control",
-    runtimeEnvironment: "local",
-    protocolVersion: 1,
-    coordinatorToken: "fixture",
-    coordinatorEpoch: 1,
-    coordinatorExpiresAt: 1000,
-    servingGeneration: 0,
-    servingMembers: {},
-  });
-  const protection = createRuntimeProtectionService({
-    identity,
-    onUnsafe: jest.fn(),
-  });
-  const lifecycle = createRuntimeLifecycle({
-    identity,
-    repository,
-    protection,
-    probeReadiness: async () => ({
-      gatewayReady: true,
-      cacheReady: true,
-      dependenciesReady: true,
-    }),
-    checkpointAndFence: jest.fn(),
-  });
-  installRuntimeLifecycle(lifecycle);
-  await lifecycle.start();
-  await repository.promote({
-    candidateRuntimeMode: "all",
-    coordinatorToken: "fixture",
-    coordinatorEpoch: 1,
-    expectedServingGeneration: 0,
-    expectedServingMembers: [],
-    candidate: identity,
-    proposedGeneration: 1,
-    now: 100,
-  });
-  const context = await lifecycle.getRuntimeAdmissionContext();
   const uploads = getPersonalMediaUploadRepository();
   const job: PersonalMediaUploadJobRecord = {
     uploadId: "held-upload",
@@ -125,83 +68,48 @@ test("pending claims count synchronously and claimed work renews after polling s
     createdAt: "now",
     updatedAt: "now",
   };
-  await uploads.write(job, context);
-  const claimGate = barrier();
+  await uploads.write(job);
   const providerGate = barrier();
   const providerStarted = barrier();
-  const originalClaim = uploads.claim;
-  jest.spyOn(uploads, "claim").mockImplementationOnce(async (input) => {
-    await claimGate.promise;
-    return originalClaim(input);
-  });
+  let runSignal: AbortSignal | undefined;
   jest
     .mocked(createPersonalMediaProcessingMeeting)
     .mockImplementation(async (claimed) => claimed);
   jest
     .mocked(processPersonalMediaUpload)
     .mockImplementation(async (_job, _instance, signal) => {
+      runSignal = signal;
       providerStarted.resolve();
       await providerGate.promise;
       signal?.throwIfAborted();
     });
-  const processing = processPersonalMediaUploadJob(job);
-  expect(lifecycle.getWorkCounts().pending_admission).toBe(1);
-  await Promise.resolve();
-  expect(getRuntimeWorkAdmissionCheckpoints()).toMatchObject([
-    { id: job.uploadId, stage: "pending", ownedPromise: processing },
-  ]);
-  claimGate.resolve();
-  await providerStarted.promise;
-  expect(lifecycle.getWorkCounts()).toMatchObject({
-    pending_admission: 0,
-    personal_processing: 1,
-  });
-  const before = await uploads.get(job.uploadId);
-  lifecycle.closeAdmission();
-  stopPersonalMediaUploadWorker();
-  await jest.advanceTimersByTimeAsync(
-    PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS + 1,
-  );
-  expect((await uploads.get(job.uploadId))!.claimExpiresAt).toBeGreaterThan(
-    before!.claimExpiresAt!,
-  );
-  const renewalGate = barrier();
-  const renewalStarted = barrier();
-  const renew = uploads.renewClaim.bind(uploads);
-  jest.spyOn(uploads, "renewClaim").mockImplementationOnce(async (input) => {
-    renewalStarted.resolve();
-    await renewalGate.promise;
-    return renew(input);
-  });
-  await jest.advanceTimersByTimeAsync(
-    PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS,
-  );
-  await renewalStarted.promise;
-  fenceRuntimeWorkAdmissions();
-  providerGate.resolve();
-  let locallySettled = false;
-  void processing.then(() => {
-    locallySettled = true;
-  });
-  await jest.advanceTimersByTimeAsync(0);
-  expect(locallySettled).toBe(false);
-  expect(getRuntimeWorkAdmissionCheckpoints()[0].localSettled).toBe(false);
-  renewalGate.resolve();
-  await processing;
-  expect(lifecycle.getWorkCounts().personal_processing).toBe(1);
-  expect(getRuntimeWorkAdmissionCheckpoints()).toMatchObject([
-    {
-      id: job.uploadId,
-      stage: "unresolved",
-      fenced: true,
-      localSettled: true,
-      ownedPromise: processing,
-      signal: expect.objectContaining({ aborted: true }),
-      claim: { instanceId, attempt: 1 },
-    },
-  ]);
-  expect((await uploads.get(job.uploadId))?.status).toBe("processing");
-  lifecycle.stop();
-  jest.restoreAllMocks();
-  jest.useRealTimers();
+  try {
+    const processing = processPersonalMediaUploadJob(job);
+    await providerStarted.promise;
+    const before = await uploads.get(job.uploadId);
+    stopPersonalMediaUploadWorker();
+    await jest.advanceTimersByTimeAsync(
+      PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS + 1,
+    );
+    expect((await uploads.get(job.uploadId))!.claimExpiresAt).toBeGreaterThan(
+      before!.claimExpiresAt!,
+    );
+    expect(runSignal?.aborted).toBe(false);
+    jest.spyOn(uploads, "renewClaim").mockResolvedValueOnce(false);
+    await jest.advanceTimersByTimeAsync(
+      PERSONAL_MEDIA_UPLOAD_WORKER_CLAIM_RENEWAL_MS,
+    );
+    expect(runSignal?.aborted).toBe(true);
+    providerGate.resolve();
+    await expect(processing).resolves.toBeUndefined();
+    expect(await uploads.get(job.uploadId)).toMatchObject({
+      status: "processing",
+      processingOwnerInstanceId: instanceId,
+      attempts: 1,
+    });
+  } finally {
+    providerGate.resolve();
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  }
 });

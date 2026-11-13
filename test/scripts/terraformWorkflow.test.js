@@ -323,15 +323,10 @@ test("a production plan run from another branch is refused", async () => {
   await expectApply(f, "refused");
 });
 
-test.each([
-  "deploy.yml",
-  "production-cutover.yml",
-  "introduce-production.yml",
-  "production-introduction.yml",
-])("Apply refuses while %s has an active run", async (workflow) => {
+test("Apply refuses while deploy.yml has an active run", async () => {
   const f = fixture();
-  f.controls.busyWorkflow = workflow;
-  await expectApply(f, "refused", { reason: `Production writer ${workflow}` });
+  f.controls.busyWorkflow = "deploy.yml";
+  await expectApply(f, "refused", { reason: "Production writer deploy.yml" });
 });
 
 test("lost capture acknowledgment preserves the intent and never starts Terraform or retries", async () => {
@@ -465,38 +460,25 @@ test("local failure-detail error before execution preserves refusal", async () =
 });
 
 test.each(["full", "deployment-prerequisites"])(
-  "private %s Apply checks the real hold guard and missing-Control exception",
+  "private %s Apply runs without a production hold check",
   async (scope) => {
     const f = fixture();
-    f.guard.failure = "ResourceNotFoundException";
     try {
       const { apply } = await planAndApply(f, {}, scope);
-      expect(apply.status).toBe(
-        scope === "deployment-prerequisites" ? "applied" : "refused",
-      );
-      expect(f.guard.reads).toBeGreaterThanOrEqual(2);
-      expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(
-        scope === "deployment-prerequisites" ? 1 : 0,
-      );
+      expect(apply.status).toBe("applied");
+      expect(f.commands.filter((c) => c.args[1] === "apply")).toHaveLength(1);
     } finally {
       rmSync(f.directory, { recursive: true, force: true });
     }
   },
 );
 
-test.each([
-  ["", "applied"],
-  ["ResourceNotFoundException", "refused"],
-])(
-  "runtime Apply revalidates its plan and needs the Control table (guard failure %j)",
-  async (failure, status) => {
-    const f = fixture();
-    f.controls.planJson = runtimePlan();
-    f.guard.failure = failure;
-    await expectApply(f, status, { scope: "deployment-runtime" });
-    expectRevalidated(f);
-  },
-);
+test("runtime Apply revalidates its plan", async () => {
+  const f = fixture();
+  f.controls.planJson = runtimePlan();
+  await expectApply(f, "applied", { scope: "deployment-runtime" });
+  expectRevalidated(f);
+});
 
 test("site delivery Apply revalidates its restored plan", async () => {
   const f = fixture();
@@ -612,6 +594,18 @@ async function expectApplyRefused(f, scope, execute) {
   }
 }
 
+test("production prerequisite Apply still refuses a restored plan outside its scope", async () => {
+  const f = fixture();
+  await expectApplyRefused(f, "deployment-prerequisites", (options) => {
+    f.controls.plan.resource_changes.push({
+      address: "aws_ecs_service.app_service",
+      mode: "managed",
+      change: { actions: ["update"] },
+    });
+    return runTerraform(options);
+  });
+});
+
 test("processing retry Apply refuses a restored plan that changes the table further", async () => {
   const f = fixture();
   f.controls.planJson = processingRetryPlan();
@@ -660,24 +654,16 @@ test("runtime Plan refuses to bundle a serving service change", async () => {
   }
 });
 
-test("even an authenticated prerequisite bundle cannot bypass a denied Control read", async () => {
-  const f = fixture();
-  f.guard.failure = "AccessDeniedException";
-  await expectApplyRefused(f, "deployment-prerequisites");
-});
-
 test.each(["full", "deployment-prerequisites"])(
-  "actual dispatcher carries %s to the real Apply guard",
+  "actual dispatcher carries %s through to Apply",
   async (scope) => {
     const f = fixture();
-    f.guard.failure = "ResourceNotFoundException";
     try {
       const { apply } = await planAndApply(f, {}, scope, dispatchTerraform);
-      expect(apply.status).toBe(scope === "full" ? "refused" : "applied");
-      expect(f.guard.reads).toBeGreaterThanOrEqual(2);
+      expect(apply.status).toBe("applied");
       expect(
         f.commands.filter((command) => command.args[1] === "apply"),
-      ).toHaveLength(scope === "full" ? 0 : 1);
+      ).toHaveLength(1);
     } finally {
       rmSync(f.directory, { recursive: true, force: true });
     }

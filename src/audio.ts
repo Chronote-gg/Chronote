@@ -1,5 +1,4 @@
 import { persistSnippetSpeakerTrack } from "./services/audioPersistenceService";
-import { getMeetingArtifactProducer } from "./services/meetingArtifactProducer";
 export {
   openOutputFile,
   getMeetingOutputCompletion,
@@ -22,14 +21,6 @@ import {
   resolveSpeakerLabel,
   warnMissingSnippetStart,
 } from "./services/recordingSpeakerService";
-import {
-  allowFixtureActor,
-  acceptedFixturePcm,
-  startFixtureCapture,
-  beginFixtureClosure,
-  closeFixtureObservation,
-  failFixture,
-} from "./services/fixtureInputService";
 import type {
   PcmSpan,
   TranscriptCorrespondence,
@@ -548,20 +539,12 @@ export function clearSnippetTimer(meeting: MeetingData, userId: string) {
   meeting.audioData.silenceTimers = currentTimers;
 }
 
-function acceptVoicePcm(
-  meeting: MeetingData,
-  userId: string,
-  state: VoiceSubscriptionState,
-) {
-  return allowFixtureActor(meeting, userId) && !state.suppressResubscribe;
-}
-
 // Subscribe to a user's voice stream and handle the audio data
 export async function subscribeToUserVoice(
   meeting: MeetingData,
   userId: string,
 ) {
-  if (!allowFixtureActor(meeting, userId) || !isCaptureActive(meeting)) return;
+  if (!isCaptureActive(meeting)) return;
 
   clearVoiceSubscription(meeting, userId);
 
@@ -594,13 +577,11 @@ export async function subscribeToUserVoice(
     subscriptions.set(userId, subscriptionState);
     createdState = subscriptionState;
     meeting.captureStartedAt ??= new Date();
-    startFixtureCapture(meeting, meeting.captureStartedAt);
     ensureRecordingCheckpointCapture(meeting);
 
     // Prevent decoder errors (often caused by malformed or partial packets) from crashing the process.
     const onDecoderError = (err: Error) => {
       if (subscriptionState.suppressResubscribe) return;
-      failFixture(meeting, "decoder_failure");
       if (isCaptureActive(meeting)) {
         meeting.audioData.captureIncomplete = true;
       }
@@ -618,7 +599,6 @@ export async function subscribeToUserVoice(
     // Prism's Opus stream can also emit errors; guard those too.
     const onOpusError = (err: Error) => {
       if (subscriptionState.suppressResubscribe) return;
-      failFixture(meeting, "decoder_failure");
       if (isCaptureActive(meeting)) {
         meeting.audioData.captureIncomplete = true;
       }
@@ -648,7 +628,6 @@ export async function subscribeToUserVoice(
 
     const onDecodedError = (err: Error) => {
       if (subscriptionState.suppressResubscribe) return;
-      failFixture(meeting, "decoder_failure");
       if (isCaptureActive(meeting)) {
         meeting.audioData.captureIncomplete = true;
       }
@@ -670,7 +649,6 @@ export async function subscribeToUserVoice(
 
     const onOpusClose = () => {
       if (subscriptionState.suppressResubscribe) return;
-      failFixture(meeting, "observer_gap");
       scheduleResubscribe(meeting, userId, "opus-stream-close");
     };
     opusStream.on("close", onOpusClose);
@@ -680,7 +658,6 @@ export async function subscribeToUserVoice(
 
     const onOpusEnd = () => {
       if (subscriptionState.suppressResubscribe) return;
-      failFixture(meeting, "observer_gap");
       scheduleResubscribe(meeting, userId, "opus-stream-end");
     };
     opusStream.on("end", onOpusEnd);
@@ -689,7 +666,7 @@ export async function subscribeToUserVoice(
     );
 
     const onPcmData = (chunk: Buffer) => {
-      if (!acceptVoicePcm(meeting, userId, subscriptionState)) return;
+      if (subscriptionState.suppressResubscribe) return;
       if (!isCaptureActive(meeting) || meeting.ownershipSignal?.aborted) return;
       let acceptedSpan: PcmSpan | undefined;
       if (
@@ -709,7 +686,6 @@ export async function subscribeToUserVoice(
         audioSeconds:
           chunk.length / (RECORD_SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE),
       });
-      acceptedFixturePcm(meeting, chunk.byteLength);
       subscriptionState.lastPcmAt = Date.now();
       subscriptionState.consecutiveNoPcmEvents = 0;
       subscriptionState.lastNoPcmAt = undefined;
@@ -767,14 +743,12 @@ export async function subscribeToUserVoice(
 
 export function userStartTalking(meeting: MeetingData, userId: string) {
   if (isCaptureIntakeStopped(meeting)) return;
-  if (!allowFixtureActor(meeting, userId)) return;
   markSpeakerStart(meeting, userId);
   clearSnippetTimer(meeting, userId);
 }
 
 export function userStopTalking(meeting: MeetingData, userId: string) {
   if (isCaptureIntakeStopped(meeting)) return;
-  if (!allowFixtureActor(meeting, userId)) return;
   finishSpeakerTurn(meeting, userId);
 }
 function finishSpeakerTurn(meeting: MeetingData, userId: string) {
@@ -861,6 +835,8 @@ export function unsubscribeToVoiceUponLeaving(
 export function ensureRecordingCheckpointCapture(meeting: MeetingData): void {
   if (
     meeting.recordingCapture ||
+    // Close retires and detaches the capture; a late subscription must not open another.
+    meeting.finishing ||
     !meeting.captureStartedAt ||
     !meeting.reservation ||
     meeting.reservation.sessionMode !== "meeting" ||
@@ -872,22 +848,10 @@ export function ensureRecordingCheckpointCapture(meeting: MeetingData): void {
     kind: "capturing",
     startedAt: meeting.captureStartedAt.toISOString(),
   };
-  const producer = getMeetingArtifactProducer(meeting);
   meeting.recordingCapture = createRecordingCheckpointCapture({
     directory: path.join(ensureMeetingTempDirSync(meeting), "checkpoints"),
     startedAt: meeting.captureStartedAt.getTime(),
     signal: meeting.ownershipSignal,
-    beginWrite: producer
-      ? (filename, artifact) =>
-          producer.beginWrite(filename, {
-            kind: "content",
-            contentKind: artifact.kind,
-            sourceId: artifact.sourceId,
-            sequence: artifact.sequence,
-            checksumSha256: artifact.checksumSha256,
-            byteLength: artifact.bytes.byteLength,
-          })
-      : undefined,
     commit: async (artifacts, signal) => {
       if (artifacts.some((artifact) => artifact.kind === "audio"))
         checkpointRecordingContext(meeting);
@@ -896,9 +860,12 @@ export function ensureRecordingCheckpointCapture(meeting: MeetingData): void {
           .kind === "committed"
       );
     },
-    stopCapture: (reason) =>
-      handleRecordingCaptureFailure(meeting, reason, () =>
-        stopRecordingCapture(meeting, "interrupted"),
+    stopCapture: (reason, diagnosis) =>
+      handleRecordingCaptureFailure(
+        meeting,
+        reason,
+        () => stopRecordingCapture(meeting, "interrupted"),
+        diagnosis,
       ),
   });
   startRecordingContentCheckpoint(meeting);
@@ -909,7 +876,6 @@ export function stopRecordingCapture(
   meeting: MeetingData,
   disposition: "complete" | "interrupted" = "complete",
 ) {
-  beginFixtureClosure(meeting);
   meeting.captureAudio = false;
   meeting.recordBotAudio = false;
   for (const id of getVoiceSubscriptions(meeting).keys())
@@ -922,7 +888,6 @@ export function stopRecordingCapture(
     return;
   const endedAt = new Date().toISOString();
   const startedAt = meeting.captureStartedAt?.toISOString() ?? null;
-  closeFixtureObservation(meeting, endedAt, disposition === "complete");
   meeting.recordingCaptureState =
     disposition === "complete" && startedAt
       ? { kind: "complete", startedAt, endedAt }

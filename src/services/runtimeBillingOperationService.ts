@@ -1,11 +1,8 @@
-import { randomUUID } from "node:crypto";
 import Stripe from "stripe";
-import { getDeploymentControlRepository } from "../db";
 import type { StripeEffect } from "../types/stripe";
 import { BillingActionError } from "./billingActionError";
 import { RuntimeAdmissionUnavailable } from "./runtimeAdmissionError";
-import { runRuntimeApiOperation } from "./runtimeApiOperationService";
-import type { RuntimeWorkClaim } from "./runtimeWorkAdmissionService";
+import { operationSignal } from "./shutdownSignal";
 
 export type RuntimeBillingOwner = Readonly<{
   signal: AbortSignal;
@@ -50,12 +47,43 @@ function knownRejection(error: unknown): boolean {
 export function assertBillingDispatchOutcomeKnown(error: unknown): void {
   if (!knownRejection(error)) throw new UnresolvedBillingMutation(error);
 }
-async function lifetime<T>(
-  signal: AbortSignal,
-  track: StripeEffect,
+const activeLifetimes = new Set<Promise<unknown>>();
+function track<T>(settled: Promise<T>): Promise<T> {
+  activeLifetimes.add(settled);
+  const forget = () => activeLifetimes.delete(settled);
+  void settled.then(forget, forget);
+  return settled;
+}
+function lifetime<T>(
+  outer: AbortSignal,
   run: (owner: RuntimeBillingOwner) => Promise<T>,
-  unresolved: () => void,
 ): Promise<T> {
+  return track(ownedLifetime(outer, run));
+}
+/**
+ * Resolves once every billing lifetime active at the call has settled, or when `signal` aborts.
+ * Never rejects: a lifetime's own failure belongs to its caller.
+ */
+export function drainBillingOperations(signal: AbortSignal): Promise<void> {
+  const active = [...activeLifetimes];
+  if (signal.aborted || !active.length) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    signal.addEventListener("abort", done, { once: true });
+    void Promise.allSettled(active).then(done);
+  });
+}
+async function ownedLifetime<T>(
+  outer: AbortSignal,
+  run: (owner: RuntimeBillingOwner) => Promise<T>,
+): Promise<T> {
+  // An unknown outcome fences this operation: no later mutation in it is dispatched.
+  const fence = new AbortController();
+  const signal = AbortSignal.any([outer, fence.signal]);
+  const unresolved = () => fence.abort();
   const pending = new Set<Promise<unknown>>();
   let pendingMutations = 0;
   let mutationUnknown = false;
@@ -78,7 +106,7 @@ async function lifetime<T>(
         );
       signal.throwIfAborted();
       pendingMutations++;
-      const task = track(async () => {
+      const task = (async () => {
         try {
           const value = await effect();
           // Repository CAS false is an acknowledged no-write result.
@@ -96,7 +124,7 @@ async function lifetime<T>(
             ? error
             : new UnresolvedBillingMutation(error);
         }
-      });
+      })();
       pending.add(task);
       try {
         const result = await task;
@@ -148,7 +176,7 @@ async function lifetime<T>(
     owners.delete(owner);
   }
 }
-/** Missing owner starts one admission; a supplied stale or fabricated owner never remints. */
+/** A missing owner starts one lifetime; a supplied stale or fabricated owner never remints. */
 export function runBillingOperation<T>(
   owner: RuntimeBillingOwner | undefined,
   run: (owner: RuntimeBillingOwner) => Promise<T>,
@@ -160,48 +188,25 @@ export function runBillingOperation<T>(
       );
     return run(owner);
   }
-  return runRuntimeApiOperation(`billing:${randomUUID()}`, (operation) =>
-    lifetime(operation.signal, operation.mutate, run, operation.unresolved),
-  );
+  return lifetime(operationSignal(), run);
 }
-/** The worker's only registration seam checks admission and claims before creating its owner. */
-export async function runBillingWorkerOperation<T>(
-  work: RuntimeWorkClaim,
+export function runBillingWorkerOperation<T>(
   signal: AbortSignal,
   run: (owner: RuntimeBillingOwner) => Promise<T>,
 ): Promise<T> {
-  const authority = await work.authority();
-  if (authority.kind !== "serving")
-    throw new RuntimeAdmissionUnavailable(
-      "Billing worker requires serving authority",
-    );
-  const admission = await getDeploymentControlRepository().checkAdmission(
-    authority.context,
-  );
-  if (admission.kind !== "admitted")
-    throw new RuntimeAdmissionUnavailable(
-      "Runtime is not accepting billing work",
-    );
-  work.claimed();
-  return lifetime(
-    signal,
-    (effect) => work.trackBillingMutation(effect),
-    run,
-    work.markBillingOutcomeUnknown,
-  );
+  return lifetime(signal, run);
 }
-
+/** The receipt's own conditional admission is the only gate before its handler runs. */
 export function runBillingReceiptOperation<T>(
-  id: string,
-  admit: (
-    context: import("../types/deploymentControl").AdmissionContext,
-  ) => Promise<boolean>,
+  admit: () => Promise<boolean>,
   run: (owner: RuntimeBillingOwner) => Promise<T>,
 ): Promise<T> {
-  return runRuntimeApiOperation(
-    id,
-    (operation) =>
-      lifetime(operation.signal, operation.mutate, run, operation.unresolved),
-    admit,
+  // Tracked from before the admission write, so a shutdown drain cannot miss a receipt it admits.
+  return track(
+    (async () => {
+      if (!(await admit()))
+        throw new RuntimeAdmissionUnavailable("Runtime is not accepting work");
+      return lifetime(operationSignal(), run);
+    })(),
   );
 }

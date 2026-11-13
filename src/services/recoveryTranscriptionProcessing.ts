@@ -19,8 +19,6 @@ import {
 } from "./transcriptionFinalPassService";
 import { renderMixedPcmTracks } from "./mixedPcmService";
 import { ensureMeetingTempDir } from "./tempFileService";
-import { withArtifactWrite } from "./artifactWriteService";
-import { localArtifactCleanup } from "./meetingArtifactCleanupService";
 import type { RecoveryArtifactScope } from "./recoveryArtifactScope";
 import { resolveAudioFileText } from "../utils/audioTranscript";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
@@ -102,7 +100,6 @@ async function originalFinalPass(
   if (!startedAt)
     throw new InvalidRecoveryContent("Finalized capture start unavailable");
   const input: FinalPassContent = {
-    beginArtifactWrite: artifacts?.beginWrite,
     meetingId: content.manifest.capture.meetingId,
     creator: { id: content.context.creatorId },
     guild: { id: content.manifest.capture.guildId },
@@ -144,18 +141,13 @@ async function originalFinalPass(
       reader,
       directory,
       signal,
-      artifacts,
     );
     if (!tracks.length)
       throw new InvalidRecoveryContent(
         "Complete finalized-pass audio unavailable",
       );
     const mixedFile = path.join(directory, "mixed.mp3");
-    const mixed = await withArtifactWrite(
-      artifacts?.beginWrite,
-      mixedFile,
-      () => renderMixedPcmTracks(tracks, mixedFile, signal),
-    );
+    const mixed = await renderMixedPcmTracks(tracks, mixedFile, signal);
     if (!mixed) throw new Error("Recovery audio rendering failed");
     return await runContentTranscriptionFinalPass(
       input,
@@ -163,7 +155,9 @@ async function originalFinalPass(
       { ensureTempDir: async () => directory },
     );
   } finally {
-    if (!artifacts) await localArtifactCleanup.enqueue(directory);
+    // A recovery scope removes its whole directory; a leftover here is the sweep's.
+    if (!artifacts)
+      await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
   }
 }
 async function writePcmInterval(
@@ -184,73 +178,89 @@ async function writePcmInterval(
     written += result.bytesWritten;
   }
 }
-async function writeVerifiedTracks(
+export async function writeVerifiedTracks(
   content: RecoveryContent,
   reader: RecoveryReader,
   directory: string,
   signal: AbortSignal,
-  artifacts?: RecoveryArtifactScope,
 ) {
   const tracks = new Map<string, { filePath: string }>();
   const lastEnd = new Map<string, number>();
-  for (const item of content.verified.filter((row) => row.kind === "audio")) {
-    if (
-      item.coverage.kind !== "known" ||
-      item.format.sampleRate !== 48000 ||
-      item.format.channels !== 2 ||
-      item.object.byteLength > 64 * 1024 * 1024
-    )
-      throw new InvalidRecoveryContent("Finalized PCM layout unavailable");
-    const bytes = await reader.readVerifiedObject(item.object, signal);
-    if (!bytes)
-      throw new InvalidRecoveryContent("Finalized PCM verification changed");
-    const filePath = path.join(
-      directory,
-      `${createHash("sha256").update(item.sourceId).digest("hex")}.pcm`,
-    );
-    const intervals = item.coverage.intervals;
-    await withArtifactWrite(artifacts?.beginWrite, filePath, async () => {
-      const handle = await fs.open(
-        filePath,
-        tracks.has(item.sourceId) ? "r+" : "w+",
-      );
-      tracks.set(item.sourceId, { filePath });
-      let cursor = 0;
-      try {
-        for (const interval of intervals) {
-          signal.throwIfAborted();
-          if (interval.startOffsetMs + interval.durationMs > 2 * 60 * 60 * 1000)
-            throw new InvalidRecoveryContent(
-              "Finalized PCM exceeds recording duration",
-            );
-          if (interval.startOffsetMs < (lastEnd.get(item.sourceId) ?? 0))
-            throw new InvalidRecoveryContent(
-              "Overlapping finalized PCM intervals",
-            );
-          lastEnd.set(
-            item.sourceId,
-            interval.startOffsetMs + interval.durationMs,
-          );
-          const length = Math.round((interval.durationMs * 192) / 4) * 4;
-          const position = Math.round((interval.startOffsetMs * 192) / 4) * 4;
-          const intervalBytes = bytes.subarray(cursor, cursor + length);
-          if (intervalBytes.byteLength !== length)
-            throw new InvalidRecoveryContent(
-              "Finalized PCM interval exceeds saved bytes",
-            );
-          await writePcmInterval(handle, intervalBytes, position);
-          cursor += length;
-        }
-        if (cursor !== bytes.byteLength)
-          throw new InvalidRecoveryContent(
-            "Finalized PCM coverage size mismatch",
-          );
-      } finally {
-        await handle.close();
-      }
-    });
-  }
+  for (const item of content.verified.filter((row) => row.kind === "audio"))
+    await writeVerifiedTrack(item, reader, directory, tracks, lastEnd, signal);
   return [...tracks.values()];
+}
+async function writeVerifiedTrack(
+  item: Extract<RecoveryContent["verified"][number], { kind: "audio" }>,
+  reader: RecoveryReader,
+  directory: string,
+  tracks: Map<string, { filePath: string }>,
+  lastEnd: Map<string, number>,
+  signal: AbortSignal,
+) {
+  if (
+    item.coverage.kind !== "known" ||
+    item.format.sampleRate !== 48000 ||
+    item.format.channels !== 2 ||
+    item.object.byteLength > 64 * 1024 * 1024
+  )
+    throw new InvalidRecoveryContent("Finalized PCM layout unavailable");
+  const bytes = await reader.readVerifiedObject(item.object, signal);
+  if (!bytes)
+    throw new InvalidRecoveryContent("Finalized PCM verification changed");
+  const filePath = path.join(
+    directory,
+    `${createHash("sha256").update(item.sourceId).digest("hex")}.pcm`,
+  );
+  const intervals = item.coverage.intervals;
+  const handle = await fs.open(
+    filePath,
+    tracks.has(item.sourceId) ? "r+" : "w+",
+  );
+  tracks.set(item.sourceId, { filePath });
+  try {
+    await writeTrackIntervals(
+      handle,
+      bytes,
+      intervals,
+      item.sourceId,
+      lastEnd,
+      signal,
+    );
+  } finally {
+    await handle.close();
+  }
+}
+async function writeTrackIntervals(
+  handle: import("node:fs/promises").FileHandle,
+  bytes: Uint8Array,
+  intervals: readonly { startOffsetMs: number; durationMs: number }[],
+  sourceId: string,
+  lastEnd: Map<string, number>,
+  signal: AbortSignal,
+) {
+  let cursor = 0;
+  for (const interval of intervals) {
+    signal.throwIfAborted();
+    if (interval.startOffsetMs + interval.durationMs > 2 * 60 * 60 * 1000)
+      throw new InvalidRecoveryContent(
+        "Finalized PCM exceeds recording duration",
+      );
+    if (interval.startOffsetMs < (lastEnd.get(sourceId) ?? 0))
+      throw new InvalidRecoveryContent("Overlapping finalized PCM intervals");
+    lastEnd.set(sourceId, interval.startOffsetMs + interval.durationMs);
+    const length = Math.round((interval.durationMs * 192) / 4) * 4;
+    const position = Math.round((interval.startOffsetMs * 192) / 4) * 4;
+    const intervalBytes = bytes.subarray(cursor, cursor + length);
+    if (intervalBytes.byteLength !== length)
+      throw new InvalidRecoveryContent(
+        "Finalized PCM interval exceeds saved bytes",
+      );
+    await writePcmInterval(handle, intervalBytes, position);
+    cursor += length;
+  }
+  if (cursor !== bytes.byteLength)
+    throw new InvalidRecoveryContent("Finalized PCM coverage size mismatch");
 }
 type FinalPassOutcome =
   "acknowledged" | "fallback" | "disabled" | "not_applicable";

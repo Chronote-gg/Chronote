@@ -1,11 +1,5 @@
 /** @jest-environment node */
 import Stripe from "stripe";
-import { getDeploymentControlRepository } from "../../src/db";
-import { getRuntimeAdmissionContext } from "../../src/services/runtimeLifecycleService";
-import {
-  seedServingRuntime,
-  stopServingRuntime,
-} from "../fixtures/servingRuntime";
 import * as renewalRecoveryService from "../../src/services/renewalRecoveryService";
 import { config } from "../../src/services/configService";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
@@ -37,7 +31,6 @@ beforeEach(async () => {
   resetMockStore();
   clearGuildSubscriptionCache();
   config.mock.enabled = true;
-  await seedServingRuntime();
   Object.assign(config.stripe, {
     secretKey: "sk_test_local",
     webhookSecret: secret,
@@ -74,7 +67,6 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 afterAll(async () => {
-  await stopServingRuntime();
   Object.assign(config.stripe, previous);
   config.mock.enabled = previousMock;
 });
@@ -174,11 +166,6 @@ test("post-write failure retains its admitted owner and refuses duplicate replay
     expect(transactions.size).toBe(1);
     available = true;
     expect(receipt?.leaseUntil).toBeGreaterThan(Date.now());
-    expect(
-      await getDeploymentControlRepository().checkAdmission(
-        await getRuntimeAdmissionContext(),
-      ),
-    ).toMatchObject({ kind: "admitted" });
     expect(
       (await postWebhook(baseUrl, request.payload, request.signature))
         .statusCode,

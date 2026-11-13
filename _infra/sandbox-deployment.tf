@@ -54,7 +54,7 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
   role  = aws_iam_role.sandbox_deploy[0].id
   policy = jsonencode({
     Version = "2012-10-17",
-    Statement = [
+    Statement = concat([
       {
         Sid    = "SandboxService",
         Effect = "Allow",
@@ -223,8 +223,27 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
           aws_secretsmanager_secret.stripe_secret_key.arn,
           aws_secretsmanager_secret.stripe_webhook_secret.arn
         ]
+      },
+      {
+        # PutMetricData supports no resource ARNs; the namespace condition scopes it.
+        Sid      = "DeployDrainTimeoutMetric",
+        Effect   = "Allow",
+        Action   = ["cloudwatch:PutMetricData"],
+        Resource = "*",
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "${local.name_prefix}/Deploy"
+          }
+        }
       }
-    ]
+      ], var.ENABLE_DEPLOY_RETIRE ? [
+      {
+        Sid      = "RetireOlderTasks",
+        Effect   = "Allow",
+        Action   = ["ecs:StopTask"],
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/*"
+      }
+    ] : [])
   })
 }
 

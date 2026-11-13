@@ -1,5 +1,7 @@
 # Deployment drain and interrupted recordings
 
+Status: Superseded by adr-20261111-lifecycle-simplification
+
 Design approved October 12, 2026. On October 13 the user authorized subagent-driven implementation and review in one PR through merge readiness. Deployment, production configuration/data changes, real meeting termination, historical repair and human messages remain outside scope.
 
 ## Selected design direction
@@ -20,13 +22,13 @@ The user selected stopping capture after bounded checkpoint-storage retries. The
 
 This is a lifecycle reliability change, not a new recording client, permission model or general job platform. Personal uploads and desktop recordings do not use the Discord recording start gate. Their upload intake continues through durable job records; new processing claims follow the serving runtime generation while already claimed work drains on its existing owner. Intake must not invoke inline processing outside that ownership protocol.
 
-The final review reconciled early native health with ordinary HTTP availability by separating their target groups. This preserves the approved experience while adding explicit listener ownership and a conservative blocked state for unknown routing mutations. See the [routing contract](../../deployment-handoff.md#candidate-traffic-and-routing-ownership).
+The final review reconciled early native health with ordinary HTTP availability by separating their target groups. This preserves the approved experience while adding explicit listener ownership and a conservative blocked state for unknown routing mutations. See the routing contract.
 
 ## Decision status and acceptance boundary
 
 H1-H6 and R1-R6 have passed task review. H7 combines actual work ownership, deterministic acceptance, the dry-run runner and an unpublished private introduction packet. The final code/PR gate includes independent whole-branch review, terminal exact-head checks and the post-30-minute feedback audit. Sandbox acceptance and production activation are UNKNOWN and separately authorized. No new product decision is requested by this document reconciliation.
 
-The [implementation reference](../../deployment-handoff.md) records the final membership/mode/bootstrap contracts, native ECS early-success behavior, compatible replacement, original completion policy, coarse uncertain-delivery no-replay and retention gap. Completed-object deletion still has no identified live route. The generated local descendant validator proves fixture coverage and refusal only.
+The implementation reference records the final membership/mode/bootstrap contracts, native ECS early-success behavior, compatible replacement, original completion policy, coarse uncertain-delivery no-replay and retention gap. Completed-object deletion still has no identified live route. The generated local descendant validator proves fixture coverage and refusal only.
 
 ## Warm replacement before draining
 
@@ -108,7 +110,7 @@ Initialization failure saves a conditional terminal failure before release and t
 
 Use one shared coordinator script from both workflows. Build/register the candidate, discover running task/runtime bindings and verify compatible protocol support, then confirm protection before requesting ECS rollout. Serialize changes per environment and disable cancellation of an in-progress replacement. A fresh deployment cannot acquire another run's coordinator ownership. Serving runtimes maintain protection independently of the workflow, including after runner loss. Candidate promotion also requires confirmed protection before it can own work.
 
-Keep the old serving generation open while the candidate starts. Warm candidates handle only side-effect-safe readiness and reads. In a combined API/bot service, early ALB health evaluates the candidate in its zero-traffic target group. Ordinary user traffic stays on the old application until protected application readiness, exact admission promotion and acknowledged listener switching. The [routing ownership and introduction contract](../../deployment-handoff.md#candidate-traffic-and-routing-ownership) replaces the earlier acceptance of warming-user requests. Warm bot gateway listeners may fill caches, but cannot claim interactions, modify global commands or react to shared bot voice events as an owner. Preserve compatibility between the two API/bot revisions for the overlap.
+Keep the old serving generation open while the candidate starts. Warm candidates handle only side-effect-safe readiness and reads. In a combined API/bot service, early ALB health evaluates the candidate in its zero-traffic target group. Ordinary user traffic stays on the old application until protected application readiness, exact admission promotion and acknowledged listener switching. The routing ownership and introduction contract replaces the earlier acceptance of warming-user requests. Warm bot gateway listeners may fill caches, but cannot claim interactions, modify global commands or react to shared bot voice events as an owner. Preserve compatibility between the two API/bot revisions for the overlap.
 
 After fresh candidate readiness, atomically authorize the candidate under a new serving generation. The old generation can no longer acquire new recording, TTS, background-processing or recovery work. Those claims use the same control/runtime conditions as recording admission. Track in-flight claims locally before their transaction. Work committed before promotion keeps its original owner, renews and finishes or checkpoints retry state. API-only runtimes in the replaced service obey the same rule. Reconciliation can classify abandoned history without acquiring processing work; actual recovery processing runs on the serving generation.
 

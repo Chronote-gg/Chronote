@@ -706,36 +706,22 @@ it("a definite renewal rejection retains the existing processing outcome", async
 });
 
 it("a directly acknowledged renewal persists its result when cancellation arrives with the response", async () => {
-  const api = await import("../../src/services/runtimeApiOperationService");
+  const shutdown = await import("../../src/services/shutdownSignal");
   const controller = new AbortController();
-  const admitted = jest
-    .mocked(api.runRuntimeApiOperation)
-    .mockImplementationOnce(async (_id, run) =>
-      run({
-        signal: controller.signal,
-        unresolved: jest.fn(),
-        read: (effect) => effect(),
-        mutate: (effect) => {
-          controller.signal.throwIfAborted();
-          return effect();
-        },
-      }),
-    );
-  const f = fixture();
-  const request = await consent(f);
-  f.update.mockImplementationOnce(async () => {
-    turnFixtureRenewalOn(f);
-    controller.abort();
-    return response(f.provider);
-  });
+  const signal = jest
+    .spyOn(shutdown, "operationSignal")
+    .mockReturnValue(controller.signal);
   try {
+    const f = fixture();
+    const request = await consent(f);
+    f.update.mockImplementationOnce(async () => {
+      turnFixtureRenewalOn(f);
+      controller.abort();
+      return response(f.provider);
+    });
     await expectVerifyingRenewal(f, request);
   } finally {
-    admitted.mockImplementation(
-      jest.requireActual<typeof import("../fixtures/runtimeApiOperation")>(
-        "../fixtures/runtimeApiOperation",
-      ).runTestApiOperation,
-    );
+    signal.mockRestore();
   }
 });
 

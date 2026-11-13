@@ -8,7 +8,6 @@ import {
 } from "@jest/globals";
 import { claimInteractionReceipt } from "../../src/services/interactionIdempotencyService";
 import { tryCreateInteractionReceipt } from "../../src/db";
-import { context } from "../deployment/controlFixtures";
 
 jest.mock("../../src/db", () => ({
   tryCreateInteractionReceipt: jest.fn(),
@@ -35,7 +34,7 @@ describe("interactionIdempotencyService", () => {
       interactionId: "123456789",
       interactionKind: "chat-input:startmeeting",
       guildId: "guild-1",
-      authority: { kind: "serving", context },
+      signal: new AbortController().signal,
     });
 
     expect(claimed).toBe(true);
@@ -48,7 +47,7 @@ describe("interactionIdempotencyService", () => {
         expiresAt: 1771102800,
       },
       undefined,
-      { kind: "serving", context },
+      expect.any(AbortSignal),
     );
   });
 
@@ -58,7 +57,7 @@ describe("interactionIdempotencyService", () => {
     const claimed = await claimInteractionReceipt({
       interactionId: "123456789",
       interactionKind: "button:end_meeting",
-      authority: { kind: "serving", context },
+      signal: new AbortController().signal,
     });
 
     expect(claimed).toBe(false);

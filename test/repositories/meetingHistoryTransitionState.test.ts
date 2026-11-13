@@ -3,7 +3,7 @@ import { requestMeetingUpdateDelivery } from "../../src/types/meetingUpdateDeliv
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { isDeepStrictEqual } from "node:util";
 import { publicationHistoryAfterPatch } from "../../src/repositories/meetingHistoryTransitionState";
-import { history } from "../deployment/controlFixtures";
+import { history } from "../fixtures/meetingHistory";
 
 const stored = (value: object) =>
   unmarshall(marshall(value, { removeUndefinedValues: true }));

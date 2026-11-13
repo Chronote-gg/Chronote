@@ -1,13 +1,9 @@
 /** @jest-environment node */
 
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
-import { createPreservationBudget } from "../../src/services/preservationBudget";
-import { history } from "../deployment/controlFixtures";
 import {
-  capture,
   digest,
   segment,
-  ownership,
   fixture,
   input,
 } from "../fixtures/recordingCheckpoint";
@@ -27,70 +23,6 @@ async function savedContextCheckpoint(count: number) {
   if (saved.kind !== "committed") throw new Error("fixture commit failed");
   return { ...f, checkpoint: saved.checkpoint };
 }
-
-test("3957 verified objects reach terminal preservation within the existing owner budget", async () => {
-  jest.useFakeTimers();
-  const f = await savedContextCheckpoint(3957);
-  const budget = createPreservationBudget(Date.now() + 100_000);
-  try {
-    const row = f.histories.get(history.guildId)![0];
-    row.status = "processing";
-    f.leases.get(history.guildId)!.leaseExpiresAt =
-      Math.floor(Date.now() / 1000) + 180;
-    let inFlight = 0;
-    let peak = 0;
-    f.read.mockClear();
-    f.read.mockImplementation(async (key) => {
-      inFlight++;
-      peak = Math.max(peak, inFlight);
-      try {
-        await new Promise<void>((resolve) => setTimeout(resolve, 50));
-        return f.objects.get(key);
-      } finally {
-        inFlight--;
-      }
-    });
-    const result = (async () => {
-      await f.service.read(f.checkpoint, budget.signal);
-      return f.service.preserveInitialTerminalRecordingCheckpoint({
-        ...input,
-        previous: f.checkpoint,
-        artifacts: [],
-        expectedStatus: "processing",
-        status: "failed",
-        captureState: {
-          kind: "complete",
-          startedAt: capture.captureStartedAt!,
-          endedAt: "2026-01-01T00:00:03.000Z",
-        },
-        recovery: {
-          disposition: "pending",
-          attempt: 0,
-          executionVersion: 1,
-          stage: "verification",
-          retry: { maxAttempts: 3, nextAttemptAt: null },
-        },
-        preservation: {
-          ownership,
-          signal: budget.signal,
-          deadlineEpochMs: budget.deadline,
-          assertOwnership: async () => {},
-        },
-      });
-    })().catch(() => ({ kind: "rejected" }));
-    await jest.advanceTimersByTimeAsync(100_001);
-    expect(await result).toMatchObject({ kind: "committed" });
-    expect(row.status).toBe("failed");
-    expect(peak).toBeLessThanOrEqual(16);
-    expect(inFlight).toBe(0);
-    expect(
-      f.read.mock.calls.filter(([key]) => !key.includes("/manifests/")),
-    ).toHaveLength(3957 * 3);
-  } finally {
-    budget.dispose();
-    jest.useRealTimers();
-  }
-});
 
 test("failed verification settles issued reads and never dispatches the next batch", async () => {
   const f = await savedContextCheckpoint(20);

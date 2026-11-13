@@ -1,4 +1,4 @@
-import { failRuntimeStartup } from "../../services/runtimeShutdownService";
+import { failWorkerStartup } from "../../services/workerShutdown";
 import { bootstrapApp } from "../bootstrap";
 
-bootstrapApp("api").catch(failRuntimeStartup);
+bootstrapApp("api").catch(failWorkerStartup);

@@ -429,28 +429,3 @@ test("default transport fixture replaces a synthetic inherited credential before
     "Bearer test-openai-api-key",
   );
 });
-
-test.each(["synthetic prompt", ""])(
-  "generation evidence follows each actual request and its prompt %j",
-  async (prompt) => {
-    const acknowledged = jest.fn();
-    const observer = jest.fn(() => acknowledged);
-    const metadata = {
-      name: "synthetic-template",
-      version: 1,
-      isFallback: false,
-    };
-    const f = await buildAsrFixture({
-      outcomes: [transientResponse, validResponse],
-      prompt,
-      observeGeneration: observer,
-      generationPrompt: metadata,
-    });
-    await f.run();
-    expect(observer.mock.calls).toEqual([
-      ["transcription", "gpt-4o-transcribe", prompt ? metadata : null],
-      ["transcription", "gpt-4o-transcribe", prompt ? metadata : null],
-    ]);
-    expect(acknowledged.mock.calls).toEqual([[null]]);
-  },
-);

@@ -1,7 +1,7 @@
 import { createServer, type RequestListener } from "node:http";
-import { getRuntimeReadiness } from "./runtimeLifecycleService";
+import { hasBeenReady } from "./workerRegistry";
 
-/** One listener starts with liveness only; application routes attach after protection. */
+/** One listener answers health from boot; application routes attach once the web server is built. */
 export async function startRuntimeHealthServer(port: number) {
   let application: RequestListener | undefined;
   let closing: Promise<void> | undefined;
@@ -15,22 +15,13 @@ export async function startRuntimeHealthServer(port: number) {
       return;
     }
     if (path === "/health") {
-      response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ status: "healthy" }));
-      return;
-    }
-    if (path === "/ready") {
-      const proof = getRuntimeReadiness();
-      const ready =
-        proof &&
-        proof.expiresAt > Date.now() / 1000 &&
-        proof.dependenciesReady &&
-        proof.cacheReady &&
-        (proof.runtimeMode === "api" || proof.gatewayReady);
-      response.writeHead(ready ? 200 : 503, {
+      const healthy = hasBeenReady();
+      response.writeHead(healthy ? 200 : 503, {
         "Content-Type": "application/json",
       });
-      response.end(JSON.stringify({ status: ready ? "ready" : "warming" }));
+      response.end(
+        JSON.stringify({ status: healthy ? "healthy" : "starting" }),
+      );
       return;
     }
     if (application) {

@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { fixture } from "../helpers/recordingContentFixture";
+import { loadCheckpointCapture } from "../fixtures/checkpointCaptureModules";
 
 import {
   subscribeToUserVoice,
@@ -59,7 +60,6 @@ test("completedTranscriptionCheckpointSurvivesWithoutFinalization", async () => 
     transcribeMeeting: true,
     generateNotes: true,
   });
-  expect(meeting.finalization).toBeUndefined();
 });
 
 test("later model/context changes cannot rewrite original generation settings", async () => {
@@ -123,18 +123,15 @@ test("disabled generation does not fetch unused templates", async () => {
 });
 
 test("late usable transcript caller publishes after PCM completion without changing capture facts", async () => {
-  const { mkdtempSync, rmSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const path = await import("node:path");
-  const { createRecordingCheckpointCapture } =
-    await import("../../src/services/recordingCheckpointCapture");
-  const { createRecordingCheckpointService } =
-    await import("../../src/services/recordingCheckpointService");
-  const { createMockDeploymentControlRepository } =
-    await import("../../src/repositories/deploymentControlRepository");
-  const { history } = await import("../deployment/controlFixtures");
+  const {
+    directory,
+    removeDirectory,
+    createRecordingCheckpointCapture,
+    createRecordingCheckpointService,
+    createMockMeetingHistoryTransitionRepository,
+    history,
+  } = await loadCheckpointCapture("late-content-");
   const { meeting } = await fixture();
-  const directory = mkdtempSync(path.join(tmpdir(), "late-content-"));
   const controller = new AbortController();
   meeting.ownershipSignal = controller.signal;
   const row = {
@@ -148,8 +145,7 @@ test("late usable transcript caller publishes after PCM completion without chang
     executionVersion: 1,
     status: "in_progress" as const,
   };
-  const repository = createMockDeploymentControlRepository(
-    new Map(),
+  const repository = createMockMeetingHistoryTransitionRepository(
     new Map([[meeting.guildId, [row]]]),
     new Map([
       [
@@ -258,13 +254,12 @@ test("late usable transcript caller publishes after PCM completion without chang
     checkpointCompletedTranscription(meeting);
     await meeting.recordingCapture.settled();
     expect(meeting.recordingCheckpoint).toBe(finalPointer);
-    expect(meeting.finalization).toBeUndefined();
     meeting.recordingCapture.releaseSettledBuffers();
   } finally {
     meeting.recordingCapture.fence();
     await meeting.recordingCapture.settled();
     meeting.recordingCapture.releaseSettledBuffers();
-    rmSync(directory, { recursive: true, force: true });
+    removeDirectory();
   }
 });
 

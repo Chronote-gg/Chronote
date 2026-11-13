@@ -7,30 +7,62 @@ import type {
   CheckpointArtifactInput,
   RecordingCoverage,
 } from "../types/recordingCheckpoint";
+import { LIFECYCLE } from "./lifecycleTiming";
 
 const RATE = 48000 * 2 * 2;
-const SEGMENT_MS = 30_000;
 const UNSAVED_MS = 60_000;
-const LIMIT = 64 * 1024 * 1024;
-const PRESSURE = LIMIT / 2;
+const MIB = 1024 * 1024;
 // Owned PCM, concatenation, response collector and flattened response scratch.
-const COPIES = 4;
-let reservedBytes = 0;
-export const getCheckpointPcmBudget = () => ({
-  reservedBytes,
-  limitBytes: LIMIT,
-});
-export function reserveCheckpointPcm(bytes: number): boolean {
-  if (bytes < 0 || reservedBytes + bytes * COPIES > LIMIT) return false;
-  reservedBytes += bytes * COPIES;
-  return true;
+export const PCM_RESERVED_COPIES = 4;
+
+/** An in-process PCM allowance; every byte is counted PCM_RESERVED_COPIES times. */
+export function createPcmBudget(limitBytes: number) {
+  let reservedBytes = 0;
+  return {
+    reserve(bytes: number): boolean {
+      const charged = bytes * PCM_RESERVED_COPIES;
+      if (bytes < 0 || reservedBytes + charged > limitBytes) return false;
+      reservedBytes += charged;
+      return true;
+    },
+    release(bytes: number): void {
+      reservedBytes -= bytes * PCM_RESERVED_COPIES;
+    },
+    snapshot: () => ({ reservedBytes, limitBytes }),
+  };
 }
-export function releaseCheckpointPcm(bytes: number): void {
-  reservedBytes -= bytes * COPIES;
-}
+
+// Live capture and TTS playback share this. 256 MiB counted is 64 MiB of PCM,
+// about 349 speaker-seconds at 192,000 bytes a second, across the worker. The
+// task has 2048 MB and peaked near 790 MB; even if all four counted copies were
+// resident at once, 790 + 256 MiB stays near 1.06 GB, about half the task.
+export const CAPTURE_PCM_LIMIT_BYTES = 256 * MIB;
+const PRESSURE = CAPTURE_PCM_LIMIT_BYTES / 2;
+export const capturePcmBudget = createPcmBudget(CAPTURE_PCM_LIMIT_BYTES);
+export const getCheckpointPcmBudget = capturePcmBudget.snapshot;
+export const reserveCheckpointPcm = capturePcmBudget.reserve;
+export const releaseCheckpointPcm = capturePcmBudget.release;
 function crossedPressureThreshold(previousReservedBytes: number): boolean {
-  return previousReservedBytes < PRESSURE && reservedBytes >= PRESSURE;
+  return (
+    previousReservedBytes < PRESSURE &&
+    getCheckpointPcmBudget().reservedBytes >= PRESSURE
+  );
 }
+
+/** Which guard stopped the capture, so the interruption log can tell the stops apart. */
+export type CaptureStopCause =
+  | "local_write_failed"
+  | "invalid_chunk"
+  | "source_bound"
+  | "unconfirmed_age"
+  | "shared_budget"
+  | "playback_tap";
+export type CaptureStopDiagnosis = {
+  cause: CaptureStopCause;
+  pcmReservedBytes: number;
+  pcmLimitBytes: number;
+  refusedChunkBytes?: number;
+};
 
 type Piece = {
   sourceId: string;
@@ -58,13 +90,10 @@ type Input = {
     artifacts: readonly CheckpointArtifactInput[],
     signal: AbortSignal,
   ): Promise<boolean>;
-  stopCapture(reason: "storage_preservation" | "ownership_lost"): void;
-  beginWrite?(
-    filename: string,
-    artifact: CheckpointArtifactInput,
-  ): {
-    settle(result: "known" | "uncertain"): void;
-  };
+  stopCapture(
+    reason: "storage_preservation" | "ownership_lost",
+    diagnosis?: CaptureStopDiagnosis,
+  ): void;
 };
 
 /** One bounded publisher per recording. Failed PCM remains owned until explicit settled handoff. */
@@ -84,15 +113,11 @@ export function createRecordingCheckpointCapture(input: Input) {
   const signal = AbortSignal.any([input.signal, controller.signal]);
 
   function writeArtifact(file: string, artifact: CheckpointArtifactInput) {
-    let write: ReturnType<NonNullable<Input["beginWrite"]>> | undefined;
     try {
-      write = input.beginWrite?.(file, artifact);
       writeFileSync(file, artifact.bytes, { flag: "wx" });
-      write?.settle("known");
       return true;
     } catch {
-      write?.settle("uncertain");
-      interrupt();
+      interrupt("local_write_failed");
       return false;
     }
   }
@@ -138,10 +163,14 @@ export function createRecordingCheckpointCapture(input: Input) {
       ...closed.map((item) => item.receivedAt),
     );
   }
-  function interrupt(
-    reason: "storage_preservation" | "ownership_lost" = "storage_preservation",
-  ) {
-    if (fence()) input.stopCapture(reason);
+  function interrupt(cause: CaptureStopCause, refusedChunkBytes?: number) {
+    if (fence())
+      input.stopCapture("storage_preservation", {
+        cause,
+        pcmReservedBytes: getCheckpointPcmBudget().reservedBytes,
+        pcmLimitBytes: CAPTURE_PCM_LIMIT_BYTES,
+        ...(refusedChunkBytes === undefined ? {} : { refusedChunkBytes }),
+      });
   }
   function fence() {
     if (stopped) return false;
@@ -157,18 +186,22 @@ export function createRecordingCheckpointCapture(input: Input) {
     const next = Math.min(
       oldest() + UNSAVED_MS,
       retryAt,
-      ...Array.from(open.values(), (item) => item.receivedAt + SEGMENT_MS),
+      ...Array.from(
+        open.values(),
+        (item) => item.receivedAt + LIFECYCLE.checkpointSegmentMs,
+      ),
     );
     if (!Number.isFinite(next)) return;
     timer = setTimeout(tick, Math.max(0, next - Date.now()));
   }
   function tick() {
     if (Date.now() >= oldest() + UNSAVED_MS) {
-      interrupt();
+      interrupt("unconfirmed_age");
       return;
     }
     for (const item of open.values()) {
-      if (Date.now() >= item.receivedAt + SEGMENT_MS) close(item.sourceId);
+      if (Date.now() >= item.receivedAt + LIFECYCLE.checkpointSegmentMs)
+        close(item.sourceId);
     }
     if (Date.now() >= retryAt) retryAt = Infinity;
     startWorker();
@@ -219,6 +252,19 @@ export function createRecordingCheckpointCapture(input: Input) {
         arm();
       });
   }
+  /** Reserves the chunk's share of the shared budget when nothing refuses it. */
+  function refusalCause(
+    sourceBytes: number,
+    chunk: Buffer,
+    at: number,
+  ): CaptureStopCause | undefined {
+    if (chunk.length % 4 || chunk.length > RATE * 30 || !Number.isFinite(at))
+      return "invalid_chunk";
+    if (sourceBytes + chunk.length > RATE * 60) return "source_bound";
+    if (Date.now() >= oldest() + UNSAVED_MS) return "unconfirmed_age";
+    if (!reserveCheckpointPcm(chunk.length)) return "shared_budget";
+    return undefined;
+  }
   function push(
     sourceId: string,
     chunk: Buffer,
@@ -232,16 +278,10 @@ export function createRecordingCheckpointCapture(input: Input) {
         .filter((item) => item.artifact.sourceId === sourceId)
         .reduce((total, item) => total + item.artifact.bytes.byteLength, 0);
     if (chunk.length === 0) return true;
-    const previousReservedBytes = reservedBytes;
-    if (
-      chunk.length % 4 ||
-      chunk.length > RATE * 30 ||
-      !Number.isFinite(at) ||
-      sourceBytes + chunk.length > RATE * 60 ||
-      Date.now() >= oldest() + UNSAVED_MS ||
-      !reserveCheckpointPcm(chunk.length)
-    ) {
-      interrupt();
+    const previousReservedBytes = getCheckpointPcmBudget().reservedBytes;
+    const refused = refusalCause(sourceBytes, chunk, at);
+    if (refused) {
+      interrupt(refused, chunk.length);
       return false;
     }
     const sampleAt = Math.max(at, sampleEnds.get(sourceId) ?? input.startedAt);
@@ -326,8 +366,26 @@ export function createRecordingCheckpointCapture(input: Input) {
     closed.length = 0;
     open.clear();
   }
+  /**
+   * The meeting has closed and freed the server: publication needs the lease,
+   * so nothing more is published, retried or reported as lost from here on.
+   */
+  function retire() {
+    stopped = true;
+    intakeStopped = true;
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    controller.abort(new Error("Recording capture retired"));
+    input.signal.removeEventListener("abort", ownershipLost);
+    releaseCheckpointPcm(queuedBytes);
+    queuedBytes = 0;
+    closed.length = 0;
+    open.clear();
+  }
   mkdirSync(input.directory, { recursive: true });
-  const ownershipLost = () => interrupt("ownership_lost");
+  const ownershipLost = () => {
+    if (fence()) input.stopCapture("ownership_lost");
+  };
   input.signal.addEventListener("abort", ownershipLost, { once: true });
   if (input.signal.aborted) ownershipLost();
   function queueContent(artifact: CheckpointArtifactInput) {
@@ -383,8 +441,10 @@ export function createRecordingCheckpointCapture(input: Input) {
     queueContent,
     finish,
     drainContent,
-    interrupt,
+    /** The bot playback tap's stop: its own bound or the shared budget refused audio. */
+    interrupt: () => interrupt("playback_tap"),
     fence,
+    retire,
     releaseSettledBuffers,
     pending: () =>
       closed.map((item) => ({ artifact: item.artifact, file: item.file })),

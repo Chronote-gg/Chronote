@@ -5,19 +5,15 @@ import type {
   MeetingUpdateProgress,
 } from "../types/meetingUpdateDelivery";
 import type { MeetingHistory } from "../types/db";
-import type { RuntimeWorkClaim } from "./runtimeWorkAdmissionService";
 import type { createDiscordMeetingUpdateTransport } from "./discordMeetingUpdateTransport";
 export type MeetingDeliveryRunInput = {
   key: MeetingUpdateKey;
-  work: RuntimeWorkClaim;
   signal?: AbortSignal;
 };
-export type MeetingDeliveryClaim = Parameters<
-  RuntimeWorkClaim["recordClaim"]
->[0];
-export type MeetingDeliveryDurableOutcome = {
-  deliveryRevision: string;
-  claim: MeetingDeliveryClaim | null;
+export type MeetingDeliveryClaim = {
+  claimId: string;
+  instanceId: string;
+  expiresAt: number;
 };
 export type MeetingDeliveryObservation = {
   operationId: string;
@@ -25,9 +21,7 @@ export type MeetingDeliveryObservation = {
 };
 type Outcome = {
   observations?: MeetingDeliveryObservation[];
-  noClaim?: { kind: "never_admitted" };
   capturedRevision: number | null;
-  durable?: MeetingDeliveryDurableOutcome;
 };
 export type MeetingDeliveryRunResult =
   | (Outcome & { kind: "settled" })

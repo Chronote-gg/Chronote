@@ -1,5 +1,3 @@
-import type { AdmissionContext } from "../types/deploymentControl";
-import { assertMockPersonalAdmission } from "./personalMediaUploadRepository";
 import { config } from "../services/configService";
 import {
   getPersonalRecordingSegment,
@@ -15,12 +13,10 @@ export type PersonalRecordingSegmentRepository = {
   prepare: (
     segment: PersonalRecordingSegmentRecord,
     expectedStatus: "pending_upload" | "failed" | undefined,
-    context: AdmissionContext,
   ) => Promise<boolean>;
   transition: (
     segment: PersonalRecordingSegmentRecord,
     expectedStatus: PersonalRecordingSegmentRecord["status"],
-    context: AdmissionContext,
   ) => Promise<boolean>;
   get: (
     uploadId: string,
@@ -47,8 +43,7 @@ const segmentMapForUpload = (uploadId: string) => {
 };
 
 const mockRepository: PersonalRecordingSegmentRepository = {
-  async prepare(segment, expectedStatus, context) {
-    assertMockPersonalAdmission(context);
+  async prepare(segment, expectedStatus) {
     if (mockDesktopDraftPaused(segment.uploadId)) return false;
     const job = getMockStore().personalMediaUploadsById.get(segment.uploadId);
     const current = segmentMapForUpload(segment.uploadId).get(
@@ -73,8 +68,7 @@ const mockRepository: PersonalRecordingSegmentRepository = {
     );
     return true;
   },
-  async transition(segment, expectedStatus, context) {
-    assertMockPersonalAdmission(context);
+  async transition(segment, expectedStatus) {
     if (mockDesktopDraftPaused(segment.uploadId)) return false;
     const current = segmentMapForUpload(segment.uploadId).get(
       segment.segmentKey,
