@@ -336,6 +336,26 @@ async function emptyRecording(
 }
 
 /**
+ * Silence only when the complete manifest listed no audio: listed audio that
+ * no longer verifies was lost after commit, so it is retried and given up
+ * with a notice, never reported as a recording in which nobody spoke.
+ */
+async function withoutVerifiedAudio(
+  history: MeetingHistory,
+  content: RecoveryContent,
+  signal: AbortSignal,
+): Promise<FinishInput> {
+  const listedAudio = content.manifest.artifacts.some(
+    (item) => item.kind === "audio",
+  );
+  if (content.manifest.captureState.kind === "complete" && listedAudio)
+    throw new InvalidRecoveryContent("Saved audio failed verification");
+  return endedCompleteSilent(history, content)
+    ? emptyRecording(history, content, signal)
+    : withoutSavedAudio(history, signal);
+}
+
+/**
  * Interrupted when the row says so, or when the manifest does not record a
  * complete capture: a row also says complete when close kept the audio for a
  * local finish after its final flush failed, and the checkpoint then lacks
@@ -670,9 +690,7 @@ export async function loadRecoveryFinishInput(
   signal.throwIfAborted();
   const hasAudio = content.verified.some((item) => item.kind === "audio");
   if (!hasAudio && !history.transcriptS3Key)
-    return endedCompleteSilent(history, content)
-      ? emptyRecording(history, content, signal)
-      : withoutSavedAudio(history, signal);
+    return withoutVerifiedAudio(history, content, signal);
 
   const interrupted = interruptedCapture(history, content);
   const { transcript, cancel, notesInput, processing } =

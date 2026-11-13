@@ -21,7 +21,7 @@ import {
 } from "../../src/services/meetingRecoveryContent";
 import type { MeetingHistory } from "../../src/types/db";
 import { history } from "../fixtures/meetingHistory";
-import { recoveryFixture } from "./meetingRecoveryFixtures";
+import { pcmArtifact, recoveryFixture } from "./meetingRecoveryFixtures";
 import {
   CURRENT_SERVER_NAME,
   TRANSCRIPT_KEY,
@@ -29,6 +29,7 @@ import {
 } from "./meetingFinish.fixture";
 
 const STORED_TEXT = "Synthetic speaker agreed on a placeholder plan.";
+const LOST_AUDIO = Buffer.alloc(3840, 7);
 const completeEnd = {
   kind: "complete" as const,
   startedAt: history.timestamp,
@@ -46,6 +47,21 @@ beforeEach(() => {
 
 const storedTranscript = () =>
   jest.mocked(fetchJsonFromS3).mockResolvedValueOnce({ text: STORED_TEXT });
+
+/** A complete manifest that lists one audio piece whose object is gone. */
+async function lostAudioCheckpoint() {
+  const f = await recoveryFixture(STORED_TEXT, {
+    captureState: completeEnd,
+    artifacts: [
+      pcmArtifact("user:123", 0, LOST_AUDIO, [
+        { startOffsetMs: 0, durationMs: 20 },
+      ]),
+    ],
+  });
+  for (const [key, bytes] of f.objects)
+    if (bytes.equals(LOST_AUDIO)) f.objects.delete(key);
+  return f;
+}
 
 /** Built from the stored transcript, with no audio to mix or transcribe. */
 function expectFromStoredTranscript(
@@ -144,4 +160,34 @@ describe("a saved transcript is used when no audio verifies", () => {
       ).rejects.toBeInstanceOf(InvalidRecoveryContent);
     },
   );
+});
+
+describe("a manifest recording a complete capture that lists audio none of which verifies", () => {
+  test("is invalid recovery content, not a silent recording", async () => {
+    const f = await lostAudioCheckpoint();
+    await expect(
+      loadRecoveryFinishInput(
+        { ...f.claim.history, capture: completeEnd },
+        signal(),
+        f.reader,
+      ),
+    ).rejects.toBeInstanceOf(InvalidRecoveryContent);
+    expect(fetchJsonFromS3).not.toHaveBeenCalled();
+  });
+
+  test("is built from a saved transcript when there is one", async () => {
+    const f = await lostAudioCheckpoint();
+    storedTranscript();
+    const input = await loadRecoveryFinishInput(
+      {
+        ...f.claim.history,
+        capture: completeEnd,
+        transcriptS3Key: TRANSCRIPT_KEY,
+      },
+      signal(),
+      f.reader,
+    );
+    expectFromStoredTranscript(input);
+    expect(input.processing).not.toEqual({ transcription: "empty" });
+  });
 });
