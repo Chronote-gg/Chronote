@@ -174,7 +174,7 @@ describe("existing server subscription checkout", () => {
     );
     expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        billing_address_collection: "required",
+        billing_address_collection: "auto",
         customer: "cus_new",
         name_collection: { business: { enabled: true, optional: true } },
         tax_id_collection: { enabled: true },
@@ -208,7 +208,7 @@ describe("existing server subscription checkout", () => {
     expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
       expect.objectContaining({
         customer: "cus_existing",
-        billing_address_collection: "required",
+        billing_address_collection: "auto",
         name_collection: { business: { enabled: true, optional: true } },
         tax_id_collection: { enabled: true },
         customer_update: { name: "auto", address: "auto" },

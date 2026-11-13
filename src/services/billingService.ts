@@ -490,7 +490,7 @@ async function createCheckoutSessionOwned(
     mode: config.subscription.stripeMode === "live" ? "live" : "test",
     checkout: {
       mode: "subscription",
-      billing_address_collection: "required",
+      billing_address_collection: "auto",
       name_collection: { business: { enabled: true, optional: true } },
       tax_id_collection: { enabled: true },
       customer_update: { name: "auto", address: "auto" },

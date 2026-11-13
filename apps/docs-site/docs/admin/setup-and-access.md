@@ -203,9 +203,10 @@ subscription has an unpaid invoice or a payment is still being settled,
 resolve that payment before changing plans. Contact support if the original payer
 cannot access billing or the server's billing information needs repair.
 
-Checkout asks for your billing address. If you are purchasing for a business,
-enter its legal name in the optional business name field. You can also enter a
-VAT or other supported business tax ID before paying. These details are saved
+Checkout collects billing address details when Stripe needs them. If you are
+purchasing for a business, enter its legal name in the optional business name
+field. You can also enter a VAT or other supported business tax ID before paying.
+These details are saved
 in Stripe for future invoices. A business name does not require a tax ID.
 
 The original payer can open **Manage billing** to update the billing name,
