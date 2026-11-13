@@ -393,19 +393,22 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     return value;
   }
 
-  async function deployImage(image, rolloutState = {}) {
+  /**
+   * Registers `template` with `image` and points the service at it. Without a
+   * template the family name resolves to the latest ACTIVE revision, which is
+   * how a Terraform-registered environment change reaches the service.
+   */
+  async function deployImage(image, { template, rolloutState = {} } = {}) {
     const family = required("ECS_TASK_FAMILY");
     const svc = await service();
     const previousImage = await servingImage(svc);
-    // The family name resolves to the latest ACTIVE revision, which is how a
-    // Terraform-registered environment change reaches the service.
-    const latest = await taskDefinition(family);
-    if (latest.family !== family) throw new Error("Task family mismatch");
+    const base = template ?? (await taskDefinition(family));
+    if (base.family !== family) throw new Error("Task family mismatch");
     const registered = (
       await aws(
         "ecs",
         "register-task-definition",
-        registrationInput(latest, image),
+        registrationInput(base, image),
       )
     ).taskDefinition;
     // Printed first so a run that fails from here on still knows what to roll back to.
@@ -440,7 +443,9 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
       throw new Error("--image must pin a sha256 digest");
     // Read before the update: a marker written later, while the new worker
     // comes up, must not let rollback pick the old runtime's image.
-    return deployImage(image, { cutover: await cutoverState() });
+    return deployImage(image, {
+      rolloutState: { cutover: await cutoverState() },
+    });
   }
 
   async function waitReady({ release }) {
@@ -513,11 +518,11 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
       throw new Error(
         "Cutover marker present: the service never moved off the previous revision; nothing rolled back, failing the run",
       );
-    assertImageOnlyChange(
-      await taskDefinition(failedArn),
-      await taskDefinition(previousTaskDefinition),
-    );
-    const { revision } = await deployImage(image);
+    const failed = await taskDefinition(failedArn);
+    assertImageOnlyChange(failed, await taskDefinition(previousTaskDefinition));
+    // Registered from the revision just compared, so a revision Terraform
+    // registered since then cannot slip in uncompared.
+    const { revision } = await deployImage(image, { template: failed });
     throw new Error(
       `Cutover marker present: rolled back to the previous image as revision ${revision}; failing the run`,
     );

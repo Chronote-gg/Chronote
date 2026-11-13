@@ -887,6 +887,21 @@ describe("rollback", () => {
     );
     expectNothingChanged(h);
   });
+  test("rollback registers from the failed revision it compared, not a newer family revision", async () => {
+    const h = rollbackHarness();
+    h.state.definitions[FAMILY] = withEnvironment(
+      taskDefinition(9, NEW_IMAGE),
+      "KEEP",
+      "uncompared",
+    );
+    await expect(rollBack(h)).rejects.toThrow(/rolled back/i);
+    const [register] = h.named("ecs.register-task-definition");
+    expect(register.params.containerDefinitions[0].environment).toContainEqual({
+      name: "KEEP",
+      value: "1",
+    });
+    expect(register.params.containerDefinitions[0].image).toBe(PREVIOUS_IMAGE);
+  });
   test("rollback refuses without the previous revision", async () => {
     const h = rollbackHarness();
     await expect(
