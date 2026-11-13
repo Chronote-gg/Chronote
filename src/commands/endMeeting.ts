@@ -898,12 +898,13 @@ async function markMeetingProcessing(meeting: MeetingData) {
 async function maybeSendMinutesLimitNotice(meeting: MeetingData) {
   const signal = getMeetingProcessingSignal(meeting);
   signal.throwIfAborted();
-  const resolved = await getGuildLimits(meeting.guildId);
+  const at = new Date();
+  const resolved = await getGuildLimits(meeting.guildId, at);
   signal.throwIfAborted();
   const { limits } = resolved;
   if (!limits.maxMeetingMinutesRolling) return;
 
-  const usage = await getRollingUsageForGuild(meeting.guildId);
+  const usage = await getRollingUsageForGuild(meeting.guildId, at);
   signal.throwIfAborted();
   const limitSeconds = limits.maxMeetingMinutesRolling * 60;
   const remainingSeconds = limitSeconds - usage.usedSeconds;
@@ -919,6 +920,7 @@ async function maybeSendMinutesLimitNotice(meeting: MeetingData) {
     windowStartMs,
     getRollingWindowMs(),
     limitSeconds,
+    usage.nextUsageResetAtIso,
   );
   if (usage.usedSeconds >= limitSeconds) {
     const nextLabel = nextAvailableAtIso

@@ -68,6 +68,13 @@ retention period. Pro's lack of a weekly recording limit does not remove the
 two-hour limit on each meeting. Review available billing changes before
 confirming payment.
 
+When temporary complimentary access expires, the remaining plan gets a fresh
+weekly recording allowance. Recordings started before that expiry do not use
+the fresh allowance, including a meeting still running when access expires.
+Your recording history stays intact. An overlapping or continuous renewal at
+the same or a higher tier keeps access continuous without another reset.
+After seven days, the usual rolling-week calculation applies.
+
 After a successful meeting, eligible Free servers may see an **Upgrade** button
 beside **Open in Chronote** and below the final notes embed. The reminder shows
 recorded time across saved meetings and invites you to get more recording time,
