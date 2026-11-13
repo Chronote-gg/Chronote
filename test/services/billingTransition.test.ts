@@ -69,7 +69,9 @@ function fixture() {
             purchase_attempt_id:
               getMockStore().purchaseAttempts.get(guildId)?.attemptId,
           },
-          customer: "cus_new",
+          customer:
+            getMockStore().purchaseAttempts.get(guildId)?.customerId ??
+            "cus_new",
           livemode: false,
           id: "cs_new",
           status: "open",
@@ -172,6 +174,11 @@ describe("existing server subscription checkout", () => {
     );
     expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
       expect.objectContaining({
+        billing_address_collection: "auto",
+        customer: "cus_new",
+        name_collection: { business: { enabled: true, optional: true } },
+        tax_id_collection: { enabled: true },
+        customer_update: { name: "auto", address: "auto" },
         metadata: expect.objectContaining({
           purchase_source: "discord_summary",
           purchase_tier: "basic",
@@ -179,6 +186,32 @@ describe("existing server subscription checkout", () => {
         }),
         success_url: expect.stringContaining("source=discord_summary"),
         cancel_url: expect.stringContaining("source=discord_summary"),
+      }),
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+    );
+  });
+
+  it("binds business details collection to the payer's reused Stripe customer", async () => {
+    getMockStore().subscriptions.delete(guildId);
+    const { stripe, client } = fixture();
+    stripe.customers.list.mockResolvedValue({
+      data: [{ id: "cus_existing", metadata: { discord_id: user.id } }],
+    });
+    await createCheckoutSession({
+      stripe: client,
+      user,
+      guildId,
+      priceId: "price_basic",
+    });
+    expect(stripe.customers.create).not.toHaveBeenCalled();
+    expect(stripe.customers.retrieve).toHaveBeenCalledWith("cus_existing");
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customer: "cus_existing",
+        billing_address_collection: "auto",
+        name_collection: { business: { enabled: true, optional: true } },
+        tax_id_collection: { enabled: true },
+        customer_update: { name: "auto", address: "auto" },
       }),
       expect.objectContaining({ idempotencyKey: expect.any(String) }),
     );
