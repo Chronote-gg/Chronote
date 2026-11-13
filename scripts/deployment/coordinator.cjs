@@ -611,13 +611,19 @@ function createCoordinator(options = {}) {
   }
   async function transactPromotion(
     ctl,
-    transaction,
+    buildTransaction,
     target,
     generation,
     retained,
   ) {
     try {
-      await aws("dynamodb", "transact-write-items", transaction);
+      const build = async () => {
+        await assertWriter();
+        return buildTransaction();
+      };
+      if (options.submitArtifactTransaction)
+        await options.submitArtifactTransaction(build);
+      else await aws("dynamodb", "transact-write-items", await build());
     } catch (error) {
       const observed = await control();
       own(observed);
@@ -875,7 +881,7 @@ function createCoordinator(options = {}) {
     ctl = await phase(ctl, "rollback_promoting");
     ctl = await transactPromotion(
       ctl,
-      builders.buildRollbackPromotionTransaction(ctl, now(), tables),
+      () => builders.buildRollbackPromotionTransaction(ctl, now(), tables),
       d.outgoing,
       d.originalGeneration + 2,
       retained,

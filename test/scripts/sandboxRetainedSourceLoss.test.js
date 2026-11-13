@@ -5,6 +5,7 @@ import { recoverRetainedSandbox } from "../../scripts/deployment/recover-retaine
 import { retainedSourceLossFixture } from "../deployment/fixtures/retainedSourceLossFixture";
 import { recoverSandbox } from "../../scripts/deployment/recover-sandbox.cjs";
 import { sourceLossFixture } from "../deployment/fixtures/sourceLossFixture";
+import { continuationBinding } from "../../scripts/deployment/continue-sandbox.cjs";
 
 test("retained path requires an approved private packet before any recovery write", async () => {
   const f = await sourceLossFixture();
@@ -43,6 +44,31 @@ async function reviewed(f) {
   f.options.env.SOURCE_LOSS_BINDING_SHA256 = inspection.bindingSha256;
   return inspection;
 }
+
+test("retained stopped proof restores the recorded unadmitted promotion candidate", async () => {
+  const f = await retainedSourceLossFixture();
+  Object.assign(f.state.ctl.deployment, {
+    phase: "promoting",
+    candidate: f.candidateIdentity,
+  });
+  f.state.ctl.deployment.routing.candidateRevision = "revision-new";
+  f.packet.operationBinding = continuationBinding(
+    f.state.ctl,
+    f.candidateIdentity,
+  );
+  f.bindPacket();
+  const old = structuredClone(f.state.rows.old);
+  await reviewed(f);
+  expect(writes(f)).toEqual([]);
+  await expect(
+    recoverRetainedSandbox({ ...f.options, mode: "recover" }),
+  ).resolves.toMatchObject({
+    kind: "availability_restored",
+    settlement: "lost_owner_settlement_pending",
+  });
+  expect(f.loss.receipt.version).toBe(2);
+  expect(f.state.rows.old).toEqual(old);
+});
 test.each([false, true])(
   "retained proof restores same candidate, native missing %s",
   async (missing) => {

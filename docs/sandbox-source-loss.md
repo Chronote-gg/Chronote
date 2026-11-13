@@ -2,6 +2,8 @@
 
 The separate source-loss executor restores availability using the existing candidate when the original serving task has stopped. It leaves lost-owner settlement pending and ordinary deployments blocked. The healthy-source continuation keeps its original refusal checks.
 
+Inspection accepts an unrecorded candidate during `warming`, or the exact recorded candidate during `promoting` before admission. The latter must match the sole native service task and validated candidate revision. Both cases require the original serving generation and members, source routing without a submitted listener request, and all existing stopped-source and candidate safety proofs.
+
 ## Execution boundary
 
 Use the existing Sandbox Deployment Identity workflow on an independently reviewed source commit. Select `continuation_action=inspect-source-loss` first. This performs metadata reads and prints the frozen binding checksum. Retain the private operation packet and compare the original deployment, source, surviving candidate, generation, image, immutable task definitions, billing flags and routing topology.

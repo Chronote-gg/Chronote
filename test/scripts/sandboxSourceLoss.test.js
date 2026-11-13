@@ -31,6 +31,52 @@ test("inspection freezes exact source/candidate/topology and is read only", asyn
   expect(writes(f)).toEqual([]);
 });
 
+test("inspection accepts the exact recorded candidate before promotion admission", async () => {
+  const f = await sourceLossFixture();
+  Object.assign(f.state.ctl.deployment, {
+    phase: "promoting",
+    candidate: f.candidateIdentity,
+  });
+  f.state.ctl.deployment.routing.candidateRevision = "revision-new";
+  const result = await reviewed(f);
+  expect(result.binding.candidateIdentity).toEqual(f.candidateIdentity);
+  expect(writes(f)).toEqual([]);
+  await expect(
+    recoverSandbox({ ...f.options, mode: "recover" }),
+  ).resolves.toMatchObject({
+    kind: "availability_restored",
+    settlement: "lost_owner_settlement_pending",
+  });
+});
+
+test.each([
+  "foreign_candidate",
+  "missing_candidate",
+  "wrong_revision",
+  "submitted_routing",
+  "admitted_generation",
+])("recorded promotion candidate refuses %s without writes", async (kind) => {
+  const f = await sourceLossFixture();
+  Object.assign(f.state.ctl.deployment, {
+    phase: "promoting",
+    candidate: f.candidateIdentity,
+  });
+  f.state.ctl.deployment.routing.candidateRevision = "revision-new";
+  if (kind === "foreign_candidate")
+    f.state.ctl.deployment.candidate = {
+      ...f.candidateIdentity,
+      instanceId: "foreign",
+    };
+  if (kind === "missing_candidate") delete f.state.ctl.deployment.candidate;
+  if (kind === "wrong_revision")
+    f.state.ctl.deployment.routing.candidateRevision = "foreign-revision";
+  if (kind === "submitted_routing")
+    f.state.ctl.deployment.routing.state = "forward_submitted";
+  if (kind === "admitted_generation") f.state.ctl.servingGeneration++;
+  await expect(reviewed(f)).rejects.toThrow();
+  expect(writes(f)).toEqual([]);
+});
+
 test.each([
   ["expired", 0],
   ["fresh-looking", 2000],
