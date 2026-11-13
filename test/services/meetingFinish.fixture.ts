@@ -117,6 +117,20 @@ export function notesInput(
   };
 }
 
+export const CURRENT_SERVER_NAME = "Current server";
+/** Stands in for the notes input the server's current settings build. */
+export const currentSettingsNotesInput = async (
+  _row: MeetingHistory,
+  transcript: string,
+  signal: AbortSignal,
+) =>
+  notesInput({
+    finalTranscript: transcript,
+    processing: undefined,
+    guild: { id: GUILD_ID, name: CURRENT_SERVER_NAME, description: "" },
+    signal,
+  });
+
 export function finishInput(overrides: Partial<FinishInput> = {}): FinishInput {
   return {
     source: "recovery",

@@ -3,7 +3,10 @@ import path from "node:path";
 import type { Client } from "discord.js";
 import type { MeetingHistory } from "../types/db";
 import type { MeetingData, MeetingNotesInput } from "../types/meeting-data";
-import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
+import type {
+  MeetingProcessingOutcome,
+  TranscriptionOutcome,
+} from "../types/meetingProcessing";
 import type { Participant } from "../types/participants";
 import type { TranscriptPayload, TranscriptSegment } from "../types/transcript";
 import {
@@ -28,6 +31,8 @@ import {
 } from "./uploadService";
 import { ensureTempBaseDir, getMeetingTempDir } from "./tempFileService";
 import {
+  INTERRUPTED_CAPTURE_NOTICE,
+  InvalidRecoveryContent,
   liveShapedNotesInput,
   readRecoveryContent,
   recoveredTranscriptionOutcome,
@@ -49,6 +54,7 @@ import type { RecordingLimitState } from "./recordingLimitService";
 import { createRecordingCheckpointService } from "./recordingCheckpointService";
 import { LIFECYCLE } from "./lifecycleTiming";
 import { fetchJsonFromS3 } from "./storageService";
+import { buildCurrentNotesInput } from "./processingRetryNotesInput";
 import { formatUserMention } from "../utils/participants";
 import { summarizeCaptureCoverage } from "../utils/meetingCaptureNotice";
 import type {
@@ -373,24 +379,46 @@ const joinSegmentText = (segments: TranscriptSegment[]) =>
     .filter((text): text is string => Boolean(text?.trim()))
     .join(" ");
 
+async function storedTranscript(
+  key: string,
+  signal: AbortSignal,
+): Promise<RecoveredTranscript | undefined> {
+  const stored = await fetchJsonFromS3<TranscriptPayload>(key, signal);
+  if (stored?.text === undefined) return undefined;
+  return {
+    text: stored.text,
+    ...(stored.segments
+      ? { spokenText: joinSegmentText(stored.segments) }
+      : {}),
+  };
+}
+
+/**
+ * With no verified audio the saved transcript is the only content left, so a
+ * failed read is thrown: the attempt is retried and its give-up records a
+ * processing outcome, rather than reading as a start that recorded nothing.
+ */
+async function requiredStoredTranscript(
+  key: string,
+  signal: AbortSignal,
+): Promise<RecoveredTranscript> {
+  const stored = await storedTranscript(key, signal);
+  if (!stored) throw new InvalidRecoveryContent("Saved transcript unavailable");
+  return stored;
+}
+
 async function recoveredTranscript(
   history: MeetingHistory,
   content: RecoveryContent,
   reader: RecoveryReader,
   signal: AbortSignal,
+  hasAudio: boolean,
 ): Promise<RecoveredTranscript> {
   if (history.transcriptS3Key) {
-    const stored = await fetchJsonFromS3<TranscriptPayload>(
-      history.transcriptS3Key,
-      signal,
-    );
-    if (stored?.text !== undefined)
-      return {
-        text: stored.text,
-        ...(stored.segments
-          ? { spokenText: joinSegmentText(stored.segments) }
-          : {}),
-      };
+    const stored = hasAudio
+      ? await storedTranscript(history.transcriptS3Key, signal)
+      : await requiredStoredTranscript(history.transcriptS3Key, signal);
+    if (stored) return stored;
   }
   const { text, segments } = await recoverTranscript(
     content,
@@ -530,53 +558,33 @@ function generatedNotesInput(
   );
 }
 
-function recoveredProcessing(
-  transcribe: boolean,
-  spoken: boolean,
-  notesInput: MeetingNotesInput,
-  content: RecoveryContent,
-  interrupted: boolean,
-): MeetingProcessingOutcome {
-  return !transcribe
-    ? {}
-    : !spoken
-      ? { transcription: "empty" }
-      : (notesInput.processing ?? {
-          transcription: recoveredTranscriptionOutcome(content, interrupted),
-        });
-}
+/** Where a recovered meeting's transcript and generation inputs come from. */
+type RecoverySource = {
+  interrupted: boolean;
+  snapshot: CompletionPolicy | undefined;
+  requested: { transcribeMeeting: boolean; generateNotes: boolean };
+  transcript: () => Promise<RecoveredTranscript>;
+  notesInput: (transcriptText: string) => Promise<MeetingNotesInput>;
+  /** The outcome of a spoken transcript whose notes input records none. */
+  transcription: TranscriptionOutcome;
+};
 
-/**
- * Rebuilds the finish input from the history row and the checkpoint in S3,
- * transcribing only audio pieces that have no transcript yet.
- */
-export async function loadRecoveryFinishInput(
+/** The policy, transcript, cancellation and notes input every recovered meeting shares. */
+async function recoveredGeneration(
   history: MeetingHistory,
+  source: RecoverySource,
   signal: AbortSignal,
-  reader: RecoveryReader = createRecordingCheckpointService(),
-): Promise<FinishInput> {
-  signal.throwIfAborted();
-  if (!history.checkpoint) return withoutSavedAudio(history, signal);
-  const content = await readRecoveryContent(history, reader, signal);
-  signal.throwIfAborted();
-  if (!content.verified.some((item) => item.kind === "audio"))
-    return endedCompleteSilent(history, content)
-      ? emptyRecording(history, content, signal)
-      : withoutSavedAudio(history, signal);
-
-  const interrupted = interruptedCapture(history, content);
-  const snapshot = history.completionPolicy ?? content.context.completion;
-  const policy = resolveCompletionPolicy(snapshot, interrupted);
-  const transcribe =
-    policy !== "cancel" && content.manifest.capture.requested.transcribeMeeting;
+) {
+  const policy = resolveCompletionPolicy(source.snapshot, source.interrupted);
+  const transcribe = policy !== "cancel" && source.requested.transcribeMeeting;
   const transcript = transcribe
-    ? await recoveredTranscript(history, content, reader, signal)
+    ? await source.transcript()
     : { text: "", spokenText: "" };
   signal.throwIfAborted();
   // "unknown" is never returned for an interrupted capture, which always proceeds.
   const cancel = await recoveredCancel(
     history,
-    snapshot,
+    source.snapshot,
     policy,
     transcript.spokenText,
     signal,
@@ -587,30 +595,105 @@ export async function loadRecoveryFinishInput(
   // Saved generation inputs are read only when notes will be generated, as
   // today's recovery does, so unavailable prompts cannot fail other outcomes.
   const notesInput =
-    !cancel && spoken && content.manifest.capture.requested.generateNotes
-      ? generatedNotesInput(
-          history,
-          content,
-          transcript.text,
-          signal,
-          interrupted,
-        )
+    !cancel && spoken && source.requested.generateNotes
+      ? await source.notesInput(transcript.text)
       : savedRowNotesInput(history, signal, transcript.text);
-  const processing = recoveredProcessing(
-    transcribe,
-    spoken,
-    notesInput,
-    content,
-    interrupted,
-  );
+  const processing: MeetingProcessingOutcome = !transcribe
+    ? {}
+    : !spoken
+      ? { transcription: "empty" }
+      : (notesInput.processing ?? { transcription: source.transcription });
   notesInput.processing = processing;
+  return { transcript, cancel, notesInput, processing };
+}
 
-  const recording = await renderRecoveredRecording(
-    history,
-    content,
-    reader,
-    signal,
-  );
+/**
+ * A row whose transcript was saved before any checkpoint was: there are no
+ * frozen inputs, so notes use the row and the server's current settings, as a
+ * processing retry does. No manifest proves the capture complete, so it is
+ * recovered as interrupted.
+ */
+async function savedTranscriptWithoutCheckpoint(
+  history: MeetingHistory,
+  transcriptS3Key: string,
+  signal: AbortSignal,
+): Promise<FinishInput> {
+  const { transcript, cancel, notesInput, processing } =
+    await recoveredGeneration(
+      history,
+      {
+        interrupted: true,
+        snapshot: history.completionPolicy,
+        requested: history,
+        transcript: () => requiredStoredTranscript(transcriptS3Key, signal),
+        notesInput: async (text) => ({
+          ...(await buildCurrentNotesInput(history, text, signal)),
+          captureNotice: INTERRUPTED_CAPTURE_NOTICE,
+        }),
+        transcription: "partial",
+      },
+      signal,
+    );
+  const capture = unprovenCompleteCapture(history, true);
+  return {
+    source: "recovery",
+    notesInput,
+    transcript: transcript.text,
+    processing,
+    participants: history.participants,
+    hasSavedAudio: true,
+    ...(cancel ? { cancel } : {}),
+    ...(capture ? { capture } : {}),
+  };
+}
+
+/**
+ * Rebuilds the finish input from the history row and the checkpoint in S3,
+ * transcribing only audio pieces that have no transcript yet. A saved
+ * transcript is looked for before concluding there is nothing to work from.
+ */
+export async function loadRecoveryFinishInput(
+  history: MeetingHistory,
+  signal: AbortSignal,
+  reader: RecoveryReader = createRecordingCheckpointService(),
+): Promise<FinishInput> {
+  signal.throwIfAborted();
+  if (!history.checkpoint)
+    return history.transcriptS3Key
+      ? savedTranscriptWithoutCheckpoint(
+          history,
+          history.transcriptS3Key,
+          signal,
+        )
+      : withoutSavedAudio(history, signal);
+  const content = await readRecoveryContent(history, reader, signal);
+  signal.throwIfAborted();
+  const hasAudio = content.verified.some((item) => item.kind === "audio");
+  if (!hasAudio && !history.transcriptS3Key)
+    return endedCompleteSilent(history, content)
+      ? emptyRecording(history, content, signal)
+      : withoutSavedAudio(history, signal);
+
+  const interrupted = interruptedCapture(history, content);
+  const { transcript, cancel, notesInput, processing } =
+    await recoveredGeneration(
+      history,
+      {
+        interrupted,
+        snapshot: history.completionPolicy ?? content.context.completion,
+        requested: content.manifest.capture.requested,
+        transcript: () =>
+          recoveredTranscript(history, content, reader, signal, hasAudio),
+        notesInput: async (text) =>
+          generatedNotesInput(history, content, text, signal, interrupted),
+        transcription: recoveredTranscriptionOutcome(content, interrupted),
+      },
+      signal,
+    );
+
+  const recording = hasAudio
+    ? await renderRecoveredRecording(history, content, reader, signal)
+    : {};
   const capture = unprovenCompleteCapture(history, interrupted);
   return {
     source: "recovery",

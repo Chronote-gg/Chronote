@@ -30,6 +30,13 @@ jest.mock("../../src/services/autoRecordCancellationService", () => ({
 jest.mock("../../src/services/mixedPcmService", () => ({
   renderMixedPcmTracks: jest.fn(async () => undefined),
 }));
+jest.mock("../../src/services/storageService", () => ({
+  ...jest.requireActual("../../src/services/storageService"),
+  fetchJsonFromS3: jest.fn(),
+}));
+jest.mock("../../src/services/processingRetryNotesInput", () => ({
+  buildCurrentNotesInput: jest.fn(),
+}));
 
 import type { Client } from "discord.js";
 import { LIFECYCLE } from "../../src/services/lifecycleTiming";
@@ -42,9 +49,15 @@ import {
 } from "../../src/services/meetingFinishInput";
 import { decideAutoRecordCancellation } from "../../src/services/autoRecordCancellationService";
 import { getNotes } from "../../src/services/notesService";
+import { fetchJsonFromS3 } from "../../src/services/storageService";
+import { buildCurrentNotesInput } from "../../src/services/processingRetryNotesInput";
+import { getProcessingRetryEligibility } from "../../src/services/processingRetryEligibility";
 import { MEETING_FINISH_FAILED_LOG } from "../../src/metrics";
 import type { MeetingHistory } from "../../src/types/db";
-import { EMPTY_RECORDING_NOTICE } from "../../src/utils/meetingProcessing";
+import {
+  EMPTY_RECORDING_NOTICE,
+  PROCESSING_FAILED_NOTICE,
+} from "../../src/utils/meetingProcessing";
 import { autoRecordCompletionPolicy } from "../fixtures/completionPolicy";
 import {
   pcmArtifact,
@@ -62,8 +75,12 @@ import {
   discordMessage,
 } from "./meetingDelivery.fixture";
 import {
+  CHECKPOINT,
   CREATOR_ID,
+  GENERATED_NOTE,
   NOTICE_MESSAGE_ID,
+  TRANSCRIPT_KEY,
+  currentSettingsNotesInput,
   autoRecordingRow,
   errorsLogged,
   processingRow,
@@ -420,5 +437,90 @@ describe("a recovered capture the row records as complete", () => {
       "recording was interrupted",
     );
     expect(errorsLogged(MEETING_FINISH_FAILED_LOG)).toBe(0);
+  });
+});
+
+/**
+ * The closing worker saves the transcript before it generates notes, so a
+ * later attempt can find one even when no audio piece was ever saved.
+ */
+describe("a recovered meeting whose transcript was saved but whose audio was not", () => {
+  const unusedReader = { read: jest.fn(), readVerifiedObject: jest.fn() };
+  beforeEach(() =>
+    jest
+      .mocked(buildCurrentNotesInput)
+      .mockImplementation(currentSettingsNotesInput),
+  );
+
+  /** Notes generated from the saved transcript, ending interrupted since nothing proves it complete. */
+  function expectNotesFromSavedTranscript(world: FinishWorld) {
+    expect(fetchJsonFromS3).toHaveBeenCalledWith(
+      TRANSCRIPT_KEY,
+      expect.anything(),
+    );
+    expect(world.current()).toMatchObject({
+      status: "interrupted",
+      notes: GENERATED_NOTE,
+      processing: { transcription: "partial", notes: "generated" },
+      recovery: DONE_MARKER,
+    });
+    expect(errorsLogged(MEETING_FINISH_FAILED_LOG)).toBe(0);
+  }
+
+  test("with no checkpoint generates notes from it", async () => {
+    jest.mocked(fetchJsonFromS3).mockResolvedValueOnce({ text: SPOKEN });
+    const world = setup(processingRow({ transcriptS3Key: TRANSCRIPT_KEY }));
+    await world.finish((signal) =>
+      loadRecoveryFinishInput(world.current(), signal, unusedReader),
+    );
+    expectNotesFromSavedTranscript(world);
+  });
+
+  test("with a checkpoint holding no audio generates notes from it", async () => {
+    jest.mocked(fetchJsonFromS3).mockResolvedValueOnce({ text: SPOKEN });
+    const row = processingRow({ transcriptS3Key: TRANSCRIPT_KEY });
+    const saved = await recoveryFixture(SPOKEN, { timestamp: START });
+    const world = setup(row);
+    await world.finish((signal) =>
+      loadRecoveryFinishInput(
+        {
+          ...saved.claim.history,
+          capture: row.capture,
+          transcriptS3Key: TRANSCRIPT_KEY,
+        },
+        signal,
+        saved.reader,
+      ),
+    );
+    expectNotesFromSavedTranscript(world);
+  });
+
+  test("that cannot be read is retried, then given up with a notice and a processing record the portal can retry", async () => {
+    jest.mocked(fetchJsonFromS3).mockResolvedValue(undefined);
+    const row = processingRow({
+      transcriptS3Key: TRANSCRIPT_KEY,
+      checkpoint: CHECKPOINT,
+    });
+    const saved = await recoveryFixture(SPOKEN, { timestamp: START });
+    const world = setup(row);
+    const load = (signal: AbortSignal) =>
+      loadRecoveryFinishInput(
+        {
+          ...saved.claim.history,
+          capture: row.capture,
+          transcriptS3Key: TRANSCRIPT_KEY,
+        },
+        signal,
+        saved.reader,
+      );
+    for (let attempt = 0; attempt < 4; attempt++) await world.finish(load);
+    expect(world.current()).toMatchObject({
+      status: "failed",
+      processing: { transcription: "failed" },
+    });
+    expect(startMessage(world).content).toBe(PROCESSING_FAILED_NOTICE);
+    expect(getProcessingRetryEligibility(world.current())).toMatchObject({
+      eligible: true,
+    });
   });
 });
