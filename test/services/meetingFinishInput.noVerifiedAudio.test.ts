@@ -1,12 +1,12 @@
 /** @jest-environment node */
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
-jest.mock("../../src/services/transcriptionService", () => ({
-  ...jest.requireActual("../../src/services/transcriptionService"),
-  transcribeContentSnippet: jest.fn(),
-}));
 jest.mock("../../src/services/storageService", () => ({
   ...jest.requireActual("../../src/services/storageService"),
   fetchJsonFromS3: jest.fn(),
+}));
+jest.mock("../../src/services/transcriptionService", () => ({
+  ...jest.requireActual("../../src/services/transcriptionService"),
+  transcribeContentSnippet: jest.fn(),
 }));
 jest.mock("../../src/services/processingRetryNotesInput", () => ({
   buildCurrentNotesInput: jest.fn(),
