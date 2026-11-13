@@ -150,7 +150,11 @@ export async function startWorker(options: {
   onFirstEligible(() => startEligibleWork(mode, runsBot));
   await startWorkerRegistry({
     mode,
-    isGatewayReady: () => config.mock.enabled || isBotGatewayReady(),
+    // REHEARSAL ONLY, never merge: on ECS this worker never reports ready, to
+    // simulate a failed first deployment in Sandbox.
+    isGatewayReady: () =>
+      !process.env.ECS_CONTAINER_METADATA_URI_V4 &&
+      (config.mock.enabled || isBotGatewayReady()),
     isServerListening: () => server?.server.listening ?? false,
     load: () => ({
       captures: captureCount(),
