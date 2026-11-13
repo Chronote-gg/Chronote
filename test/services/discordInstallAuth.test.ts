@@ -3,9 +3,10 @@ import express from "express";
 import session from "express-session";
 import { rateLimit } from "express-rate-limit";
 import passport from "passport";
-import OAuth2Strategy from "passport-oauth2";
+import { Strategy as DiscordStrategy } from "passport-discord";
 import type { AddressInfo } from "net";
 import {
+  discordLoginAuthentication,
   discordCallbackAuthentication,
   resolveDiscordCallbackRedirect,
 } from "../../src/services/discordInstallAuth";
@@ -20,9 +21,11 @@ import {
   setInstallAttributionOnRequest,
 } from "../../src/services/installAttributionService";
 
+import { discordLoginStateStore } from "../../src/services/discordLoginStateStore";
+
 // Real OAuth2 state validation, token exchange dispatch and Passport session
 // regeneration. Only Discord's network token endpoint is replaced.
-class TestDiscordStrategy extends OAuth2Strategy {
+class TestDiscordStrategy extends DiscordStrategy {
   constructor(install: boolean) {
     super(
       {
@@ -32,7 +35,8 @@ class TestDiscordStrategy extends OAuth2Strategy {
         clientSecret: "fixture-secret",
         callbackURL: "https://api.chronote.gg/callback",
         state: true,
-        ...(install ? { store: discordInstallStateStore } : {}),
+        scope: ["identify", "email", "guilds"],
+        store: install ? discordInstallStateStore : discordLoginStateStore,
       },
       (_accessToken, _refreshToken, _profile, done) =>
         done(null, {
@@ -41,6 +45,18 @@ class TestDiscordStrategy extends OAuth2Strategy {
           refreshToken: "transient-refresh",
         }),
     );
+    this.userProfile = (_token, done) =>
+      done(null, {
+        id: "fixture-user",
+        username: "fixture",
+        discriminator: "0",
+        avatar: null,
+        provider: "discord",
+        locale: "en-US",
+        mfa_enabled: false,
+        verified: true,
+        email: "fixture@example.test",
+      });
     this._oauth2.getOAuthAccessToken = (_code, _params, done) =>
       done(null, "transient-token", "transient-refresh", {});
   }
@@ -85,7 +101,10 @@ async function createFixture() {
     setInstallAttributionOnRequest(req, parseInstallAttribution(req.query));
     auth.authenticate("discord-install", { session: false })(req, res, next);
   });
-  app.get("/portal-begin", auth.authenticate("discord"));
+  app.get(
+    "/portal-begin",
+    discordLoginAuthentication(auth, "https://chronote.gg"),
+  );
   app.get(
     "/callback",
     discordCallbackAuthentication(auth, "https://chronote.gg"),
@@ -218,6 +237,16 @@ test.each([false, true])(
   },
 );
 
+async function expectReplayRejected(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+  state: string,
+  cookie: string,
+) {
+  const replay = await fixture.get(callbackPath(state), cookie);
+  expect(replay.status).toBe(302);
+  expect(fixture.serialized).not.toHaveBeenCalled();
+}
+
 test("parallel install flows retain their own attribution and DNT and reject replay", async () => {
   const fixture = await createFixture();
   try {
@@ -232,9 +261,7 @@ test("parallel install flows retain their own attribution and DNT and reject rep
     ]);
     expect((await resultA.json()).attribution.source).toBe("github");
     expect((await resultB.json()).attribution).toBeUndefined();
-    const replay = await fixture.get(callbackPath(stateFrom(a)), cookie);
-    expect(replay.status).toBe(302);
-    expect(fixture.serialized).not.toHaveBeenCalled();
+    await expectReplayRejected(fixture, stateFrom(a), cookie);
   } finally {
     await fixture.close();
   }
@@ -295,7 +322,82 @@ test("provider denial consumes only the cancelled flow", async () => {
     expect(denied.headers.get("location")).toBe("https://chronote.gg");
     const success = await fixture.get(callbackPath(stateFrom(b)), cookie);
     expect((await success.json()).attribution.source).toBe("reddit");
-    const replay = await fixture.get(callbackPath(stateFrom(a)), cookie);
+    await expectReplayRejected(fixture, stateFrom(a), cookie);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("ordinary login skips repeated consent and interactive login retains an approval step", async () => {
+  const fixture = await createFixture();
+  try {
+    const cookie = cookieFrom(await fixture.get("/session"));
+    const ordinary = new URL(
+      (await fixture.get("/portal-begin", cookie)).headers.get("location")!,
+    );
+    const interactive = new URL(
+      (
+        await fixture.get("/portal-begin?interaction=consent", cookie)
+      ).headers.get("location")!,
+    );
+    expect(ordinary.searchParams.get("prompt")).toBe("none");
+    expect(interactive.searchParams.get("prompt")).toBe("consent");
+    expect(ordinary.searchParams.get("scope")).toBe("identify email guilds");
+    expect(ordinary.searchParams.get("state")).not.toBe(
+      interactive.searchParams.get("state"),
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+test("concurrent portal sign-ins return to their own targets after session regeneration", async () => {
+  const fixture = await createFixture();
+  try {
+    let cookie = cookieFrom(await fixture.get("/session"));
+    const a = await fixture.get(
+      "/portal-begin?redirect=" +
+        encodeURIComponent(
+          "https://chronote.gg/portal/meetings?scope=personal#notes",
+        ),
+      cookie,
+    );
+    const b = await fixture.get(
+      "/portal-begin?redirect=" +
+        encodeURIComponent("https://chronote.gg/portal/settings"),
+      cookie,
+    );
+    const resultB = await fixture.get(callbackPath(stateFrom(b)), cookie);
+    cookie = cookieFrom(resultB) || cookie;
+    expect((await resultB.json()).redirect).toBe(
+      "https://chronote.gg/portal/settings",
+    );
+    const resultA = await fixture.get(callbackPath(stateFrom(a)), cookie);
+    expect((await resultA.json()).redirect).toBe(
+      "https://chronote.gg/portal/meetings?scope=personal#notes",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+test("cancelled recovery returns only its validated target with a bounded failure outcome", async () => {
+  const fixture = await createFixture();
+  try {
+    const cookie = cookieFrom(await fixture.get("/session"));
+    const begin = await fixture.get(
+      "/portal-begin?authRecovery=fixture-recovery&redirect=" +
+        encodeURIComponent("https://chronote.gg/portal/meetings#notes"),
+      cookie,
+    );
+    const result = await fixture.get(
+      callbackPath(stateFrom(begin), true),
+      cookie,
+    );
+    const target = new URL(result.headers.get("location")!);
+    expect(target.pathname).toBe("/portal/meetings");
+    expect(target.hash).toBe("#notes");
+    expect(target.searchParams.get("authRecovery")).toBe("fixture-recovery");
+    expect(target.searchParams.get("authOutcome")).toBe("failed");
+    const replay = await fixture.get(callbackPath(stateFrom(begin)), cookie);
     expect(replay.status).toBe(302);
     expect(fixture.serialized).not.toHaveBeenCalled();
   } finally {

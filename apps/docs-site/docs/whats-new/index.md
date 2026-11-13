@@ -7,6 +7,10 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Smoother portal sign-in (November 12)
+
+- Expired sessions reconnect through Discord and return to the requested page. Returning users can skip another approval click when Discord recognizes their existing grant. The portal warns before leaving unfinished edits or an upload. See [Sign in to the portal](/getting-started/#sign-in-to-the-portal).
+
 ### API request logging notice (November 4)
 
 - We are turning on request-level logging for the Chronote API so we can diagnose errors and availability problems. A log line records the caller's IP address and port, the requested path and query string, the response status, the time of the request, the user agent and the connection's security details.

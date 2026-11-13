@@ -1,3 +1,4 @@
+import { useAuthNavigationBlocker } from "../../../hooks/useAuthNavigationBlocker";
 import {
   Button,
   Group,
@@ -50,6 +51,9 @@ export default function MeetingNotesImportModal({
   const [mode, setMode] = useState<ImportNotesMode>("append");
   const [sourceName, setSourceName] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
+  useAuthNavigationBlocker(
+    opened && Boolean(notes || sourceName || sourceUrl || saving),
+  );
 
   useEffect(() => {
     if (!opened) return;

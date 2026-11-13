@@ -5,6 +5,13 @@ import {
   stashOauthRedirectFromSession,
   readOauthRedirectFromRequest,
 } from "./oauthRedirectSession";
+import { resolveRedirectTarget } from "./oauthRedirectService";
+import {
+  discordLoginStateStore,
+  readDiscordLoginIntent,
+  setDiscordLoginIntent,
+  type DiscordLoginIntent,
+} from "./discordLoginStateStore";
 import { readMcpAuthorizeRedirect } from "./mcpOAuthSession";
 import {
   discordInstallStateStore,
@@ -15,6 +22,47 @@ import {
 
 export { DISCORD_INSTALL_SESSION_KEY } from "./discordInstallStateStore";
 
+export function discordLoginAuthentication(
+  passport: Pick<Authenticator, "authenticate">,
+  frontendSiteUrl: string,
+): RequestHandler {
+  return (req, res, next) => {
+    const returnTo =
+      readMcpAuthorizeRedirect(req) ||
+      resolveRedirectTarget(req.query.redirect, frontendSiteUrl, {
+        allowedInternalPaths: ["/api/notion/connect"],
+      }) ||
+      stashOauthRedirectFromSession(req) ||
+      new URL("/portal", frontendSiteUrl).toString();
+    const prompt = req.query.interaction === "consent" ? "consent" : "none";
+    const recoveryId =
+      typeof req.query.authRecovery === "string" &&
+      /^[A-Za-z0-9_-]{1,128}$/.test(req.query.authRecovery)
+        ? req.query.authRecovery
+        : null;
+    setDiscordLoginIntent(req, { returnTo, prompt, recoveryId });
+    passport.authenticate("discord", { prompt })(req, res, next);
+  };
+}
+
+function loginOutcome(
+  intent: DiscordLoginIntent | undefined,
+  outcome: "ok" | "failed",
+  siteUrl: string,
+): string {
+  const returnTo = intent?.returnTo ?? new URL("/portal", siteUrl).toString();
+  if (returnTo.startsWith("/"))
+    return outcome === "ok"
+      ? returnTo
+      : new URL("/portal?authOutcome=failed", siteUrl).toString();
+  const target = new URL(returnTo);
+  if (intent?.recoveryId)
+    target.searchParams.set("authRecovery", intent.recoveryId);
+  if (intent?.recoveryId || outcome === "failed")
+    target.searchParams.set("authOutcome", outcome);
+  return target.toString();
+}
+
 // Both flows use the registered callback URL, but separate Passport state stores
 // bind each response to its intended flow. DNT does not affect that binding.
 export function discordCallbackAuthentication(
@@ -23,17 +71,46 @@ export function discordCallbackAuthentication(
 ): RequestHandler {
   return (req, res, next) => {
     if (!isDiscordInstallState(req.query.state)) {
-      const installBinding = readDiscordInstallBinding(req);
-      stashOauthRedirectFromSession(req);
-      res.locals.mcpAuthorizeRedirect = readMcpAuthorizeRedirect(req);
-      passport.authenticate("discord", { failureRedirect: frontendSiteUrl })(
-        req,
-        res,
-        (error: unknown) => {
-          if (!error) restoreDiscordInstallBinding(req, installBinding);
-          next(error);
+      const binding = readDiscordInstallBinding(req);
+      passport.authenticate(
+        "discord",
+        async (error: unknown, user: Express.User | false | null) => {
+          let intent = readDiscordLoginIntent(req);
+          if (error || !user) {
+            try {
+              intent ??= await discordLoginStateStore.consumeFailure(
+                req,
+                req.query.state,
+              );
+            } catch (stateError) {
+              next(stateError);
+              return;
+            }
+            res.redirect(loginOutcome(intent, "failed", frontendSiteUrl));
+            return;
+          }
+          if (!intent) {
+            res.redirect(loginOutcome(undefined, "failed", frontendSiteUrl));
+            return;
+          }
+          const destination = loginOutcome(intent, "ok", frontendSiteUrl);
+          req.logIn(user, (loginError) => {
+            if (loginError) {
+              next(loginError);
+              return;
+            }
+            restoreDiscordInstallBinding(req, binding);
+            req.session.save((saveError) => {
+              if (saveError) {
+                next(saveError);
+                return;
+              }
+              res.locals.discordLoginRedirect = destination;
+              next();
+            });
+          });
         },
-      );
+      )(req, res, next);
       return;
     }
     passport.authenticate(
@@ -74,6 +151,7 @@ export function resolveDiscordCallbackRedirect(
   if (res.locals.discordInstallerId)
     return new URL("/join", frontendSiteUrl).toString();
   return (
+    res.locals.discordLoginRedirect ||
     res.locals.mcpAuthorizeRedirect ||
     readOauthRedirectFromRequest(req) ||
     frontendSiteUrl

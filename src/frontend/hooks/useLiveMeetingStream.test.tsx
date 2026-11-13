@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { useLiveMeetingStream, toStreamStatus } from "./useLiveMeetingStream";
+import { subscribeAuthTransport } from "../services/authRecovery";
 
 jest.mock("../services/apiClient", () => ({
   buildApiUrl: (path: string) => path,
@@ -21,6 +22,22 @@ class TestEventSource extends EventTarget {
 }
 
 const originalEventSource = global.EventSource;
+
+it("a stream transport error requests an identity check without interpreting it as logout", () => {
+  const check = jest.fn();
+  const unsubscribe = subscribeAuthTransport(check);
+  const { result } = renderHook(() =>
+    useLiveMeetingStream({
+      guildId: "fixture",
+      meetingId: "fixture",
+      enabled: true,
+    }),
+  );
+  act(() => TestEventSource.latest.onerror?.());
+  expect(check).toHaveBeenCalledTimes(1);
+  unsubscribe();
+  expect(result.current.status).toBe("error");
+});
 beforeEach(() => {
   TestEventSource.instances = [];
   Object.defineProperty(global, "EventSource", {

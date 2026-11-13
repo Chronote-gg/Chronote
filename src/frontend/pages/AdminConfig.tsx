@@ -1,3 +1,4 @@
+import { useAuthNavigationBlocker } from "../hooks/useAuthNavigationBlocker";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -154,6 +155,7 @@ const useAdminConfigState = (): {
     {},
   );
   const [dirty, setDirty] = useState(false);
+  useAuthNavigationBlocker(dirty);
 
   useEffect(() => {
     if (dirty) return;

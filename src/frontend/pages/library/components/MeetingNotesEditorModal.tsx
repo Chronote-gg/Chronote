@@ -1,3 +1,4 @@
+import { useAuthModalDraft } from "../../../hooks/useAuthNavigationBlocker";
 import { Button, Group, Modal, Stack, Text } from "@mantine/core";
 import { useEffect, useMemo, useState } from "react";
 import ReactQuill from "react-quill-new";
@@ -66,13 +67,12 @@ export default function MeetingNotesEditorModal({
   }, [initialDelta, initialMarkdown]);
 
   const [value, setValue] = useState<Delta>(resolvedInitialDelta);
-  const [dirty, setDirty] = useState(false);
+  const { dirty, markDirty } = useAuthModalDraft(opened, saving);
 
   useEffect(() => {
-    if (!opened) return;
+    if (!opened || dirty) return;
     setValue(resolvedInitialDelta);
-    setDirty(false);
-  }, [opened, resolvedInitialDelta]);
+  }, [opened, resolvedInitialDelta, dirty]);
 
   return (
     <Modal
@@ -107,7 +107,7 @@ export default function MeetingNotesEditorModal({
                 ? new Delta(contents as unknown as { ops: never[] })
                 : buildPlainDeltaFromMarkdown(initialMarkdown),
             );
-            setDirty(true);
+            markDirty();
           }}
           modules={DEFAULT_MODULES}
           style={{ minHeight: 260 }}
