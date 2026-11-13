@@ -117,6 +117,37 @@ describe("wait-drain: an older task that is still the serving worker", () => {
     expect(h.named("ecs.stop-task")).toHaveLength(0);
     expect(h.named("cloudwatch.put-metric-data")).toHaveLength(1);
   });
+  test("a timeout after an unreadable final poll counts only tasks not latched draining", async () => {
+    // Read 1 is the marker. Read 2 latches the revision 5 task draining under a
+    // ready revision 6 worker and leaves the revision 6 task unknown; later reads fail.
+    let calls = 0;
+    const h = harness({
+      tasks: [
+        { ...OLD_TASK, taskDefinitionArn: OLD_ARN.replace(/:6$/, ":5") },
+        { ...OLD_TASK, taskArn: "task/unknown" },
+      ],
+      registry: (clock) => {
+        calls += 1;
+        if (calls > 2) throw new Error("ProvisionedThroughputExceeded");
+        return [
+          CUTOVER,
+          worker("i-six", {
+            release: 6,
+            taskArn: "task/other",
+            heartbeatAt: freshSeconds(clock),
+          }),
+        ];
+      },
+    });
+    await expect(h.deploy.waitDrain()).rejects.toThrow(
+      /160 minutes; 1 of them never showed/,
+    );
+    expect(
+      h.logs.some((line) =>
+        /2 older tasks waited for \(1 draining, 1 unknown\)/.test(line),
+      ),
+    ).toBe(true);
+  });
   test("unknown at first, then superseded by a newer ready worker, drains normally", async () => {
     const readyAt = START_MS + 2 * MINUTE_MS;
     const h = servingHarness((now) => [

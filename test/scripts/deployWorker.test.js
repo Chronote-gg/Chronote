@@ -87,9 +87,11 @@ describe("wait-drain", () => {
     expect(h.named("ecs.list-tasks")[0].params.desiredStatus).toBe("RUNNING");
     expect(h.named("cloudwatch.put-metric-data")).toHaveLength(0);
     expect(h.named("ecs.stop-task")).toHaveLength(0);
-    expect(h.logs.some((line) => /1 older task draining/.test(line))).toBe(
-      true,
-    );
+    expect(
+      h.logs.some((line) =>
+        /1 older task waited for \(0 draining, 1 unknown\)/.test(line),
+      ),
+    ).toBe(true);
     expect(h.elapsed()).toBeGreaterThanOrEqual(10 * MINUTE_MS);
   });
   test("drain wait times out at 160 minutes and publishes the metric", async () => {
@@ -213,7 +215,9 @@ describe("wait-drain", () => {
     expect(stops.sort()).toEqual(["task/a", "task/b"]);
     expect(h.named("ecs.stop-task")[0].params.reason).toMatch(/deployment/);
     expect(
-      h.logs.filter((line) => /2 older tasks draining/.test(line)),
+      h.logs.filter((line) =>
+        /2 older tasks waited for \(2 draining, 0 unknown\)/.test(line),
+      ),
     ).toHaveLength(2);
   });
   test("protection wait proceeds after five minutes", async () => {

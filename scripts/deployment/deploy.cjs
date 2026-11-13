@@ -158,11 +158,13 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     const older = await olderTasks();
     const open = older.filter((task) => !wait.draining.has(task.taskArn));
     const ready = open.length ? await readyForDrain(wait.retire) : [];
-    if (!ready) return { waiting: older, retirable: [] };
-    for (const task of open) classify(task, ready, wait);
+    if (ready) for (const task of open) classify(task, ready, wait);
+    const latched = (task) => wait.draining.has(task.taskArn);
     return {
-      waiting: older.filter((task) => !wait.serving.has(task.taskArn)),
-      retirable: older.filter((task) => wait.draining.has(task.taskArn)),
+      waiting: ready
+        ? older.filter((task) => !wait.serving.has(task.taskArn))
+        : older,
+      draining: older.filter(latched),
     };
   }
 
@@ -300,9 +302,10 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     const retired = new Set();
     const wait = { retire, serving: new Set(), draining: new Set() };
     for (;;) {
-      const { waiting, retirable } = await drainingTasks(wait);
+      const { waiting, draining } = await drainingTasks(wait);
+      const unknown = waiting.length - draining.length;
       log(
-        `${waiting.length} older ${waiting.length === 1 ? "task" : "tasks"} draining`,
+        `${waiting.length} older ${waiting.length === 1 ? "task" : "tasks"} waited for (${draining.length} draining, ${unknown} unknown)`,
       );
       if (!waiting.length) break;
       if (now() - started >= DRAIN_TIMEOUT_MS) {
@@ -310,9 +313,9 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
           Namespace: namespace,
           MetricData: [{ MetricName: DRAIN_METRIC, Value: 1, Unit: "Count" }],
         });
-        throw new Error(drainTimeoutMessage(waiting.length - retirable.length));
+        throw new Error(drainTimeoutMessage(unknown));
       }
-      if (retire) await retireTasks(retirable, retired);
+      if (retire) await retireTasks(draining, retired);
       await sleep(DRAIN_POLL_MS);
     }
   }
