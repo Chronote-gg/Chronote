@@ -1,6 +1,6 @@
 "use strict";
 const { execFile } = require("node:child_process");
-const { promisify } = require("node:util");
+const { isDeepStrictEqual, promisify } = require("node:util");
 const { unmarshall } = require("@aws-sdk/util-dynamodb");
 
 const SECOND_MS = 1000;
@@ -321,6 +321,18 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     return applicationContainer(await taskDefinition(svc.taskDefinition)).image;
   }
 
+  function registrationInput(definition, image) {
+    const input = structuredClone(definition);
+    for (const field of READ_ONLY_TASK_FIELDS) delete input[field];
+    for (const container of input.containerDefinitions)
+      if (container.environment)
+        container.environment = container.environment.filter(
+          (entry) => entry.name !== CANDIDATE_ENV,
+        );
+    applicationContainer(input).image = image;
+    return input;
+  }
+
   async function deployImage(image) {
     const family = required("ECS_TASK_FAMILY");
     const svc = await service();
@@ -329,18 +341,15 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     // Terraform-registered environment change reaches the service.
     const latest = await taskDefinition(family);
     if (latest.family !== family) throw new Error("Task family mismatch");
-    const input = structuredClone(latest);
-    for (const field of READ_ONLY_TASK_FIELDS) delete input[field];
-    for (const container of input.containerDefinitions)
-      if (container.environment)
-        container.environment = container.environment.filter(
-          (entry) => entry.name !== CANDIDATE_ENV,
-        );
-    applicationContainer(input).image = image;
-    const registered = (await aws("ecs", "register-task-definition", input))
-      .taskDefinition;
+    const registered = (
+      await aws(
+        "ecs",
+        "register-task-definition",
+        registrationInput(latest, image),
+      )
+    ).taskDefinition;
     // Printed first so a run that fails from here on still knows what to roll back to.
-    output({ previousImage });
+    output({ previousImage, previousTaskDefinition: svc.taskDefinition });
     try {
       await aws("ecs", "update-service", {
         cluster: cluster(),
@@ -388,8 +397,33 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     }
   }
 
-  async function rollback({ image }) {
+  /**
+   * Rollback swaps only the image back. It never restores an earlier task
+   * definition, because the next deployment starts from the family's latest
+   * revision and would silently drop a Terraform change. So a failure the
+   * task definition may have caused is left for a forward repair.
+   */
+  function assertImageOnlyChange(failed, previous) {
+    const sameImage =
+      applicationContainer(failed).image ===
+      applicationContainer(previous).image;
+    const sameDefinition = isDeepStrictEqual(
+      registrationInput(failed, ""),
+      registrationInput(previous, ""),
+    );
+    if (!sameImage && sameDefinition) return;
+    const difference = sameImage
+      ? "runs the same image as"
+      : "differs in more than its image from";
+    throw new Error(
+      `Cutover marker present: the failure is in the task definition, which rolling back the image cannot repair: revision ${failed.revision} ${difference} revision ${previous.revision}. Nothing was rolled back. Repair forward: fix the configuration and deploy again; failing the run`,
+    );
+  }
+
+  async function rollback({ image, previousTaskDefinition }) {
     if (!image) throw new Error("--image is required");
+    if (!previousTaskDefinition)
+      throw new Error("--previous-task-definition is required");
     // Release numbers only ever increase, so the only rollback is a higher
     // revision, and it is only correct once new workers are in charge.
     const cutover = await cutoverState();
@@ -403,10 +437,15 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
       );
     // A rollout that ECS rejected left the service where it was; replacing the
     // serving tasks with the same image would only start a needless drain.
-    if ((await servingImage(await service())) === image)
+    const failedArn = (await service()).taskDefinition;
+    if (failedArn === previousTaskDefinition)
       throw new Error(
-        "Cutover marker present: the service never moved off the previous image; nothing rolled back, failing the run",
+        "Cutover marker present: the service never moved off the previous revision; nothing rolled back, failing the run",
       );
+    assertImageOnlyChange(
+      await taskDefinition(failedArn),
+      await taskDefinition(previousTaskDefinition),
+    );
     const { revision } = await deployImage(image);
     throw new Error(
       `Cutover marker present: rolled back to the previous image as revision ${revision}; failing the run`,
@@ -424,6 +463,8 @@ function parseArguments(argv) {
     if (flag === "--retire") options.retire = true;
     else if (flag === "--image") options.image = rest[++index];
     else if (flag === "--release") options.release = Number(rest[++index]);
+    else if (flag === "--previous-task-definition")
+      options.previousTaskDefinition = rest[++index];
     else throw new Error(`Unknown argument ${flag}`);
   }
   return { command, options };

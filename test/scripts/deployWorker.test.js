@@ -108,6 +108,7 @@ function harness(overrides = {}) {
     latestRevision: 7,
     servingImage: PREVIOUS_IMAGE,
     stopping: new Map(),
+    definitions: {},
     ...overrides,
   };
   const handlers = {
@@ -146,9 +147,10 @@ function harness(overrides = {}) {
     "dynamodb.query": () => ({ Items: state.registry(clock) }),
     "ecs.describe-task-definition": ({ taskDefinition: ref }) => ({
       taskDefinition:
-        ref === FAMILY
+        state.definitions[ref] ??
+        (ref === FAMILY
           ? taskDefinition(state.latestRevision, "repo@sha256:latest")
-          : taskDefinition(7, state.servingImage),
+          : taskDefinition(7, state.servingImage)),
     }),
     "ecs.register-task-definition": (input) => ({
       taskDefinition: {
@@ -564,7 +566,10 @@ describe("rollout", () => {
       (c) => c.name === "ecs.update-service",
     );
     expect(h.outputs[0]).toEqual({
-      value: { previousImage: PREVIOUS_IMAGE },
+      value: {
+        previousImage: PREVIOUS_IMAGE,
+        previousTaskDefinition: CURRENT_ARN,
+      },
       afterCalls: updateIndex,
     });
   });
@@ -586,7 +591,7 @@ describe("rollout", () => {
       /AccessDenied/,
     );
     expect(h.outputs.map((o) => o.value)).toEqual([
-      { previousImage: PREVIOUS_IMAGE },
+      { previousImage: PREVIOUS_IMAGE, previousTaskDefinition: CURRENT_ARN },
     ]);
   });
   test("rollout refuses an image without a digest", async () => {
@@ -652,19 +657,55 @@ describe("wait-ready", () => {
 });
 
 describe("rollback", () => {
-  test("rollback changes nothing when the service is still on the previous image", async () => {
-    const h = harness({ latestRevision: 8, servingImage: PREVIOUS_IMAGE });
-    await expect(h.deploy.rollback({ image: PREVIOUS_IMAGE })).rejects.toThrow(
-      /never moved off the previous image/,
+  const arn = (revision) =>
+    `arn:aws:ecs:us-east-1:000000000000:task-definition/${FAMILY}:${revision}`;
+  const withEnvironment = (definition, name, value) => {
+    const [application] = definition.containerDefinitions;
+    application.environment = application.environment.map((entry) =>
+      entry.name === name ? { name, value } : entry,
     );
+    return definition;
+  };
+  /** The service is on the failed revision 8; rollout was on revision 7. */
+  function rollbackHarness({
+    failed = taskDefinition(8, NEW_IMAGE),
+    ...overrides
+  } = {}) {
+    const previous = taskDefinition(7, PREVIOUS_IMAGE);
+    const h = harness({
+      latestRevision: 8,
+      definitions: {
+        [FAMILY]: failed,
+        [failed.taskDefinitionArn]: failed,
+        [previous.taskDefinitionArn]: previous,
+      },
+      ...overrides,
+    });
+    h.state.service.taskDefinition = failed.taskDefinitionArn;
+    return h;
+  }
+  const rollBack = (h, options = {}) =>
+    h.deploy.rollback({
+      image: PREVIOUS_IMAGE,
+      previousTaskDefinition: arn(7),
+      ...options,
+    });
+  const expectNothingChanged = (h) => {
     expect(h.named("ecs.register-task-definition")).toHaveLength(0);
     expect(h.named("ecs.update-service")).toHaveLength(0);
-  });
-  test("rollback registers a higher revision when the service moved to the new image", async () => {
-    const h = harness({ latestRevision: 8, servingImage: NEW_IMAGE });
-    await expect(h.deploy.rollback({ image: PREVIOUS_IMAGE })).rejects.toThrow(
-      /rolled back.*revision 9/i,
+  };
+
+  test("rollback changes nothing when the service is still on the previous revision", async () => {
+    const h = rollbackHarness();
+    h.state.service.taskDefinition = arn(7);
+    await expect(rollBack(h)).rejects.toThrow(
+      /never moved off the previous revision/,
     );
+    expectNothingChanged(h);
+  });
+  test("rollback registers a higher revision when only the image changed", async () => {
+    const h = rollbackHarness();
+    await expect(rollBack(h)).rejects.toThrow(/rolled back.*revision 9/i);
     const [register] = h.named("ecs.register-task-definition");
     expect(register.params.containerDefinitions[0].image).toBe(PREVIOUS_IMAGE);
     const [update] = h.named("ecs.update-service");
@@ -674,52 +715,56 @@ describe("rollback", () => {
       ConsistentRead: true,
     });
   });
+  test.each([
+    ["the image did not change", () => taskDefinition(8, PREVIOUS_IMAGE)],
+    [
+      "the environment changed with the image",
+      () => withEnvironment(taskDefinition(8, NEW_IMAGE), "KEEP", "2"),
+    ],
+  ])("rollback asks for a forward repair when %s", async (_, failed) => {
+    const h = rollbackHarness({ failed: failed() });
+    await expect(rollBack(h)).rejects.toThrow(
+      /failure is in the task definition.*revision 8.*revision 7.*fix the configuration and deploy again/,
+    );
+    expectNothingChanged(h);
+  });
+  test("rollback refuses without the previous revision", async () => {
+    const h = rollbackHarness();
+    await expect(
+      rollBack(h, { previousTaskDefinition: undefined }),
+    ).rejects.toThrow(/--previous-task-definition is required/);
+    expectNothingChanged(h);
+  });
   test("rollback without the cutover marker changes nothing in ECS", async () => {
-    const h = harness({
-      latestRevision: 8,
-      servingImage: NEW_IMAGE,
-      registry: () => [],
-    });
-    await expect(h.deploy.rollback({ image: PREVIOUS_IMAGE })).rejects.toThrow(
+    const h = rollbackHarness({ registry: () => [] });
+    await expect(rollBack(h)).rejects.toThrow(
       /old runtime is still in charge.*new deployment of a fixed commit/,
     );
-    expect(h.named("ecs.register-task-definition")).toHaveLength(0);
-    expect(h.named("ecs.update-service")).toHaveLength(0);
+    expectNothingChanged(h);
   });
   test("rollback retries a failing marker read, then changes nothing", async () => {
-    const h = harness({
-      latestRevision: 8,
-      servingImage: NEW_IMAGE,
+    const h = rollbackHarness({
       registry: () => {
         throw new Error("AccessDenied");
       },
     });
-    await expect(h.deploy.rollback({ image: PREVIOUS_IMAGE })).rejects.toThrow(
+    await expect(rollBack(h)).rejects.toThrow(
       /cutover state could not be read.*nothing was changed/,
     );
     expect(h.named("dynamodb.query")).toHaveLength(MARKER_READ_ATTEMPTS);
-    expect(h.named("ecs.register-task-definition")).toHaveLength(0);
-    expect(h.named("ecs.update-service")).toHaveLength(0);
+    expectNothingChanged(h);
     expect(h.elapsed()).toBeLessThan(MINUTE_MS);
   });
   test("rollback takes the path of a marker read that succeeds on retry", async () => {
-    const absent = harness({
-      latestRevision: 8,
-      servingImage: NEW_IMAGE,
-      registry: failingReads(1, () => []),
-    });
-    await expect(
-      absent.deploy.rollback({ image: PREVIOUS_IMAGE }),
-    ).rejects.toThrow(/old runtime is still in charge/);
+    const absent = rollbackHarness({ registry: failingReads(1, () => []) });
+    await expect(rollBack(absent)).rejects.toThrow(
+      /old runtime is still in charge/,
+    );
     expect(absent.named("ecs.update-service")).toHaveLength(0);
-    const present = harness({
-      latestRevision: 8,
-      servingImage: NEW_IMAGE,
+    const present = rollbackHarness({
       registry: failingReads(1, () => [CUTOVER]),
     });
-    await expect(
-      present.deploy.rollback({ image: PREVIOUS_IMAGE }),
-    ).rejects.toThrow(/rolled back.*revision 9/i);
+    await expect(rollBack(present)).rejects.toThrow(/rolled back.*revision 9/i);
     expect(present.named("dynamodb.query")).toHaveLength(2);
   });
 });
@@ -734,6 +779,18 @@ test("arguments parse into subcommand options", async () => {
   expect(parseArguments(["wait-ready", "--release", "12"])).toEqual({
     command: "wait-ready",
     options: { release: 12 },
+  });
+  expect(
+    parseArguments([
+      "rollback",
+      "--image",
+      PREVIOUS_IMAGE,
+      "--previous-task-definition",
+      OLD_ARN,
+    ]),
+  ).toEqual({
+    command: "rollback",
+    options: { image: PREVIOUS_IMAGE, previousTaskDefinition: OLD_ARN },
   });
   expect(() => parseArguments(["rollout", "--force"])).toThrow(/Unknown/);
 });

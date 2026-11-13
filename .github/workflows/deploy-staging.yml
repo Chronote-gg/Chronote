@@ -520,6 +520,7 @@ jobs:
           status=$?
           set -e
           echo "previous_image=$(jq -rs 'map(.previousImage // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"
+          echo "previous_task_definition=$(jq -rs 'map(.previousTaskDefinition // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"
           echo "revision=$(jq -rs 'map(.revision // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"
           exit "$status"
 
@@ -533,7 +534,8 @@ jobs:
         if: failure() && (steps.rollout.outcome == 'failure' || steps.wait-ready.outcome == 'failure') && steps.rollout.outputs.previous_image != ''
         env:
           PREVIOUS_IMAGE: ${{ steps.rollout.outputs.previous_image }}
-        run: node scripts/deployment/deploy.cjs rollback --image "$PREVIOUS_IMAGE"
+          PREVIOUS_TASK_DEFINITION: ${{ steps.rollout.outputs.previous_task_definition }}
+        run: node scripts/deployment/deploy.cjs rollback --image "$PREVIOUS_IMAGE" --previous-task-definition "$PREVIOUS_TASK_DEFINITION"
 
       - name: Create deployment summary
         if: always()

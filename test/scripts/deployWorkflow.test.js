@@ -71,14 +71,22 @@ describe.each(FILES)("%s", (name) => {
     expect(rollback.env.PREVIOUS_IMAGE).toBe(
       "${{ steps.rollout.outputs.previous_image }}",
     );
-    expect(rollback.run).toContain('--image "$PREVIOUS_IMAGE"');
+    expect(rollback.env.PREVIOUS_TASK_DEFINITION).toBe(
+      "${{ steps.rollout.outputs.previous_task_definition }}",
+    );
+    expect(rollout.run).toContain(
+      `echo "previous_task_definition=$(jq -rs 'map(.previousTaskDefinition // empty) | last // ""' "$output")" >> "$GITHUB_OUTPUT"`,
+    );
   });
 
-  test("rollback is given only the previous image", () => {
+  test("rollback is given only the previous image and revision", () => {
     const rollback = backend.steps[indexOfCommand(backend, "rollback")];
-    expect(Object.keys(rollback.env)).toEqual(["PREVIOUS_IMAGE"]);
+    expect(Object.keys(rollback.env)).toEqual([
+      "PREVIOUS_IMAGE",
+      "PREVIOUS_TASK_DEFINITION",
+    ]);
     expect(rollback.run.trim()).toBe(
-      `${DEPLOY_SCRIPT} rollback --image "$PREVIOUS_IMAGE"`,
+      `${DEPLOY_SCRIPT} rollback --image "$PREVIOUS_IMAGE" --previous-task-definition "$PREVIOUS_TASK_DEFINITION"`,
     );
   });
 
