@@ -11,9 +11,11 @@ variable "enable_processing_retry_policy" {
   }
 }
 locals {
-  retry_region       = "us-east-1:${var.production_account_id}"
-  retry_log_group    = "arn:aws:logs:${local.retry_region}:log-group:/ecs/meeting-notes-prod-bot"
-  retry_failure_name = "meeting-notes-prod-processing-retry-worker-failed"
+  retry_region    = "us-east-1:${var.production_account_id}"
+  retry_log_group = "arn:aws:logs:${local.retry_region}:log-group:/ecs/meeting-notes-prod-bot"
+  # The retry worker alarm, then the lifecycle alarms in _infra/alerts-lifecycle.tf.
+  # test/scripts/lifecycleAlarms.test.ts fails when an alarm there is missing here.
+  retry_alarm_names = ["processing-retry-worker-failed", "meeting-lifecycle-stuck", "meeting-finish-failed", "task-protection-failing", "no-eligible-worker", "finisher-scan-missing", "renewal-recovery-stalled", "deploy-drain-timeout"]
 }
 resource "aws_iam_policy" "processing_retry" {
   count = var.enable_processing_retry_policy ? 1 : 0
@@ -31,7 +33,7 @@ resource "aws_iam_policy" "processing_retry" {
       { Sid = "LogGroupDiscovery", Effect = "Allow", Action = "logs:DescribeLogGroups", Resource = "arn:aws:logs:${local.retry_region}:log-group:*" },
       { Sid = "AppLogGroup", Effect = "Allow", Action = ["logs:ListTagsForResource", "logs:DescribeMetricFilters", "logs:PutMetricFilter"], Resource = [local.retry_log_group, "${local.retry_log_group}:*"] },
       # Default tags travel with PutMetricAlarm.
-      { Sid = "RetryWorkerAlarm", Effect = "Allow", Action = ["cloudwatch:PutMetricAlarm", "cloudwatch:DescribeAlarms", "cloudwatch:TagResource", "cloudwatch:ListTagsForResource"], Resource = "arn:aws:cloudwatch:${local.retry_region}:alarm:${local.retry_failure_name}" },
+      { Sid = "RetryWorkerAlarm", Effect = "Allow", Action = ["cloudwatch:PutMetricAlarm", "cloudwatch:DescribeAlarms", "cloudwatch:TagResource", "cloudwatch:ListTagsForResource"], Resource = [for name in local.retry_alarm_names : "arn:aws:cloudwatch:${local.retry_region}:alarm:meeting-notes-prod-${name}"] },
       { Sid = "CriticalAlertsTopic", Effect = "Allow", Action = ["sns:GetTopicAttributes", "sns:ListTagsForResource"], Resource = "arn:aws:sns:${local.retry_region}:meeting-notes-prod-critical-alerts" }
     ]
   })

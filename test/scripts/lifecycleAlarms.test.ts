@@ -136,3 +136,31 @@ test("the drain alarm watches the metric deploy.cjs publishes", () => {
     /variable_name = "SECRETS_PREFIX"\s+value\s+= local\.name_prefix/,
   );
 });
+
+// The production Terraform role may create only alarms it names, so an alarm
+// added here without its grant would fail the scoped Apply with access denied.
+test("the production Terraform role may create every lifecycle alarm", () => {
+  const bootstrap = read("_infra/production-bootstrap/processing-retry.tf");
+  const [grantedList] = capture(
+    bootstrap,
+    /^\s*retry_alarm_names\s*= \[([^\]]*)\]$/gm,
+  );
+  const granted = capture(grantedList ?? "", /"([^"]+)"/g);
+  const suffixes = capture(
+    terraform,
+    /^\s*alarm_name\s*= "\$\{local\.name_prefix\}-([\w-]+)"$/gm,
+  );
+  const lifecycleNames = [...terraformAlarms.keys()].map((key) =>
+    key.replaceAll("_", "-"),
+  );
+  // The lifecycle alarms take their names from their filters, so only the
+  // drain alarm spells one out.
+  expect(suffixes).toEqual(["deploy-drain-timeout"]);
+  expect(lifecycleNames).toHaveLength(6);
+  expect(granted).toEqual(
+    expect.arrayContaining([...lifecycleNames, ...suffixes]),
+  );
+  expect(bootstrap).toMatch(
+    /Sid = "RetryWorkerAlarm".*Resource = \[for name in local\.retry_alarm_names : "arn:aws:cloudwatch:\$\{local\.retry_region\}:alarm:meeting-notes-prod-\$\{name\}"\]/,
+  );
+});
