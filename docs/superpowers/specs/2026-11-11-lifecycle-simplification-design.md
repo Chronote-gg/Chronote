@@ -324,7 +324,7 @@ The work handle that today threads through about 40 function signatures is repla
 
 The first deployment replaces a worker that still runs the old protocol, and the two must not process the same meeting. `docs/deployment.md` holds the operator procedure.
 
-- The backend job of the first deployment is approved at a moment when the old runtime is idle, checked by a person after the approval request appears.
+- The backend job of the first deployment is approved at a moment when the old runtime is idle, checked by a person after the approval request appears. The one exception is a processing lease that the old runtime keeps renewing for work stuck in its memory, with no recording in progress: the owner may then choose to stop the old task and finish those meetings by hand (`docs/deployment.md`, "If the old task holds a processing lease that never lapses").
 - While any old-protocol runtime record has a fresh heartbeat, or while those records cannot be read, a new worker is ready but not eligible. It takes no meetings, runs no finisher, and never asks for protection. This is the only place the new code reads old state, and it is removed in the following release.
 - The new workflow updates the service. An operator then stops the old task, at an idle moment after the new worker reports ready.
 - When every old-protocol heartbeat has been stale for two minutes, the new worker writes a cutover marker to the registry and becomes eligible. The marker is permanent: once it exists no worker enters standby again, whatever the old records say. Starts are unavailable from the stop until the cutover, about two to four minutes, once.
