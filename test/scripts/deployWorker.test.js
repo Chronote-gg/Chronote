@@ -291,10 +291,9 @@ describe("wait-drain", () => {
         { MetricName: "DrainWaitTimedOut", Value: 1, Unit: "Count" },
       ],
     });
-    // The marker read and one registry read per drain poll; the protection wait is never reached.
-    expect(h.named("dynamodb.query")).toHaveLength(
-      1 + h.named("ecs.list-tasks").length,
-    );
+    // The marker read and the first evaluation's registry read; a task seen
+    // draining needs no further read, and the protection wait is never reached.
+    expect(h.named("dynamodb.query")).toHaveLength(2);
   });
   test("drain wait without the cutover marker does not wait for the old runtime or retire it", async () => {
     const h = harness({
@@ -457,6 +456,37 @@ describe("wait-drain", () => {
         previousImage: PREVIOUS_IMAGE,
       });
       expect(h.named("ecs.stop-task")).toHaveLength(0);
+    });
+    test("a real drain keeps waiting when the newer record is stale for one poll", async () => {
+      const staleAt = START_MS + 30_000;
+      const h = servingHarness(
+        (now) => [
+          oldRecord(now),
+          worker("i-new", {
+            release: 7,
+            heartbeatAt: now * 1000 === staleAt ? now - 31 : now,
+          }),
+        ],
+        { onSleep: stopsAtTenMinutes },
+      );
+      await expect(h.deploy.waitDrain()).resolves.toBeUndefined();
+      expect(h.elapsed()).toBeGreaterThanOrEqual(10 * MINUTE_MS);
+      expect(h.logs.some((line) => /not waited for/.test(line))).toBe(false);
+    });
+    test("a serving task becomes draining once a newer worker is ready", async () => {
+      const readyAt = START_MS + 2 * MINUTE_MS;
+      const h = servingHarness(
+        (now) => [
+          oldRecord(now),
+          ...(now * 1000 >= readyAt
+            ? [worker("i-new", { release: 7, heartbeatAt: now })]
+            : []),
+        ],
+        { tasks: [{ ...OLD_TASK }, { ...OLD_TASK, taskArn: "task/older" }] },
+      );
+      h.state.onSleep = stopsAtTenMinutes;
+      await expect(h.deploy.waitDrain()).resolves.toBeUndefined();
+      expect(h.elapsed()).toBeGreaterThanOrEqual(10 * MINUTE_MS);
     });
   });
   test("protection wait proceeds after five minutes", async () => {

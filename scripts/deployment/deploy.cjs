@@ -149,23 +149,39 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
    * record is ready and no ready worker runs a higher release. That is the
    * worker's own eligibility rule, so after a rollout whose revision never
    * became ready the only serving worker is neither waited for nor retired.
+   * Only a task serving at the first evaluation is skipped, and it can only
+   * turn draining: one stale sample of the newer worker must not end a real
+   * drain.
    */
-  async function drainingTasks(reported) {
+  async function drainingTasks(wait) {
     const older = await olderTasks();
     if (!older.length) return older;
-    const ready = await readyWorkers();
-    return older.filter((task) => {
-      const own = ready.find((record) => record.taskArn === task.taskArn);
-      const serving =
-        Boolean(own) && !ready.some((record) => record.release > own.release);
-      if (serving && !reported.has(task.taskArn)) {
-        log(
-          `Older task ${task.taskArn} is the serving worker on revision ${own.release} and no newer revision has a ready worker; not waited for`,
-        );
-        reported.add(task.taskArn);
+    const candidates = older.filter(
+      (task) => wait.first || wait.serving.has(task.taskArn),
+    );
+    if (candidates.length) {
+      const ready = await readyWorkers();
+      for (const task of candidates) {
+        const serving = servingRecord(task, ready);
+        if (serving && wait.first) {
+          log(
+            `Older task ${task.taskArn} is the serving worker on revision ${serving.release} and no newer revision has a ready worker; not waited for`,
+          );
+          wait.serving.add(task.taskArn);
+        }
+        if (!serving) wait.serving.delete(task.taskArn);
       }
-      return !serving;
-    });
+    }
+    wait.first = false;
+    return older.filter((task) => !wait.serving.has(task.taskArn));
+  }
+
+  /** The task's own ready record when no ready worker runs a higher release. */
+  function servingRecord(task, ready) {
+    const own = ready.find((record) => record.taskArn === task.taskArn);
+    if (!own || ready.some((record) => record.release > own.release))
+      return null;
+    return own;
   }
 
   async function registry() {
@@ -267,9 +283,9 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     const namespace = `${required("SECRETS_PREFIX")}/Deploy`;
     const started = now();
     const retired = new Set();
-    const notWaitedFor = new Set();
+    const wait = { first: true, serving: new Set() };
     for (;;) {
-      const draining = await drainingTasks(notWaitedFor);
+      const draining = await drainingTasks(wait);
       log(
         `${draining.length} older ${draining.length === 1 ? "task" : "tasks"} draining`,
       );
