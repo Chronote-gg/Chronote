@@ -336,9 +336,10 @@ async function emptyRecording(
 }
 
 /**
- * Silence only when the complete manifest listed no audio: listed audio that
- * no longer verifies was lost after commit, so it is retried and given up
- * with a notice, never reported as a recording in which nobody spoke.
+ * Only a manifest that lists no audio means nothing was recorded, silence
+ * when it records a complete capture. Listed audio that no longer verifies,
+ * whatever the capture state, was lost after commit: it is retried and given
+ * up with a notice, never failed silently or reported as nobody speaking.
  */
 async function withoutVerifiedAudio(
   history: MeetingHistory,
@@ -348,7 +349,7 @@ async function withoutVerifiedAudio(
   const listedAudio = content.manifest.artifacts.some(
     (item) => item.kind === "audio",
   );
-  if (content.manifest.captureState.kind === "complete" && listedAudio)
+  if (listedAudio)
     throw new InvalidRecoveryContent("Saved audio failed verification");
   return endedCompleteSilent(history, content)
     ? emptyRecording(history, content, signal)

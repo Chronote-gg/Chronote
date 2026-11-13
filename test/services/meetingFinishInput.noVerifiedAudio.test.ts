@@ -20,6 +20,7 @@ import {
   InvalidRecoveryContent,
 } from "../../src/services/meetingRecoveryContent";
 import type { MeetingHistory } from "../../src/types/db";
+import type { RecordingCaptureState } from "../../src/types/recordingCheckpoint";
 import { history } from "../fixtures/meetingHistory";
 import { pcmArtifact, recoveryFixture } from "./meetingRecoveryFixtures";
 import {
@@ -48,10 +49,12 @@ beforeEach(() => {
 const storedTranscript = () =>
   jest.mocked(fetchJsonFromS3).mockResolvedValueOnce({ text: STORED_TEXT });
 
-/** A complete manifest that lists one audio piece whose object is gone. */
-async function lostAudioCheckpoint() {
+/** A manifest, complete by default, that lists one audio piece whose object is gone. */
+async function lostAudioCheckpoint(
+  captureState: RecordingCaptureState = completeEnd,
+) {
   const f = await recoveryFixture(STORED_TEXT, {
-    captureState: completeEnd,
+    captureState,
     artifacts: [
       pcmArtifact("user:123", 0, LOST_AUDIO, [
         { startOffsetMs: 0, durationMs: 20 },
@@ -189,5 +192,29 @@ describe("a manifest recording a complete capture that lists audio none of which
     );
     expectFromStoredTranscript(input);
     expect(input.processing).not.toEqual({ transcription: "empty" });
+  });
+});
+
+describe("a manifest that does not record a complete capture, with no saved transcript", () => {
+  test("listing audio none of which verifies is invalid recovery content", async () => {
+    const f = await lostAudioCheckpoint({
+      kind: "interrupted",
+      startedAt: history.timestamp,
+      detectedAt: history.timestamp,
+      endedAt: null,
+    });
+    await expect(
+      loadRecoveryFinishInput(f.claim.history, signal(), f.reader),
+    ).rejects.toBeInstanceOf(InvalidRecoveryContent);
+  });
+
+  test("listing no audio still fails silently as a start that recorded nothing", async () => {
+    const f = await recoveryFixture(STORED_TEXT);
+    const input = await loadRecoveryFinishInput(
+      f.claim.history,
+      signal(),
+      f.reader,
+    );
+    expect(input).toMatchObject({ hasSavedAudio: false, processing: {} });
   });
 });
