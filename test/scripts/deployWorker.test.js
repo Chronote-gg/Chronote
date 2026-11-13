@@ -766,6 +766,42 @@ describe("rollback", () => {
     expect(h.named("ecs.update-service")).toHaveLength(0);
   };
 
+  test.each([
+    ["as registered", (definition) => definition],
+    [
+      "with its environment returned in another order",
+      (definition) => {
+        for (const container of definition.containerDefinitions)
+          container.environment.reverse();
+        return definition;
+      },
+    ],
+  ])(
+    "rollback rolls back the revision rollout registered, %s",
+    async (_, describedAs) => {
+      const previous = taskDefinition(7, PREVIOUS_IMAGE);
+      const h = harness({
+        definitions: {
+          [FAMILY]: previous,
+          [previous.taskDefinitionArn]: previous,
+        },
+      });
+      await h.deploy.rollout({ image: NEW_IMAGE });
+      const [register] = h.named("ecs.register-task-definition");
+      const failed = describedAs({
+        ...taskDefinition(8, NEW_IMAGE),
+        ...structuredClone(register.params),
+        taskDefinitionArn: arn(8),
+        revision: 8,
+      });
+      Object.assign(h.state.definitions, {
+        [FAMILY]: failed,
+        [failed.taskDefinitionArn]: failed,
+      });
+      h.state.latestRevision = 8;
+      await expect(rollBack(h)).rejects.toThrow(/rolled back.*revision 9/i);
+    },
+  );
   test("rollback changes nothing when the service is still on the previous revision", async () => {
     const h = rollbackHarness();
     h.state.service.taskDefinition = arn(7);

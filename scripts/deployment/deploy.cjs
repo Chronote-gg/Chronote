@@ -358,6 +358,24 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     return input;
   }
 
+  /**
+   * A copy for comparison only: ECS may return name-keyed lists such as
+   * `environment` and `secrets` in another order than they were registered.
+   */
+  function sortedByName(value) {
+    if (Array.isArray(value)) {
+      const items = value.map(sortedByName);
+      return items.every((item) => typeof item?.name === "string")
+        ? items.sort((a, b) => a.name.localeCompare(b.name))
+        : items;
+    }
+    if (value && typeof value === "object")
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, sortedByName(item)]),
+      );
+    return value;
+  }
+
   async function deployImage(image, rolloutState = {}) {
     const family = required("ECS_TASK_FAMILY");
     const svc = await service();
@@ -439,8 +457,8 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
       applicationContainer(failed).image ===
       applicationContainer(previous).image;
     const sameDefinition = isDeepStrictEqual(
-      registrationInput(failed, ""),
-      registrationInput(previous, ""),
+      sortedByName(registrationInput(failed, "")),
+      sortedByName(registrationInput(previous, "")),
     );
     if (!sameImage && sameDefinition) return;
     const difference = sameImage
