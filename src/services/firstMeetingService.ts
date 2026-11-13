@@ -114,6 +114,10 @@ function matchesActiveLease(
 async function verifiedLiveKind(
   history: MeetingHistory,
 ): Promise<"recording" | "processing" | null> {
+  // Close frees the lease before processing, and the row stays processing only until the finish settles or abandons it.
+  if (history.lifecycleVersion === 2 && history.status === "processing") {
+    return "processing";
+  }
   const lease = await getActiveMeetingLease(history.guildId);
   if (!lease || !matchesActiveLease(lease, history)) return null;
   if (lease.status === "processing") return "processing";
@@ -140,10 +144,6 @@ async function deriveState(
       kind: hasCompleteNotesDelivery(history) ? "ready" : "saved",
       meeting,
     };
-  }
-  // Close frees the lease before processing, and the row stays processing only until the finish settles or abandons it.
-  if (history.lifecycleVersion === 2 && history.status === "processing") {
-    return { kind: "processing", meeting };
   }
   const active =
     history.status === "starting" ||
