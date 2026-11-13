@@ -203,6 +203,16 @@ subscription has an unpaid invoice or a payment is still being settled,
 resolve that payment before changing plans. Contact support if the original payer
 cannot access billing or the server's billing information needs repair.
 
+Checkout asks for your billing address. If you are purchasing for a business,
+enter its legal name in the optional business name field. You can also enter a
+VAT or other supported business tax ID before paying. These details are saved
+in Stripe for future invoices. A business name does not require a tax ID.
+
+The original payer can open **Manage billing** to update the billing name,
+address and tax ID. Changes apply to future invoices, not invoices that have
+already been finalized. Contact support for a company registration number or
+missing details on an existing invoice.
+
 Plan tiers affect weekly meeting minutes, the number of meetings searchable by `/ask`, and access to features like image generation.
 
 Chronote may also grant a server a complimentary Basic or Pro plan. Comped servers see the granted plan and any public note on the billing page, but they do not see Stripe billing management until a paid subscription exists. Server admins can still start paying or upgrade from the billing page when they are ready.
