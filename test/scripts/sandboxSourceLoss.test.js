@@ -68,7 +68,12 @@ test("recovery refuses billing drift after review even when both definitions agr
   expect(changed.bindingSha256).not.toBe(approved.bindingSha256);
   await expect(
     recoverSandbox({ ...f.options, mode: "recover" }),
-  ).rejects.toThrow();
+  ).rejects.toMatchObject({
+    name: "AssertionError",
+    code: "ERR_ASSERTION",
+    actual: changed.bindingSha256,
+    expected: approved.bindingSha256,
+  });
   expect(writes(f)).toEqual([]);
 });
 
