@@ -534,18 +534,35 @@ test("a capped lease leaves the capture signal live", async () => {
 });
 
 describe("a start whose lease another meeting took does nothing visible", () => {
-  test("a start that fails after the lease was lost drops the connection locally and sends no leave", async () => {
-    const world = setup();
-    world.deps.buildMeetingSession.mockImplementationOnce(async () => {
-      world.hooks()?.onLost();
-      throw new Error("synthetic build failure");
-    });
+  test.each([
+    [
+      "the lease was lost",
+      (world: ReturnType<typeof setup>) => world.hooks()?.onLost(),
+    ],
+    [
+      // An overdue deadline can fire after a stall before renewal reports the loss.
+      "its confirmed lease lapsed before any loss was reported",
+      (world: ReturnType<typeof setup>) => {
+        world.clock.nowMs = (CONFIRMED_UNTIL + 1) * MS_PER_SECOND;
+      },
+    ],
+  ])(
+    "a start that fails after %s drops the connection locally and sends no leave",
+    async (_label, loseOwnership) => {
+      const world = setup();
+      world.deps.buildMeetingSession.mockImplementationOnce(async () => {
+        loseOwnership(world);
+        throw new Error("synthetic build failure");
+      });
 
-    await expect(world.start()).rejects.toThrow("synthetic build failure");
+      await expect(world.start()).rejects.toThrow("synthetic build failure");
 
-    expect(world.deps.dropVoiceLocally).toHaveBeenCalledWith(world.connection);
-    expect(world.deps.leaveVoice).not.toHaveBeenCalled();
-  });
+      expect(world.deps.dropVoiceLocally).toHaveBeenCalledWith(
+        world.connection,
+      );
+      expect(world.deps.leaveVoice).not.toHaveBeenCalled();
+    },
+  );
 
   test("a start that fails for another reason still leaves", async () => {
     const world = setup();
@@ -572,19 +589,6 @@ describe("a start whose lease another meeting took does nothing visible", () => 
     expect(world.deps.joinVoice).not.toHaveBeenCalled();
     expect(world.deps.leaveVoice).not.toHaveBeenCalled();
     expect(world.deps.dropVoiceLocally).not.toHaveBeenCalled();
-  });
-
-  test("a start that fails after its confirmed lease lapsed, before any loss is reported, drops the connection locally", async () => {
-    const world = setup();
-    world.deps.buildMeetingSession.mockImplementationOnce(async () => {
-      world.clock.nowMs = (CONFIRMED_UNTIL + 1) * MS_PER_SECOND;
-      throw new Error("synthetic build failure");
-    });
-
-    await expect(world.start()).rejects.toThrow("synthetic build failure");
-
-    expect(world.deps.dropVoiceLocally).toHaveBeenCalledWith(world.connection);
-    expect(world.deps.leaveVoice).not.toHaveBeenCalled();
   });
 });
 
