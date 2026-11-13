@@ -1,4 +1,5 @@
 import type { VoiceConnection } from "@discordjs/voice";
+import { setTimeout as sleep } from "node:timers/promises";
 import { v4 as uuidv4 } from "uuid";
 import { MAXIMUM_MEETING_DURATION } from "../constants";
 import {
@@ -9,6 +10,7 @@ import {
   type MeetingInitialization,
   type MeetingInitOptions,
 } from "../meetings";
+import { isDeploymentConflict } from "../repositories/deploymentControlErrors";
 import { getMeetingHistoryTransitionRepository } from "../repositories/meetingHistoryTransitions";
 import type { LeaseSnapshot } from "../repositories/meetingLeaseRepository";
 import type { MeetingHistoryTransitionRepository } from "../repositories/meetingHistoryTransitions";
@@ -84,6 +86,7 @@ export type MeetingStartDeps = {
   /** Writes the My Meetings pointer, so a meeting that later fails is still listed. */
   indexMeeting(history: MeetingHistory): Promise<void>;
   nowMs(): number;
+  delay?(ms: number): Promise<void>;
 };
 
 function leaseSnapshot(meeting: MeetingData | undefined): LeaseSnapshot {
@@ -105,6 +108,11 @@ function admissionBlocked(reason: string): Error {
   return new Error(message);
 }
 
+type MeetingReservation = Extract<
+  SessionReservation,
+  { sessionMode: "meeting" }
+>;
+
 function callerSignals(options: MeetingInitOptions): AbortSignal[] {
   return options.startSignal ? [options.startSignal] : [];
 }
@@ -118,6 +126,7 @@ function retireStartedCapture(started: MeetingData | undefined) {
 }
 
 export function createMeetingStart(deps: MeetingStartDeps) {
+  const delay = deps.delay ?? ((ms: number) => sleep(ms));
   /**
    * Renewal learns of a loss only after a round trip, and a stalled event loop
    * can fire an overdue deadline before that, so a lapsed confirmed lease counts
@@ -165,6 +174,44 @@ export function createMeetingStart(deps: MeetingStartDeps) {
     console.warn("Failed start left its history row unchanged", {
       meetingId: reservation.meetingId,
     });
+  }
+
+  /**
+   * A checkpoint publication can hold the row in a transaction at this moment.
+   * A conflict means another writer touched the item, not that the condition
+   * failed, so the same conditional update is sent again; its condition still
+   * guards ownership.
+   */
+  async function markInProgress(
+    reservation: MeetingReservation,
+    signal: AbortSignal,
+    ownership: AbortSignal,
+  ) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await deps.history.transitionMeetingHistory({
+          key: reservation.historyKey,
+          expectedMeetingId: reservation.meetingId,
+          expectedOwnerInstanceId: reservation.ownerInstanceId,
+          expectedExecutionVersion: reservation.executionVersion,
+          expectedStatus: MEETING_STATUS.STARTING,
+          patch: {
+            status: MEETING_STATUS.IN_PROGRESS,
+            updatedAt: new Date(deps.nowMs()).toISOString(),
+          },
+          signal,
+        });
+      } catch (error) {
+        if (
+          !isDeploymentConflict(error) ||
+          attempt === LIFECYCLE.closeWriteAttempts
+        )
+          throw error;
+      }
+      await delay(LIFECYCLE.startConflictRetryMs);
+      ownership.throwIfAborted();
+      signal.throwIfAborted();
+    }
   }
 
   async function release(reservation: SessionReservation, recording: boolean) {
@@ -305,18 +352,11 @@ export function createMeetingStart(deps: MeetingStartDeps) {
       );
       meeting.abortOwnership = (reason) => ownership.abort(reason);
       if (reservation.sessionMode === "meeting") {
-        const outcome = await deps.history.transitionMeetingHistory({
-          key: reservation.historyKey,
-          expectedMeetingId: reservation.meetingId,
-          expectedOwnerInstanceId: reservation.ownerInstanceId,
-          expectedExecutionVersion: reservation.executionVersion,
-          expectedStatus: MEETING_STATUS.STARTING,
-          patch: {
-            status: MEETING_STATUS.IN_PROGRESS,
-            updatedAt: new Date(deps.nowMs()).toISOString(),
-          },
+        const outcome = await markInProgress(
+          reservation,
           signal,
-        });
+          ownership.signal,
+        );
         if (outcome !== "applied")
           throw new Error("Meeting start lost its history row");
       }

@@ -39,6 +39,9 @@ export class DeploymentControlError extends Error {
     super(`Deployment control ${kind}`);
   }
 }
+export function isDeploymentConflict(error: unknown): boolean {
+  return error instanceof DeploymentControlError && error.kind === "conflict";
+}
 export async function conditional(
   operation: () => Promise<unknown>,
 ): Promise<ConditionalResult> {

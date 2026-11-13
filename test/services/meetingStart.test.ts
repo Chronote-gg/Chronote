@@ -8,6 +8,7 @@ import {
   type MeetingStartDeps,
 } from "../../src/services/meetingStart";
 import { LIFECYCLE } from "../../src/services/lifecycleTiming";
+import { DeploymentControlError } from "../../src/repositories/deploymentControlErrors";
 import type { AcquireSessionLeaseInput } from "../../src/services/meetingLease";
 import type { LeaseRenewalHooks } from "../../src/services/meetingLease";
 import { joinVoice } from "../../src/services/voiceSession";
@@ -146,6 +147,7 @@ function setup() {
     endMeeting: jest.fn(),
     indexMeeting: jest.fn(async () => undefined),
     nowMs: () => clock.nowMs,
+    delay: jest.fn(async () => undefined),
   };
   const start = createMeetingStart(deps as unknown as MeetingStartDeps);
   return {
@@ -244,6 +246,86 @@ test("a failure after the meeting reached in_progress fails the row from in_prog
   expect(statuses).toEqual(["starting", "starting", "in_progress"]);
   expect(world.deps.leaveVoice).toHaveBeenCalledWith(world.connection);
   expect(world.deps.disposeFailedSession).toHaveBeenCalledTimes(1);
+});
+
+describe("a transient conflict on the in_progress write", () => {
+  const conflict = () =>
+    new DeploymentControlError("conflict", {
+      name: "TransactionConflictException",
+    });
+  const inProgressWrites = (world: ReturnType<typeof setup>) =>
+    world.transitions.filter((input) => input.patch.status === "in_progress");
+  function failInProgressWrites(
+    world: ReturnType<typeof setup>,
+    times: number,
+    beforeThrow: () => void = () => undefined,
+  ) {
+    let failures = 0;
+    world.deps.history.transitionMeetingHistory.mockImplementation(
+      async (input: HistoryTransition) => {
+        world.transitions.push(input);
+        if (input.patch.status !== "in_progress" || failures >= times)
+          return "applied";
+        failures++;
+        beforeThrow();
+        throw conflict();
+      },
+    );
+  }
+
+  test("is retried after a pause and the start succeeds", async () => {
+    const world = setup();
+    failInProgressWrites(world, 1);
+
+    await expect(world.start()).resolves.toBe(world.meeting);
+
+    expect(inProgressWrites(world)).toHaveLength(2);
+    expect(world.deps.delay).toHaveBeenCalledWith(
+      LIFECYCLE.startConflictRetryMs,
+    );
+    expect(world.deps.leaveVoice).not.toHaveBeenCalled();
+    expect(world.deps.lease.releaseSessionLease).not.toHaveBeenCalled();
+  });
+
+  test("past the bound fails the start with the usual clean-up", async () => {
+    const world = setup();
+    failInProgressWrites(world, LIFECYCLE.closeWriteAttempts);
+
+    await expect(world.start()).rejects.toThrow("Deployment control conflict");
+
+    expect(inProgressWrites(world)).toHaveLength(LIFECYCLE.closeWriteAttempts);
+    expect(world.transitions.at(-1)?.patch.status).toBe("failed");
+    expect(world.deps.leaveVoice).toHaveBeenCalledWith(world.connection);
+    expect(world.deps.lease.releaseSessionLease).toHaveBeenCalledTimes(1);
+  });
+
+  test("a failed condition is not retried", async () => {
+    const world = setup();
+    world.deps.history.transitionMeetingHistory.mockResolvedValueOnce("stale");
+
+    await expect(world.start()).rejects.toThrow(
+      "Meeting start lost its history row",
+    );
+
+    expect(
+      world.deps.history.transitionMeetingHistory.mock.calls.filter(
+        ([input]) => input.patch.status === "in_progress",
+      ),
+    ).toHaveLength(1);
+    expect(world.deps.delay).not.toHaveBeenCalled();
+  });
+
+  test("stops once the lease is lost", async () => {
+    const world = setup();
+    failInProgressWrites(world, 1, () => world.hooks()?.onLost());
+
+    await expect(world.start()).rejects.toThrow(
+      "Meeting lease lost to another meeting",
+    );
+
+    expect(inProgressWrites(world)).toHaveLength(1);
+    expect(world.deps.dropVoiceLocally).toHaveBeenCalledWith(world.connection);
+  });
 });
 
 test("a failed start sends the voice leave before disposing the session", async () => {
