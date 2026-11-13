@@ -141,6 +141,10 @@ async function deriveState(
       meeting,
     };
   }
+  // Close frees the lease before processing, and the row stays processing only until the finish settles or abandons it.
+  if (history.lifecycleVersion === 2 && history.status === "processing") {
+    return { kind: "processing", meeting };
+  }
   const active =
     history.status === "starting" ||
     history.status === "in_progress" ||
