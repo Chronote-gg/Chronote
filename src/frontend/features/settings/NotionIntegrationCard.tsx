@@ -426,7 +426,7 @@ export function NotionIntegrationCard({
       if (
         destinationPageId === nextState.destinationPageId &&
         autoExportEnabled === nextState.autoExportEnabled &&
-        tagDraft === nextState.tagDraft &&
+        (parseTags(tagDraft)?.join(", ") ?? "") === nextState.tagDraft &&
         channelIds.join(",") === nextState.channelIds.join(",")
       )
         setDirty(false);
