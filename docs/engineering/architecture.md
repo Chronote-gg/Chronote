@@ -18,7 +18,7 @@
 
 ## Key flows (server code in `src/`)
 
-- Entry: `index.ts` -> `setupBot()` and `setupWebServer()`. Independent runtimes: `src/apps/bot/main.ts` and `src/apps/api/main.ts` boot the bot and API separately.
+- Entry: `index.ts` -> `setupBot()` and `setupWebServer()`. The combined worker (`index.ts`, the image's command) is the only deployed and supported topology. `src/apps/bot/main.ts` and `src/apps/api/main.ts` boot the bot or the API alone for local use and are not supported as separately deployed services: the worker registry compares task-definition revisions without regard to mode, so splitting them needs the registry to scope releases by mode first (see the design's [Deferred list](../superpowers/specs/2026-11-11-lifecycle-simplification-design.md#deferred-in-the-order-they-should-come)).
 - Bot interactions: `src/bot.ts`
   - Slash commands: `/startmeeting`, `/autorecord`, `/context`, `/dictionary`.
   - User context menu app actions: `Start meeting`, `Stop recording`.
