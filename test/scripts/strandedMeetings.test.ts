@@ -161,6 +161,17 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
+/** A run whose notes keep failing puts the row back exactly as it was found. */
+async function failNotesAndExpectRestored(before: MeetingHistory) {
+  const world = setup(before);
+  world.notes.mockRejectedValue(new Error("synthetic notes failure"));
+  await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
+    "restored",
+  );
+  expect(world.current()).toEqual(before);
+  return world;
+}
+
 describe("parseStrandedArgs", () => {
   const key = [GUILD_SNOWFLAKE, `333333333333333333#${START}`];
 
@@ -267,17 +278,12 @@ describe("finishStranded", () => {
   });
 
   test("a failure that outlasts its retries leaves the row as it found it", async () => {
-    const before = strandedRow({ status: "in_progress", capture: undefined });
-    const world = setup(before);
-    world.notes.mockRejectedValue(new Error("synthetic notes failure"));
-
-    await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
-      "restored",
+    const world = await failNotesAndExpectRestored(
+      strandedRow({ status: "in_progress", capture: undefined }),
     );
 
     expect(world.notes).toHaveBeenCalledTimes(3);
     expect(world.deps.sleep).toHaveBeenCalledTimes(2);
-    expect(world.current()).toEqual(before);
     expect(world.discord.requests).toEqual([]);
   });
 
@@ -449,16 +455,9 @@ describe("finishStranded on a terminal row whose old recovery never finished", (
   });
 
   test("a notes-less row that cannot finish gets its terminal status and recovery back", async () => {
-    const before = strandedRow({
-      status: "interrupted",
-      recovery: unfinishedRecovery,
-    });
-    const world = setup(before);
-    world.notes.mockRejectedValue(new Error("synthetic notes failure"));
-    await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
-      "restored",
+    await failNotesAndExpectRestored(
+      strandedRow({ status: "interrupted", recovery: unfinishedRecovery }),
     );
-    expect(world.current()).toEqual(before);
   });
 
   test("--post on a row whose notes message is recorded says so before it acts", async () => {
