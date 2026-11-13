@@ -295,6 +295,15 @@ describe("wait-drain", () => {
     // draining needs no further read, and the protection wait is never reached.
     expect(h.named("dynamodb.query")).toHaveLength(2);
   });
+  test("a failed marker read logs the line the operator guide quotes, within a bound", async () => {
+    const h = harness({ registry: failingReads(2, () => []) });
+    await expect(h.deploy.waitDrain()).resolves.toBeUndefined();
+    expect(h.logs.slice(0, 2)).toEqual([
+      "Cutover marker read 1 of 3 failed: ProvisionedThroughputExceeded",
+      "Cutover marker read 2 of 3 failed: ProvisionedThroughputExceeded",
+    ]);
+    expect(h.elapsed()).toBeLessThan(MINUTE_MS);
+  });
   test("drain wait without the cutover marker does not wait for the old runtime or retire it", async () => {
     const h = harness({
       registry: () => [],
