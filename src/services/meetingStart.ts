@@ -25,6 +25,7 @@ import { dismissalCancellationReason } from "../utils/meetingLifecycle";
 import { LIFECYCLE } from "./lifecycleTiming";
 import {
   acquireSessionLease,
+  confirmedLeaseExpiry,
   latestLeaseCap,
   releaseSessionLease,
   startLeaseRenewal,
@@ -63,6 +64,7 @@ export type MeetingStartDeps = {
     | "startLeaseRenewal"
     | "releaseSessionLease"
     | "latestLeaseCap"
+    | "confirmedLeaseExpiry"
   >;
   history: Pick<MeetingHistoryTransitionRepository, "transitionMeetingHistory">;
   requestCaptureProtection(): Promise<void>;
@@ -116,6 +118,23 @@ function retireStartedCapture(started: MeetingData | undefined) {
 }
 
 export function createMeetingStart(deps: MeetingStartDeps) {
+  /**
+   * Renewal learns of a loss only after a round trip, and a stalled event loop
+   * can fire an overdue deadline before that, so a lapsed confirmed lease counts
+   * as lost too. Close reads its fallback the same way.
+   */
+  function stillOwns(
+    reservation: SessionReservation,
+    ownership: AbortSignal,
+  ): boolean {
+    const confirmedUntil = deps.lease.confirmedLeaseExpiry(reservation);
+    return (
+      !ownership.aborted &&
+      confirmedUntil !== undefined &&
+      confirmedUntil >= Math.floor(deps.nowMs() / MS_PER_SECOND)
+    );
+  }
+
   /** Only while status is starting or in_progress, so a later writer is never overwritten. */
   async function markFailed(reservation: SessionReservation): Promise<void> {
     if (reservation.sessionMode !== "meeting") return;
@@ -212,6 +231,7 @@ export function createMeetingStart(deps: MeetingStartDeps) {
     if (admission.kind === "blocked") throw admissionBlocked(admission.reason);
     const { reservation } = admission;
     const ownership = new AbortController();
+    const stillOwned = () => stillOwns(reservation, ownership.signal);
 
     let meeting: MeetingData | undefined;
     let pendingEndRequest: ActiveMeetingLease | undefined;
@@ -266,7 +286,9 @@ export function createMeetingStart(deps: MeetingStartDeps) {
         voiceChannel: options.voiceChannel,
         guild: options.guild,
         captureAudio: sessionCapturesAudio(options),
-        signal,
+        // A lost lease ends a pending join at once rather than at the deadline.
+        signal: AbortSignal.any([signal, ownership.signal]),
+        stillOwned,
       });
       meeting = await deps.buildMeetingSession(
         { ...options, meetingId },
@@ -301,9 +323,7 @@ export function createMeetingStart(deps: MeetingStartDeps) {
     } catch (error) {
       // Leave first: disposing can take seconds, and the bot should not linger in voice meanwhile.
       if (connection)
-        (ownership.signal.aborted ? deps.dropVoiceLocally : deps.leaveVoice)(
-          connection,
-        );
+        (stillOwned() ? deps.leaveVoice : deps.dropVoiceLocally)(connection);
       const settled = await deps
         .disposeFailedSession(initialization)
         .catch(() => false);
@@ -366,6 +386,7 @@ function start() {
       startLeaseRenewal,
       releaseSessionLease,
       latestLeaseCap,
+      confirmedLeaseExpiry,
     },
     history: getMeetingHistoryTransitionRepository(),
     requestCaptureProtection,

@@ -1,35 +1,16 @@
 /** @jest-environment node */
-import {
-  getVoiceConnection,
-  VoiceConnectionStatus,
-  type DiscordGatewayAdapterCreator,
-} from "@discordjs/voice";
+import { getVoiceConnection, VoiceConnectionStatus } from "@discordjs/voice";
 import {
   dropVoiceLocally,
   joinVoice,
   leaveVoice,
 } from "../../src/services/voiceSession";
+import { fakeVoiceGuild as fakeGuild } from "./voiceSession.fixture";
 
 const VOICE_CHANNEL_ID = "100000000000000001";
-let nextGuildId = 200000000000000001n;
+const stillOwned = () => true;
 
-type SentPayload = { op: number; d: { channel_id: string | null } };
-
-/** The real library over a fake gateway adapter, so payloads can be observed. */
-function fakeGuild() {
-  const sent: SentPayload[] = [];
-  const voiceAdapterCreator: DiscordGatewayAdapterCreator = () => ({
-    sendPayload(payload) {
-      sent.push(payload);
-      return true;
-    },
-    destroy() {},
-  });
-  const id = String(nextGuildId++);
-  return { guild: { id, voiceAdapterCreator }, sent };
-}
-
-async function joinedConnection() {
+async function joinedConnection(owned: () => boolean = stillOwned) {
   const { guild, sent } = fakeGuild();
   const abort = new AbortController();
   const joining = joinVoice({
@@ -37,6 +18,7 @@ async function joinedConnection() {
     guild,
     captureAudio: true,
     signal: abort.signal,
+    stillOwned: owned,
   });
   const connection = getVoiceConnection(guild.id);
   abort.abort();
@@ -51,6 +33,7 @@ test("join times out through the signal", async () => {
     guild,
     captureAudio: false,
     signal: AbortSignal.timeout(10),
+    stillOwned,
   });
 
   await expect(joining).rejects.toThrow();
@@ -63,7 +46,7 @@ test("join times out through the signal", async () => {
   expect(getVoiceConnection(guild.id)).toBeUndefined();
 });
 
-test("a failed join destroys the connection", async () => {
+test("a failed join by a worker that still owns the server sends a leave", async () => {
   const { connection, sent } = await joinedConnection();
 
   expect(connection?.state.status).toBe(VoiceConnectionStatus.Destroyed);
@@ -75,6 +58,16 @@ test("a failed join destroys the connection", async () => {
   ]);
 });
 
+test("a failed join by a worker that no longer owns the server is dropped locally", async () => {
+  const { connection, sent } = await joinedConnection(() => false);
+
+  expect(connection?.state.status).toBe(VoiceConnectionStatus.Destroyed);
+  // A leave would disconnect whichever worker now holds the server's voice state.
+  expect(sent.map((payload) => payload.d.channel_id)).toEqual([
+    VOICE_CHANNEL_ID,
+  ]);
+});
+
 function pendingConnection() {
   const { guild, sent } = fakeGuild();
   void joinVoice({
@@ -82,6 +75,7 @@ function pendingConnection() {
     guild,
     captureAudio: true,
     signal: new AbortController().signal,
+    stillOwned,
   }).catch(() => undefined);
   const connection = getVoiceConnection(guild.id);
   if (!connection) throw new Error("join did not create a connection");

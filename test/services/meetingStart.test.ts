@@ -1,14 +1,17 @@
 /** @jest-environment node */
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 
-import type { VoiceConnection } from "@discordjs/voice";
+import { getVoiceConnection, type VoiceConnection } from "@discordjs/voice";
 import type { MeetingInitOptions } from "../../src/meetings";
 import {
   createMeetingStart,
   type MeetingStartDeps,
 } from "../../src/services/meetingStart";
+import { LIFECYCLE } from "../../src/services/lifecycleTiming";
 import type { AcquireSessionLeaseInput } from "../../src/services/meetingLease";
 import type { LeaseRenewalHooks } from "../../src/services/meetingLease";
+import { joinVoice } from "../../src/services/voiceSession";
+import { fakeVoiceGuild } from "./voiceSession.fixture";
 import type { ActiveMeetingLease } from "../../src/types/db";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type {
@@ -19,6 +22,9 @@ import type {
 const GUILD = "synthetic-guild";
 const MEETING = "synthetic-meeting";
 const NOW_MS = 1_800_000_000_000;
+const MS_PER_SECOND = 1000;
+/** As the lease service reports right after acquiring: confirmed one lease term ahead. */
+const CONFIRMED_UNTIL = NOW_MS / MS_PER_SECOND + LIFECYCLE.leaseSeconds;
 
 function reservationFor(input: AcquireSessionLeaseInput): SessionReservation {
   const shared = {
@@ -73,6 +79,7 @@ function setup() {
   let ownershipSignal: AbortSignal | undefined;
   const captureEnd = { onLost: jest.fn(), onCapReached: jest.fn() };
   const transitions: HistoryTransition[] = [];
+  const clock = { nowMs: NOW_MS };
   const deps = {
     lease: {
       acquireSessionLease: jest.fn(async (input: AcquireSessionLeaseInput) => {
@@ -92,6 +99,7 @@ function setup() {
         calls.push("release");
       }),
       latestLeaseCap: jest.fn((): number | undefined => undefined),
+      confirmedLeaseExpiry: jest.fn((): number | undefined => CONFIRMED_UNTIL),
     },
     history: {
       transitionMeetingHistory: jest.fn(async (input: HistoryTransition) => {
@@ -106,10 +114,12 @@ function setup() {
     releaseCaptureProtection: jest.fn(() => {
       calls.push("unprotect");
     }),
-    joinVoice: jest.fn(async () => {
-      calls.push("join");
-      return connection;
-    }),
+    joinVoice: jest.fn<Promise<VoiceConnection>, Parameters<typeof joinVoice>>(
+      async () => {
+        calls.push("join");
+        return connection;
+      },
+    ),
     leaveVoice: jest.fn(() => {
       calls.push("leave");
     }),
@@ -135,13 +145,14 @@ function setup() {
     captureEndHandlers: () => captureEnd,
     endMeeting: jest.fn(),
     indexMeeting: jest.fn(async () => undefined),
-    nowMs: () => NOW_MS,
+    nowMs: () => clock.nowMs,
   };
   const start = createMeetingStart(deps as unknown as MeetingStartDeps);
   return {
     deps,
     calls,
     deadline,
+    clock,
     connection,
     meeting,
     transitions,
@@ -561,5 +572,65 @@ describe("a start whose lease another meeting took does nothing visible", () => 
     expect(world.deps.joinVoice).not.toHaveBeenCalled();
     expect(world.deps.leaveVoice).not.toHaveBeenCalled();
     expect(world.deps.dropVoiceLocally).not.toHaveBeenCalled();
+  });
+
+  test("a start that fails after its confirmed lease lapsed, before any loss is reported, drops the connection locally", async () => {
+    const world = setup();
+    world.deps.buildMeetingSession.mockImplementationOnce(async () => {
+      world.clock.nowMs = (CONFIRMED_UNTIL + 1) * MS_PER_SECOND;
+      throw new Error("synthetic build failure");
+    });
+
+    await expect(world.start()).rejects.toThrow("synthetic build failure");
+
+    expect(world.deps.dropVoiceLocally).toHaveBeenCalledWith(world.connection);
+    expect(world.deps.leaveVoice).not.toHaveBeenCalled();
+  });
+});
+
+describe("a pending join that fails sends a leave only while the lease is confirmed", () => {
+  /** The real join over a gateway that records payloads: a `null` channel is a leave. */
+  async function pendingRealJoin() {
+    const world = setup();
+    const voice = fakeVoiceGuild();
+    world.deps.joinVoice.mockImplementationOnce(joinVoice);
+    const started = world.start({ guild: voice.guild as never });
+    started.catch(() => undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(voice.channelIds()).toEqual(["synthetic-voice"]);
+    return { world, started, voice };
+  }
+
+  test("a lease lost while the join is pending ends the join at once and sends no leave", async () => {
+    const { world, started, voice } = await pendingRealJoin();
+
+    world.hooks()?.onLost();
+
+    await expect(started).rejects.toThrow();
+    expect(world.deadline.signal.aborted).toBe(false);
+    expect(voice.channelIds()).toEqual(["synthetic-voice"]);
+    expect(getVoiceConnection(voice.guild.id)).toBeUndefined();
+    expect(world.deps.lease.releaseSessionLease).toHaveBeenCalledTimes(1);
+  });
+
+  test("a deadline that fires after a stall past the confirmed lease sends no leave", async () => {
+    const { world, started, voice } = await pendingRealJoin();
+
+    world.clock.nowMs = (CONFIRMED_UNTIL + 1) * MS_PER_SECOND;
+    world.deadline.abort(new Error("start deadline"));
+
+    await expect(started).rejects.toThrow();
+    expect(voice.channelIds()).toEqual(["synthetic-voice"]);
+    expect(getVoiceConnection(voice.guild.id)).toBeUndefined();
+  });
+
+  test("a deadline inside the confirmed lease sends the leave", async () => {
+    const { world, started, voice } = await pendingRealJoin();
+
+    world.clock.nowMs = CONFIRMED_UNTIL * MS_PER_SECOND;
+    world.deadline.abort(new Error("start deadline"));
+
+    await expect(started).rejects.toThrow();
+    expect(voice.channelIds()).toEqual(["synthetic-voice", null]);
   });
 });

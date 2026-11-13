@@ -6,12 +6,18 @@ import {
 } from "@discordjs/voice";
 import type { Guild, VoiceBasedChannel } from "discord.js";
 
-/** Joins and waits for Ready within the caller's signal. A join that is not Ready is torn down. */
+/**
+ * Joins and waits for Ready within the caller's signal. A join that is not
+ * Ready is torn down, with a leave only while `stillOwned` says this worker
+ * still owns the server: Discord keeps one voice state per bot per server, so
+ * a leave from a worker that lost it would disconnect the new owner.
+ */
 export async function joinVoice(options: {
   voiceChannel: Pick<VoiceBasedChannel, "id">;
   guild: Pick<Guild, "id" | "voiceAdapterCreator">;
   captureAudio: boolean;
   signal: AbortSignal;
+  stillOwned(): boolean;
 }): Promise<VoiceConnection> {
   const connection = joinVoiceChannel({
     channelId: options.voiceChannel.id,
@@ -30,7 +36,7 @@ export async function joinVoice(options: {
       options.signal,
     );
   } catch (error) {
-    leaveVoice(connection);
+    (options.stillOwned() ? leaveVoice : dropVoiceLocally)(connection);
     throw error;
   }
 }
