@@ -136,6 +136,10 @@ export async function readRecoveryContent(
 export type RecoveryContent = Awaited<ReturnType<typeof readRecoveryContent>>;
 export const INTERRUPTED_CAPTURE_NOTICE =
   "This recording ended abruptly. The interruption cause is unknown.";
+const NO_INVENTED_DISCUSSION =
+  "Saved content can contain gaps. Describe only confirmed conversation; never invent missing discussion, decisions, or an ending.";
+/** A completed capture whose saved content is still partial: gaps, but no interruption. */
+export const SAVED_CONTENT_GAP_NOTICE = `Some of this recording's saved audio could not be used. ${NO_INVENTED_DISCUSSION}`;
 export function recoveryCaptureNotice(
   content: RecoveryContent,
   interrupted: boolean,
@@ -149,7 +153,7 @@ export function recoveryCaptureNotice(
     interrupted
       ? INTERRUPTED_CAPTURE_NOTICE
       : "These notes were recovered after processing stopped.",
-    "Saved content can contain gaps. Describe only confirmed conversation; never invent missing discussion, decisions, or an ending.",
+    NO_INVENTED_DISCUSSION,
     content.missing.length
       ? `${content.missing.length} checkpoint artifacts could not be verified.`
       : "Only verified saved content is included.",
@@ -733,20 +737,31 @@ export function recoveredTranscriptionOutcome(
 }
 /**
  * Generation from saved content for a capture that is not being recovered as
- * such: it is named like a live run, and only an interrupted capture keeps
- * the notice, because a completed capture has no gaps for it to describe.
+ * such: it is named like a live run. An interrupted capture keeps the recovery
+ * notice; a completed one keeps only a gap notice, when its content is partial.
  */
-export function liveShapedNotesInput(
-  input: MeetingNotesInput,
+export function liveShapedNotesInput<
+  Input extends Pick<MeetingNotesInput, "captureNotice" | "processing">,
+>(
+  input: Input,
   history: Pick<MeetingHistory, "meetingName">,
   interrupted: boolean,
-): MeetingNotesInput {
+): Input & Pick<MeetingNotesInput, "meetingName" | "recovered"> {
   return {
     ...input,
     meetingName: history.meetingName,
     recovered: undefined,
-    captureNotice: interrupted ? input.captureNotice : undefined,
+    captureNotice: interrupted
+      ? input.captureNotice
+      : completedCaptureNotice(input),
   };
+}
+function completedCaptureNotice(
+  input: Pick<MeetingNotesInput, "processing">,
+): string | undefined {
+  return input.processing?.transcription === "partial"
+    ? SAVED_CONTENT_GAP_NOTICE
+    : undefined;
 }
 export function recoveryNotesInput(
   history: MeetingHistory,
