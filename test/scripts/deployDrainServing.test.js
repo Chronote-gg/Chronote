@@ -129,14 +129,16 @@ describe("wait-drain: an older task that is still the serving worker", () => {
       ),
     ).toBe(true);
   });
-  test("an unreadable registry at the first evaluation calls nothing serving", async () => {
+  test("an unreadable first evaluation decides serving from the first read that succeeds", async () => {
     const h = servingHarness(() => [], {
       registry: unreadableFrom(2, (now) => [oldRecord(now)]),
-      onSleep: stopsAtTenMinutes,
     });
     await expect(h.deploy.waitDrain()).resolves.toBeUndefined();
-    expect(h.elapsed()).toBeGreaterThanOrEqual(10 * MINUTE_MS);
-    expect(h.logs.some((line) => /not waited for/.test(line))).toBe(false);
+    // Two 5 second retries, one 30 second poll, then the successful read.
+    expect(h.elapsed()).toBe(40_000);
+    expect(h.logs.some((line) => /task\/old .*not waited for/.test(line))).toBe(
+      true,
+    );
   });
   test("an unreadable registry with retire fails the step and stops nothing", async () => {
     const h = servingHarness(() => [], {
@@ -161,5 +163,51 @@ describe("wait-drain: an older task that is still the serving worker", () => {
     h.state.onSleep = stopsAtTenMinutes;
     await expect(h.deploy.waitDrain()).resolves.toBeUndefined();
     expect(h.elapsed()).toBeGreaterThanOrEqual(10 * MINUTE_MS);
+  });
+  describe("with a real drain beside it", () => {
+    // Task "task/older" on revision 5 drains while "task/old" on 6 serves; 7 never became ready.
+    const DRAINING_TASK = {
+      taskArn: "task/older",
+      taskDefinitionArn: OLD_ARN.replace(/:6$/, ":5"),
+      lastStatus: "RUNNING",
+    };
+    const staleAt = START_MS + 30_000;
+    const drainBeside = (overrides) =>
+      harness({
+        tasks: [{ ...DRAINING_TASK }, { ...OLD_TASK }],
+        registry: (clock) => {
+          const now = freshSeconds(clock);
+          return [
+            CUTOVER,
+            worker("i-older", {
+              release: 5,
+              taskArn: "task/older",
+              heartbeatAt: now,
+            }),
+            oldRecord(clock === staleAt ? now - 31 : now),
+          ];
+        },
+        ...overrides,
+      });
+    test("one stale own record never makes retire stop the serving task", async () => {
+      const h = drainBeside({});
+      await expect(
+        h.deploy.waitDrain({ retire: true }),
+      ).resolves.toBeUndefined();
+      expect(h.named("ecs.stop-task").map((c) => c.params.task)).toEqual([
+        "task/older",
+      ]);
+    });
+    test("one stale own record does not bring back the drain timeout", async () => {
+      const h = drainBeside({
+        onSleep: (clock, state) => {
+          if (clock - START_MS >= 5 * MINUTE_MS)
+            state.tasks = state.tasks.filter((t) => t.taskArn !== "task/older");
+        },
+      });
+      await expect(h.deploy.waitDrain()).resolves.toBeUndefined();
+      expect(h.elapsed()).toBeGreaterThanOrEqual(5 * MINUTE_MS);
+      expect(h.elapsed()).toBeLessThan(6 * MINUTE_MS);
+    });
   });
 });

@@ -149,9 +149,10 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
    * record is ready and no ready worker runs a higher release. That is the
    * worker's own eligibility rule, so after a rollout whose revision never
    * became ready the only serving worker is neither waited for nor retired.
-   * Only a task serving at the first evaluation is skipped, and it can only
-   * turn draining: one stale sample of the newer worker must not end a real
-   * drain.
+   * Serving is decided at the first evaluation that can read the registry,
+   * and a task leaves it only on positive evidence: a ready worker on a
+   * higher release. One stale sample, of the newer worker or of the task's
+   * own record, must neither end a real drain nor retire the serving worker.
    */
   async function drainingTasks(wait) {
     const older = await olderTasks();
@@ -160,20 +161,24 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
       (task) => wait.first || wait.serving.has(task.taskArn),
     );
     const ready = candidates.length ? await readyForDrain(wait.retire) : [];
-    const first = wait.first;
-    wait.first = false;
     if (!ready) return older;
-    for (const task of candidates) {
-      const serving = servingRecord(task, ready);
-      if (serving && first) {
-        log(
-          `Older task ${task.taskArn} is the serving worker on revision ${serving.release} and no newer revision has a ready worker; not waited for`,
-        );
-        wait.serving.add(task.taskArn);
-      }
-      if (!serving) wait.serving.delete(task.taskArn);
-    }
+    for (const task of candidates)
+      if (wait.first) markIfServing(task, ready, wait.serving);
+      else if (
+        ready.some((record) => record.release > wait.serving.get(task.taskArn))
+      )
+        wait.serving.delete(task.taskArn);
+    wait.first = false;
     return older.filter((task) => !wait.serving.has(task.taskArn));
+  }
+
+  function markIfServing(task, ready, serving) {
+    const own = servingRecord(task, ready);
+    if (!own) return;
+    log(
+      `Older task ${task.taskArn} is the serving worker on revision ${own.release} and no newer revision has a ready worker; not waited for`,
+    );
+    serving.set(task.taskArn, own.release);
   }
 
   /**
@@ -300,7 +305,7 @@ function createDeploy({ aws, env, now, sleep, log, output }) {
     const namespace = `${required("SECRETS_PREFIX")}/Deploy`;
     const started = now();
     const retired = new Set();
-    const wait = { first: true, retire, serving: new Set() };
+    const wait = { first: true, retire, serving: new Map() };
     for (;;) {
       const draining = await drainingTasks(wait);
       log(
