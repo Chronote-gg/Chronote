@@ -2,6 +2,7 @@
 const assert = require("node:assert/strict");
 const { marshall } = require("@aws-sdk/util-dynamodb");
 const { z } = require("zod");
+const { eventReceiptProofSchema } = require("./service-event-stop-proof.cjs");
 function receiptSchema(types) {
   const base = z
     .object({
@@ -39,6 +40,10 @@ function receiptSchema(types) {
     .strict();
   return z.discriminatedUnion("version", [
     base,
+    base
+      .omit({ stoppedAt: true })
+      .extend({ version: z.literal(3), terminalProof: eventReceiptProofSchema })
+      .strict(),
     base.extend({
       version: z.literal(2),
       terminalProof: z
@@ -63,8 +68,9 @@ function initialReceipt({
   bindingSha256,
   metadataAudit,
 }) {
+  const event = terminal.terminalProof?.kind === "ecs_service_stop_event";
   const evidence = terminal.terminalProof
-    ? { version: 2, terminalProof: terminal.terminalProof }
+    ? { version: event ? 3 : 2, terminalProof: terminal.terminalProof }
     : { version: 1 };
   return {
     pk: "SOURCELOSS#" + d.runToken,
@@ -76,7 +82,7 @@ function initialReceipt({
     actorArn,
     source: d.outgoing,
     candidate,
-    stoppedAt: terminal.stoppedAt,
+    ...(event ? {} : { stoppedAt: terminal.stoppedAt }),
     admittedAt,
     stage: "admission_transferred",
     settlement: "lost_owner_settlement_pending",
@@ -202,6 +208,7 @@ async function writeState({
   transaction,
   next,
   receipt,
+  publication,
 }) {
   types.controlRecordSchema.parse(next);
   receiptSchema(types).parse(receipt);
@@ -222,6 +229,7 @@ async function writeState({
         "deployment",
       ])
         assert.deepEqual(observed[key], next[key]);
+      publication.assertCurrent(observed, next);
     } catch {
       throw error;
     }

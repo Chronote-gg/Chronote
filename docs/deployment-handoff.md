@@ -308,6 +308,12 @@ Restoring standalone writes requires a separately reviewed admitted executor. Do
 
 A separately approved stopped-source operation uses [Sandbox source-loss recovery](sandbox-source-loss.md). It restores the existing candidate's admission and routing while preserving pending settlement. Healthy-source continuation and normal retirement still require their original evidence.
 
+Stopped-source inspection also binds the current publication protocol, compatible-image authority, pins and transition, together with the reviewed release/image evidence. Recovery reuses the ordinary publication compatibility decision. Known-compatible images can retain pins; unqualified images require no unresolved pins. An existing transition must name the exact recovery run and image set.
+
+For an enrolled publication protocol and unqualified images, admission reserves the exact transition in the same Control update that grants the next generation. That update conditions all inspected publication fields, including their absence. Routing-state writes and lost-acknowledgment observation preserve the same publication authority. A change before admission refuses the transaction. A change or unavailable readback after admission preserves its committed generation and recovery receipt and holds routing. Recovery never clears pins, replaces another transition, rolls back admission or retries an uncertain listener send to get past the hold.
+
+These source safeguards do not generalize an operator's actor identity, historical terminal-evidence packet or release authority. Local DynamoDB/runtime tests use synthetic provider effects and do not establish native-role or live-provider acceptance.
+
 The separately approved [historical carryforward contract](sandbox-carryforward.md) can archive an availability-restored incident without settling it and hand Control to a new normal protected deployment. Ordinary preparation retains its refusal of unrelated unfinished operations.
 
 ## Production introduction workflow status
