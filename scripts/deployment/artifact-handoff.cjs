@@ -95,36 +95,73 @@ function createArtifactHandoff(options) {
       revision: row.revision + 1,
     };
   }
+  const heartbeatState = (row) => ({
+    ...row,
+    revision: 0,
+    heartbeatAt: 0,
+    freshUntil: 0,
+  });
+  function heartbeatOnly(previous, current) {
+    return (
+      current.revision > previous.revision &&
+      current.heartbeatAt >= previous.heartbeatAt &&
+      current.freshUntil >= previous.freshUntil &&
+      same(heartbeatState(previous), heartbeatState(current))
+    );
+  }
   async function write(purpose, expected, next, ctl, time = now()) {
     if (production)
       refuse("Private recovery recipe does not support artifact safety writes");
-    const source = await runtime(next.identity);
-    const input = {
-      purpose,
-      expected,
-      next,
-      context: { kind: "preparing", control: ctl, runtime: source },
-      now: time,
+    const build = async () => {
+      if (options.submitArtifactTransaction) await options.assertWriter();
+      const source = await runtime(next.identity);
+      if (options.submitArtifactTransaction) {
+        const current = await read(expected.identity);
+        if (!same(expected, current) && !heartbeatOnly(expected, current))
+          refuse("Artifact authority changed before guarded submission");
+        time = now();
+        next = {
+          ...next,
+          revision: current.revision + 1,
+          ...(next.heartbeatAt === expected.heartbeatAt
+            ? {
+                heartbeatAt: current.heartbeatAt,
+                freshUntil: current.freshUntil,
+              }
+            : {}),
+          ...(purpose === "consume" ? { consumedAt: time } : {}),
+        };
+        expected = current;
+      }
+      const input = {
+        purpose,
+        expected,
+        next,
+        context: { kind: "preparing", control: ctl, runtime: source },
+        now: time,
+      };
+      return next.attestation
+        ? legacy.buildLegacyArtifactTransaction(
+            {
+              purpose,
+              expected,
+              next,
+              runtime: source,
+              control: ctl,
+              now: input.now,
+            },
+            tables,
+          )
+        : builders.buildArtifactSafetyTransaction(input, tables);
     };
-    const transaction = next.attestation
-      ? legacy.buildLegacyArtifactTransaction(
-          {
-            purpose,
-            expected,
-            next,
-            runtime: source,
-            control: ctl,
-            now: input.now,
-          },
-          tables,
-        )
-      : builders.buildArtifactSafetyTransaction(input, tables);
     const phase = {
       consume: "warming",
       cancel: next.attestation && "complete",
     }[purpose];
     try {
-      await aws("dynamodb", "transact-write-items", transaction);
+      if (options.submitArtifactTransaction)
+        await options.submitArtifactTransaction(build);
+      else await aws("dynamodb", "transact-write-items", await build());
     } catch (error) {
       const observed = await read(next.identity);
       if (!isDeepStrictEqual(observed, next)) throw error;
@@ -132,7 +169,7 @@ function createArtifactHandoff(options) {
         phase &&
         !isDeepStrictEqual(
           await control(),
-          builders.artifactPreparationControl(ctl, input.now, phase),
+          builders.artifactPreparationControl(ctl, time, phase),
         )
       )
         throw error;
@@ -159,25 +196,13 @@ function createArtifactHandoff(options) {
     }
   }
   async function retryHeartbeat(row, operation) {
-    const state = (value) => ({
-      ...value,
-      revision: 0,
-      heartbeatAt: 0,
-      freshUntil: 0,
-    });
     for (let attempt = 0; ; attempt++) {
       try {
         return await operation(row);
       } catch (error) {
         if (row.attestation || attempt === 2) throw error;
         const observed = await read(row.identity);
-        if (
-          observed.revision <= row.revision ||
-          observed.heartbeatAt < row.heartbeatAt ||
-          observed.freshUntil < row.freshUntil ||
-          !same(state(observed), state(row))
-        )
-          throw error;
+        if (!heartbeatOnly(row, observed)) throw error;
         row = observed;
       }
     }

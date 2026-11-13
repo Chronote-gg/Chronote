@@ -6,6 +6,8 @@ import type { TransactWriteItemsCommandInput } from "@aws-sdk/client-dynamodb";
 import { artifactSafetyFixture } from "./fixtures/artifactSafetyFixture";
 import { attestation } from "./fixtures/legacyArtifactFixture";
 import { createArtifactHandoff } from "../../scripts/deployment/artifact-handoff.cjs";
+import { guardedCoordinator } from "../../scripts/deployment/sandbox-operation.cjs";
+import { fixture as coordinatorFixture } from "./fixtures/coordinatorFixture";
 
 function fixture(
   now = () => 120,
@@ -84,6 +86,208 @@ function idle(f: ReturnType<typeof fixture>) {
     state: "idle",
   });
 }
+
+test("guarded preparation snapshots artifact CAS after authority latency and heartbeat", async () => {
+  const f = coordinatorFixture();
+  const original = f.aws.getMockImplementation()!;
+  const attemptedRevisions: number[] = [];
+  let guards = 0;
+  f.aws.mockImplementation(async (service, operation, input) => {
+    const put = input.TransactItems?.[0]?.Put;
+    if (operation === "transact-write-items" && put) {
+      const names = put.ExpressionAttributeNames!;
+      const revisionName = Object.keys(names).find(
+        (key) => names[key] === "revision",
+      )!;
+      const clause = put
+        .ConditionExpression!.split(" AND ")
+        .find((part) => part.startsWith(revisionName + " = "))!;
+      const expected = unmarshall(put.ExpressionAttributeValues!)[
+        clause.split(" = ")[1]
+      ];
+      const row = f.state.artifacts.get("old")!;
+      attemptedRevisions.push(expected);
+      if (expected !== row.revision)
+        throw Error("TransactionCanceledException: stale artifact revision");
+    }
+    return original(service, operation, input);
+  });
+  const coordinator = guardedCoordinator(f.options, async (operation) => {
+    const row = f.state.artifacts.get("old")!;
+    if (operation !== "transact-write-items" || row.state !== "idle") return;
+    guards++;
+    const startup = structuredClone(row.startup);
+    f.advanceTime(10);
+    f.state.artifacts.set("old", {
+      ...f.state.artifacts.get("old")!,
+      revision: row.revision + 1,
+      startup,
+    });
+  });
+  const result = await coordinator.prepare().catch((error) => error);
+  expect({ kind: result.kind, guards, attemptedRevisions }).toEqual({
+    kind: "warming",
+    guards: 1,
+    attemptedRevisions: [1, 3],
+  });
+  expect(f.svc.taskDefinition).toBe("definition:new");
+});
+
+test.each(["startup", "revision_rollback"])(
+  "guarded preparation refuses %s drift before submitting an artifact transaction",
+  async (change) => {
+    const f = coordinatorFixture();
+    const initial = f.state.artifacts.get("old")!;
+    f.state.artifacts.set("old", { ...initial, revision: 5 });
+    const coordinator = guardedCoordinator(f.options, async (operation) => {
+      if (operation !== "transact-write-items") return;
+      const row = f.state.artifacts.get("old")!;
+      f.state.artifacts.set("old", {
+        ...row,
+        ...(change === "startup"
+          ? { startup: { kind: "active", activatedAt: f.options.now() + 1 } }
+          : { revision: row.revision - 1 }),
+      });
+    });
+    await expect(coordinator.prepare()).rejects.toMatchObject({
+      category: "artifact_preservation_unconfirmed",
+    });
+    expect(
+      f.calls.some((call) =>
+        ["transact-write-items", "update-service"].includes(call.operation),
+      ),
+    ).toBe(false);
+  },
+);
+
+test("rejected artifact authority never submits its transaction", async () => {
+  const f = coordinatorFixture();
+  const coordinator = guardedCoordinator(f.options, async (operation) => {
+    if (operation === "transact-write-items") throw Error("authority refused");
+  });
+  await expect(coordinator.prepare()).rejects.toThrow("authority refused");
+  expect(
+    f.calls.some((call) =>
+      ["transact-write-items", "update-service"].includes(call.operation),
+    ),
+  ).toBe(false);
+});
+
+test("an introduction hold appearing during artifact authority prevents submission", async () => {
+  const f = coordinatorFixture();
+  const original = f.aws.getMockImplementation()!;
+  let held = false;
+  f.aws.mockImplementation(async (service, operation, input) => {
+    if (held && operation === "get-item" && input.Key?.sk?.S === "INTRODUCTION")
+      return {
+        Item: marshall({
+          pk: "ENV",
+          sk: "INTRODUCTION",
+          recordType: "production_introduction",
+          protocolVersion: 1,
+          holdId: "hold",
+          introductionId: "intro",
+          manifestHash: "a".repeat(64),
+          revision: 1,
+          admission: { state: "held" },
+          deployment: { state: "held" },
+        }),
+      };
+    return original(service, operation, input);
+  });
+  const coordinator = guardedCoordinator(f.options, async (operation) => {
+    if (operation === "transact-write-items") held = true;
+  });
+  await expect(coordinator.prepare()).rejects.toMatchObject({
+    category: "introduction_held",
+  });
+  expect(
+    f.calls.some((call) =>
+      ["transact-write-items", "update-service"].includes(call.operation),
+    ),
+  ).toBe(false);
+  expect(f.state.artifacts.get("old")!.state).toBe("idle");
+});
+
+test("guarded artifact provider errors retain coordinator classification", async () => {
+  const f = coordinatorFixture();
+  const original = f.aws.getMockImplementation()!;
+  let transactions = 0;
+  f.aws.mockImplementation(async (service, operation, input) => {
+    if (operation === "transact-write-items") {
+      transactions++;
+      throw Object.assign(Error("conditional conflict"), {
+        name: "TransactionCanceledException",
+        CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+      });
+    }
+    return original(service, operation, input);
+  });
+  const coordinator = guardedCoordinator(f.options, async () => {});
+  await expect(coordinator.prepare()).rejects.toMatchObject({
+    category: "control_store_condition_failed",
+    operation: "dynamodb.transact-write-items",
+  });
+  expect(transactions).toBe(1);
+  expect(f.calls.some((call) => call.operation === "update-service")).toBe(
+    false,
+  );
+});
+
+test("guarded consume reconciles a lost acknowledgment at its actual submitted time", async () => {
+  const f = coordinatorFixture();
+  const original = f.aws.getMockImplementation()!;
+  let elapsed = 0;
+  let lost = false;
+  f.aws.mockImplementation(async (service, operation, input) => {
+    const result = await original(service, operation, input);
+    const put = input.TransactItems?.[0]?.Put;
+    if (put && unmarshall(put.Item!).state === "consumed" && !lost) {
+      lost = true;
+      throw Error("lost consume response");
+    }
+    return result;
+  });
+  const coordinator = guardedCoordinator(
+    { ...f.options, now: () => f.options.now() + elapsed },
+    async (operation) => {
+      if (
+        operation === "transact-write-items" &&
+        f.state.artifacts.get("old")!.state === "sealed"
+      )
+        elapsed += 10;
+    },
+  );
+  await expect(coordinator.prepare()).resolves.toEqual({ kind: "warming" });
+  expect(lost).toBe(true);
+  expect(f.state.artifacts.get("old")).toMatchObject({
+    state: "consumed",
+    consumedAt: f.options.now() + elapsed,
+  });
+  expect(f.state.ctl.deployment!.updatedAt).toBe(f.options.now() + elapsed);
+});
+
+test("guard latency cannot extend an expired artifact seal", async () => {
+  const f = coordinatorFixture();
+  let elapsed = 0;
+  const coordinator = guardedCoordinator(
+    { ...f.options, now: () => f.options.now() + elapsed },
+    async (operation) => {
+      if (
+        operation === "transact-write-items" &&
+        f.state.artifacts.get("old")!.state === "sealed"
+      )
+        elapsed += 61;
+    },
+  );
+  await expect(coordinator.prepare()).rejects.toThrow(
+    "Artifact proof cannot be consumed",
+  );
+  expect(f.state.artifacts.get("old")!.state).toBe("sealed");
+  expect(f.calls.some((call) => call.operation === "update-service")).toBe(
+    false,
+  );
+});
 
 test("request retries a heartbeat conflict without adding history checks", async () => {
   let writes = 0;

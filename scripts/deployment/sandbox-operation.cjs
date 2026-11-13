@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { awsCli, createCoordinator } = require("./coordinator.cjs");
 const { assertSandboxIdentity } = require("./assert-sandbox-identity.cjs");
 const { createWriterInventory } = require("./carryforward-writers.cjs");
+const { createAwsCaller } = require("./coordinator-aws.cjs");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function assertNoEndpointOverride(env) {
   assert.ok(
@@ -24,8 +25,15 @@ async function authenticateOperation(options, env, token) {
   return { aws, actor, types, inventory };
 }
 function guardedCoordinator(base, beforeMutation) {
+  const diagnostic = base.diagnostic ?? {};
+  const submit = createAwsCaller(base.aws, diagnostic);
   return createCoordinator({
     ...base,
+    diagnostic,
+    submitArtifactTransaction: async (build) => {
+      await beforeMutation("transact-write-items");
+      return submit("dynamodb", "transact-write-items", await build());
+    },
     aws: async (service, operation, input) => {
       if (
         [

@@ -1,5 +1,6 @@
 "use strict";
 const assert = require("node:assert/strict");
+const { CoordinatorFailure } = require("./coordinator-aws.cjs");
 const { awsCli, configuration } = require("./coordinator.cjs");
 const { assertSandboxIdentity } = require("./assert-sandbox-identity.cjs");
 const {
@@ -255,11 +256,14 @@ function runRecoveryCli(recover, mode, failureKind) {
         }),
       ),
     )
-    .catch(() => {
+    .catch((error) => {
       console.error(
         JSON.stringify({
           kind: failureKind,
           action: "preserve_receipts_and_review_current_state",
+          ...(error instanceof CoordinatorFailure
+            ? { category: error.category, operation: error.operation }
+            : {}),
         }),
       );
       process.exitCode = 1;

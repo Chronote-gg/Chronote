@@ -105,6 +105,7 @@ async function recoverPreparingSandbox(options = {}) {
     builders:
       options.builders ??
       require("../../dist/services/deploymentControlTransactions.js"),
+    artifactBuilders: options.artifactBuilders,
   });
   await commitPreparingRecovery({ aws, inspector, claim });
   const authority = createCarryforwardAuthority({

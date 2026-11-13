@@ -11,8 +11,85 @@ import {
   buildPreparingRecovery,
   commitPreparingRecovery,
 } from "../../scripts/deployment/preparing-recovery-state.cjs";
+import { bindingHash } from "../../scripts/deployment/binding-hash.cjs";
+import { controlAuthority } from "../../scripts/deployment/carryforward-state.cjs";
 const { client, createTable, records, transact } = localControlTable();
 afterAll(() => client.destroy());
+
+test.each(["heartbeat", "startup", "expired", "requested"])(
+  "pinned registration atomically guards source artifact semantics: %s",
+  async (change) => {
+    const f = await preparingRecoveryFixture();
+    f.state.ctl.deployment.taskDefinition = f.proof.definitionArn;
+    f.proof.controlSha256 = bindingHash(controlAuthority(f.state.ctl));
+    f.bindProof();
+    const inspected = await recoverPreparingSandbox({
+      ...f.options,
+      mode: "inspect",
+    });
+    const artifact = f.state.artifacts.get("old")!;
+    const claim = buildPreparingRecovery({
+      observed: {
+        control: structuredClone(f.state.ctl),
+        archive: f.archive,
+        recovery: f.recovery,
+        source: f.oldIdentity,
+        bindingSha256: inspected.bindingSha256,
+        artifactAuthority: inspected.binding.artifactAuthority,
+        artifactFreshUntil: artifact.freshUntil,
+      },
+      proof: f.proof,
+      proofSha256: f.options.env.PREPARING_RECOVERY_PROOF_SHA256,
+      executionRunToken: "902-1",
+      actorArn: "actual-test-actor",
+      now: f.options.now(),
+      types: f.options.types,
+      builders: f.options.builders,
+      artifactBuilders: f.options.artifactBuilders,
+    });
+    const table = "preparing-pinned-" + randomUUID();
+    const { put, read } = records(table);
+    await createTable(table);
+    try {
+      for (const row of [f.state.ctl, f.state.rows.old, f.archive, f.recovery])
+        await put(row);
+      const changed = {
+        ...artifact,
+        revision: artifact.revision + 1,
+        heartbeatAt: artifact.heartbeatAt + 1,
+        freshUntil: artifact.freshUntil + 1,
+        ...(change === "startup"
+          ? { startup: { kind: "active", activatedAt: f.options.now() + 1 } }
+          : {}),
+        ...(change === "expired" ? { freshUntil: f.options.now() } : {}),
+        ...(change === "requested"
+          ? { state: "requested", request: { foreignEpoch: true } }
+          : {}),
+      };
+      await put(changed);
+      const commit = commitPreparingRecovery({
+        aws: async (_service, _operation, input) => transact(table, input),
+        inspector: { read, control: () => read("ENV", "CONTROL") },
+        claim,
+      });
+      if (change === "heartbeat") {
+        await commit;
+        expect(await read(claim.receipt.pk, claim.receipt.sk)).toEqual(
+          claim.receipt,
+        );
+      } else {
+        await expect(commit).rejects.toThrow();
+        expect(await read("ENV", "CONTROL")).toEqual(f.state.ctl);
+        expect(await read(claim.receipt.pk, claim.receipt.sk)).toBeUndefined();
+      }
+      expect(await read(artifact.pk, artifact.sk)).toEqual(changed);
+      expect(await read(f.archive.pk, f.archive.sk)).toEqual(f.archive);
+      expect(await read(f.recovery.pk, f.recovery.sk)).toEqual(f.recovery);
+    } finally {
+      await client.send(new DeleteTableCommand({ TableName: table }));
+    }
+  },
+);
 
 test.each([
   "success",

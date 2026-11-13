@@ -18,11 +18,15 @@ function buildPreparingRecovery({
   now,
   types,
   builders,
+  artifactBuilders,
 }) {
   const previous = observed.control;
   assert.ok(previous.coordinatorExpiresAt <= now);
   assert.equal(previous.deployment.phase, "preparing");
-  assert.equal(previous.deployment.taskDefinition, undefined);
+  assert.ok(
+    previous.deployment.taskDefinition === undefined ||
+      previous.deployment.taskDefinition === proof.definitionArn,
+  );
   assert.equal(previous.deployment.candidate, undefined);
   assert.equal(previous.coordinatorToken, proof.logicalRunToken);
   const next = types.controlRecordSchema.parse({
@@ -100,6 +104,32 @@ function buildPreparingRecovery({
       }),
     ],
   };
+  if (previous.deployment.taskDefinition) {
+    assert.ok(observed.artifactFreshUntil > now);
+    assert.deepEqual(observed.artifactAuthority.identity, observed.source);
+    assert.equal(observed.artifactAuthority.state, "idle");
+    assert.equal(observed.artifactAuthority.startup.kind, "active");
+    const condition = (
+      artifactBuilders ??
+      require("../../dist/services/artifactSafetyTransactions.js")
+    ).artifactSnapshotCondition(observed.artifactAuthority);
+    transaction.TransactItems.push({
+      ConditionCheck: {
+        TableName: table,
+        Key: marshall({
+          pk: "ENV",
+          sk: "ARTIFACTS#" + observed.source.instanceId + "/STATE",
+        }),
+        ...condition,
+        ConditionExpression:
+          condition.ConditionExpression + " AND freshUntil > :artifactNow",
+        ExpressionAttributeValues: {
+          ...condition.ExpressionAttributeValues,
+          ...marshall({ ":artifactNow": now }),
+        },
+      },
+    });
+  }
   return {
     next,
     receipt,
