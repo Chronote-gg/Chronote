@@ -8,6 +8,7 @@ import { attestation } from "./fixtures/legacyArtifactFixture";
 import { createArtifactHandoff } from "../../scripts/deployment/artifact-handoff.cjs";
 import { guardedCoordinator } from "../../scripts/deployment/sandbox-operation.cjs";
 import { fixture as coordinatorFixture } from "./fixtures/coordinatorFixture";
+import { introductionFixture } from "../fixtures/productionIntroduction";
 
 function fixture(
   now = () => 120,
@@ -85,6 +86,27 @@ function idle(f: ReturnType<typeof fixture>) {
     ...artifactTypes.artifactSafetyBaseSchema.parse(f.expected),
     state: "idle",
   });
+}
+
+function delayedConsume(
+  f: ReturnType<typeof coordinatorFixture>,
+  seconds: number,
+) {
+  let elapsed = 0;
+  const now = () => f.options.now() + elapsed;
+  return {
+    now,
+    coordinator: guardedCoordinator(
+      { ...f.options, now },
+      async (operation) => {
+        if (
+          operation === "transact-write-items" &&
+          f.state.artifacts.get("old")!.state === "sealed"
+        )
+          elapsed += seconds;
+      },
+    ),
+  };
 }
 
 test("guarded preparation snapshots artifact CAS after authority latency and heartbeat", async () => {
@@ -180,18 +202,13 @@ test("an introduction hold appearing during artifact authority prevents submissi
   f.aws.mockImplementation(async (service, operation, input) => {
     if (held && operation === "get-item" && input.Key?.sk?.S === "INTRODUCTION")
       return {
-        Item: marshall({
-          pk: "ENV",
-          sk: "INTRODUCTION",
-          recordType: "production_introduction",
-          protocolVersion: 1,
-          holdId: "hold",
-          introductionId: "intro",
-          manifestHash: "a".repeat(64),
-          revision: 1,
-          admission: { state: "held" },
-          deployment: { state: "held" },
-        }),
+        Item: marshall(
+          introductionFixture({
+            holdId: "hold",
+            introductionId: "intro",
+            revision: 1,
+          }),
+        ),
       };
     return original(service, operation, input);
   });
@@ -237,7 +254,6 @@ test("guarded artifact provider errors retain coordinator classification", async
 test("guarded consume reconciles a lost acknowledgment at its actual submitted time", async () => {
   const f = coordinatorFixture();
   const original = f.aws.getMockImplementation()!;
-  let elapsed = 0;
   let lost = false;
   f.aws.mockImplementation(async (service, operation, input) => {
     const result = await original(service, operation, input);
@@ -248,38 +264,19 @@ test("guarded consume reconciles a lost acknowledgment at its actual submitted t
     }
     return result;
   });
-  const coordinator = guardedCoordinator(
-    { ...f.options, now: () => f.options.now() + elapsed },
-    async (operation) => {
-      if (
-        operation === "transact-write-items" &&
-        f.state.artifacts.get("old")!.state === "sealed"
-      )
-        elapsed += 10;
-    },
-  );
+  const { coordinator, now } = delayedConsume(f, 10);
   await expect(coordinator.prepare()).resolves.toEqual({ kind: "warming" });
   expect(lost).toBe(true);
   expect(f.state.artifacts.get("old")).toMatchObject({
     state: "consumed",
-    consumedAt: f.options.now() + elapsed,
+    consumedAt: now(),
   });
-  expect(f.state.ctl.deployment!.updatedAt).toBe(f.options.now() + elapsed);
+  expect(f.state.ctl.deployment!.updatedAt).toBe(now());
 });
 
 test("guard latency cannot extend an expired artifact seal", async () => {
   const f = coordinatorFixture();
-  let elapsed = 0;
-  const coordinator = guardedCoordinator(
-    { ...f.options, now: () => f.options.now() + elapsed },
-    async (operation) => {
-      if (
-        operation === "transact-write-items" &&
-        f.state.artifacts.get("old")!.state === "sealed"
-      )
-        elapsed += 61;
-    },
-  );
+  const { coordinator } = delayedConsume(f, 61);
   await expect(coordinator.prepare()).rejects.toThrow(
     "Artifact proof cannot be consumed",
   );

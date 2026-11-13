@@ -16,6 +16,42 @@ import { controlAuthority } from "../../scripts/deployment/carryforward-state.cj
 const { client, createTable, records, transact } = localControlTable();
 afterAll(() => client.destroy());
 
+function preparingClaim(
+  f: Awaited<ReturnType<typeof preparingRecoveryFixture>>,
+  inspected: {
+    bindingSha256: string;
+    binding: { artifactAuthority?: Record<string, unknown> };
+  },
+) {
+  const observed = {
+    control: structuredClone(f.state.ctl),
+    archive: f.archive,
+    recovery: f.recovery,
+    source: f.oldIdentity,
+    bindingSha256: inspected.bindingSha256,
+    ...(inspected.binding.artifactAuthority
+      ? {
+          artifactAuthority: inspected.binding.artifactAuthority,
+          artifactFreshUntil: f.state.artifacts.get("old")!.freshUntil,
+        }
+      : {}),
+  };
+  return {
+    observed,
+    claim: buildPreparingRecovery({
+      observed,
+      proof: f.proof,
+      proofSha256: f.options.env.PREPARING_RECOVERY_PROOF_SHA256,
+      executionRunToken: "902-1",
+      actorArn: "actual-test-actor",
+      now: f.options.now(),
+      types: f.options.types,
+      builders: f.options.builders,
+      artifactBuilders: f.options.artifactBuilders,
+    }),
+  };
+}
+
 test.each(["heartbeat", "startup", "expired", "requested"])(
   "pinned registration atomically guards source artifact semantics: %s",
   async (change) => {
@@ -28,25 +64,7 @@ test.each(["heartbeat", "startup", "expired", "requested"])(
       mode: "inspect",
     });
     const artifact = f.state.artifacts.get("old")!;
-    const claim = buildPreparingRecovery({
-      observed: {
-        control: structuredClone(f.state.ctl),
-        archive: f.archive,
-        recovery: f.recovery,
-        source: f.oldIdentity,
-        bindingSha256: inspected.bindingSha256,
-        artifactAuthority: inspected.binding.artifactAuthority,
-        artifactFreshUntil: artifact.freshUntil,
-      },
-      proof: f.proof,
-      proofSha256: f.options.env.PREPARING_RECOVERY_PROOF_SHA256,
-      executionRunToken: "902-1",
-      actorArn: "actual-test-actor",
-      now: f.options.now(),
-      types: f.options.types,
-      builders: f.options.builders,
-      artifactBuilders: f.options.artifactBuilders,
-    });
+    const { claim } = preparingClaim(f, inspected);
     const table = "preparing-pinned-" + randomUUID();
     const { put, read } = records(table);
     await createTable(table);
@@ -108,23 +126,7 @@ test.each([
     ...f.options,
     mode: "inspect",
   });
-  const observed = {
-    control: structuredClone(f.state.ctl),
-    archive: f.archive,
-    recovery: f.recovery,
-    source: f.oldIdentity,
-    bindingSha256: inspected.bindingSha256,
-  };
-  const claim = buildPreparingRecovery({
-    observed,
-    proof: f.proof,
-    proofSha256: f.options.env.PREPARING_RECOVERY_PROOF_SHA256,
-    executionRunToken: "902-1",
-    actorArn: "actual-test-actor",
-    now: f.options.now(),
-    types: f.options.types,
-    builders: f.options.builders,
-  });
+  const { observed, claim } = preparingClaim(f, inspected);
   const table = "preparing-" + randomUUID();
   const { put, read, invalidateReadiness, progress } = records(table);
   await createTable(table);
