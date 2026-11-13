@@ -623,6 +623,15 @@ describe("actual capture preservation cutoff handoff", () => {
           meeting,
           expect.objectContaining({ endReason: "unknown", abnormal: true }),
         );
+        expect(warn).toHaveBeenCalledWith(
+          "Recording checkpoint capture interrupted",
+          expect.objectContaining({
+            reason: "storage_preservation",
+            cause: "unconfirmed_age",
+            pcmLimitBytes: expect.any(Number),
+            pcmReservedBytes: expect.any(Number),
+          }),
+        );
         expect(receiver.subscriptions.size).toBe(0);
         const subscriptionsBefore = receiver.subscribe.mock.calls.length;
         await subscribeToUserVoice(meeting, "user-1");

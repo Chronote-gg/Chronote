@@ -860,9 +860,12 @@ export function ensureRecordingCheckpointCapture(meeting: MeetingData): void {
           .kind === "committed"
       );
     },
-    stopCapture: (reason) =>
-      handleRecordingCaptureFailure(meeting, reason, () =>
-        stopRecordingCapture(meeting, "interrupted"),
+    stopCapture: (reason, diagnosis) =>
+      handleRecordingCaptureFailure(
+        meeting,
+        reason,
+        () => stopRecordingCapture(meeting, "interrupted"),
+        diagnosis,
       ),
   });
   startRecordingContentCheckpoint(meeting);

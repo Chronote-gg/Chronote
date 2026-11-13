@@ -32,6 +32,21 @@ function crossedPressureThreshold(previousReservedBytes: number): boolean {
   return previousReservedBytes < PRESSURE && reservedBytes >= PRESSURE;
 }
 
+/** Which guard stopped the capture, so the interruption log can tell the stops apart. */
+export type CaptureStopCause =
+  | "local_write_failed"
+  | "invalid_chunk"
+  | "source_bound"
+  | "unconfirmed_age"
+  | "shared_budget"
+  | "playback_tap";
+export type CaptureStopDiagnosis = {
+  cause: CaptureStopCause;
+  pcmReservedBytes: number;
+  pcmLimitBytes: number;
+  refusedChunkBytes?: number;
+};
+
 type Piece = {
   sourceId: string;
   sequence: number;
@@ -58,7 +73,10 @@ type Input = {
     artifacts: readonly CheckpointArtifactInput[],
     signal: AbortSignal,
   ): Promise<boolean>;
-  stopCapture(reason: "storage_preservation" | "ownership_lost"): void;
+  stopCapture(
+    reason: "storage_preservation" | "ownership_lost",
+    diagnosis?: CaptureStopDiagnosis,
+  ): void;
 };
 
 /** One bounded publisher per recording. Failed PCM remains owned until explicit settled handoff. */
@@ -82,7 +100,7 @@ export function createRecordingCheckpointCapture(input: Input) {
       writeFileSync(file, artifact.bytes, { flag: "wx" });
       return true;
     } catch {
-      interrupt();
+      interrupt("local_write_failed");
       return false;
     }
   }
@@ -128,10 +146,14 @@ export function createRecordingCheckpointCapture(input: Input) {
       ...closed.map((item) => item.receivedAt),
     );
   }
-  function interrupt(
-    reason: "storage_preservation" | "ownership_lost" = "storage_preservation",
-  ) {
-    if (fence()) input.stopCapture(reason);
+  function interrupt(cause: CaptureStopCause, refusedChunkBytes?: number) {
+    if (fence())
+      input.stopCapture("storage_preservation", {
+        cause,
+        pcmReservedBytes: reservedBytes,
+        pcmLimitBytes: LIMIT,
+        ...(refusedChunkBytes === undefined ? {} : { refusedChunkBytes }),
+      });
   }
   function fence() {
     if (stopped) return false;
@@ -157,7 +179,7 @@ export function createRecordingCheckpointCapture(input: Input) {
   }
   function tick() {
     if (Date.now() >= oldest() + UNSAVED_MS) {
-      interrupt();
+      interrupt("unconfirmed_age");
       return;
     }
     for (const item of open.values()) {
@@ -213,6 +235,19 @@ export function createRecordingCheckpointCapture(input: Input) {
         arm();
       });
   }
+  /** Reserves the chunk's share of the shared budget when nothing refuses it. */
+  function refusalCause(
+    sourceBytes: number,
+    chunk: Buffer,
+    at: number,
+  ): CaptureStopCause | undefined {
+    if (chunk.length % 4 || chunk.length > RATE * 30 || !Number.isFinite(at))
+      return "invalid_chunk";
+    if (sourceBytes + chunk.length > RATE * 60) return "source_bound";
+    if (Date.now() >= oldest() + UNSAVED_MS) return "unconfirmed_age";
+    if (!reserveCheckpointPcm(chunk.length)) return "shared_budget";
+    return undefined;
+  }
   function push(
     sourceId: string,
     chunk: Buffer,
@@ -227,15 +262,9 @@ export function createRecordingCheckpointCapture(input: Input) {
         .reduce((total, item) => total + item.artifact.bytes.byteLength, 0);
     if (chunk.length === 0) return true;
     const previousReservedBytes = reservedBytes;
-    if (
-      chunk.length % 4 ||
-      chunk.length > RATE * 30 ||
-      !Number.isFinite(at) ||
-      sourceBytes + chunk.length > RATE * 60 ||
-      Date.now() >= oldest() + UNSAVED_MS ||
-      !reserveCheckpointPcm(chunk.length)
-    ) {
-      interrupt();
+    const refused = refusalCause(sourceBytes, chunk, at);
+    if (refused) {
+      interrupt(refused, chunk.length);
       return false;
     }
     const sampleAt = Math.max(at, sampleEnds.get(sourceId) ?? input.startedAt);
@@ -337,7 +366,9 @@ export function createRecordingCheckpointCapture(input: Input) {
     open.clear();
   }
   mkdirSync(input.directory, { recursive: true });
-  const ownershipLost = () => interrupt("ownership_lost");
+  const ownershipLost = () => {
+    if (fence()) input.stopCapture("ownership_lost");
+  };
   input.signal.addEventListener("abort", ownershipLost, { once: true });
   if (input.signal.aborted) ownershipLost();
   function queueContent(artifact: CheckpointArtifactInput) {
@@ -393,7 +424,8 @@ export function createRecordingCheckpointCapture(input: Input) {
     queueContent,
     finish,
     drainContent,
-    interrupt,
+    /** The bot playback tap's stop: its own bound or the shared budget refused audio. */
+    interrupt: () => interrupt("playback_tap"),
     fence,
     retire,
     releaseSettledBuffers,

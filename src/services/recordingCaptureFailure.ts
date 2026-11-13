@@ -1,6 +1,7 @@
 import type { MeetingData } from "../types/meeting-data";
 import { appendMeetingCheckpointArtifacts } from "./recordingCheckpointService";
 import { MEETING_END_REASONS } from "../types/meetingLifecycle";
+import type { CaptureStopDiagnosis } from "./recordingCheckpointCapture";
 
 const PRESERVATION_TIMEOUT_MS = 5000;
 
@@ -40,10 +41,12 @@ export function handleRecordingCaptureFailure(
   meeting: MeetingData,
   reason: "storage_preservation" | "ownership_lost",
   stopCapture: () => void,
+  diagnosis?: CaptureStopDiagnosis,
 ): void {
   console.warn("Recording checkpoint capture interrupted", {
     meetingId: meeting.meetingId,
     reason,
+    ...diagnosis,
     checkpointRevision: meeting.recordingCheckpoint?.revision,
     ...meeting.recordingCapture?.snapshot(),
   });

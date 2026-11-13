@@ -162,7 +162,10 @@ test("a failed local write stops the capture", async () => {
     stopCapture: stopped,
   });
   expect(capture.queueContent(snapshot)).toBe(false);
-  expect(stopped).toHaveBeenCalledWith("storage_preservation");
+  expect(stopped).toHaveBeenCalledWith(
+    "storage_preservation",
+    expect.objectContaining({ cause: "local_write_failed" }),
+  );
   await capture.settled();
 });
 
@@ -367,6 +370,77 @@ test("process budget includes queued bytes and scratch across meetings", async (
   a.capture.releaseSettledBuffers();
   b.capture.releaseSettledBuffers();
   expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
+});
+
+const heldCommit = () =>
+  jest.fn(
+    (_artifacts: readonly CheckpointArtifactInput[], signal: AbortSignal) =>
+      new Promise<boolean>((resolve) =>
+        signal.addEventListener("abort", () => resolve(false), { once: true }),
+      ),
+  );
+const largestChunk = () => Buffer.alloc(5760000);
+async function releaseHeld(...captures: Array<ReturnType<typeof fixture>>) {
+  for (const f of captures) f.controller.abort();
+  await jest.advanceTimersByTimeAsync(0);
+  for (const f of captures) f.capture.releaseSettledBuffers();
+}
+
+test.each([
+  {
+    cause: "invalid_chunk",
+    act: (f: ReturnType<typeof fixture>) =>
+      f.capture.push("user", Buffer.alloc(3), 0),
+  },
+  {
+    cause: "source_bound",
+    act: (f: ReturnType<typeof fixture>) => {
+      f.capture.push("user", largestChunk(), 0);
+      f.capture.push("user", largestChunk(), 0);
+      f.capture.push("user", pcm(), 0);
+    },
+  },
+  {
+    cause: "unconfirmed_age",
+    act: async (f: ReturnType<typeof fixture>) => {
+      f.capture.push("user", pcm(), 0);
+      await jest.advanceTimersByTimeAsync(60000);
+    },
+  },
+  {
+    cause: "playback_tap",
+    act: (f: ReturnType<typeof fixture>) => f.capture.interrupt(),
+  },
+])(
+  "a capture stopped for $cause reports that cause",
+  async ({ cause, act }) => {
+    const f = fixture(heldCommit());
+    await act(f);
+    expect(f.stopped).toHaveBeenCalledTimes(1);
+    expect(f.stopped).toHaveBeenCalledWith(
+      "storage_preservation",
+      expect.objectContaining({ cause, pcmLimitBytes: 64 * 1024 * 1024 }),
+    );
+    await releaseHeld(f);
+  },
+);
+
+test("a capture refused by the shared budget reports the budget and the refused chunk", async () => {
+  const a = fixture(heldCommit());
+  const b = fixture(heldCommit());
+  a.capture.push("a", largestChunk(), 0);
+  b.capture.push("b", largestChunk(), 0);
+  const reservedBytes = getCheckpointPcmBudget().reservedBytes;
+
+  expect(a.capture.push("c", largestChunk(), 0)).toBe(false);
+
+  expect(a.stopped).toHaveBeenCalledWith("storage_preservation", {
+    cause: "shared_budget",
+    pcmReservedBytes: reservedBytes,
+    pcmLimitBytes: 64 * 1024 * 1024,
+    refusedChunkBytes: 5760000,
+  });
+  await releaseHeld(a, b);
 });
 
 test("completed text remains publishable after complete PCM capture", async () => {
