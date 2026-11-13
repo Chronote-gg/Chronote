@@ -294,16 +294,31 @@ export function claimContract({ h, seed }: ContractContext) {
       await expectRestored(claim, before);
     });
 
-    it("a reopening claim refuses a row with saved notes or a finished recovery", async () => {
+    it("a reopening claim takes a row whose notes are empty", async () => {
+      const row = await seed("a", {
+        status: "failed",
+        lifecycleVersion: undefined,
+        recovery: unfinishedRecovery,
+        notes: "",
+      });
+      const claim = await h.repository.claim(
+        finisherRow(row),
+        WORKER_B,
+        NOW,
+        reopening,
+      );
+      expect(claim?.history.status).toBe("processing");
+    });
+
+    it("a reopening claim refuses saved notes, a finished recovery, or a completed or cancelled meeting", async () => {
       const legacy = { status: "failed", lifecycleVersion: undefined } as const;
+      const unfinished = { ...legacy, recovery: unfinishedRecovery };
       const rows = [
-        await seed("notes", {
-          ...legacy,
-          recovery: unfinishedRecovery,
-          notes: "synthetic notes",
-        }),
+        await seed("notes", { ...unfinished, notes: "synthetic notes" }),
         await seed("done", { ...legacy, recovery: doneRecovery }),
         await seed("absent", legacy),
+        await seed("complete", { ...unfinished, status: "complete" }),
+        await seed("cancelled", { ...unfinished, status: "cancelled" }),
       ];
       for (const row of rows) {
         await expect(

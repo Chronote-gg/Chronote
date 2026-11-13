@@ -100,6 +100,7 @@ function setup(initial: MeetingHistory) {
   const repository = createMockMeetingFinishRepository(histories, new Map());
   const discord = fakeDiscord();
   let nowMs = NOW_MS;
+  const summaries = jest.fn(async () => ({}));
   const notes = jest.fn(async (input: MeetingNotesInput) => {
     input.notesText = "- Synthetic note.";
     input.processing = { ...input.processing, notes: "generated" };
@@ -110,7 +111,7 @@ function setup(initial: MeetingHistory) {
     transport: discord.transport,
     upload: acceptingUpload(),
     notes,
-    summaries: jest.fn(async () => ({})),
+    summaries,
     claimUpgrade: jest.fn(async () => undefined),
     followOns: stubFollowOns(),
     nowMs: () => nowMs,
@@ -132,6 +133,8 @@ function setup(initial: MeetingHistory) {
     deps,
     discord,
     notes,
+    summaries,
+    repository,
     nowSeconds: () => Math.floor(nowMs / MS_PER_SECOND),
     current: () => histories.get(GUILD_ID)![0],
   };
@@ -511,6 +514,12 @@ describe("finishStranded on a terminal row whose old recovery never finished", (
       strandedRow(),
       strandedRow({ status: "failed", recovery: unfinishedRecovery }),
       notesSavedRow({ notesMessageIds: ["900"] }),
+      strandedRow({ status: "complete", recovery: unfinishedRecovery }),
+      strandedRow({
+        status: "interrupted",
+        recovery: unfinishedRecovery,
+        notes: "",
+      }),
     ];
     const listed = await listStranded(
       {
@@ -536,9 +545,62 @@ describe("finishStranded on a terminal row whose old recovery never finished", (
         notesSaved: true,
         notesMessageRecorded: true,
       }),
+      expect.objectContaining({ kind: "not_reprocessed", notesSaved: false }),
+      expect.objectContaining({ kind: "needs_processing", notesSaved: false }),
     ]);
   });
+
+  describe.each(["complete", "cancelled"] as const)(
+    "a %s row without notes",
+    (status) => {
+      const before = () =>
+        strandedRow({ status, recovery: unfinishedRecovery });
+
+      test("--no-post settles it without processing it again", async () => {
+        const world = setup(before());
+        await expect(finishStranded(KEY, false, world.deps)).resolves.toBe(
+          "finished",
+        );
+        expectNotReprocessed(world, status);
+        expect(world.current().recovery).toBeUndefined();
+        expect(world.discord.requests).toEqual([]);
+      });
+
+      test("--post delivers it as it stands without processing it again", async () => {
+        const world = setup(before());
+        await expect(finishStranded(KEY, true, world.deps)).resolves.toBe(
+          "finished",
+        );
+        expectNotReprocessed(world, status);
+        expect(world.current().recovery?.disposition).toBe("done");
+      });
+    },
+  );
+
+  test("a settle whose recovery removal is refused is not reported finished", async () => {
+    const world = setup(notesSavedRow());
+    const save = world.repository.save;
+    world.repository.save = async (claim, patch, now, ...rest) =>
+      rest[2]?.includes("recovery")
+        ? undefined
+        : save(claim, patch, now, ...rest);
+    await expect(finishStranded(KEY, false, world.deps)).resolves.not.toBe(
+      "finished",
+    );
+    expect(world.current().recovery).toEqual(deliveryUncertainRecovery);
+  });
 });
+
+/** Nothing was generated again and the old terminal status stands. */
+function expectNotReprocessed(
+  world: ReturnType<typeof setup>,
+  status: MeetingHistory["status"],
+) {
+  expect(world.notes).not.toHaveBeenCalled();
+  expect(world.summaries).not.toHaveBeenCalled();
+  expect(world.current().status).toBe(status);
+  expect(world.current().notes).toBeUndefined();
+}
 
 test("list reports each stranded meeting with what its checkpoint manifest holds", async () => {
   const checkpoint = { revision: 4 } as RecordingCheckpoint;

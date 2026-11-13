@@ -11,9 +11,10 @@
  * owner-only directory and prints only the count. Besides open rows, it lists
  * terminal rows whose old recovery value never reached done: nothing else can
  * ever finish them, because the portal refuses retry and corrections for them.
- * A notes-less one is set back to processing by the claim and processed like
- * any other; one with saved notes is never regenerated, only settled
- * (--no-post) or delivered (--post, which warns first when a notes message id
+ * A notes-less interrupted or failed one is set back to processing by the
+ * claim and processed like any other. One with saved notes, and any complete
+ * or cancelled one, is never processed again, only settled (--no-post) or
+ * delivered as it stands (--post, which warns first when a notes message id
  * is recorded, since the old runtime probably posted it).
  *
  * `finish` claims the meeting as an operator and runs the recovery loader and
@@ -45,6 +46,7 @@ import { parseArgs } from "node:util";
 import { z } from "zod";
 import {
   getMeetingFinishRepository,
+  reopenable,
   terminalWithUnfinishedRecovery,
 } from "../src/repositories/meetingFinishRepository";
 import type {
@@ -208,19 +210,19 @@ const stranded = (row: MeetingHistory) =>
     row.finish !== undefined ||
     terminalWithUnfinishedRecovery(row));
 
-/** A terminal row the old runtime left before notes were saved: it still needs processing. */
-const needsReopening = (row: MeetingHistory) =>
-  terminalWithUnfinishedRecovery(row) && row.notes === undefined;
-
-/** A terminal row whose notes were saved but whose old publication never finished. */
-const notesSavedUnsettled = (row: MeetingHistory) =>
-  terminalWithUnfinishedRecovery(row) && row.notes !== undefined;
+/**
+ * A terminal row with an unfinished old recovery that is never processed
+ * again: its notes are saved, or it is `complete` or `cancelled`. It is only
+ * settled (--no-post) or delivered as it stands (--post).
+ */
+const notReprocessed = (row: MeetingHistory) =>
+  terminalWithUnfinishedRecovery(row) && !reopenable(row);
 
 const notesMessageRecorded = (row: MeetingHistory) =>
   Boolean(row.summaryMessageId || row.notesMessageIds?.length);
 
 const POST_RECORDED_WARNING =
-  "This meeting records a notes message id, so the old runtime probably posted its notes already. Proceeding because --post was passed: delivery reads the channel and resumes after the chunks already there.";
+  "This meeting records a notes message id, so the old runtime probably posted its notes already. Proceeding because --post was passed: the summary is edited in place, and a notes chunk is skipped only when delivery finds it in its readback of recent channel history; otherwise the full set of notes is posted again.";
 
 /** A capture whose worker died is adopted as interrupted; anything else is claimed. */
 async function take(
@@ -233,7 +235,7 @@ async function take(
     const now = Math.floor(deps.nowMs() / MS_PER_SECOND);
     return deps.repository.claim(finisherRow(row), owner, now, {
       operator: true,
-      reopen: needsReopening(row),
+      reopen: reopenable(row),
     });
   }
   const operator = { operator: true };
@@ -261,7 +263,7 @@ async function waitForRetry(
 /**
  * What a row with no finish map left says about how the meeting ended. A
  * `--no-post` settle keeps the old terminal status, `failed` included, so it
- * is finished once its leftover recovery value is gone.
+ * is finished exactly when its leftover recovery value is gone.
  */
 function concluded(
   row: MeetingHistory,
@@ -269,7 +271,7 @@ function concluded(
   settling: boolean,
 ): FinishStrandedResult | undefined {
   if (row.finish || isOpen(row.status)) return undefined;
-  if (settling && row.recovery === undefined) return "finished";
+  if (settling) return row.recovery === undefined ? "finished" : undefined;
   if (row.status === MEETING_STATUS.FAILED) return "failed";
   return deliver && row.delivery?.notes?.outcome === "failed"
     ? "delivery_failed"
@@ -309,7 +311,7 @@ export async function finishStranded(
   if (!stranded(before)) return "not_stranded";
   if (await leaseHeld(before, deps.readLease, deps.nowMs(), signal))
     return "lease_held";
-  if (deliver && notesSavedUnsettled(before) && notesMessageRecorded(before))
+  if (deliver && notReprocessed(before) && notesMessageRecorded(before))
     console.error(POST_RECORDED_WARNING);
   return finishAttempts(key, before, deliver, deps, signal);
 }
@@ -324,7 +326,7 @@ async function finishAttempts(
 ): Promise<FinishStrandedResult> {
   let current = before;
   let lastClaim: FinishClaim | undefined;
-  const settling = !deliver && notesSavedUnsettled(before);
+  const settling = !deliver && notReprocessed(before);
   for (let attempt = 1; attempt <= OPERATOR_ATTEMPTS; attempt++) {
     if (!(await waitedForRetry(current, deps, signal))) break;
     if (signal.aborted) break;
@@ -451,11 +453,11 @@ async function checkpointSummary(
   }
 }
 
-/** Open, or terminal with an unfinished old recovery and either no notes or saved notes. */
+/** Whether the row is open, will be processed again, or will only be settled or delivered. */
 function strandedKind(row: MeetingHistory) {
-  if (needsReopening(row)) return "needs_processing";
-  if (notesSavedUnsettled(row)) return "notes_saved";
-  return "open";
+  if (reopenable(row)) return "needs_processing";
+  if (!notReprocessed(row)) return "open";
+  return row.notes ? "notes_saved" : "not_reprocessed";
 }
 
 /** Each stranded meeting and what its checkpoint holds; identifiers stay in the private file. */

@@ -71,9 +71,9 @@ type RetrySchedule = Pick<
 >;
 /**
  * Rows that predate the lifecycle marker are claimed or adopted only by an
- * operator. `reopen`, for an operator claim only, takes a terminal row with no
- * saved notes whose old recovery never finished and sets it back to
- * `processing` in the same write, so the pipeline processes it.
+ * operator. `reopen`, for an operator claim only, takes an interrupted or
+ * failed row with no saved notes whose old recovery never finished and sets it
+ * back to `processing` in the same write, so the pipeline processes it.
  */
 type ClaimOptions = { operator?: boolean; reopen?: boolean };
 
@@ -186,6 +186,24 @@ const unfinishedRecovery = (row: MeetingHistory) =>
  */
 export const terminalWithUnfinishedRecovery = (row: MeetingHistory) =>
   row.status !== undefined && !isOpen(row.status) && unfinishedRecovery(row);
+
+/**
+ * Only a meeting the old runtime stopped before it finished processing may be
+ * processed again. A `complete` one already finished, and a `cancelled` one
+ * carries no completion policy for the pipeline to honour, so reprocessing it
+ * could post notes for a meeting the user cancelled.
+ */
+const REOPENABLE_STATUSES: readonly MeetingStatus[] = [
+  MEETING_STATUS.INTERRUPTED,
+  MEETING_STATUS.FAILED,
+];
+
+/** A row a reopening claim takes: interrupted or failed, no saved notes, recovery unfinished. */
+export const reopenable = (row: MeetingHistory) =>
+  row.status !== undefined &&
+  REOPENABLE_STATUSES.includes(row.status) &&
+  !row.notes &&
+  unfinishedRecovery(row);
 
 const reopens = (options: ClaimOptions | undefined) =>
   Boolean(options?.operator && options.reopen);
@@ -412,8 +430,10 @@ function unfinishedRecoveryCondition(e: Expression) {
 /** The extra condition and assignment a reopening claim adds to the claim write. */
 function reopenClause(e: Expression, options: ClaimOptions | undefined) {
   if (!reopens(options)) return { condition: "", assignment: "" };
+  const notes = e.path("notes");
+  const status = e.path("status");
   return {
-    condition: ` AND attribute_not_exists(${e.path("notes")}) AND ${unfinishedRecoveryCondition(e)}`,
+    condition: ` AND ${status} IN (${e.list(REOPENABLE_STATUSES)}) AND (attribute_not_exists(${notes}) OR ${notes} = ${e.value("")}) AND ${unfinishedRecoveryCondition(e)}`,
     assignment: `, ${e.path("status")} = ${e.value(MEETING_STATUS.PROCESSING)}`,
   };
 }
@@ -822,7 +842,7 @@ export function createMockMeetingFinishRepository(
       if (
         !stored ||
         !mockClaimable(stored, row, Boolean(options?.operator), now) ||
-        (reopen && (stored.notes !== undefined || !unfinishedRecovery(stored)))
+        (reopen && !reopenable(stored))
       )
         return undefined;
       return claimFor(
