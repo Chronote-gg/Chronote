@@ -70,17 +70,17 @@ function createSourceLossInspection({
     assertStoppedSource(source, d, config, now);
     return { stoppedAt: source.stoppedAt };
   }
-  async function billingFlags(d) {
+  async function definitionBillingFlags(arn, digest, containerName) {
     const { taskDefinition } = await aws("ecs", "describe-task-definition", {
-      taskDefinition: d.taskDefinition,
+      taskDefinition: arn,
     });
-    assert.equal(taskDefinition.taskDefinitionArn, d.taskDefinition);
+    assert.equal(taskDefinition.taskDefinitionArn, arn);
     assert.equal(taskDefinition.family, config.family);
     const containers = taskDefinition.containerDefinitions.filter(
-      (c) => c.name === d.routing.containerName,
+      (c) => c.name === containerName,
     );
     assert.equal(containers.length, 1);
-    assert.equal(containers[0].image, d.image);
+    assert.equal(containers[0].image.split("@")[1], digest);
     const names = [
       "STRIPE_MODE",
       "STRIPE_RENEWAL_GRACE_ENABLED",
@@ -100,8 +100,25 @@ function createSourceLossInspection({
       flags[name] = entries[0]?.value ?? "";
     }
     assert.equal(flags.STRIPE_MODE, "test");
-    for (const name of names.slice(1, 4)) assert.notEqual(flags[name], "true");
-    return flags;
+    return { flags, image: containers[0].image };
+  }
+  async function billingFlags(d) {
+    const [source, candidate] = await Promise.all([
+      definitionBillingFlags(
+        d.previousTaskDefinition,
+        d.outgoing.imageDigest,
+        d.routing.containerName,
+      ),
+      definitionBillingFlags(
+        d.taskDefinition,
+        d.image.split("@")[1],
+        d.routing.containerName,
+      ),
+    ]);
+    assert.equal(candidate.image, d.image);
+    assert.deepEqual(candidate.flags, source.flags);
+    assert.notEqual(candidate.flags.STRIPE_INTRO_OFFER_LEDGER_ENABLED, "true");
+    return candidate.flags;
   }
   async function native(ctl, candidate) {
     const d = ctl.deployment;

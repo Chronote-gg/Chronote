@@ -30,6 +30,119 @@ test("inspection freezes exact source/candidate/topology and is read only", asyn
   );
   expect(writes(f)).toEqual([]);
 });
+
+test("restores unchanged test billing flags without settling lost source work", async () => {
+  const f = await sourceLossFixture();
+  const flags = [
+    { name: "STRIPE_RENEWAL_GRACE_ENABLED", value: "true" },
+    { name: "STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED", value: "true" },
+    { name: "STRIPE_INTRO_OFFER_LEDGER_ENABLED", value: "false" },
+    { name: "STRIPE_RENEWAL_REACTIVATION_ENABLED", value: "true" },
+  ];
+  f.loss.sourceBillingFlags.push(...structuredClone(flags));
+  f.loss.candidateBillingFlags.push(...structuredClone(flags));
+  f.state.rows.old.workCounts.pending_admission = 1;
+  const original = structuredClone(f.state.rows.old);
+  const inspection = await reviewed(f);
+  expect(inspection.binding.terminal.billingFlags).toMatchObject({
+    STRIPE_MODE: "test",
+    STRIPE_RENEWAL_GRACE_ENABLED: "true",
+    STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED: "true",
+  });
+  expect(await recoverSandbox({ ...f.options, mode: "recover" })).toMatchObject(
+    {
+      kind: "availability_restored",
+      settlement: "lost_owner_settlement_pending",
+    },
+  );
+  expect(f.state.rows.old).toEqual(original);
+  expect(f.loss.receipt.settlement).toBe("lost_owner_settlement_pending");
+});
+
+test.each([
+  "STRIPE_RENEWAL_GRACE_ENABLED",
+  "STRIPE_SUBSCRIPTION_TRANSITIONS_ENABLED",
+  "STRIPE_RENEWAL_REACTIVATION_ENABLED",
+])("refuses changed %s in either immutable definition", async (name) => {
+  for (const side of ["sourceBillingFlags", "candidateBillingFlags"]) {
+    const f = await sourceLossFixture();
+    f.loss[side].push({ name, value: "true" });
+    await expect(reviewed(f)).rejects.toThrow();
+    expect(writes(f)).toEqual([]);
+  }
+});
+
+test("refuses an enabled intro ledger even when unchanged", async () => {
+  const f = await sourceLossFixture();
+  for (const side of ["sourceBillingFlags", "candidateBillingFlags"])
+    f.loss[side].push({
+      name: "STRIPE_INTRO_OFFER_LEDGER_ENABLED",
+      value: "true",
+    });
+  await expect(reviewed(f)).rejects.toThrow();
+  expect(writes(f)).toEqual([]);
+});
+
+test.each(["source", "candidate"])(
+  "refuses duplicate or secret billing flags in the %s definition",
+  async (side) => {
+    for (const kind of ["duplicate", "secret"]) {
+      const f = await sourceLossFixture();
+      if (kind === "duplicate")
+        f.loss[side + "BillingFlags"].push({
+          name: "STRIPE_MODE",
+          value: "test",
+        });
+      else {
+        const original = f.aws.getMockImplementation();
+        f.aws.mockImplementation(async (service, operation, input) => {
+          const result = await original(service, operation, input);
+          const arn = side === "source" ? "definition:old" : "definition:new";
+          if (
+            operation === "describe-task-definition" &&
+            input.taskDefinition === arn
+          )
+            result.taskDefinition.containerDefinitions[0].secrets.push({
+              name: "STRIPE_RENEWAL_GRACE_ENABLED",
+              valueFrom: "fixture-reference",
+            });
+          return result;
+        });
+      }
+      await expect(reviewed(f)).rejects.toThrow();
+      expect(writes(f)).toEqual([]);
+    }
+  },
+);
+
+test.each(["arn", "family", "image", "live"])(
+  "refuses mismatched source definition %s",
+  async (kind) => {
+    const f = await sourceLossFixture();
+    const original = f.aws.getMockImplementation();
+    f.aws.mockImplementation(async (service, operation, input) => {
+      const result = await original(service, operation, input);
+      if (
+        operation === "describe-task-definition" &&
+        input.taskDefinition === "definition:old"
+      ) {
+        const definition = result.taskDefinition;
+        if (kind === "arn") definition.taskDefinitionArn = "foreign";
+        if (kind === "family") definition.family = "foreign";
+        if (kind === "image")
+          definition.containerDefinitions[0].image =
+            "repo@sha256:" + "c".repeat(64);
+        if (kind === "live")
+          definition.containerDefinitions[0].environment.find(
+            (e) => e.name === "STRIPE_MODE",
+          ).value = "live";
+      }
+      return result;
+    });
+    await expect(reviewed(f)).rejects.toThrow();
+    expect(writes(f)).toEqual([]);
+  },
+);
 test("same candidate restores admission before traffic and leaves settlement pending", async () => {
   const f = await sourceLossFixture();
   const original = structuredClone(f.state.rows.old);
@@ -194,7 +307,10 @@ test.each([
         result.taskDefinition.containerDefinitions[0].environment.find(
           (e) => e.name === "STRIPE_MODE",
         ).value = "live";
-      if (kind === "billing_gate")
+      if (
+        kind === "billing_gate" &&
+        input.taskDefinition === f.state.ctl.deployment.taskDefinition
+      )
         result.taskDefinition.containerDefinitions[0].environment.push({
           name: "STRIPE_RENEWAL_GRACE_ENABLED",
           value: "true",

@@ -19,6 +19,8 @@ export async function sourceLossFixture() {
     loseAck: false,
     beforeWrite: () => undefined,
     afterWrite: () => undefined,
+    sourceBillingFlags: [],
+    candidateBillingFlags: [],
   };
   const original = f.aws.getMockImplementation();
   function transact(input) {
@@ -100,14 +102,20 @@ export async function sourceLossFixture() {
       return {
         taskDefinition: {
           ...f.definition,
-          taskDefinitionArn: "definition:new",
+          taskDefinitionArn: input.taskDefinition,
           containerDefinitions: [
             {
               ...f.definition.containerDefinitions[0],
-              image: f.options.env.CANDIDATE_IMAGE,
+              image:
+                input.taskDefinition === "definition:old"
+                  ? `repo@${f.oldIdentity.imageDigest}`
+                  : f.options.env.CANDIDATE_IMAGE,
               environment: [
                 ...f.definition.containerDefinitions[0].environment,
                 { name: "STRIPE_MODE", value: "test" },
+                ...(input.taskDefinition === "definition:old"
+                  ? state.sourceBillingFlags
+                  : state.candidateBillingFlags),
               ],
             },
           ],
