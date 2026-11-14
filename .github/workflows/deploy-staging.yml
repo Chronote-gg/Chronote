@@ -467,7 +467,7 @@ jobs:
         run: node scripts/operator/build-publication-release.cjs
 
       - name: Save operator release metadata
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: recovery-publication-release-${{ github.run_id }}-${{ github.run_attempt }}
           path: scripts/operator/recovery-publication-releases.json
