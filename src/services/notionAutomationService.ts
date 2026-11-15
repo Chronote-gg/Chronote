@@ -37,8 +37,18 @@ type RunAutoExportParams = {
 const hasNotes = (meeting: MeetingHistory) =>
   Boolean(meeting.notes && meeting.notes.trim().length > 0);
 
+/**
+ * The finish pipeline's terminal save wrote the notes, whether or not Discord
+ * delivery followed: every marked row, or an old-runtime row it is finishing,
+ * whose finish map is in the deliver phase until the follow-ons have run.
+ */
+const finishedByPipeline = (meeting: MeetingHistory) =>
+  meeting.lifecycleVersion === 2 || meeting.finish?.phase === "deliver";
+
+/** A recovery value only the old runtime writes unfinished, so it matters only on a row the pipeline has not finished. */
 const hasUnfinishedRecovery = (meeting: MeetingHistory) =>
-  Boolean(meeting.recovery && meeting.recovery.disposition !== "done") ||
+  (!finishedByPipeline(meeting) &&
+    Boolean(meeting.recovery && meeting.recovery.disposition !== "done")) ||
   Boolean(
     meeting.recoveryExport &&
     !["acknowledged", "skipped"].includes(meeting.recoveryExport.state),
@@ -48,8 +58,9 @@ const isCompletedMeeting = (meeting: MeetingHistory) =>
   !hasUnfinishedRecovery(meeting) &&
   ((meeting.status ?? MEETING_STATUS.COMPLETE) === MEETING_STATUS.COMPLETE ||
     (meeting.status === MEETING_STATUS.INTERRUPTED &&
-      meeting.recovery?.disposition === "done" &&
-      meeting.recovery.outcome === "completed"));
+      (finishedByPipeline(meeting) ||
+        (meeting.recovery?.disposition === "done" &&
+          meeting.recovery.outcome === "completed"))));
 
 const matchesChannelFilter = (
   config: NotionAutomationConfig,

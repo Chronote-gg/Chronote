@@ -429,6 +429,85 @@ describe("ordinary Notion callers during recovery", () => {
   );
 });
 
+describe("meetings the finish pipeline finished without a Discord delivery receipt", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.replaceProperty(config.notion, "enabled", true);
+    mockRepository.getAutomationConfig.mockResolvedValue(automationConfig);
+    mockRepository.getAutomationMeetingExport.mockResolvedValue(undefined);
+    mockRepository.reserveAutomationMeetingExport.mockResolvedValue(true);
+    jest
+      .mocked(exportMeetingToNotionAutomation)
+      .mockResolvedValue({ ...existingExport, status: "exported" });
+  });
+
+  const leftoverRecovery: MeetingHistory["recovery"] = {
+    attempt: 1,
+    executionVersion: 1,
+    stage: "notes",
+    retry: { maxAttempts: 3, nextAttemptAt: null },
+    disposition: "pending",
+  };
+  // The terminal save's finish map, still present while the follow-ons run.
+  const finishing: MeetingHistory["finish"] = {
+    owner: "worker-1",
+    attempts: 0,
+    phase: "deliver",
+  };
+  const failedDelivery: MeetingHistory["delivery"] = {
+    notes: { outcome: "failed", intended: 1, sent: 0, errors: [] },
+  };
+
+  it.each([
+    {
+      name: "an old-runtime meeting finished with --no-post",
+      row: { recovery: leftoverRecovery, finish: finishing },
+    },
+    {
+      name: "an old-runtime meeting whose delivery failed for good",
+      row: {
+        recovery: leftoverRecovery,
+        finish: finishing,
+        delivery: failedDelivery,
+      },
+    },
+    {
+      name: "a marked meeting finished without delivery",
+      row: { lifecycleVersion: 2 as const },
+    },
+    {
+      name: "a marked meeting whose delivery failed for good",
+      row: { lifecycleVersion: 2 as const, delivery: failedDelivery },
+    },
+  ])("exports $name", async ({ row }) => {
+    await maybeAutoExportCompletedMeeting({
+      ...meeting,
+      status: "interrupted",
+      ...row,
+    });
+    expect(exportMeetingToNotionAutomation).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { name: "no finish map", finish: undefined },
+    {
+      name: "a finish still processing",
+      finish: { ...finishing, phase: "process" as const },
+    },
+  ])(
+    "refuses an old-runtime unfinished recovery with $name",
+    async ({ finish }) => {
+      await maybeAutoExportCompletedMeeting({
+        ...meeting,
+        status: "interrupted",
+        recovery: leftoverRecovery,
+        finish,
+      });
+      expect(exportMeetingToNotionAutomation).not.toHaveBeenCalled();
+    },
+  );
+});
+
 function maybeAutoExportCompletedMeeting(
   meeting: MeetingHistory,
   signal?: AbortSignal,
