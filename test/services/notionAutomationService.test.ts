@@ -473,6 +473,16 @@ describe("Notion export from the finish pipeline's follow-ons", () => {
     { name: "still processing", row: { status: "processing" as const } },
     { name: "cancelled", row: { status: "cancelled" as const } },
     { name: "failed", row: { status: "failed" as const } },
+    {
+      name: "with an old export that never acknowledged",
+      row: {
+        recoveryExport: {
+          checkpointRevision: 1,
+          intentExecutionVersion: 2,
+          state: "submitted" as const,
+        },
+      },
+    },
   ])("refuses a row $name even from the follow-ons", async ({ row }) => {
     await maybeAutoExportCompletedMeeting(
       { ...strandedRow("process"), ...row },

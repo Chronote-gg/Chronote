@@ -39,12 +39,16 @@ type RunAutoExportParams = {
 const hasNotes = (meeting: MeetingHistory) =>
   Boolean(meeting.notes && meeting.notes.trim().length > 0);
 
-const hasUnfinishedRecovery = (meeting: MeetingHistory) =>
-  Boolean(meeting.recovery && meeting.recovery.disposition !== "done") ||
+// An old-runtime export that never acknowledged may already have created a page.
+const hasPendingRecoveryExport = (meeting: MeetingHistory) =>
   Boolean(
     meeting.recoveryExport &&
     !["acknowledged", "skipped"].includes(meeting.recoveryExport.state),
   );
+
+const hasUnfinishedRecovery = (meeting: MeetingHistory) =>
+  Boolean(meeting.recovery && meeting.recovery.disposition !== "done") ||
+  hasPendingRecoveryExport(meeting);
 
 const FINISHED_STATUSES: readonly MeetingStatus[] = [
   MEETING_STATUS.COMPLETE,
@@ -57,7 +61,8 @@ const FINISHED_STATUSES: readonly MeetingStatus[] = [
  */
 const isCompletedMeeting = (meeting: MeetingHistory, finishing: boolean) =>
   finishing
-    ? FINISHED_STATUSES.includes(meeting.status ?? MEETING_STATUS.COMPLETE)
+    ? !hasPendingRecoveryExport(meeting) &&
+      FINISHED_STATUSES.includes(meeting.status ?? MEETING_STATUS.COMPLETE)
     : !hasUnfinishedRecovery(meeting) &&
       ((meeting.status ?? MEETING_STATUS.COMPLETE) ===
         MEETING_STATUS.COMPLETE ||
