@@ -653,7 +653,8 @@ describe("initializeMeeting", () => {
   });
 
   it("a nickname change aborted before it is issued sends nothing and leaves nothing to restore", async () => {
-    const options = buildMeetingOptions(buildBotMember("Meeting Notes Bot"));
+    const botMember = buildBotMember("Meeting Notes Bot");
+    const options = buildMeetingOptions(botMember);
     // The nickname's config read is the one made once the meeting is live.
     jest.mocked(resolveConfigSnapshot).mockImplementation(async () => {
       getMeeting("guild-1")?.botNicknameChange?.abort();
@@ -670,7 +671,10 @@ describe("initializeMeeting", () => {
     jest
       .mocked(resolveConfigSnapshot)
       .mockImplementation(async () => EMPTY_SNAPSHOT);
+    expect(meeting.botNicknameChange?.signal.aborted).toBe(true);
+    expect(meeting.botNicknameChangeIssued).toBeFalsy();
     await restoreVoiceSessionNickname(meeting);
+    expect(botMember.setNickname).not.toHaveBeenCalled();
     expect(options.guild.client.rest.patch).not.toHaveBeenCalled();
     deleteMeeting(meeting);
   });

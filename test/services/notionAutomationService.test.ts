@@ -429,7 +429,7 @@ describe("ordinary Notion callers during recovery", () => {
   );
 });
 
-describe("meetings the finish pipeline finished without a Discord delivery receipt", () => {
+describe("Notion export from the finish pipeline's follow-ons", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.replaceProperty(config.notion, "enabled", true);
@@ -441,69 +441,68 @@ describe("meetings the finish pipeline finished without a Discord delivery recei
       .mockResolvedValue({ ...existingExport, status: "exported" });
   });
 
-  const leftoverRecovery: MeetingHistory["recovery"] = {
-    attempt: 1,
-    executionVersion: 1,
-    stage: "notes",
-    retry: { maxAttempts: 3, nextAttemptAt: null },
-    disposition: "pending",
-  };
-  // The terminal save's finish map, still present while the follow-ons run.
-  const finishing: MeetingHistory["finish"] = {
-    owner: "worker-1",
-    attempts: 0,
-    phase: "deliver",
-  };
-  const failedDelivery: MeetingHistory["delivery"] = {
-    notes: { outcome: "failed", intended: 1, sent: 0, errors: [] },
-  };
-
-  it.each([
-    {
-      name: "an old-runtime meeting finished with --no-post",
-      row: { recovery: leftoverRecovery, finish: finishing },
+  /** An old-runtime interrupted row with notes whose recovery never finished, under a finish claim. */
+  const strandedRow = (phase: "process" | "deliver"): MeetingHistory => ({
+    ...meeting,
+    status: "interrupted",
+    recovery: {
+      attempt: 1,
+      executionVersion: 1,
+      stage: "notes",
+      retry: { maxAttempts: 3, nextAttemptAt: null },
+      disposition: "pending",
     },
-    {
-      name: "an old-runtime meeting whose delivery failed for good",
-      row: {
-        recovery: leftoverRecovery,
-        finish: finishing,
-        delivery: failedDelivery,
-      },
-    },
-    {
-      name: "a marked meeting finished without delivery",
-      row: { lifecycleVersion: 2 as const },
-    },
-    {
-      name: "a marked meeting whose delivery failed for good",
-      row: { lifecycleVersion: 2 as const, delivery: failedDelivery },
-    },
-  ])("exports $name", async ({ row }) => {
-    await maybeAutoExportCompletedMeeting({
-      ...meeting,
-      status: "interrupted",
-      ...row,
-    });
-    expect(exportMeetingToNotionAutomation).toHaveBeenCalledTimes(1);
+    finish: { owner: "worker-1", attempts: 0, phase },
   });
 
   it.each([
-    { name: "no finish map", finish: undefined },
-    {
-      name: "a finish still processing",
-      finish: { ...finishing, phase: "process" as const },
-    },
-  ])(
-    "refuses an old-runtime unfinished recovery with $name",
-    async ({ finish }) => {
-      await maybeAutoExportCompletedMeeting({
-        ...meeting,
-        status: "interrupted",
-        recovery: leftoverRecovery,
-        finish,
-      });
-      expect(exportMeetingToNotionAutomation).not.toHaveBeenCalled();
+    { name: "on a first attempt with --no-post", phase: "process" as const },
+    { name: "after a delivery retry", phase: "deliver" as const },
+  ])("exports an old-runtime unfinished recovery $name", async ({ phase }) => {
+    await maybeAutoExportCompletedMeeting(strandedRow(phase), undefined, true);
+    expect(exportMeetingToNotionAutomation).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the same row when not called from the follow-ons", async () => {
+    await maybeAutoExportCompletedMeeting(strandedRow("deliver"));
+    expect(exportMeetingToNotionAutomation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "without notes", row: { notes: undefined } },
+    { name: "still processing", row: { status: "processing" as const } },
+    { name: "cancelled", row: { status: "cancelled" as const } },
+    { name: "failed", row: { status: "failed" as const } },
+  ])("refuses a row $name even from the follow-ons", async ({ row }) => {
+    await maybeAutoExportCompletedMeeting(
+      { ...strandedRow("process"), ...row },
+      undefined,
+      true,
+    );
+    expect(exportMeetingToNotionAutomation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "in processing", row: { status: "processing" as const } },
+    { name: "without notes", row: { notes: undefined } },
+  ])("a marked row $name does not export", async ({ row }) => {
+    await maybeAutoExportCompletedMeeting({
+      ...meeting,
+      lifecycleVersion: 2,
+      ...row,
+    });
+    expect(exportMeetingToNotionAutomation).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, true])(
+    "an ordinary delivered meeting exports (follow-ons: %s)",
+    async (finishing) => {
+      await maybeAutoExportCompletedMeeting(
+        { ...meeting, status: "complete", lifecycleVersion: 2 },
+        undefined,
+        finishing,
+      );
+      expect(exportMeetingToNotionAutomation).toHaveBeenCalledTimes(1);
     },
   );
 });
@@ -511,9 +510,11 @@ describe("meetings the finish pipeline finished without a Discord delivery recei
 function maybeAutoExportCompletedMeeting(
   meeting: MeetingHistory,
   signal?: AbortSignal,
+  finishing?: boolean,
 ) {
   return withTestNotionOwner(
-    (owned) => actual_maybeAutoExportCompletedMeeting(meeting, owned),
+    (owned) =>
+      actual_maybeAutoExportCompletedMeeting(meeting, owned, finishing),
     signal,
   );
 }

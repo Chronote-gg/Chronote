@@ -210,7 +210,7 @@ async function exportToNotion(history: MeetingHistory, signal: AbortSignal) {
   const owned = AbortSignal.any([signal]);
   const unregister = registerNotionMutationTracker(owned, (run) => run());
   try {
-    await maybeAutoExportCompletedMeeting(history, owned);
+    await maybeAutoExportCompletedMeeting(history, owned, true);
   } finally {
     unregister();
   }

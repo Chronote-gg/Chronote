@@ -6,7 +6,7 @@ import {
 } from "./notionOperationLifetime";
 import { getNotionIntegrationRepository } from "../repositories/notionIntegrationRepository";
 import type { MeetingHistory } from "../types/db";
-import { MEETING_STATUS } from "../types/meetingLifecycle";
+import { MEETING_STATUS, type MeetingStatus } from "../types/meetingLifecycle";
 import type {
   NotionAutomationConfig,
   NotionAutomationMeetingExport,
@@ -32,35 +32,38 @@ type RunAutoExportParams = {
   meeting: MeetingHistory;
   force?: boolean;
   signal?: AbortSignal;
+  /** Called from the finish pipeline's follow-ons, past its terminal save. */
+  finishing?: boolean;
 };
 
 const hasNotes = (meeting: MeetingHistory) =>
   Boolean(meeting.notes && meeting.notes.trim().length > 0);
 
-/**
- * The finish pipeline's terminal save wrote the notes, whether or not Discord
- * delivery followed: every marked row, or an old-runtime row it is finishing,
- * whose finish map is in the deliver phase until the follow-ons have run.
- */
-const finishedByPipeline = (meeting: MeetingHistory) =>
-  meeting.lifecycleVersion === 2 || meeting.finish?.phase === "deliver";
-
-/** A recovery value only the old runtime writes unfinished, so it matters only on a row the pipeline has not finished. */
 const hasUnfinishedRecovery = (meeting: MeetingHistory) =>
-  (!finishedByPipeline(meeting) &&
-    Boolean(meeting.recovery && meeting.recovery.disposition !== "done")) ||
+  Boolean(meeting.recovery && meeting.recovery.disposition !== "done") ||
   Boolean(
     meeting.recoveryExport &&
     !["acknowledged", "skipped"].includes(meeting.recoveryExport.state),
   );
 
-const isCompletedMeeting = (meeting: MeetingHistory) =>
-  !hasUnfinishedRecovery(meeting) &&
-  ((meeting.status ?? MEETING_STATUS.COMPLETE) === MEETING_STATUS.COMPLETE ||
-    (meeting.status === MEETING_STATUS.INTERRUPTED &&
-      (finishedByPipeline(meeting) ||
-        (meeting.recovery?.disposition === "done" &&
-          meeting.recovery.outcome === "completed"))));
+const FINISHED_STATUSES: readonly MeetingStatus[] = [
+  MEETING_STATUS.COMPLETE,
+  MEETING_STATUS.INTERRUPTED,
+];
+
+/**
+ * Under a finish claim the pipeline has saved or adopted the final notes, so a
+ * recovery value the old runtime left is stale rather than unfinished.
+ */
+const isCompletedMeeting = (meeting: MeetingHistory, finishing: boolean) =>
+  finishing
+    ? FINISHED_STATUSES.includes(meeting.status ?? MEETING_STATUS.COMPLETE)
+    : !hasUnfinishedRecovery(meeting) &&
+      ((meeting.status ?? MEETING_STATUS.COMPLETE) ===
+        MEETING_STATUS.COMPLETE ||
+        (meeting.status === MEETING_STATUS.INTERRUPTED &&
+          meeting.recovery?.disposition === "done" &&
+          meeting.recovery.outcome === "completed"));
 
 const matchesChannelFilter = (
   config: NotionAutomationConfig,
@@ -92,9 +95,13 @@ const matchesPersonalAutomationOwner = (
   );
 };
 
-const isEligible = (config: NotionAutomationConfig, meeting: MeetingHistory) =>
+const isEligible = (
+  config: NotionAutomationConfig,
+  meeting: MeetingHistory,
+  finishing: boolean,
+) =>
   config.autoExportEnabled &&
-  isCompletedMeeting(meeting) &&
+  isCompletedMeeting(meeting, finishing) &&
   hasNotes(meeting) &&
   matchesPersonalAutomationOwner(config, meeting) &&
   matchesChannelFilter(config, meeting) &&
@@ -212,6 +219,7 @@ const getRunnableAutomationConfig = async ({
   meeting,
   force,
   signal,
+  finishing = false,
 }: RunAutoExportParams) => {
   if (!appConfig.notion.enabled) {
     if (force) throwNotionNotConfigured();
@@ -226,7 +234,7 @@ const getRunnableAutomationConfig = async ({
     return undefined;
   }
 
-  if (!isEligible(config, meeting)) {
+  if (!isEligible(config, meeting, finishing)) {
     if (force) throwAutomationNotEligible();
     return undefined;
   }
@@ -321,9 +329,10 @@ const runAutoExport = async (params: RunAutoExportParams) => {
 export const maybeAutoExportCompletedMeeting = async (
   meeting: MeetingHistory,
   signal?: AbortSignal,
+  finishing = false,
 ) => {
   try {
-    await runAutoExport({ meeting, signal });
+    await runAutoExport({ meeting, signal, finishing });
   } catch (error) {
     assertNotionOutcomeKnown(error, signal);
     console.warn("Notion auto-export failed", {
