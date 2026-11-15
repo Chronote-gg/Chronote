@@ -183,7 +183,9 @@ import { listDictionaryEntriesService } from "../services/dictionaryService";
 import {
   getSnapshotBoolean,
   getSnapshotString,
+  resolveConfigSnapshot,
 } from "../services/unifiedConfigService";
+import { getMeetingProcessingSignal } from "../services/meetingProcessingLifetime";
 import { createTtsQueue } from "../ttsQueue";
 import {
   addMeeting,
@@ -215,6 +217,28 @@ const buildBotMember = (
   };
   return botMember;
 };
+
+type RestPatch = Guild["client"]["rest"]["patch"];
+
+const EMPTY_SNAPSHOT = {
+  values: {},
+  experimentalEnabled: false,
+  missingRequired: [],
+};
+
+/** Holds the next PATCH as a request queued in a rate-limit bucket: it settles only when aborted. */
+const queueUntilAborted = (patch: jest.MockedFunction<RestPatch>) =>
+  new Promise<AbortSignal>((issued) => {
+    patch.mockImplementationOnce(
+      (_route, options) =>
+        new Promise((_resolve, reject) => {
+          const signal = options?.signal;
+          if (!signal) throw new Error("PATCH sent without a signal");
+          signal.addEventListener("abort", () => reject(signal.reason));
+          issued(signal);
+        }),
+    );
+  });
 
 const buildMeetingOptions = (botMember: unknown = null) => {
   const guild = {
@@ -562,8 +586,12 @@ describe("initializeMeeting", () => {
       chatTtsEnabled: true,
     });
 
-    expect(botMember.setNickname).toHaveBeenCalledWith(
-      "Meeting Notes Bot (TTS Only)",
+    expect(guild.client.rest.patch).toHaveBeenCalledWith(
+      Routes.guildMember("guild-1", "@me"),
+      {
+        body: { nick: "Meeting Notes Bot (TTS Only)" },
+        signal: expect.any(AbortSignal),
+      },
     );
     expect(meeting.botNicknameBeforeSession).toBeNull();
 
@@ -571,7 +599,7 @@ describe("initializeMeeting", () => {
     await expect(
       restoreVoiceSessionNickname(meeting, giveUp.signal),
     ).resolves.toBe(true);
-    expect(guild.client.rest.patch).toHaveBeenCalledWith(
+    expect(guild.client.rest.patch).toHaveBeenLastCalledWith(
       Routes.guildMember("guild-1", "@me"),
       { body: { nick: null }, signal: giveUp.signal },
     );
@@ -595,27 +623,99 @@ describe("initializeMeeting", () => {
     await expect(
       restoreVoiceSessionNickname(meeting, giveUp.signal),
     ).rejects.toThrow();
+    expect(options.guild.client.rest.patch).toHaveBeenCalledTimes(1);
+    deleteMeeting(meeting);
+  });
+
+  it("a nickname change still queued when the meeting closes is aborted, and the restore still runs", async () => {
+    const options = buildMeetingOptions(buildBotMember("Meeting Notes Bot"));
+    const patch = jest.mocked(options.guild.client.rest.patch);
+    const issued = queueUntilAborted(patch);
+    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
+    jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
+    const starting = initializeMeeting({
+      ...options,
+      transcribeMeeting: false,
+      generateNotes: false,
+    });
+    const setSignal = await issued;
+    getMeeting("guild-1")?.botNicknameChange?.abort();
+
+    const meeting = await starting;
+    expect(setSignal.aborted).toBe(true);
+    expect(getMeetingProcessingSignal(meeting).aborted).toBe(false);
+    await expect(restoreVoiceSessionNickname(meeting)).resolves.toBe(true);
+    expect(patch).toHaveBeenLastCalledWith(
+      Routes.guildMember("guild-1", "@me"),
+      { body: { nick: null }, signal: undefined },
+    );
+    deleteMeeting(meeting);
+  });
+
+  it("a nickname change aborted before it is issued sends nothing and leaves nothing to restore", async () => {
+    const options = buildMeetingOptions(buildBotMember("Meeting Notes Bot"));
+    // The nickname's config read is the one made once the meeting is live.
+    jest.mocked(resolveConfigSnapshot).mockImplementation(async () => {
+      getMeeting("guild-1")?.botNicknameChange?.abort();
+      return EMPTY_SNAPSHOT;
+    });
+    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
+    jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
+
+    const meeting = await initializeMeeting({
+      ...options,
+      transcribeMeeting: false,
+      generateNotes: false,
+    });
+    jest
+      .mocked(resolveConfigSnapshot)
+      .mockImplementation(async () => EMPTY_SNAPSHOT);
+    await restoreVoiceSessionNickname(meeting);
     expect(options.guild.client.rest.patch).not.toHaveBeenCalled();
     deleteMeeting(meeting);
+  });
+
+  it("a failed start aborts a nickname change still queued", async () => {
+    const options = buildMeetingOptions(buildBotMember("Meeting Notes Bot"));
+    const issued = queueUntilAborted(
+      jest.mocked(options.guild.client.rest.patch),
+    );
+    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
+    jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
+    const controller = new AbortController();
+    const starting = initializeMeeting({
+      ...options,
+      startSignal: controller.signal,
+      transcribeMeeting: false,
+      generateNotes: false,
+    });
+    // The change may already have been sent, so its outcome is unknown and fails the start.
+    const rejected = expect(starting).rejects.toThrow();
+    const setSignal = await issued;
+    controller.abort(new Error("synthetic stop"));
+
+    await rejected;
+    expect(setSignal.aborted).toBe(true);
   });
 
   it("a missing nickname permission skips the change and still starts", async () => {
     const botMember = buildBotMember("Meeting Notes Bot");
     botMember.permissions = new PermissionsBitField();
+    const options = buildMeetingOptions(botMember);
     jest.mocked(getSnapshotBoolean).mockReturnValue(true);
     jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
     const meeting = await initializeMeeting({
-      ...buildMeetingOptions(botMember),
+      ...options,
       transcribeMeeting: false,
       generateNotes: false,
     });
-    expect(botMember.setNickname).not.toHaveBeenCalled();
+    expect(options.guild.client.rest.patch).not.toHaveBeenCalled();
     deleteMeeting(meeting);
   });
 
   it("a nickname change with an unknown outcome fails the start", async () => {
-    const botMember = buildBotMember("Meeting Notes Bot");
-    botMember.setNickname.mockRejectedValueOnce(
+    const options = buildMeetingOptions(buildBotMember("Meeting Notes Bot"));
+    jest.mocked(options.guild.client.rest.patch).mockRejectedValueOnce(
       Object.assign(new Error("final forbidden after a possible reset"), {
         status: 403,
       }),
@@ -624,12 +724,12 @@ describe("initializeMeeting", () => {
     jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
     await expect(
       initializeMeeting({
-        ...buildMeetingOptions(botMember),
+        ...options,
         transcribeMeeting: false,
         generateNotes: false,
       }),
     ).rejects.toThrow();
-    expect(botMember.setNickname).toHaveBeenCalledTimes(1);
+    expect(options.guild.client.rest.patch).toHaveBeenCalledTimes(1);
   });
 
   it("does not duplicate an existing session status suffix", async () => {
@@ -656,7 +756,7 @@ describe("initializeMeeting", () => {
       chatTtsEnabled: true,
     });
 
-    expect(botMember.setNickname).not.toHaveBeenCalled();
+    expect(guild.client.rest.patch).not.toHaveBeenCalled();
 
     deleteMeeting(meeting);
   });
@@ -770,12 +870,12 @@ describe("initializeMeeting", () => {
       });
       return {};
     });
-    const bot = buildBotMember("Synthetic Bot");
+    const options = buildMeetingOptions(buildBotMember("Synthetic Bot"));
     jest.mocked(getSnapshotBoolean).mockReturnValue(true);
     jest.mocked(getSnapshotString).mockReturnValue("(recording)");
     const controller = new AbortController();
     const pending = initializeMeeting({
-      ...buildMeetingOptions(bot),
+      ...options,
       startSignal: controller.signal,
       transcribeMeeting: true,
       generateNotes: true,
@@ -785,7 +885,7 @@ describe("initializeMeeting", () => {
     controller.abort(new Error("synthetic stop"));
     release();
     await rejected;
-    expect(bot.setNickname).not.toHaveBeenCalled();
+    expect(options.guild.client.rest.patch).not.toHaveBeenCalled();
     expect(listDictionaryEntriesService).not.toHaveBeenCalled();
   });
 

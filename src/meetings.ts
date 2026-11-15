@@ -183,6 +183,9 @@ async function applyVoiceSessionNickname(
   signal: AbortSignal,
 ) {
   signal.throwIfAborted();
+  // Set before the first await, so a close arriving at any point can cancel the change.
+  const change = new AbortController();
+  meeting.botNicknameChange = change;
   try {
     const snapshot = await resolveConfigSnapshot({
       guildId: meeting.guildId,
@@ -215,14 +218,25 @@ async function applyVoiceSessionNickname(
     if (!nextNickname) return;
     if (botMember.nickname === nextNickname) return;
 
+    const requestSignal = AbortSignal.any([
+      signal,
+      change.signal,
+      getMeetingProcessingSignal(meeting),
+    ]);
+    if (change.signal.aborted) return;
+    requestSignal.throwIfAborted();
     meeting.botNicknameBeforeSession = botMember.nickname ?? null;
+    // Issued, not landed: an abort cannot tell a request still queued from one already sent, so the restore always runs.
+    meeting.botNicknameChangeIssued = true;
     await runMeetingNoticeMutation(
       meeting,
-      async () => {
-        await botMember.setNickname(nextNickname);
-        meeting.botNicknameChanged = true;
-      },
-      () => false,
+      () =>
+        meeting.guild.client.rest.patch(
+          Routes.guildMember(meeting.guild.id, "@me"),
+          { body: { nick: nextNickname }, signal: requestSignal },
+        ),
+      // Close cancelled it and puts the saved nickname back itself.
+      () => change.signal.aborted,
     ); // REST can replay network failures/5xx before a final 4xx; that outcome stays unknown.
     getMeetingProcessingSignal(meeting).throwIfAborted();
   } catch (error) {
@@ -236,7 +250,7 @@ export async function restoreVoiceSessionNickname(
   meeting: MeetingData,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  if (!meeting.botNicknameChanged) return true;
+  if (!meeting.botNicknameChangeIssued) return true;
   signal?.throwIfAborted();
   try {
     // The REST call, not setNickname, so a give-up drops a request still queued in the rate-limit bucket.
@@ -244,7 +258,7 @@ export async function restoreVoiceSessionNickname(
       Routes.guildMember(meeting.guild.id, "@me"),
       { body: { nick: meeting.botNicknameBeforeSession ?? null }, signal },
     );
-    meeting.botNicknameChanged = false;
+    meeting.botNicknameChangeIssued = false;
     return true;
   } catch (error) {
     console.warn("Failed to restore bot session nickname.", error);

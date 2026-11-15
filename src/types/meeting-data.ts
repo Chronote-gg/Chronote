@@ -111,7 +111,10 @@ export interface MeetingData {
   resetTtsOnlyIdleTimer?: () => void;
   chatTtsMonthlyLimitNoticeSent?: boolean;
   botNicknameBeforeSession?: string | null;
-  botNicknameChanged?: boolean;
+  /** A session nickname change was sent or queued; its outcome may be unknown. */
+  botNicknameChangeIssued?: boolean;
+  /** Cancels the session nickname change if it is still queued. */
+  botNicknameChange?: AbortController;
 
   /** Aborted only when this worker lost the capture's lease to another meeting. */
   ownershipSignal?: AbortSignal;

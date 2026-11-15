@@ -272,6 +272,39 @@ test("a nickname restore that never resolves is aborted at its bound, before the
   expect(restoreSignal?.aborted).toBe(true);
 });
 
+test("a nickname change still queued is aborted before the restore and before the lease release", async () => {
+  const meeting = meetingFor();
+  const change = new AbortController();
+  meeting.botNicknameChange = change;
+  const t = setup([meeting]);
+  let abortedAtRestore: boolean | undefined;
+  t.deps.restoreNickname.mockImplementationOnce(async () => {
+    abortedAtRestore = change.signal.aborted;
+  });
+  let abortedAtRelease: boolean | undefined;
+  t.deps.lease.releaseSessionLease.mockImplementationOnce(async () => {
+    abortedAtRelease = change.signal.aborted;
+  });
+
+  await t.close.closeMeeting(meeting, button);
+
+  expect(abortedAtRestore).toBe(true);
+  expect(abortedAtRelease).toBe(true);
+});
+
+test("a lost lease aborts a nickname change still queued and restores nothing", async () => {
+  const meeting = meetingFor();
+  const change = new AbortController();
+  meeting.botNicknameChange = change;
+  const t = setup([meeting]);
+  t.deps.lease.confirmSessionLease.mockResolvedValueOnce("lost");
+
+  await t.close.closeMeeting(meeting, button);
+
+  expect(change.signal.aborted).toBe(true);
+  expect(t.deps.restoreNickname).not.toHaveBeenCalled();
+});
+
 test("a nickname restore that settles in time is not aborted", async () => {
   const meeting = meetingFor();
   const t = setup([meeting]);

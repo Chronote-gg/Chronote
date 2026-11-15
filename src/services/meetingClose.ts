@@ -218,6 +218,8 @@ export function createMeetingClose(deps: MeetingCloseDeps) {
   }
 
   async function departVoice(meeting: MeetingData, ownership: Ownership) {
+    // A change still queued must not land after the lease is released; the restore covers one already sent.
+    meeting.botNicknameChange?.abort();
     if (ownership !== "held") {
       await attempt(meeting, "drop-voice", () =>
         deps.dropVoiceLocally(meeting.connection),
