@@ -92,20 +92,17 @@ test("every deploy job depends on CI, directly or transitively", () => {
 // Deploy jobs run under the repository variable DEPLOY_ENVIRONMENT (set to the
 // unreviewed production-deploy environment once it is provisioned) and fall
 // back to the reviewed production environment while the variable is unset.
-const SWITCHABLE = "${{ vars.DEPLOY_ENVIRONMENT || 'production' }}";
-test("every deploy job except the backend uses the switchable environment", () => {
-  const others = deployJobs.filter(([id]) => id !== "deploybackend");
-  expect(others.length).toBe(4);
-  for (const [id, job] of others)
-    expect(`${id}: ${job.environment}`).toBe(`${id}: ${SWITCHABLE}`);
-});
-
 // retire_older_tasks is a boolean input (absent on push), so the gate is true
-// only for a dispatch that asked to retire, which keeps the human approval.
-test("a dispatch that retires older tasks always deploys in production", () => {
-  expect(deployment.jobs.deploybackend.environment).toBe(
-    "${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}",
-  );
+// only for a dispatch that asked to retire. Every deploy job shares it, so such
+// a dispatch publishes nothing, docs included, without a human approval.
+const DEPLOY_ENVIRONMENT_EXPRESSION =
+  "${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}";
+test("a dispatch that retires older tasks runs every deploy job in production", () => {
+  expect(deployJobs.length).toBe(5);
+  for (const [id, job] of deployJobs)
+    expect(`${id}: ${job.environment}`).toBe(
+      `${id}: ${DEPLOY_ENVIRONMENT_EXPRESSION}`,
+    );
   const input = (
     deployment as unknown as {
       on: {

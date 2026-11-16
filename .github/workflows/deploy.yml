@@ -308,7 +308,7 @@ jobs:
     # The backend job already required CI and Docs.
     if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
-    environment: ${{ vars.DEPLOY_ENVIRONMENT || 'production' }}
+    environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -393,7 +393,7 @@ jobs:
       cancel-in-progress: false
     needs: [ci]
     runs-on: ubuntu-latest
-    environment: ${{ vars.DEPLOY_ENVIRONMENT || 'production' }}
+    environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -562,7 +562,7 @@ jobs:
     needs: [deploybackend]
     if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
-    environment: ${{ vars.DEPLOY_ENVIRONMENT || 'production' }}
+    environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}
     permissions:
       contents: read
       id-token: write
@@ -613,7 +613,7 @@ jobs:
     needs: [deploybackend]
     if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
-    environment: ${{ vars.DEPLOY_ENVIRONMENT || 'production' }}
+    environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}
     timeout-minutes: 15
     permissions:
       contents: read

@@ -25,7 +25,7 @@ test("production connection sync requires a successful backend and the event rev
     "${{ !cancelled() && needs.deploybackend.result == 'success' }}",
   );
   expect(sync.environment).toBe(
-    "${{ vars.DEPLOY_ENVIRONMENT || 'production' }}",
+    "${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}",
   );
   expect(workflow.on).not.toHaveProperty("pull_request");
   const checkout = sync.steps.find((item: { uses?: string }) =>
