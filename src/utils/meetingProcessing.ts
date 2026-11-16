@@ -9,8 +9,16 @@ import type {
 
 export const EMPTY_RECORDING_NOTICE =
   "No usable speech was found, so no notes were generated.";
+export const PROCESSING_FAILED_NOTICE =
+  "Chronote could not finish processing this meeting. The saved audio is kept and processing can be retried from the portal.";
 export const PARTIAL_TRANSCRIPT_NOTICE =
   "Some audio could not be transcribed. These notes may be incomplete.";
+/** What a meeting that failed before notes records, so the portal offers a retry. */
+export const TRANSCRIPTION_FAILED: MeetingProcessingOutcome = {
+  transcription: "failed",
+  notes: "skipped",
+  summary: "skipped",
+};
 
 /**
  * Failed per-turn snippets below this count do not demote a Discord recording that has

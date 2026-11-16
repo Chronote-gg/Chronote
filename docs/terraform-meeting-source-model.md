@@ -11,7 +11,7 @@ The deploy role must be a fully known, byte-equal no-op. Completed target no-ops
 are refused. The separate `meeting-update-delivery` scope retains the runtime
 readiness grant. Production retains its existing single-policy update contract.
 
-The guard verifies the current 26-file source pin and complete source-declared
+The guard verifies the current 27-file source pin and complete source-declared
 check catalog, including a passing deploy-role instance. Unknown excluded checks
 need that source proof. A created attachment's unknown policy ARN additionally
 needs the exact direct configuration reference to the newly created known policy.
@@ -44,7 +44,7 @@ source relation. A later Apply commit is allowed only under the existing verifie
 relation proving Terraform inputs unchanged. The model then binds an opaque proof
 to that exact rendering. A boolean, digest supplied by a caller, or another plan's
 proof cannot enable it. Readonly init must succeed and a subsequent version JSON
-record must identify Terraform 1.17.1 and installed AWS 6.72.0. The checked lock
+record must identify Terraform 1.17.1 and installed AWS 6.73.0. The checked lock
 pins the installation. Older captures without that record remain refused.
 
 ## Dependency audit
@@ -175,7 +175,7 @@ lookup. Its closure, excluded checks, unknown handling and installed-provider
 requirements are unchanged. The source pin is refreshed only for these declared
 edits to `sandbox-deployment.tf` and `production-deployment.tf`.
 
-The checked application lock and exceptional meeting model both require AWS 6.72.0;
+The checked application lock and exceptional meeting model both require AWS 6.73.0;
 the model also requires Terraform 1.17.1 and post-init installation evidence.
 Offline mocks use their own checked locks and the CI Terraform 1.16.0 toolchain;
 they do not prove native meeting-model acceptance. The exact version refusals
@@ -370,6 +370,42 @@ table in the bootstrap `table_suffixes`, so its `TableMetadata` read grant
 covers it; production's `TableMetadata` already covers every
 `meeting-notes-prod-*` table. This audit permits no plan, Apply or deployment.
 
+### Lifecycle alarm and deploy role audit (2026-11-11)
+
+The lifecycle change adds `alerts-lifecycle.tf`, taking the hashed inventory from
+26 files to 27, and edits `main.tf`, `production-deployment.tf` and
+`sandbox-deployment.tf`. The new file holds five log metric filters, their alarms
+and one alarm on the deploy script's `DrainWaitTimedOut` metric. Like the
+processing-retry pair they address the app log group and critical-alerts topic by
+name through `local.app_log_group_name` and `local.critical_alerts_topic_arn`, so
+they take no edge on the KMS key policy. `main.tf` adds the boolean
+`ENABLE_DEPLOY_RETIRE`, default `false`, with no validation block, and sets
+`health_check_grace_period_seconds` on the ECS service from `ENABLE_API_ALB`. The
+service is outside the closure, so that new read of an excluded-check variable adds
+no edge into a table, the DynamoDB access policy or the KMS key. Both deploy role
+policies gain a namespaced `cloudwatch:PutMetricData` statement and a
+`ecs:StopTask` statement gated by `ENABLE_DEPLOY_RETIRE`; they consume table and
+KMS outputs downstream, as before. No added resource or variable declares a
+`validation` block or a `lifecycle` pre- or postcondition, so the excluded-check
+identities, the 32-address closure, the site graph, the typed retry-index gate and
+the installed-provider requirements are unchanged. The outgoing pin was
+reproduced from the parent commit before the new one was recorded.
+
+A follow-up gates the eligible-worker filter, and through it its alarm, on
+`ECS_DESIRED_COUNT > 0` as well as alerting. That adds a read of an
+excluded-check variable by a CloudWatch filter outside the closure, with no
+reverse edge, and changes no check identity. The pin was recomputed again by
+the same method, reproducing the outgoing value first.
+
+A later change adds a sixth lifecycle filter and alarm, `finisher_scan_missing`,
+gated like the eligible-worker pair through a new `worker_silence_alarms` local,
+and rewords a comment in `api.tf`. The new entry addresses the app log group
+and the critical-alerts topic by name like the others, declares no
+`validation` block or `lifecycle` condition, and adds no edge into the closure;
+the comment changes no configuration. The hashed inventory stays at 27 files.
+The outgoing pin was reproduced from the parent commit before the new one was
+recorded.
+
 ### Recomputing the pin
 
 `node scripts/deployment/recompute-source-model.cjs [ref]` prints the pin for a
@@ -405,3 +441,15 @@ is preferable to inferring transitive safety from incomplete configuration JSON.
 The strict path still accepts plans whose effects are completely known without
 using the exception. Public fixtures are constructed from the existing synthetic
 provider fixture and source addresses; they contain no private saved plan data.
+
+## Provider dependency audit (2026-11-16)
+
+AWS advances from 6.72.0 to 6.73.0 in the application, state-management and
+production-bootstrap locks; Grafana advances to 4.55.0. All twenty reviewed AWS
+resource implementations are byte-identical between these releases, including
+DynamoDB, IAM, S3, KMS, CloudFront, CloudWatch, logs and SNS. The WAF nested-rule
+breaking change affects no configured resource. The source model is recomputed
+over current master and the new lock; installed-provider fixtures require 6.73.0
+and reject previous-provider evidence. Plan allowances and deployment authority
+are unchanged. Sandbox bootstrap retains its exact AWS 6.69.1 pin. Offline
+initialization and validation establish no live plan or production acceptance.

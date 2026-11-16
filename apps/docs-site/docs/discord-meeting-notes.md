@@ -42,9 +42,9 @@ Availability in the software does not mean the option is enabled on the hosted s
 
 ## Updates and interrupted recordings
 
-During a supported service handoff, an existing recording stays with its original owner while other eligible servers can start on the ready replacement. If a start reaches a runtime that is handing over, retry it. The usual server limits and one-active-session rule still apply.
+Routine Chronote updates normally do not stop meetings from starting. A recording that is already running continues until it ends, and new meetings can usually start while an update is in progress. A brief service interruption can still delay a start; try again after a few minutes. The usual server limits and one-recording-per-server rule still apply.
 
-After an interruption, Chronote can recover verified saved conversation using the original transcription and notes settings. Partial notes keep their interruption and coverage warning. If preservation or delivery cannot be confirmed, the meeting can remain unavailable or need review. Recovery does not rejoin the voice channel or automatically resend an uncertain delivery.
+If a recording is interrupted, Chronote finishes it automatically from the conversation saved so far, using the original transcription and notes settings. Partial notes are marked **Interrupted**, show when the recording ended where that time is known, and keep their coverage warning. Chronote does not rejoin the voice channel.
 
 See [Interrupted recordings](/core-concepts/meeting-lifecycle/#interrupted-recordings) for the statuses and saved-coverage limits.
 

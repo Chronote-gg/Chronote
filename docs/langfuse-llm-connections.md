@@ -93,7 +93,7 @@ If `SECRETS_PREFIX` is empty, it derives the prefix by removing `-bot-task` from
 definition through `ECS_CLUSTER` and `ECS_SERVICE`, then reads `OPENAI_PROJECT_ID`
 from the app container environment. It never selects the latest task-family
 revision. The app container is the one with `DDB_TABLE_PREFIX`, matching the
-deployment coordinator.
+deploy script (`scripts/deployment/deploy.cjs`).
 
 Both the key and project ID must be nonempty. Missing runtime configuration
 fails the job before any push; the required `OpenAI-Project` header is never

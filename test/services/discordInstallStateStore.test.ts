@@ -167,3 +167,25 @@ test("Dynamo failures fail closed without authenticating", async () => {
     client.destroy();
   }
 });
+
+test("already-pending install records retain their original attribution payload", async () => {
+  const client = new DynamoDBClient({ region: "us-east-1" });
+  const state = `install.0.${"a".repeat(43)}`;
+  const send = jest.spyOn(client, "send").mockResolvedValue({
+    Attributes: marshall({
+      state,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      attribution: { source: "github", medium: "web" },
+    }),
+  } as never);
+  try {
+    const callback = request();
+    expect(
+      await verify(new DiscordInstallStateStore(client), callback, state),
+    ).toBe(true);
+    expect(readInstallAttributionFromRequest(callback)?.source).toBe("github");
+  } finally {
+    send.mockRestore();
+    client.destroy();
+  }
+});

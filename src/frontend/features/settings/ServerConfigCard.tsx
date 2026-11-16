@@ -1,3 +1,4 @@
+import { useAuthNavigationBlocker } from "../../hooks/useAuthNavigationBlocker";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -156,6 +157,8 @@ export function ServerConfigCard({
   const [draft, setDraft] = useState<Record<string, ConfigDraftEntry>>({});
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  useAuthNavigationBlocker(dirty);
+  useAuthNavigationBlocker(saving);
 
   useEffect(() => {
     if (dirty || !snapshot) return;

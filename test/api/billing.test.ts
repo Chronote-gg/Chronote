@@ -1,5 +1,4 @@
 /** @jest-environment node */
-import { seedBillingRuntime } from "../fixtures/billingRuntime";
 
 import {
   afterAll,
@@ -385,7 +384,6 @@ describe("billing webhook routes", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     resetMockStore();
-    seedBillingRuntime();
     clearGuildSubscriptionCache();
     config.stripe.secretKey = "sk_test_billing";
     config.stripe.webhookSecret = "whsec_test_billing";
@@ -1190,7 +1188,6 @@ describe("billing webhook routes", () => {
 describe("initial purchase webhook recovery", () => {
   beforeEach(() => {
     resetMockStore();
-    seedBillingRuntime();
     clearGuildSubscriptionCache();
     config.stripe.secretKey = "sk_test_billing";
     config.stripe.webhookSecret = "whsec_test_billing";
@@ -1392,7 +1389,6 @@ test("does not acknowledge a failed renewal webhook when durable recovery cannot
   config.stripe.renewalGraceEnabled = true;
   config.stripe.webhookSecret = "whsec_test";
   resetMockStore();
-  seedBillingRuntime();
   const refresh = jest
     .spyOn(renewalRecoveryService, "refreshRenewalRecovery")
     .mockRejectedValue(new Error("Recovery storage unavailable"));
@@ -1414,7 +1410,6 @@ test("does not acknowledge a failed renewal webhook when durable recovery cannot
 
 test("normal paid webhook acknowledgement waits for durable renewal coverage", async () => {
   resetMockStore();
-  seedBillingRuntime();
   config.mock.enabled = true;
   config.stripe.webhookSecret = "whsec_test";
   const event = subscriptionEvent("active", "evt_paid_coverage_failure");

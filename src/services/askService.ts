@@ -5,7 +5,10 @@ import { captureEvent } from "./analyticsService";
 import { listDictionaryEntriesService } from "./dictionaryService";
 import { normalizeTags, parseTags } from "../utils/tags";
 import { buildUpgradeTextOnly } from "../utils/upgradePrompt";
-import { ensureUserCanAccessMeeting } from "./meetingAccessService";
+import {
+  ensureUserCanAccessMeeting,
+  type MeetingAccessContext,
+} from "./meetingAccessService";
 import { generateOpenAIText } from "./openaiTextService";
 import { buildModelOverrides, getModelChoice } from "./modelFactory";
 import { getLangfuseChatPrompt } from "./langfusePromptService";
@@ -149,6 +152,7 @@ const filterMeetingsByChannelAccess = async (
   userId: string,
   attendeeOverrideEnabled: boolean,
 ) => {
+  const accessContext: MeetingAccessContext = new Map();
   const visible: MeetingSummary[] = [];
   for (const meeting of meetings) {
     const allowed = await ensureUserCanAccessMeeting({
@@ -156,6 +160,7 @@ const filterMeetingsByChannelAccess = async (
       meeting,
       userId,
       attendeeOverrideEnabled,
+      accessContext,
     });
     if (allowed === null) {
       throw new DiscordRateLimitedError();

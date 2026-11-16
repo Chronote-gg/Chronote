@@ -13,7 +13,10 @@ import {
 } from "../utils/meetingCaptureNotice";
 import { config } from "./configService";
 import { ensureUserCanReadChannelHistory } from "./discordPermissionsService";
-import { ensureUserCanAccessMeeting } from "./meetingAccessService";
+import {
+  ensureUserCanAccessMeeting,
+  type MeetingAccessContext,
+} from "./meetingAccessService";
 import {
   getMeetingHistoryService,
   listRecentMeetingsForGuildService,
@@ -111,15 +114,14 @@ function matchesActiveLease(
 async function verifiedLiveKind(
   history: MeetingHistory,
 ): Promise<"recording" | "processing" | null> {
+  // Close frees the lease before processing, and the row stays processing only until the finish settles or abandons it.
+  if (history.lifecycleVersion === 2 && history.status === "processing") {
+    return "processing";
+  }
   const lease = await getActiveMeetingLease(history.guildId);
   if (!lease || !matchesActiveLease(lease, history)) return null;
-  if (history.status === "interrupted" && lease.sessionMode !== "recovery")
-    return null;
   if (lease.status === "processing") return "processing";
-  if (
-    lease.sessionMode !== "recovery" &&
-    (lease.status === "starting" || lease.status === "in_progress")
-  ) {
+  if (lease.status === "starting" || lease.status === "in_progress") {
     return "recording";
   }
   return null;
@@ -147,11 +149,11 @@ async function deriveState(
     history.status === "starting" ||
     history.status === "in_progress" ||
     history.status === "processing";
-  if (active || history.status === "interrupted") {
+  if (active) {
     const kind = await verifiedLiveKind(history);
     if (kind) return { kind, meeting };
+    return { kind: "attention", reason: "status_unknown", meeting };
   }
-  if (active) return { kind: "attention", reason: "status_unknown", meeting };
   return terminalState(history, meeting);
 }
 
@@ -196,12 +198,14 @@ export async function getFirstMeetingState(input: {
   const candidates = rows
     .filter((row): row is MeetingHistory => Boolean(row))
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  const accessContext: MeetingAccessContext = new Map();
   for (const history of candidates) {
     const allowed = await ensureUserCanAccessMeeting({
       guildId: input.guildId,
       userId: input.userId,
       meeting: history,
       attendeeOverrideEnabled,
+      accessContext,
     });
     if (allowed === null) permissionUnavailable();
     if (!allowed) continue;

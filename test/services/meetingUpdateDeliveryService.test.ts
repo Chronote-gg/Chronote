@@ -1,9 +1,5 @@
 /** @jest-environment node */
 import "./meetingUpdateDeliveryRuntime";
-import {
-  getRuntimeWorkAdmissionCheckpoints,
-  releaseAcknowledgedRuntimeWork,
-} from "../../src/services/runtimeWorkAdmissionService";
 import { createDiscordMeetingUpdateTransport } from "../../src/services/discordMeetingUpdateTransport";
 import { planMeetingUpdate } from "../../src/services/meetingUpdatePlan";
 import { key, now } from "../types/meetingUpdateDelivery.fixture";
@@ -165,37 +161,26 @@ test("growth persists POST IDs before pointer registration, shrink registers bef
     grown.notesMessageIds!.length - 1,
   );
 });
-test("deadline and fence retain actual provider lifetime until the held response settles", async () => {
+test("deadline and stop retain actual provider lifetime until the held response settles", async () => {
   const f = deliveryFixture();
   const { entered, tail } = holdPatch(f);
-  const { work, promise } = run(f, false, 1);
+  const { controller, promise } = run(f, false, 1);
   expect(
     await Promise.race([
       entered.promise.then(() => true),
       promise.then(() => false),
     ]),
   ).toBe(true);
-  work.fence();
-  work.acknowledgeTerminal();
+  controller.abort();
   let settled = false;
-  const drain = work.settle().then(() => {
+  void promise.then(() => {
     settled = true;
   });
   await new Promise((resolve) => setTimeout(resolve, 10));
-  const checkpoint = getRuntimeWorkAdmissionCheckpoints().find(
-    (item) => item.signal === work.signal,
-  )!;
-  expect(checkpoint.effects.length).toBeGreaterThan(0);
-  expect(releaseAcknowledgedRuntimeWork(checkpoint.id)).toBe(false);
   expect(settled).toBe(false);
   tail.resolve(Response.json(f.input.messages[0]));
   await promise;
-  await drain;
-  expect(
-    getRuntimeWorkAdmissionCheckpoints().some(
-      (item) => item.id === checkpoint.id,
-    ),
-  ).toBe(false);
+  expect(settled).toBe(true);
 });
 
 test("same live owner can retire a marked operation whose HTTP invocation was positively prevented", async () => {
@@ -204,7 +189,7 @@ test("same live owner can retire a marked operation whose HTTP invocation was po
   afterTransition(
     f.repository,
     (input) => hasSubmission(input, "submitted"),
-    () => invocation.work.fence(),
+    () => invocation.controller.abort(),
   );
   const result = await invocation.promise;
   expect(result.kind).toBe("retryable");
@@ -226,8 +211,6 @@ test("lost submitted-marker ACK with unavailable exact readback issues no HTTP a
   );
   const result = await run(f).promise;
   expect(result.kind).toBe("uncertain");
-  expect(result.durable).toBeUndefined();
-  expect(result.noClaim).toBeUndefined();
   expect(f.calls.filter((call) => call.method !== "GET")).toEqual([]);
 });
 test("a submitted operation abandoned by a prior process cannot become not_submitted after reclaim", async () => {
@@ -239,7 +222,8 @@ test("a submitted operation abandoned by a prior process cannot become not_submi
     expectedContentRevision: 1,
     expectedDeliveryRevision: f.input.history.updateDelivery.revision,
     attempt: plan.attempt,
-    authority: f.authority,
+    ownerInstanceId: "old",
+    now,
   });
   const row = await f.read();
   const progress = row.updateDelivery.progress;
@@ -330,14 +314,13 @@ test("eight known failures exhaust once and retain desired content", async () =>
   expect(f.calls.length).toBe(calls);
   expect((await f.read()).updateDelivery.attempts).toBe(8);
 });
-test("read-only preflight failure positively reports never-admitted local proof", async () => {
+test("read-only preflight failure is uncertain and calls Discord not at all", async () => {
   const f = deliveryFixture();
   jest
     .spyOn(f.repository, "getStrong")
     .mockRejectedValue(new Error("Read unavailable"));
   const result = await run(f).promise;
-  expect(result).toMatchObject({ noClaim: { kind: "never_admitted" } });
-  expect(result.durable).toBeUndefined();
+  expect(result.kind).toBe("uncertain");
   expect(f.calls).toEqual([]);
 });
 test("renewal serializes with provider progress, retains newer desired and refreshes exact runtime checkpoint", async () => {
@@ -369,17 +352,12 @@ test("renewal serializes with provider progress, retains newer desired and refre
   jest.spyOn(Date, "now").mockReturnValue((now + 20) * 1000);
   await renewed.promise;
   await new Promise((resolve) => setImmediate(resolve));
-  const expiresAt = getRuntimeWorkAdmissionCheckpoints().find(
-    (item) => item.signal === invocation.work.signal,
-  )?.claim?.expiresAt;
   const plan = planMeetingUpdate(f.input);
   if (plan.kind !== "ready") throw new Error("Expected plan");
   f.remote.set(plan.targets[0].messageId, plan.targets[0].after);
   tail.resolve(Response.json(plan.targets[0].after));
   const result = await invocation.promise;
   expect(result.kind).toBe("settled");
-  expect(expiresAt).toBe(now + 80);
-  expect(result.durable?.claim?.expiresAt).toBe(now + 80);
   expect((await f.read()).updateDelivery.parts.notesBody).toEqual({
     desired: 2,
     acknowledged: 1,
@@ -450,7 +428,6 @@ test("the eighth known preclaim failure is visible without fabricating a claim",
   });
   const result = await run(f, false, 10000, { discord }).promise;
   expect(result.kind).toBe("blocked");
-  expect(result.durable?.claim).toBeNull();
   expect(result.capturedRevision).toBeNull();
   expect((await f.read()).updateDelivery).toMatchObject({
     attempts: 8,
@@ -507,7 +484,7 @@ test("changed saved pointers after the final PATCH prevent captured completion",
   expect((await f.read()).updateDelivery.parts.notesBody.acknowledged).toBe(0);
 });
 
-test("fresh claim lost ACK cannot return never-admitted proof after invoking durable admission", async () => {
+test("a fresh claim whose ACK and readback are both lost issues no HTTP", async () => {
   const f = deliveryFixture();
   const original = f.repository.claim.bind(f.repository);
   jest.spyOn(f.repository, "claim").mockImplementation(async (input) => {
@@ -519,8 +496,6 @@ test("fresh claim lost ACK cannot return never-admitted proof after invoking dur
   });
   const result = await run(f).promise;
   expect(result.kind).toBe("uncertain");
-  expect(result.noClaim).toBeUndefined();
-  expect(result.durable).toBeUndefined();
   expect(f.calls.filter((call) => call.method !== "GET")).toEqual([]);
 });
 
@@ -536,7 +511,6 @@ test("a definite preflight rate limit honors provider timing before any claim", 
   });
   const result = await run(f, false, 10000, { discord }).promise;
   expect(result.kind).toBe("retryable");
-  expect(result.durable?.claim).toBeNull();
   expect((await f.read()).updateDelivery).toMatchObject({
     attempts: 1,
     progress: { kind: "retrying", nextCheckAt: now + 180 },

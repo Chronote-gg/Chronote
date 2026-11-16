@@ -1,6 +1,6 @@
-import { rejectFixtureTts } from "./services/fixtureInputService";
 import type { PcmSpan } from "./types/transcriptCorrespondence";
 import { appendPcmSpan } from "./utils/transcriptCorrespondence";
+import { markCaptureIncomplete } from "./utils/captureIncomplete";
 import {
   getMeetingProcessingSignal,
   runMeetingProcessingEffect,
@@ -227,7 +227,6 @@ async function playTtsItem(
         ? undefined
         : createCheckpointPlaybackTap({
             push: (chunk, observedAt) => {
-              if (rejectFixtureTts(meeting)) return false;
               if (
                 meeting.recordBotAudio === false ||
                 meeting.ownershipSignal?.aborted
@@ -249,7 +248,8 @@ async function playTtsItem(
                 return false;
               if (chunk.length && !receivedSpan) mappedPlayback = false;
               meeting.audioData.audioPassThrough?.write(chunk, (error) => {
-                if (error) meeting.audioData.captureIncomplete = true;
+                if (error)
+                  markCaptureIncomplete(meeting, "bot-audio-write-failed");
               });
               return true;
             },
@@ -396,7 +396,6 @@ export function createTtsQueue(
   };
 
   const enqueue = (item: TtsQueueItem) => {
-    if (rejectFixtureTts(meeting)) return false;
     if (getMeetingProcessingSignal(meeting).aborted) return false;
     if (queue.length >= config.chatTts.queueLimit) {
       if (item.priority === "high") {
@@ -414,7 +413,6 @@ export function createTtsQueue(
   };
 
   const playCueIfIdle = (item: TtsQueueSfxItem) => {
-    if (rejectFixtureTts(meeting)) return false;
     if (getMeetingProcessingSignal(meeting).aborted) return false;
     if (playing || queue.length > 0) return false;
     if (player.state.status !== AudioPlayerStatus.Idle) return false;

@@ -36,6 +36,10 @@ import {
 import { retainCleanupCandidates } from "../types/meetingUpdateCleanup";
 import { processingRetryJobSchema } from "../types/meetingProcessingRetry";
 import { trimNotesForHistory } from "../utils/notesHistory";
+import {
+  finishedMeetingStatus,
+  MEETING_STATUS,
+} from "../types/meetingLifecycle";
 
 export const MAX_MEETING_ITEM_BYTES = 400 * 1024;
 const NUMBER_STORAGE_OVERHEAD_BYTES = 2;
@@ -238,6 +242,13 @@ function withRegeneration(
   };
   if (regeneration.transcriptS3Key !== undefined)
     saved.transcriptS3Key = regeneration.transcriptS3Key;
+  // The pipeline gave up on this meeting; with notes regenerated it finished after all.
+  if (
+    saved.lifecycleVersion === 2 &&
+    saved.status === MEETING_STATUS.FAILED &&
+    saved.notes?.trim()
+  )
+    saved.status = finishedMeetingStatus(saved.capture);
   delete saved.processingRetryQueue;
   delete saved.processingRetryDueAt;
   return saved;

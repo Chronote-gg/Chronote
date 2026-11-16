@@ -91,6 +91,31 @@ test("notes conflict preserves canonical content and intent and invokes no Notio
   );
   expect(maybeAutoSyncMeetingNotes).not.toHaveBeenCalled();
 });
+test("two concurrent corrections of the same notes version: exactly one is applied", async () => {
+  fixture();
+  const correction = (notes: string) =>
+    updateMeetingNotesService({
+      ...key,
+      notes,
+      notesVersion: 2,
+      editedBy: "synthetic-editor",
+      expectedPreviousVersion: 1,
+    });
+  const results = await Promise.all([
+    correction("Synthetic correction A"),
+    correction("Synthetic correction B"),
+  ]);
+  expect(results.filter(Boolean)).toHaveLength(1);
+  const row = await getMeetingUpdateDeliveryRepository().getStrong(key);
+  expect(row).toMatchObject({
+    notes: results[0] ? "Synthetic correction A" : "Synthetic correction B",
+    notesVersion: 2,
+    contentRevision: 2,
+  });
+  expect(
+    row?.notesHistory?.filter(({ version }) => version === 2),
+  ).toHaveLength(1);
+});
 test("rename retains pending notes body and requests both titles without a notes version increment", async () => {
   fixture();
   expect(

@@ -169,3 +169,57 @@ Release references: [AWS SDK](https://github.com/aws/aws-sdk-js-v3/releases/tag/
 [Playwright](https://github.com/microsoft/playwright/releases/tag/v1.65.0),
 [AWS provider](https://github.com/hashicorp/terraform-provider-aws/releases/tag/v6.72.0),
 and [quality tool](https://github.com/BASIC-BIT/quality-ratchet/releases/tag/v1.1.1).
+
+## Maintenance assessment on 2026-11-16
+
+Refresh the existing consolidation PR against current master. Use Node 24.22.3,
+including the Docker base, engine floor and speech acceptance runtime pin, for
+its HTTP/2 and TLS security fixes. The native ABI remains 137. Preserve the
+qualified ONNX 1.30 runtime and Rust 1.88 DAVE build route. Runtime evidence from
+24.22.2 is no longer accepted as current qualification.
+
+Compatible updates include AWS SDK 3.1169, Mantine 9.8.1, tRPC 11.28.3, OpenAI
+7.57, PostHog browser 1.450 and Node 5.74, Fast XML Parser 5.12.1, ESLint 10.15,
+Playwright 1.65.1, Prettier 3.10.1 and the matching tooling cohorts. Fast XML
+Parser incorporates dependency PR [#617](https://github.com/Chronote-gg/Chronote/pull/617),
+including its updated builder, entities, strnum and unsafe-property helpers.
+Retain the Langfuse 6.1.1 numeric-token accounting patch. Preserve current
+master's deployment simplification; obsolete artifact-upload steps are not
+restored for a dependency version bump.
+
+PostHog now represents unavailable flags as undefined rather than false. The
+application has no feature-flag getter or flag-hook callers, so its current
+capture consumers need no migration. Stripe, TypeScript, OpenTelemetry, ONNX,
+DAVE's patched JavaScript loader, KaTeX and the five outstanding upgrades in
+[#585](https://github.com/Chronote-gg/Chronote/pull/585) retain their documented
+compatibility constraints. Keep that PR open for its unincorporated changes.
+
+Refresh native and desktop Cargo locks within their supported dependency
+ranges, including Tauri 2.12.6 and CLI 2.12.5. Python uses Lizard 1.26.1 and
+Boto3 1.44.3; the known-bad Lizard 1.24.2 and 1.24.3 releases remain excluded.
+The newer parser handles TS/JS generic and callback syntax and Rust comments.
+Its full repository scan and thirteen offline Python tests pass.
+
+AWS provider 6.73 and Grafana 4.55 locks are refreshed. The twenty reviewed AWS
+resource implementations are unchanged from 6.72; the WAF breaking change
+applies to no configured resource. Recompute the source model over current
+master and the new lock, and require the exact installed provider without
+broadening any plan allowance. Sandbox retains AWS 6.69.1. See the
+[source-model audit](../terraform-meeting-source-model.md).
+
+Fresh npm audits report four low-severity occurrences across two advisories,
+Quill and deepmerge, with no published fix; desktop npm has none. Native Cargo
+still reports the same eleven vulnerabilities described above, including the
+four findings in normal Node binding dependencies. Desktop Cargo reports zero
+vulnerabilities. Both Rust audits retain informational maintenance warnings.
+No advisory is dismissed or suppressed. Passing build and CI checks do not
+establish that these outstanding security findings are resolved.
+
+Release references: [Node security release](https://github.com/nodejs/node/releases/tag/v24.22.3),
+[AWS SDK](https://github.com/aws/aws-sdk-js-v3/releases/tag/v3.1169.0),
+[Mantine](https://github.com/mantinedev/mantine/releases/tag/9.8.1),
+[tRPC](https://github.com/trpc/trpc/releases/tag/v11.28.3),
+[OpenAI](https://github.com/openai/openai-node/releases/tag/v7.57.0),
+[Playwright](https://github.com/microsoft/playwright/releases/tag/v1.65.1),
+[AWS provider](https://github.com/hashicorp/terraform-provider-aws/releases/tag/v6.73.0),
+and [Grafana provider](https://github.com/grafana/terraform-provider-grafana/releases/tag/v4.55.0).

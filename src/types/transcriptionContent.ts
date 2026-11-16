@@ -1,5 +1,4 @@
 import type { ChatMeetingInput } from "../services/openaiChatService";
-import type { ArtifactWriter } from "../services/artifactProducerRegistry";
 import type {
   getTranscriptionPrompt,
   getTranscriptionFinalPassPrompt,
@@ -10,12 +9,9 @@ import type {
   SavedRecordingSettings,
 } from "./recordingContent";
 import type { TranscriptionLanguage } from "../config/transcriptionLanguage";
-import type { GenerationObserver } from "./fixtureEvidence";
 
 export type TranscriptionContentInput = {
-  beginArtifactWrite?: ArtifactWriter;
   tempDirectory?: string;
-  observeGeneration?: GenerationObserver;
   meetingId: string;
   creator: { id: string };
   guild: { id: string };
@@ -30,7 +26,6 @@ export type TranscriptionContentInput = {
 };
 
 export type FinalPassContent = ChatMeetingInput & {
-  beginArtifactWrite?: ArtifactWriter;
   startTime: Date;
   endTime?: Date;
   participants: MeetingData["participants"];

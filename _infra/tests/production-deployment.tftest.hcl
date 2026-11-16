@@ -339,3 +339,78 @@ run "release_images_are_never_selected_for_expiration" {
     error_message = "ECR lifecycle rules must never select tagged release images for expiration."
   }
 }
+
+run "deploy_role_publishes_only_the_deploy_namespace_and_retires_only_when_enabled" {
+  command = plan
+  plan_options {
+    target = [aws_iam_role_policy.production_deploy, aws_ecs_service.app_service]
+  }
+  variables {
+    environment        = "prod"
+    github_environment = "production"
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Condition.StringEquals["cloudwatch:namespace"] if s.Sid == "DeployDrainTimeoutMetric"]) == "meeting-notes-prod/Deploy"
+    error_message = "PutMetricData must be bound to the Deploy namespace the deploy script publishes to."
+  }
+  assert {
+    condition     = length([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s if contains(flatten([s.Action]), "ecs:StopTask")]) == 0
+    error_message = "StopTask must be absent unless ENABLE_DEPLOY_RETIRE is set."
+  }
+  assert {
+    condition     = aws_ecs_service.app_service.health_check_grace_period_seconds == 300
+    error_message = "The grace period must equal the one deploy.cjs sets on every rollout."
+  }
+}
+
+run "deploy_retire_grants_stop_task_on_cluster_tasks_only" {
+  command = plan
+  plan_options {
+    target = [aws_iam_role_policy.production_deploy]
+  }
+  variables {
+    environment          = "prod"
+    github_environment   = "production"
+    ENABLE_DEPLOY_RETIRE = true
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "RetireOlderTasks"]) == "arn:aws:ecs:us-east-1:123456789012:task/${aws_ecs_cluster.main.name}/*"
+    error_message = "StopTask must bind only this cluster's tasks."
+  }
+}
+
+# The Sandbox role shares these statements; this file carries the mocks its policy needs.
+run "sandbox_deploy_role_metric_and_retire_grants" {
+  command = plan
+  plan_options {
+    target = [aws_iam_role_policy.sandbox_deploy]
+  }
+  variables {
+    environment        = "sandbox"
+    github_environment = "sandbox"
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.sandbox_deploy[0].policy).Statement : s.Condition.StringEquals["cloudwatch:namespace"] if s.Sid == "DeployDrainTimeoutMetric"]) == "meeting-notes-sandbox/Deploy"
+    error_message = "PutMetricData must be bound to the Sandbox Deploy namespace."
+  }
+  assert {
+    condition     = length([for s in jsondecode(aws_iam_role_policy.sandbox_deploy[0].policy).Statement : s if contains(flatten([s.Action]), "ecs:StopTask")]) == 0
+    error_message = "StopTask must be absent unless ENABLE_DEPLOY_RETIRE is set."
+  }
+}
+
+run "sandbox_deploy_retire_grants_stop_task_on_cluster_tasks_only" {
+  command = plan
+  plan_options {
+    target = [aws_iam_role_policy.sandbox_deploy]
+  }
+  variables {
+    environment          = "sandbox"
+    github_environment   = "sandbox"
+    ENABLE_DEPLOY_RETIRE = true
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.sandbox_deploy[0].policy).Statement : s.Resource if s.Sid == "RetireOlderTasks"]) == "arn:aws:ecs:us-east-1:123456789012:task/${aws_ecs_cluster.main.name}/*"
+    error_message = "StopTask must bind only this cluster's tasks."
+  }
+}

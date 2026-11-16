@@ -51,6 +51,24 @@ of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts
 - `yarn db:init` – create tables locally
 - `yarn dev:clean` – wipe local Dynamo data and restart
 
+### Integration tests
+
+`yarn test:integration` runs every `*.integration.test.ts` against DynamoDB Local. Start it with `yarn docker:up`, then run `TEST_DYNAMODB_ENDPOINT=http://127.0.0.1:8000 yarn test:integration`. The endpoint must be a loopback HTTP address; the suite refuses anything else and never uses your AWS credentials.
+
+#### Checkpoint finish/storage acceptance
+
+The checkpoint finish/storage suite tests compiled capture and checkpoint code against isolated DynamoDB and MinIO services. It verifies that finish waits for a pending storage retry, reads saved audio back byte-for-byte, and retains local audio when retries are exhausted. It does not exercise Discord commands, voice capture, notes generation, AWS IAM or production routing.
+
+Build both images before running the suite, as CI does. MinIO is built from pinned official source because its prebuilt community images are no longer available.
+
+```sh
+docker build -t chronote-deployment-test:local .
+docker build -f test/deployment/fixtures/Minio.Dockerfile -t chronote-minio-test:source .
+DEPLOYMENT_TEST_IMAGE=chronote-deployment-test:local TEST_DYNAMODB_ENDPOINT=http://127.0.0.1:8000 yarn test:integration --runTestsByPath test/deployment/checkpointFinishStorage.integration.test.ts
+```
+
+This targeted test creates and removes its own internal Docker network and generated-data containers without exposing ports or using host credentials. The complete deployment suite additionally needs DynamoDB Local at the configured loopback endpoint. Sandbox unit-test failures block deployment.
+
 ### Langfuse prompt sync
 
 - Prompts live in `prompts/` as Markdown with YAML front matter.
@@ -150,19 +168,21 @@ flowchart LR
   C --> Z["CI complete"]
   D --> Z
   Z --> K["deploy-docs: publish docs"]
-  K --> L["deploybackend: prepare, promote, retire"]
+  K --> L["deploybackend: wait for drain, roll out, wait for ready"]
   L --> J["deploy-frontend: publish frontend"]
 ```
 
-Production backend deployment waits for CI and docs publication. Frontend publication waits for backend success; docs publication can finish even if the backend later fails. Normal backend deployments protect the serving runtime, warm and promote a compatible candidate, then wait for runtime-owned retirement. See [recording handoff and recovery](docs/deployment-handoff.md). The one-time [first production introduction](docs/production-introduction.md) is a cold cutover that runs only when no work is in flight.
+Production backend deployment waits for CI and docs publication. Frontend publication waits for backend success; docs publication can finish even if the backend later fails. The backend job waits for any older task that is still recording a meeting (bounded), rolls out a new task definition revision, waits for a ready worker on it and rolls back on failure. Meetings can start throughout. See [deployment](docs/deployment.md).
 
-Sandbox deployment uses its own preflight, skips Checkov and allows unit test failures to continue. Its frontend, docs and backend jobs depend on that preflight, without the production backend-before-frontend dependency. All three jobs use the Sandbox OIDC deployment role; site jobs restrict each session to its own publishing targets. Install the existing site policy before enabling them, as described in [Sandbox site publishing](_infra/README.md#sandbox-site-publishing). Sandbox bootstrap and approval rules remain separate.
+Sandbox deployment uses its own preflight, skips Checkov and allows unit test failures to continue. Its frontend, docs and backend jobs depend on that preflight, and frontend publication waits for the backend as in production. All three jobs use the Sandbox OIDC deployment role; site jobs restrict each session to its own publishing targets. Install the existing site policy before enabling them, as described in [Sandbox site publishing](_infra/README.md#sandbox-site-publishing). The Sandbox backend job runs the same deploy script as production.
 
 Coverage update rule:
 
 - After coverage improvements or coverage scope changes, round each threshold down to the nearest 10 and keep it in sync with `jest.config.ts`. Do not lower a threshold below its pre-PR value unless the coverage scope meaningfully expands, in which case reset to the new rounded baseline and call it out in the PR.
 
 ## Frontend
+
+Portal sign-in reconnects expired sessions and returns to the requested page. It warns before leaving unfinished work. See [sign-in help](https://docs.chronote.gg/getting-started/#sign-in-to-the-portal).
 
 - Vite + React 19 + Mantine 8 UI under `src/frontend/`, builds to `build/frontend/`.
 - Public product docs use Docusaurus under `apps/docs-site`, builds to `build/docs-site/`.
@@ -192,7 +212,7 @@ Coverage update rule:
 
 ## Backend / services
 
-- Bot + API: Node 24.22.2, Express 5. API routes are modularized under `src/api/` (billing, guilds). New typed API surface is tRPC at `/trpc` (routers in `src/trpc/`).
+- Bot + API: Node 24.22.3, Express 5. API routes are modularized under `src/api/` (billing, guilds). New typed API surface is tRPC at `/trpc` (routers in `src/trpc/`).
 - Voice capture: discord.js v14, @discordjs/voice/opus, prism-media.
 - Transcription flow and tuning: `docs/audio-transcription.md`.
 - Slow transcription now includes a default low-confidence prompt/no-prompt vote fallback to reduce hallucinated prompt echoes.

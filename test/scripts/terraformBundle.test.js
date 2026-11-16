@@ -11,16 +11,7 @@ import {
   parseInvocation,
 } from "../../scripts/deployment/terraform-bundle.cjs";
 import { digest } from "../../scripts/deployment/collector-payload.cjs";
-const invocation = {
-  repository: "Chronote-gg/Chronote",
-  sourceSha: "a".repeat(40),
-  workflowPath: ".github/workflows/terraform-plan.yml",
-  runId: "10",
-  runAttempt: 1,
-  environment: "production",
-  workspace: "default",
-  scope: "full",
-};
+import { invocation } from "../fixtures/deployment/terraformWorkflow.js";
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), "private-plan-"));
   const plan = Buffer.from([0, 255, 13, 10, 128]),

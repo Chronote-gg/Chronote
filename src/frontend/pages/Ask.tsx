@@ -1,3 +1,4 @@
+import { useAuthNavigationBlocker } from "../hooks/useAuthNavigationBlocker";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Button, Group, Modal, Stack, Textarea } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
@@ -61,6 +62,9 @@ export default function Ask() {
   );
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [feedbackDraft, setFeedbackDraft] = useState("");
+  useAuthNavigationBlocker(Boolean(draft));
+  useAuthNavigationBlocker(Boolean(renameDraft), renaming);
+  useAuthNavigationBlocker(Boolean(feedbackDraft), feedbackModalOpen);
   const [pendingFeedback, setPendingFeedback] = useState<{
     conversationId: string;
     messageId: string;

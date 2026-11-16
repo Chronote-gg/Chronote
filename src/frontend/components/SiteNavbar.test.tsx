@@ -27,25 +27,33 @@ const renderNavbar = (pathname = "/portal/meetings") =>
     </MantineProvider>,
   );
 
+const authenticatedAuth = (): ReturnType<typeof useAuth> => ({
+  state: "authenticated",
+  loading: false,
+  protectedQueriesReady: true,
+  actorKey: 1,
+  navigationBlocked: false,
+  ensureProtectedSession: async () => {},
+  retryRecovery: async () => {},
+  continueRecovery: () => {},
+  onPublicNavigation: () => {},
+  loginUrl: "/auth/discord",
+  logoutUrl: "/logout",
+  user: {
+    id: "user-1",
+    username: "User 1",
+    avatar: null,
+  },
+  refresh: jest.fn(async () => undefined),
+});
+
 describe("SiteNavbar", () => {
   const openMock = jest.fn();
 
   beforeEach(() => {
     jest.clearAllMocks();
     browseSearch = {};
-    jest.mocked(useAuth).mockReturnValue({
-      state: "authenticated",
-      loading: false,
-      protectedQueriesReady: true,
-      loginUrl: "/auth/discord",
-      logoutUrl: "/logout",
-      user: {
-        id: "user-1",
-        username: "User 1",
-        avatar: null,
-      },
-      refresh: jest.fn(async () => undefined),
-    });
+    jest.mocked(useAuth).mockReturnValue(authenticatedAuth());
     jest.mocked(useGuildContext).mockReturnValue({
       guilds: [],
       selectedGuildId: null,
@@ -125,15 +133,7 @@ describe("SiteNavbar", () => {
 });
 
 it("uses URL scope instead of stored guild management rights", () => {
-  jest.mocked(useAuth).mockReturnValue({
-    state: "authenticated",
-    loading: false,
-    protectedQueriesReady: true,
-    loginUrl: "/auth/discord",
-    logoutUrl: "/logout",
-    user: { id: "user", username: "User", avatar: null },
-    refresh: jest.fn(async () => undefined),
-  });
+  jest.mocked(useAuth).mockReturnValue(authenticatedAuth());
   jest.mocked(useGuildContext).mockReturnValue({
     guilds: [
       { id: "manager", name: "Manager server", canManage: true },

@@ -1,10 +1,4 @@
 import { jest } from "@jest/globals";
-const { context } = jest.requireActual<{
-  context: import("../../types/deploymentControl").AdmissionContext;
-}>("../../../test/deployment/controlFixtures");
-jest.mock("../runtimeLifecycleService", () => ({
-  getRuntimeAdmissionContext: async () => context,
-}));
 import { PERSONAL_MEDIA_UPLOAD_MAX_BYTES } from "../../constants";
 import {
   createPersonalMediaUploadIntent,
@@ -240,7 +234,6 @@ describe("personalMediaUploadService", () => {
         status: "pending_upload",
         sourceS3Key: intent.key,
       }),
-      context,
     );
   });
 
@@ -293,7 +286,6 @@ describe("personalMediaUploadService", () => {
         ],
         fileSize: 0,
       }),
-      context,
     );
   });
 
@@ -422,7 +414,7 @@ describe("personalMediaUploadService", () => {
       title: "Planning session",
       tags: ["planning"],
     });
-    expect(uploadRepository.submit).toHaveBeenCalledWith(completed, context);
+    expect(uploadRepository.submit).toHaveBeenCalledWith(completed);
     expect(uploadRepository.claim).not.toHaveBeenCalled();
   });
 
@@ -584,7 +576,7 @@ describe("personalMediaUploadService", () => {
         expect.objectContaining({ sourceId: "system_output" }),
       ],
     });
-    expect(uploadRepository.submit).toHaveBeenCalledWith(completed, context);
+    expect(uploadRepository.submit).toHaveBeenCalledWith(completed);
     await expect(
       segmentRepository.listByUpload(session.uploadId),
     ).resolves.toEqual(
@@ -706,7 +698,7 @@ describe("personalMediaUploadService", () => {
         segmentCount: 1,
         uploadedSegmentCount: 1,
       });
-      expect(uploadRepository.submit).toHaveBeenCalledWith(completed, context);
+      expect(uploadRepository.submit).toHaveBeenCalledWith(completed);
       await expect(
         segmentRepository.listByUpload(session.uploadId),
       ).resolves.toEqual(

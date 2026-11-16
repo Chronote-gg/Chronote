@@ -1,18 +1,9 @@
 /** @jest-environment node */
-import * as db from "../../src/db";
 import { registerNotionMutationTracker } from "../../src/services/notionOperationLifetime";
 import { runRuntimeApiOperation } from "../../src/services/runtimeApiOperationService";
-import {
-  fenceRuntimeWorkAdmission,
-  getRuntimeWorkAdmissionCheckpoints,
-} from "../../src/services/runtimeWorkAdmissionService";
+import * as shutdown from "../../src/services/shutdownSignal";
 import { updateMeetingNotesService } from "../../src/services/meetingHistoryService";
 import { getMockStore } from "../../src/repositories/mockStore";
-const mockApiSettled = jest.fn();
-jest.mock("../../src/services/runtimeLifecycleService", () => ({
-  beginRuntimeWork: () => ({ transition: () => {}, settle: mockApiSettled }),
-  getRuntimeAdmissionContext: async () => ({ instanceId: "synthetic-api" }),
-}));
 import { config } from "../../src/services/configService";
 import {
   getNotionIntegrationRepository,
@@ -43,10 +34,6 @@ const meeting = {
   generateNotes: true,
 } satisfies MeetingHistory;
 async function fixture() {
-  jest.spyOn(db, "getDeploymentControlRepository").mockReturnValue({
-    ...db.getDeploymentControlRepository(),
-    checkAdmission: jest.fn(async () => ({ kind: "admitted" as const })),
-  });
   resetNotionIntegrationMemoryRepository();
   jest.spyOn(config.notion, "enabled", "get").mockReturnValue(true);
   const fetch = jest.fn().mockResolvedValueOnce(
@@ -172,7 +159,6 @@ test("unknown fixed-page update preserves the acknowledged export row", async ()
 
 async function correctionFixture() {
   const f = await fixture();
-  mockApiSettled.mockClear();
   await f.repository.writeAutomationMeetingExport({
     guildId: meeting.guildId,
     channelId_timestamp: meeting.channelId_timestamp,
@@ -188,8 +174,13 @@ async function correctionFixture() {
   ]);
   return f;
 }
+/** The operation signal stands in for process shutdown, which is the only thing that aborts it. */
 function correct(id: string) {
-  return runRuntimeApiOperation(id, (operation) =>
+  const shutdownController = new AbortController();
+  jest
+    .spyOn(shutdown, "operationSignal")
+    .mockReturnValueOnce(shutdownController.signal);
+  const task = runRuntimeApiOperation(id, (operation) =>
     updateMeetingNotesService(
       {
         guildId: meeting.guildId,
@@ -202,9 +193,10 @@ function correct(id: string) {
       operation.signal,
       operation,
     ),
-  );
+  ).catch((error: unknown) => error);
+  return { task, stop: () => shutdownController.abort() };
 }
-test("actual canonical ACK followed by held automatic Notion lookup cancellation releases after the whole helper settles", async () => {
+test("actual canonical ACK followed by held automatic Notion lookup and shutdown never sends a page mutation", async () => {
   const f = await correctionFixture();
   let release!: () => void;
   let entered!: () => void;
@@ -221,21 +213,15 @@ test("actual canonical ACK followed by held automatic Notion lookup cancellation
       });
       return original(id);
     });
-  const id = "synthetic-api-notion-read";
-  const task = correct(id).catch((error: unknown) => error);
+  const { task, stop } = correct("synthetic-api-notion-read");
   await started;
-  fenceRuntimeWorkAdmission(id);
-  expect(mockApiSettled).not.toHaveBeenCalled();
+  stop();
   release();
   await task;
-  expect(mockApiSettled).toHaveBeenCalledTimes(1);
-  expect(
-    getRuntimeWorkAdmissionCheckpoints().find((entry) => entry.id === id),
-  ).toBeUndefined();
   expect(f.fetch).toHaveBeenCalledTimes(1);
 });
 test.each(["5xx", "body_loss", "known_ack"])(
-  "actual automatic Notion mutation %s determines API ownership",
+  "actual automatic Notion mutation %s decides the saved export when shutdown follows submission",
   async (outcome) => {
     const f = await correctionFixture();
     let release!: () => void;
@@ -265,21 +251,11 @@ test.each(["5xx", "body_loss", "known_ack"])(
         { status: outcome === "5xx" ? 503 : 200 },
       );
     });
-    const id = `synthetic-api-notion-${outcome}`;
-    const task = correct(id).catch((error: unknown) => error);
+    const { task, stop } = correct(`synthetic-api-notion-${outcome}`);
     await started;
-    fenceRuntimeWorkAdmission(id);
-    expect(mockApiSettled).not.toHaveBeenCalled();
+    stop();
     release();
     await task;
-    expect(mockApiSettled).toHaveBeenCalledTimes(
-      outcome === "known_ack" ? 1 : 0,
-    );
-    expect(
-      Boolean(
-        getRuntimeWorkAdmissionCheckpoints().find((entry) => entry.id === id),
-      ),
-    ).toBe(outcome !== "known_ack");
     expect(
       (await f.repository.getAutomationMeetingExport(f.key))
         ?.exportedNotesVersion,
@@ -290,7 +266,7 @@ test.each(["5xx", "body_loss", "known_ack"])(
 // The initial 401 is a definite rejection. The subsequent token rotation owns
 // its complete response validation, and only its successful ACK permits release.
 test.each(["5xx", "body_loss", "schema_loss", "known_ack"])(
-  "actual automatic token refresh %s retains its exact API owner through validation",
+  "actual automatic token refresh %s is saved only after a validated ACK when shutdown follows submission",
   async (outcome) => {
     const f = await correctionFixture();
     f.fetch.mockResolvedValueOnce(
@@ -330,8 +306,7 @@ test.each(["5xx", "body_loss", "schema_loss", "known_ack"])(
       );
     });
     const writeConnection = jest.spyOn(f.repository, "writeConnection");
-    const id = `synthetic-api-token-${outcome}`;
-    const task = correct(id).catch((error: unknown) => error);
+    const { task, stop } = correct(`synthetic-api-token-${outcome}`);
     // Race with task completion so an incorrect 401-unknown classification fails promptly.
     expect(
       await Promise.race([
@@ -339,13 +314,9 @@ test.each(["5xx", "body_loss", "schema_loss", "known_ack"])(
         task.then(() => "ended"),
       ]),
     ).toBe("issued");
-    fenceRuntimeWorkAdmission(id);
-    expect(mockApiSettled).not.toHaveBeenCalled();
+    stop();
     release();
     await task;
-    expect(mockApiSettled).toHaveBeenCalledTimes(
-      outcome === "known_ack" ? 1 : 0,
-    );
     expect(writeConnection).toHaveBeenCalledTimes(
       outcome === "known_ack" ? 1 : 0,
     );

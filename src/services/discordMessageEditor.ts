@@ -17,7 +17,10 @@ export const discordEditorMessageSchema = z
   .object({
     id: discordIdSchema,
     channel_id: discordIdSchema,
-    author: z.object({ id: discordIdSchema, bot: z.boolean() }).passthrough(),
+    // Discord sends `bot` only for bot users; human authors omit it.
+    author: z
+      .object({ id: discordIdSchema, bot: z.boolean().optional() })
+      .passthrough(),
     content: z.string(),
     embeds: z.array(discordObjectSchema),
     components: z.array(discordObjectSchema).default([]),
@@ -141,6 +144,45 @@ export function createDiscordMessageTransport({
         { method: "PATCH", body: JSON.stringify(payload), signal },
         true,
       )) !== null,
+    createMessage: async ({
+      channelId,
+      payload,
+      signal,
+    }: {
+      channelId: string;
+      payload: Record<string, unknown>;
+      signal?: AbortSignal;
+    }): Promise<unknown> => {
+      const response = await request(
+        `/channels/${channelId}/messages`,
+        "message create",
+        { method: "POST", body: JSON.stringify(payload), signal },
+      );
+      return response!.json();
+    },
+    listMessages: ({
+      channelId,
+      after,
+      before,
+      limit,
+      signal,
+    }: {
+      channelId: string;
+      after?: string;
+      before?: string;
+      limit: number;
+      signal?: AbortSignal;
+    }): Promise<unknown> =>
+      getJson(
+        `/channels/${channelId}/messages?${new URLSearchParams({
+          ...(after ? { after } : {}),
+          ...(before ? { before } : {}),
+          limit: String(limit),
+        })}`,
+        "message list",
+        false,
+        signal,
+      ),
     writeNotesMessage: async ({
       channelId,
       messageId,
@@ -213,47 +255,5 @@ export function createDiscordMessageEditor(options: DiscordTransportOptions) {
       }))
         ? "acknowledged"
         : "missing",
-  };
-}
-
-export function createFirstPublicationTransport({
-  token,
-  fetchImpl = fetch,
-}: DiscordTransportOptions) {
-  const editor = createDiscordMessageEditor({ token, fetchImpl });
-  return {
-    getBotIdentity: editor.getBotIdentity,
-    getChannel: editor.getChannel,
-    getMessage: editor.getMessage,
-    createNotesMessage: async ({
-      channelId,
-      payload,
-    }: {
-      channelId: string;
-      payload: import("./firstPublicationTypes").PublicationPayload;
-    }) => {
-      const { payloadSchema } = await import("./firstPublicationTypes");
-      const body = payloadSchema.parse(payload);
-      discordIdSchema.parse(channelId);
-      const response = await fetchImpl(
-        `https://discord.com/api/v10/channels/${channelId}/messages`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bot ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(body),
-          redirect: "error",
-          signal: AbortSignal.timeout(15000),
-        },
-      );
-      if (!response.ok)
-        throw new DiscordMessageHttpError(
-          "first publication create",
-          response.status,
-        );
-      return discordEditorMessageSchema.parse(await response.json());
-    },
   };
 }

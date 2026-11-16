@@ -1,10 +1,16 @@
 /** @jest-environment node */
+// These suites exercise the pollers themselves; eligibility gating has its own suite.
+jest.mock("../../src/services/workerRegistry", () => ({
+  isEligible: () => true,
+}));
 import {
   verifyRenewalRecoveryReadiness,
   startRenewalRecoveryWorker,
   stopRenewalRecoveryWorker,
   runRenewalRecoveryPoll,
+  releaseRenewalRecoveryLease,
 } from "../../src/services/renewalRecoveryWorkerService";
+import { RENEWAL_RECOVERY_STALLED_LOG } from "../../src/metrics";
 import { reconcileBillingChangeForWebhook } from "../../src/services/billingChangeService";
 import { pendingFundingChange } from "../fixtures/pendingFundingChange";
 import { response } from "../fixtures/renewalStripeClient";
@@ -17,16 +23,10 @@ import {
   renewalRecoverySchema,
 } from "../../src/types/renewalRecovery";
 import { stripeTransport } from "../fixtures/stripeTransport";
-import { context, control, runtime } from "../deployment/controlFixtures";
-import { getRuntimeAdmissionContext } from "../../src/services/runtimeLifecycleService";
-import {
-  fenceRuntimeWorkAdmissions,
-  getRuntimeWorkAdmissionCheckpoints,
-} from "../../src/services/runtimeWorkAdmissionService";
-jest.mock("../../src/services/runtimeLifecycleService", () => ({
-  beginRuntimeWork: () => ({ settle: jest.fn(), transition: jest.fn() }),
-  getRuntimeAdmissionContext: jest.fn(async () => context),
-}));
+import { UnresolvedBillingMutation } from "../../src/services/runtimeBillingOperationService";
+import * as jobLeases from "../../src/repositories/jobLeaseRepository";
+import { getRuntimeInstanceId } from "../../src/services/runtimeInstanceService";
+import { LIFECYCLE } from "../../src/services/lifecycleTiming";
 const stripe = stripeTransport(() => {
   throw new Error("Unexpected provider request");
 }).stripe;
@@ -69,13 +69,7 @@ beforeEach(() => {
   config.mock.enabled = true;
   config.subscription.stripeMode = "test";
   resetMockStore();
-  for (const record of [control, runtime("old")])
-    getMockStore().deploymentControlRecords.set(
-      JSON.stringify([record.pk, record.sk]),
-      structuredClone(record),
-    );
   jest.spyOn(recovery, "reconcileRenewalRecovery").mockResolvedValue();
-  jest.mocked(getRuntimeAdmissionContext).mockResolvedValue(context);
 });
 afterEach(async () => {
   await stopRenewalRecoveryWorker();
@@ -121,103 +115,81 @@ test("traverses due pages and isolates a failed recovery from the next page", as
   });
   expect(listDue).toHaveBeenCalledTimes(2);
   expect(recovery.reconcileRenewalRecovery).toHaveBeenCalledTimes(2);
-  expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(0);
 });
-test("denied admission performs no provider work", async () => {
+test("a poll runs without any deployment control record", async () => {
   seed();
-  jest
-    .mocked(getRuntimeAdmissionContext)
-    .mockRejectedValue(new Error("Runtime retiring"));
-  await expect(
-    runRenewalRecoveryPoll({
-      stripe,
-      now: 200,
-      signal: new AbortController().signal,
-    }),
-  ).rejects.toThrow("Runtime retiring");
-  expect(recovery.reconcileRenewalRecovery).not.toHaveBeenCalled();
-});
-test("two polls cannot process one locally owned cycle concurrently", async () => {
-  seed();
-  let release!: () => void;
-  let entered!: () => void;
-  const enteredPromise = new Promise<void>((done) => {
-    entered = done;
-  });
-  jest
-    .mocked(recovery.reconcileRenewalRecovery)
-    .mockImplementation(async () => {
-      entered();
-      await new Promise<void>((done) => {
-        release = done;
-      });
-    });
-  const first = runRenewalRecoveryPoll({
-    stripe,
-    now: 200,
-    signal: new AbortController().signal,
-  });
-  await enteredPromise;
   await runRenewalRecoveryPoll({
     stripe,
     now: 200,
     signal: new AbortController().signal,
   });
+  expect(getMockStore().deploymentControlRecords.size).toBe(0);
   expect(recovery.reconcileRenewalRecovery).toHaveBeenCalledTimes(1);
-  release();
-  await first;
 });
-test.each([true, false])(
-  "worker stop refuses nested effects with runtime fence=%s",
-  async (fenceRuntime) => {
-    jest.useFakeTimers();
-    jest.setSystemTime(200000);
-    const record = seed();
-    const { client, operation } = pendingFundingChange(record.guildId);
-    let release!: () => void;
-    let entered!: () => void;
-    const enteredPromise = new Promise<void>((done) => {
-      entered = done;
-    });
-    const nextWrite = jest
-      .spyOn(client.stripe.invoices, "create")
-      .mockRejectedValue(new Error("Unexpected new invoice"));
-    client.retrieve.mockImplementationOnce(async () => {
-      entered();
+test("worker start runs one poll at a time", async () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(200000);
+  seed();
+  let release!: () => void;
+  jest
+    .mocked(recovery.reconcileRenewalRecovery)
+    .mockImplementation(async () => {
       await new Promise<void>((done) => {
         release = done;
       });
-      return response(client.provider);
     });
-    jest
-      .mocked(recovery.reconcileRenewalRecovery)
-      .mockImplementation(async (input) => {
-        await input.stripe.subscriptions.retrieve(
-          operation.source.subscriptionId,
-        );
-        await reconcileBillingChangeForWebhook(
-          input.stripe,
-          record.guildId,
-          input.effect,
-          input.owner,
-        );
-      });
-    jest.spyOn(console, "warn").mockImplementation(() => undefined);
-    startRenewalRecoveryWorker(client.stripe);
-    await enteredPromise;
-    let stopped = false;
-    const stopping = stopRenewalRecoveryWorker().then(() => {
-      stopped = true;
+  startRenewalRecoveryWorker(stripe);
+  await jest.advanceTimersByTimeAsync(60000);
+  expect(recovery.reconcileRenewalRecovery).toHaveBeenCalledTimes(1);
+  release();
+  await jest.advanceTimersByTimeAsync(0);
+});
+test("worker stop refuses nested effects", async () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(200000);
+  const record = seed();
+  const { client, operation } = pendingFundingChange(record.guildId);
+  let release!: () => void;
+  let entered!: () => void;
+  const enteredPromise = new Promise<void>((done) => {
+    entered = done;
+  });
+  const nextWrite = jest
+    .spyOn(client.stripe.invoices, "create")
+    .mockRejectedValue(new Error("Unexpected new invoice"));
+  client.retrieve.mockImplementationOnce(async () => {
+    entered();
+    await new Promise<void>((done) => {
+      release = done;
     });
-    if (fenceRuntime) fenceRuntimeWorkAdmissions();
-    await Promise.resolve();
-    expect(stopped).toBe(false);
-    release();
-    await stopping;
-    expect(nextWrite).not.toHaveBeenCalled();
-    expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(0);
-  },
-);
+    return response(client.provider);
+  });
+  jest
+    .mocked(recovery.reconcileRenewalRecovery)
+    .mockImplementation(async (input) => {
+      await input.stripe.subscriptions.retrieve(
+        operation.source.subscriptionId,
+      );
+      await reconcileBillingChangeForWebhook(
+        input.stripe,
+        record.guildId,
+        input.effect,
+        input.owner,
+      );
+    });
+  jest.spyOn(console, "warn").mockImplementation(() => undefined);
+  startRenewalRecoveryWorker(client.stripe);
+  await enteredPromise;
+  let stopped = false;
+  const stopping = stopRenewalRecoveryWorker().then(() => {
+    stopped = true;
+  });
+  await Promise.resolve();
+  expect(stopped).toBe(false);
+  release();
+  await stopping;
+  expect(nextWrite).not.toHaveBeenCalled();
+});
 test("stale index keys are harmless and do not reconcile another current cycle", async () => {
   const record = seed();
   const actual = repository.getRenewalRecoveryRepository();
@@ -267,24 +239,6 @@ test("enforcement readiness verifies provider mode and usable due index before s
   }
 });
 
-test("maintenance refusal preserves due recovery and prevents its active lifetime", async () => {
-  seed();
-  const db = await import("../../src/db");
-  jest.spyOn(db, "getDeploymentControlRepository").mockReturnValue({
-    ...db.getDeploymentControlRepository(),
-    checkAdmission: jest.fn(async () => ({
-      kind: "blocked" as const,
-      reason: "not_serving" as const,
-    })),
-  });
-  await runRenewalRecoveryPoll({
-    stripe,
-    now: 200,
-    signal: new AbortController().signal,
-  });
-  expect(recovery.reconcileRenewalRecovery).not.toHaveBeenCalled();
-});
-
 test.each(["read failure", "domain ACK then failure", "domain ACK lost"])(
   "worker %s preserves actual mutation knowledge",
   async (stage) => {
@@ -293,8 +247,9 @@ test.each(["read failure", "domain ACK then failure", "domain ACK lost"])(
         stage,
       ) + 10,
     );
-    const before = getRuntimeWorkAdmissionCheckpoints().length;
-    jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warn = jest
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
     jest
       .mocked(recovery.reconcileRenewalRecovery)
       .mockImplementationOnce(async (input) => {
@@ -310,8 +265,100 @@ test.each(["read failure", "domain ACK then failure", "domain ACK lost"])(
       now: 200,
       signal: new AbortController().signal,
     });
-    expect(getRuntimeWorkAdmissionCheckpoints()).toHaveLength(
-      before + (stage === "read failure" ? 0 : 1),
+    const [, { error }] = warn.mock.calls[0];
+    expect(error instanceof UnresolvedBillingMutation).toBe(
+      stage !== "read failure",
     );
   },
 );
+
+describe("renewal recovery job lease", () => {
+  const poll = () =>
+    runRenewalRecoveryPoll({
+      stripe,
+      now: 200,
+      signal: new AbortController().signal,
+    });
+  const otherWorkerHolds = () =>
+    jobLeases.getJobLeaseRepository().tryAcquireJobLease({
+      name: "renewal-recovery",
+      owner: "synthetic-other-worker",
+      now: Math.floor(Date.now() / 1000),
+      ttlSeconds: LIFECYCLE.renewalRecoveryLeaseSeconds,
+    });
+  test("a poll is skipped when another worker holds the lease", async () => {
+    seed();
+    const provider = jest.fn(() => {
+      throw new Error("Unexpected provider request");
+    });
+    const transport = stripeTransport(provider);
+    await expect(otherWorkerHolds()).resolves.toBe(true);
+    jest.spyOn(console, "debug").mockImplementation(() => undefined);
+    const listDue = jest.spyOn(repository, "getRenewalRecoveryRepository");
+    await runRenewalRecoveryPoll({
+      stripe: transport.stripe,
+      now: 200,
+      signal: new AbortController().signal,
+    });
+    expect(listDue).not.toHaveBeenCalled();
+    expect(recovery.reconcileRenewalRecovery).not.toHaveBeenCalled();
+    expect(provider).not.toHaveBeenCalled();
+  });
+  test("a poll is skipped when the lease check fails", async () => {
+    seed();
+    jest.spyOn(jobLeases, "getJobLeaseRepository").mockReturnValue({
+      tryAcquireJobLease: jest.fn(async () => {
+        throw new Error("Lease table unavailable");
+      }),
+      releaseJobLease: jest.fn(async () => undefined),
+    });
+    const warn = jest
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    await expect(poll()).resolves.toBeUndefined();
+    expect(recovery.reconcileRenewalRecovery).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(RENEWAL_RECOVERY_STALLED_LOG, "Error");
+  });
+  test("the lease holder polls as before", async () => {
+    seed();
+    await poll();
+    await poll();
+    expect(recovery.reconcileRenewalRecovery).toHaveBeenCalledTimes(2);
+    await expect(otherWorkerHolds()).resolves.toBe(false);
+    await expect(
+      jobLeases.getJobLeaseRepository().tryAcquireJobLease({
+        name: "renewal-recovery",
+        owner: getRuntimeInstanceId(),
+        now: Math.floor(Date.now() / 1000),
+        ttlSeconds: LIFECYCLE.renewalRecoveryLeaseSeconds,
+      }),
+    ).resolves.toBe(true);
+  });
+  test("a poll that loses the lease stops before its next due record", async () => {
+    const first = seed();
+    seed(1);
+    let calls = 0;
+    const actual = jobLeases.getJobLeaseRepository();
+    jest.spyOn(jobLeases, "getJobLeaseRepository").mockReturnValue({
+      ...actual,
+      async tryAcquireJobLease(input) {
+        calls += 1;
+        // Poll start and the first record hold it; another worker owns it by the second record.
+        return calls <= 2 && actual.tryAcquireJobLease(input);
+      },
+    });
+    jest.spyOn(console, "debug").mockImplementation(() => undefined);
+    await poll();
+    expect(recovery.reconcileRenewalRecovery).toHaveBeenCalledTimes(1);
+    expect(recovery.reconcileRenewalRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({ guildId: first.guildId }),
+    );
+  });
+  test("releasing the lease lets another worker poll at once", async () => {
+    seed();
+    await poll();
+    await expect(otherWorkerHolds()).resolves.toBe(false);
+    await releaseRenewalRecoveryLease();
+    await expect(otherWorkerHolds()).resolves.toBe(true);
+  });
+});

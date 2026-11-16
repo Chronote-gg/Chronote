@@ -121,18 +121,34 @@ export function GuildProvider({ children }: { children: React.ReactNode }) {
     localStorage.getItem(STORAGE_KEY),
   );
   const [error, setError] = useState<string | null>(null);
-  const { state: authState, protectedQueriesReady, user } = useAuth();
-  const actor = user?.id ?? null;
-  const [metadataActor, setMetadataActor] = useState(actor);
+  const {
+    state: authState,
+    protectedQueriesReady,
+    navigationBlocked,
+    actorKey,
+  } = useAuth();
+  const actor = actorKey;
+  const [metadataActor, setMetadataActor] = useState<typeof actor>(actor);
   const actorMatches = metadataActor === actor;
   useEffect(() => {
-    if (!actorMatches || !protectedQueriesReady) {
+    if (
+      !actorMatches ||
+      (!protectedQueriesReady &&
+        !navigationBlocked &&
+        authState === "unauthenticated")
+    ) {
       setGuilds([]);
       setSelectedGuildId(null);
       clearStoredGuild();
       setMetadataActor(actor);
     }
-  }, [actor, actorMatches, protectedQueriesReady]);
+  }, [
+    actor,
+    actorMatches,
+    protectedQueriesReady,
+    navigationBlocked,
+    authState,
+  ]);
   const guildQuery = trpc.servers.listEligible.useQuery(undefined, {
     retry: false,
     enabled: authState === "authenticated" && protectedQueriesReady,
@@ -167,9 +183,14 @@ export function GuildProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(
     () => ({
-      guilds: actorMatches && protectedQueriesReady ? guilds : [],
+      guilds:
+        actorMatches && (protectedQueriesReady || navigationBlocked)
+          ? guilds
+          : [],
       selectedGuildId:
-        actorMatches && protectedQueriesReady ? selectedGuildId : null,
+        actorMatches && (protectedQueriesReady || navigationBlocked)
+          ? selectedGuildId
+          : null,
       setSelectedGuildId: (id: string | null) => {
         if (
           id &&
@@ -185,7 +206,7 @@ export function GuildProvider({ children }: { children: React.ReactNode }) {
         setSelectedGuildId(id);
         storeGuild(id);
       },
-      loading,
+      loading: navigationBlocked && actorMatches ? false : loading,
       error,
       refresh: async () => {
         await guildQuery.refetch();
@@ -200,6 +221,7 @@ export function GuildProvider({ children }: { children: React.ReactNode }) {
       guildQuery,
       actorMatches,
       protectedQueriesReady,
+      navigationBlocked,
     ],
   );
 

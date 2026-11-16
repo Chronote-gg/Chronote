@@ -6,32 +6,25 @@ import { getPersonalMediaUploadRepository } from "../../src/repositories/persona
 import { getMockStore } from "../../src/repositories/mockStore";
 import { config } from "../../src/services/configService";
 import { processPersonalMediaUploadJob } from "../../src/services/personalMediaUploadWorkerService";
-import { getRuntimeWorkAdmissionCheckpoints } from "../../src/services/runtimeWorkAdmissionService";
 import { getRuntimeInstanceId } from "../../src/services/runtimeInstanceService";
 import { processPersonalMediaUpload } from "../../src/services/personalMediaUploadProcessingService";
 import { buildPausedDesktopDraftMarker } from "../../src/testSupport/personalMediaUploadFixtures";
 import type { PersonalMediaUploadJobRecord } from "../../src/types/db";
-import {
-  seedServingRuntime,
-  stopServingRuntime,
-} from "../fixtures/servingRuntime";
 
 jest.mock("../../src/services/personalMediaUploadProcessingService", () => ({
   createPersonalMediaProcessingMeeting: jest.fn(),
   processPersonalMediaUpload: jest.fn(),
 }));
 
-beforeEach(async () => {
+beforeEach(() => {
   config.mock.enabled = true;
   getMockStore().personalMediaUploadsById.clear();
-  await seedServingRuntime();
   jest.clearAllMocks();
 });
 afterEach(() => {
   config.mock.enabled = true;
   jest.restoreAllMocks();
 });
-afterAll(stopServingRuntime);
 
 test.each([
   "paused",
@@ -78,9 +71,9 @@ test.each([
         "TransactItems" in input
       ) {
         submissions++;
-        expect(input.TransactItems).toHaveLength(4);
+        expect(input.TransactItems).toHaveLength(2);
         parent = unmarshall(
-          input.TransactItems![3].Put!.Item!,
+          input.TransactItems![1].Put!.Item!,
         ) as PersonalMediaUploadJobRecord;
         throw failure;
       }
@@ -96,18 +89,8 @@ test.each([
   expect(jobs).toEqual([parent]);
   selected = true;
   await processPersonalMediaUploadJob(jobs[0]);
-  const owned = getRuntimeWorkAdmissionCheckpoints().filter(
-    (row) => row.id === parent.uploadId,
-  );
   expect(processPersonalMediaUpload).not.toHaveBeenCalled();
-  if (scenario === "paused") {
-    expect(owned).toHaveLength(0);
-    expect(parent.status).toBe("queued");
-  } else {
-    expect(owned).toMatchObject([
-      { stage: "unresolved", fenced: true, localSettled: true },
-    ]);
-  }
+  if (scenario !== "lost claim ACK") expect(parent.status).toBe("queued");
   expect(submissions).toBe(scenario === "lost claim ACK" ? 1 : 0);
   if (scenario === "lost claim ACK") expect(parent.status).toBe("processing");
 });

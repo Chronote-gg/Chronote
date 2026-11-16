@@ -85,7 +85,7 @@ const config: Config.InitialOptions = {
     "/dist/",
     "/build/",
     "/test/e2e/",
-    "/test/deployment/.*\\.integration\\.test\\.ts$",
+    "\\.integration\\.test\\.ts$",
   ],
 
   // An array of file extensions your modules use

@@ -23,25 +23,27 @@ describe("portal layouts", () => {
     resetFrontendMocks();
   });
 
-  test("PortalLayout shows sign-in prompt for unauthenticated users", () => {
+  test("PortalLayout shows the automatic return state for unauthenticated users", () => {
     authState.state = "unauthenticated";
     setRouterPathname("/portal/server/g1/library");
     renderWithMantine(<PortalLayout />);
     expect(screen.queryByTestId("navigate")).toBeNull();
-    const cta = screen.getByRole("link", { name: /connect discord/i });
-    expect(cta).toHaveAttribute("href", authState.loginUrl);
+    expect(screen.queryByTestId("router-outlet")).toBeNull();
+    expect(
+      screen.getByText("Returning through Discord..."),
+    ).toBeInTheDocument();
   });
 
   test("PortalLayout shows loading state while auth is loading", () => {
-    authState.state = "authenticated";
+    authState.state = "unknown";
     authState.loading = true;
     guildState.loading = false;
     setRouterPathname("/portal/server/g1/ask");
     renderWithMantine(<PortalLayout />);
-    expect(screen.getByText("Loading your portal...")).toBeInTheDocument();
+    expect(screen.getByText("Checking your sign-in...")).toBeInTheDocument();
   });
 
-  test("PortalLayout renders navbar and outlet when authenticated", () => {
+  test("PortalLayout renders navbar and outlet after checking private entry", async () => {
     authState.state = "authenticated";
     authState.loading = false;
     guildState.loading = false;
@@ -50,7 +52,7 @@ describe("portal layouts", () => {
     setRouterPathname("/portal/server/g1/library");
     renderWithMantine(<PortalLayout />);
     expect(screen.getByTestId("nav-meetings")).toBeInTheDocument();
-    expect(screen.getByTestId("router-outlet")).toBeInTheDocument();
+    expect(await screen.findByTestId("router-outlet")).toBeInTheDocument();
   });
 
   test("PortalLayout hides navbar on server select route", () => {

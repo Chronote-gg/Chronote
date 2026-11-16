@@ -1,10 +1,4 @@
 /** @jest-environment node */
-jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
-const mockSend = jest.fn();
-jest.mock("@aws-sdk/client-dynamodb", () => ({
-  ...jest.requireActual("@aws-sdk/client-dynamodb"),
-  DynamoDBClient: jest.fn(() => ({ send: mockSend })),
-}));
 jest.mock("node:timers/promises", () => ({
   setTimeout: jest.fn(async (milliseconds: number) => {
     jest.setSystemTime(Date.now() + milliseconds);
@@ -13,39 +7,44 @@ jest.mock("node:timers/promises", () => ({
 import {
   ConditionalCheckFailedException,
   TransactionConflictException,
-  UpdateItemCommand,
+  type DynamoDBClient,
+  type UpdateItemCommand,
+  type UpdateItemCommandInput,
 } from "@aws-sdk/client-dynamodb";
 import { setTimeout as delay } from "node:timers/promises";
-import { renewActiveMeetingLease } from "../../src/db";
-import { config } from "../../src/services/configService";
+import { renewActiveMeetingLeaseWrite } from "../../src/repositories/activeMeetingLeaseRenewal";
+const mockSend = jest.fn();
+const client = { send: mockSend } as unknown as DynamoDBClient;
 const start = Date.parse("2026-10-30T12:00:00.950Z");
 const conflict = () => new TransactionConflictException({ $metadata: {} });
 const stale = () => new ConditionalCheckFailedException({ $metadata: {} });
-const ownership = {
-  executionVersion: 1,
-  sessionMode: "meeting",
-} satisfies NonNullable<Parameters<typeof renewActiveMeetingLease>[7]>;
+const CONDITION =
+  "#leaseExpiresAt >= :now AND #meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId";
+const input: UpdateItemCommandInput = {
+  TableName: "synthetic-active-meeting-table",
+  Key: { guildId: { S: "guild" } },
+  UpdateExpression: "SET #leaseExpiresAt = :leaseExpiresAt",
+  ConditionExpression: CONDITION,
+  ExpressionAttributeNames: {
+    "#leaseExpiresAt": "leaseExpiresAt",
+    "#meetingId": "meetingId",
+    "#ownerInstanceId": "ownerInstanceId",
+  },
+  ExpressionAttributeValues: {
+    ":leaseExpiresAt": { N: String(Math.floor(start / 1000) + 30) },
+    ":meetingId": { S: "meeting" },
+    ":ownerInstanceId": { S: "owner" },
+  },
+};
 const renew = (signal?: AbortSignal) =>
-  renewActiveMeetingLease(
-    "guild",
-    "meeting",
-    "owner",
-    Math.floor(start / 1000) + 30,
-    new Date(start).toISOString(),
-    Math.floor(start / 1000) + 150,
-    { status: "in_progress" },
-    ownership,
-    signal,
-  );
+  renewActiveMeetingLeaseWrite(client, input, signal);
 beforeEach(() => {
   jest.useFakeTimers();
   jest.setSystemTime(start);
-  config.mock.enabled = false;
   mockSend.mockReset();
   jest.mocked(delay).mockClear();
 });
 afterEach(() => {
-  config.mock.enabled = true;
   jest.useRealTimers();
 });
 test("rejected transaction conflict retries the exact owner with a fresh expiry check", async () => {
@@ -69,14 +68,10 @@ test("rejected transaction conflict retries the exact owner with a fresh expiry 
       ":now": { N: String(Math.floor((start + 100) / 1000)) },
     },
   });
-  expect(next.ConditionExpression).toBe(
-    "#leaseExpiresAt >= :now AND #meetingId = :meetingId AND #ownerInstanceId = :ownerInstanceId AND #executionVersion = :executionVersion AND sessionMode = :sessionMode",
-  );
+  expect(next.ConditionExpression).toBe(CONDITION);
   expect(next.ExpressionAttributeValues).toMatchObject({
     ":meetingId": { S: "meeting" },
     ":ownerInstanceId": { S: "owner" },
-    ":executionVersion": { N: "1" },
-    ":sessionMode": { S: "meeting" },
   });
 });
 test("conflict retries are bounded and never report ownership on exhaustion", async () => {
@@ -144,36 +139,3 @@ test("an owner fenced during the acknowledged write cannot report continuing own
   await expect(renew(controller.signal)).rejects.toBe(reason);
   expect(mockSend).toHaveBeenCalledTimes(1);
 });
-test.each([
-  undefined,
-  { executionVersion: 1, sessionMode: "tts_only" } satisfies NonNullable<
-    Parameters<typeof renewActiveMeetingLease>[7]
-  >,
-])(
-  "legacy and TTS renewal retain their exact ownership conditions: %p",
-  async (owner) => {
-    mockSend.mockRejectedValueOnce(conflict()).mockResolvedValueOnce({});
-    await expect(
-      renewActiveMeetingLease(
-        "guild",
-        "meeting",
-        "owner",
-        Math.floor(start / 1000) + 30,
-        new Date(start).toISOString(),
-        Math.floor(start / 1000) + 150,
-        { status: "in_progress" },
-        owner,
-      ),
-    ).resolves.toBe(true);
-    const input: UpdateItemCommand["input"] = mockSend.mock.calls[1][0].input;
-    expect(input.ConditionExpression).toContain(
-      owner
-        ? "#executionVersion = :executionVersion AND sessionMode = :sessionMode"
-        : "attribute_not_exists(#executionVersion)",
-    );
-    if (owner)
-      expect(input.ExpressionAttributeValues?.[":sessionMode"]).toEqual({
-        S: "tts_only",
-      });
-  },
-);

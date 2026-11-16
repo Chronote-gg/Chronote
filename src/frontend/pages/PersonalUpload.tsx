@@ -1,3 +1,4 @@
+import { useAuthNavigationBlocker } from "../hooks/useAuthNavigationBlocker";
 import {
   meetingBrowseSearchSchema,
   type MeetingBrowseSearch,
@@ -250,6 +251,9 @@ export default function PersonalUpload() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [phase, setPhase] = useState<UploadPhase>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  useAuthNavigationBlocker(
+    Boolean(file || title || tagsText) || phase === "uploading",
+  );
 
   const createUploadIntent =
     trpc.personalUploads.createUploadIntent.useMutation();

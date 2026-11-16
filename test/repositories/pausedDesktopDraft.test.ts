@@ -10,20 +10,6 @@ import {
   getPausedDesktopDraft,
 } from "../../src/repositories/pausedDesktopDraft";
 import type { PersonalMediaUploadJobRecord } from "../../src/types/db";
-import { context, control, runtime } from "../deployment/controlFixtures";
-import { buildPausedDesktopDraftInstallationTransaction } from "../../src/services/pausedDesktopDraftTransactions";
-import {
-  createDynamoDeploymentControlRepository,
-  createMockDeploymentControlRepository,
-} from "../../src/repositories/deploymentControlRepository";
-import {
-  DynamoDBClient,
-  TransactWriteItemsCommand,
-} from "@aws-sdk/client-dynamodb";
-import type {
-  PausedDesktopDraftInstallation,
-  DeploymentControlRecord,
-} from "../../src/types/deploymentControl";
 
 const job: PersonalMediaUploadJobRecord = {
   uploadId: "synthetic-paused",
@@ -42,11 +28,10 @@ beforeEach(() => {
   const store = getMockStore();
   store.personalMediaUploadsById.set(job.uploadId, structuredClone(job));
   store.deploymentControlRecords.clear();
-  for (const row of [control, runtime("old"), marker])
-    store.deploymentControlRecords.set(
-      JSON.stringify([row.pk, row.sk]),
-      structuredClone(row),
-    );
+  store.deploymentControlRecords.set(
+    JSON.stringify([marker.pk, marker.sk]),
+    structuredClone(marker),
+  );
 });
 test("shared lookup exposes structured pause and refuses foreign or invalid bindings", async () => {
   const repository = getDeploymentControlRepository();
@@ -75,9 +60,7 @@ test("shared lookup exposes structured pause and refuses foreign or invalid bind
 });
 test("mock submission and all claim paths refuse key existence", async () => {
   const repository = getPersonalMediaUploadRepository();
-  expect(await repository.submit({ ...job, status: "queued" }, context)).toBe(
-    false,
-  );
+  expect(await repository.submit({ ...job, status: "queued" })).toBe(false);
   for (const state of [
     { status: "queued" as const },
     {
@@ -107,7 +90,6 @@ test("mock submission and all claim paths refuse key existence", async () => {
         claimExpiresAt: 160,
         updatedAt: "later",
         maxAttempts: 3,
-        context,
         claimId: "claim",
         expectedAttempts: state.attempts ?? 0,
       }),
@@ -117,9 +99,7 @@ test("mock submission and all claim paths refuse key existence", async () => {
     JSON.stringify([marker.pk, marker.sk]),
   );
   getMockStore().personalMediaUploadsById.set(job.uploadId, job);
-  expect(await repository.submit({ ...job, status: "queued" }, context)).toBe(
-    true,
-  );
+  expect(await repository.submit({ ...job, status: "queued" })).toBe(true);
 });
 test("mock late segment prepare and transition refuse key existence", async () => {
   const segment = {
@@ -146,188 +126,11 @@ test("mock late segment prepare and transition refuse key existence", async () =
     job.uploadId,
     new Map([[segment.segmentKey, segment]]),
   );
-  expect(await repository.prepare(segment, "pending_upload", context)).toBe(
-    false,
-  );
+  expect(await repository.prepare(segment, "pending_upload")).toBe(false);
   expect(
     await repository.transition(
       { ...segment, status: "uploaded" },
       "pending_upload",
-      context,
     ),
   ).toBe(false);
 });
-function installation(): PausedDesktopDraftInstallation {
-  const first = {
-    record: marker,
-    expectedParent: { ...job, uploadOrigin: "desktop_recording" as const },
-  };
-  const second = {
-    record: {
-      ...marker,
-      uploadId: "synthetic-second",
-      pk: "UPLOAD#synthetic-second",
-    },
-    expectedParent: { ...first.expectedParent, uploadId: "synthetic-second" },
-  };
-  return {
-    control: { ...control, servingMembers: {} },
-    coordinatorToken: control.coordinatorToken,
-    coordinatorEpoch: control.coordinatorEpoch,
-    now: 100,
-    pairs: [first, second],
-  };
-}
-const tables = {
-  deploymentControl: "synthetic-control",
-  personalMediaUpload: "synthetic-upload",
-  meetingHistory: "synthetic-history",
-};
-test("installation requires closed exact authority, one cohort and unclaimed parents", () => {
-  const invalid: PausedDesktopDraftInstallation[] = [
-    { ...installation(), control },
-    { ...installation(), coordinatorToken: "other" },
-    { ...installation(), coordinatorEpoch: 4 },
-    { ...installation(), now: 200 },
-  ];
-  for (const field of [
-    "operationId",
-    "manifestSha256",
-    "preservedCaptureSha256",
-  ] as const) {
-    const input = installation();
-    input.pairs[1].record = {
-      ...input.pairs[1].record,
-      [field]: field === "operationId" ? "other" : "c".repeat(64),
-    };
-    invalid.push(input);
-  }
-  for (const patch of [
-    { processingClaimId: "held" },
-    { processingOwnerInstanceId: "old" },
-    { claimExpiresAt: 99 },
-    { attempts: 1 },
-    { artifactAttempts: {} },
-    { status: "processing" as const },
-    { ownerUserId: "other" },
-  ]) {
-    const input = installation();
-    input.pairs[0].expectedParent = {
-      ...input.pairs[0].expectedParent,
-      ...patch,
-    };
-    invalid.push(input);
-  }
-  const duplicate = installation();
-  duplicate.pairs = [duplicate.pairs[0], duplicate.pairs[0]];
-  invalid.push(duplicate);
-  invalid.forEach((input) =>
-    expect(() =>
-      buildPausedDesktopDraftInstallationTransaction(input, tables),
-    ).toThrow(),
-  );
-});
-test("mock installation refuses the entire cohort on conflict and permits exact readback", async () => {
-  const input = installation();
-  const records = new Map<string, DeploymentControlRecord>([
-    [JSON.stringify(["ENV", "CONTROL"]), input.control],
-  ]);
-  const uploads = new Map(
-    input.pairs.map((pair) => [
-      pair.expectedParent.uploadId,
-      pair.expectedParent,
-    ]),
-  );
-  const repository = createMockDeploymentControlRepository(
-    records,
-    undefined,
-    undefined,
-    uploads,
-  );
-  records.set(JSON.stringify([marker.pk, marker.sk]), {
-    ...marker,
-    operationId: "other",
-  });
-  expect(await repository.installPausedDesktopDrafts(input)).toBe("stale");
-  expect(
-    await repository.getRecord(input.pairs[1].record.pk, "PAUSED_DRAFT"),
-  ).toBeUndefined();
-  records.delete(JSON.stringify([marker.pk, marker.sk]));
-  expect(await repository.installPausedDesktopDrafts(input)).toBe("applied");
-  for (const pair of input.pairs)
-    expect(await repository.getRecord(pair.record.pk, pair.record.sk)).toEqual(
-      pair.record,
-    );
-  expect(await repository.installPausedDesktopDrafts(input)).toBe("stale");
-});
-test("bound mock repository uses shared upload parents for paused-draft installation", async () => {
-  const input = installation();
-  const store = getMockStore();
-  store.deploymentControlRecords.clear();
-  store.deploymentControlRecords.set(
-    JSON.stringify(["ENV", "CONTROL"]),
-    input.control,
-  );
-  for (const { expectedParent } of input.pairs)
-    store.personalMediaUploadsById.set(expectedParent.uploadId, expectedParent);
-  const repository = getDeploymentControlRepository();
-  expect(await repository.installPausedDesktopDrafts(input)).toBe("applied");
-  expect(
-    await repository.getRecord(input.pairs[1].record.pk, "PAUSED_DRAFT"),
-  ).toEqual(input.pairs[1].record);
-});
-test.each([
-  { name: "TimeoutError", code: "ETIMEDOUT" },
-  { name: "Error", code: "ECONNRESET" },
-])(
-  "an unknown installation acknowledgment stops SDK replay on $code",
-  async (errorIdentity) => {
-    const failure = Object.assign(
-      new Error("unknown acknowledgment"),
-      errorIdentity,
-    );
-    const handle = jest.fn(async () => {
-      throw failure;
-    });
-    const client = new DynamoDBClient({
-      region: "local",
-      credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
-      maxAttempts: 3,
-      retryMode: "standard",
-      cacheMiddleware: true,
-      requestHandler: { handle },
-    });
-    const repository = createDynamoDeploymentControlRepository(client, tables);
-    const ordinaryWrite = () =>
-      client.send(
-        new TransactWriteItemsCommand(
-          buildPausedDesktopDraftInstallationTransaction(
-            installation(),
-            tables,
-          ),
-        ),
-      );
-    try {
-      await expect(ordinaryWrite()).rejects.toBe(failure);
-      expect(handle).toHaveBeenCalledTimes(3);
-      handle.mockClear();
-      await expect(
-        repository.installPausedDesktopDrafts(installation()),
-      ).rejects.toMatchObject({
-        kind: "unavailable",
-        cause: failure,
-      });
-      expect(handle).toHaveBeenCalledTimes(1);
-      handle.mockClear();
-      await expect(ordinaryWrite()).rejects.toBe(failure);
-      expect(handle).toHaveBeenCalledTimes(3);
-      handle.mockClear();
-      await expect(repository.getRecord("ENV", "CONTROL")).rejects.toBe(
-        failure,
-      );
-      expect(handle).toHaveBeenCalledTimes(3);
-    } finally {
-      client.destroy();
-    }
-  },
-);

@@ -54,6 +54,29 @@ const resourceFreeActions = new Set([
   "ssmmessages:OpenDataChannel",
 ]);
 
+// A principal that can publish to the Logs namespace could forge the worker
+// eligible heartbeat and silence its dead-man alarm, so metric publishing is
+// granted only to the deploy role and only for its own Deploy namespace.
+const putMetricData = "cloudwatch:PutMetricData";
+const deployPolicy = policyDocuments[0];
+const deployMetricStatement = {
+  Action: [putMetricData],
+  Resource: ["*"],
+  Condition: {
+    StringEquals: { "cloudwatch:namespace": "meeting-notes-prod/Deploy" },
+  },
+};
+// IAM actions are case-insensitive and may use * and ? wildcards.
+const grants = (action, target) => {
+  const pattern = action
+    .split("")
+    .map((char) =>
+      char === "*" ? ".*" : char === "?" ? "." : char.replace(/\W/, "\\$&"),
+    )
+    .join("");
+  return new RegExp(`^${pattern}$`, "i").test(target);
+};
+
 const sorted = (values) => [...values].sort();
 const list = (value) => [value].flat();
 const attributes = (table) =>
@@ -118,11 +141,24 @@ function checkOidcTrust({ after }, accountId) {
   }
 }
 
-function checkPolicyDocument({ after }) {
+function checkMetricStatement(statement, address) {
+  assert.equal(address, deployPolicy);
+  const { Sid, Effect, ...grant } = statement;
+  assert.deepEqual(
+    { ...grant, Action: list(grant.Action), Resource: list(grant.Resource) },
+    deployMetricStatement,
+  );
+}
+
+function checkPolicyDocument({ after }, address) {
   for (const statement of statements(after.policy)) {
     if (statement.Effect !== "Allow") continue;
     assert.ok(!("NotAction" in statement) && !("NotResource" in statement));
     const actions = list(statement.Action);
+    if (actions.some((action) => grants(action, putMetricData))) {
+      checkMetricStatement(statement, address);
+      continue;
+    }
     for (const action of actions)
       assert.ok(!["*", "iam:*", "sts:*"].includes(action));
     if (list(statement.Resource).includes("*"))
@@ -143,7 +179,8 @@ function validateRuntimePlan(plan, { accountId }) {
       if (address === guildTable) checkGuildTable(change);
       if (apiTargetGroups.includes(address)) checkApiTargetGroup(change);
       if (oidcRoles.includes(address)) checkOidcTrust(change, accountId);
-      if (policyDocuments.includes(address)) checkPolicyDocument(change);
+      if (policyDocuments.includes(address))
+        checkPolicyDocument(change, address);
     },
   });
 }

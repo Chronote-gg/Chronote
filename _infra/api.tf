@@ -211,7 +211,9 @@ resource "aws_lb_listener" "api_https" {
     }
   }
 
-  # After separately approved introduction, the coordinator owns exact weights.
+  # Weights set outside Terraform are kept, so an apply never moves live traffic.
+  # Deployments do not change them either: deploy.cjs preflight refuses unless
+  # full weight goes to the group the service is bound to.
   lifecycle {
     ignore_changes = [default_action]
   }

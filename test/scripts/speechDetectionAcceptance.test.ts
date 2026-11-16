@@ -261,7 +261,7 @@ function fixture() {
     compiledSha256,
     speechPolicy: policy,
     limits: { cpu: 0.5, memoryBytes: 1073741824, source: "cgroup-v1" },
-    nodeVersion: "v24.22.2",
+    nodeVersion: "v24.22.3",
     durationSeconds: 120,
     fastPerSecond: 4,
     slowPerSecond: 1,
@@ -496,7 +496,7 @@ test("accepts explicit off admission emitted by the runner", async () => {
 });
 test("accepts benchmark measurements from the reviewed production runtime", () => {
   const f = fixture();
-  f.benchmark.nodeVersion = "v24.22.2";
+  f.benchmark.nodeVersion = "v24.22.3";
   const result = run(f);
   expect(result.report.benchmarkEvidence.problems).toEqual([]);
   expect(result.status).toBe(0);
@@ -530,7 +530,7 @@ test.each(["non_speech", "uncertain"])(
     expect(result.status).not.toBe(0);
   },
 );
-test.each(["v24.15.0", "v24.22.1"])(
+test.each(["v24.15.0", "v24.22.1", "v24.22.2"])(
   "rejects benchmark measurements from historical runtime %s",
   (runtime) => {
     const f = fixture();

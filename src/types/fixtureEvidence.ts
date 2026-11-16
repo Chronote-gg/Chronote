@@ -1,13 +1,28 @@
 import { z } from "zod";
-import {
-  fixtureAdmissionReferenceSchema,
-  fixtureSessionOwnershipSchema,
-} from "./productionIntroduction";
-import type { LangfusePromptMeta } from "../services/langfusePromptService";
+/* Evidence older fixture meetings carry on their history rows and checkpoint manifests; kept so those still parse. */
+const id = z.string().min(1);
+const fixtureAdmissionReferenceSchema = z
+  .object({
+    holdId: id,
+    introductionId: id,
+    grantId: id,
+    revision: z.number().int().positive(),
+  })
+  .strict();
+const fixtureSessionOwnershipSchema = z
+  .object({
+    guildId: id,
+    meetingId: id,
+    ownerInstanceId: id,
+    executionVersion: z.literal(1),
+    voiceOperationAttemptId: id,
+    sessionMode: z.literal("meeting"),
+  })
+  .strict();
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const timestamp = z.string().datetime().nullable();
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
-export const fixtureFailureSchema = z.enum([
+const fixtureFailureSchema = z.enum([
   "unbound_member",
   "unbound_audio",
   "chat_input",
@@ -21,7 +36,6 @@ export const fixtureFailureSchema = z.enum([
   "reattachment",
   "incomplete_closure",
 ]);
-export type FixtureFailure = z.infer<typeof fixtureFailureSchema>;
 export const fixtureInputEvidenceSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -95,11 +109,6 @@ export const fixtureGenerationSchema = z
   })
   .strict();
 export type FixtureGenerationEvidence = z.infer<typeof fixtureGenerationSchema>;
-export type GenerationObserver = (
-  stage: string,
-  requestedModel: string,
-  prompt: LangfusePromptMeta | null | undefined,
-) => (returnedModel: string | null) => void;
 export const fixtureTranscriptSchema = z
   .object({
     key: z.string().min(1),

@@ -6,11 +6,14 @@ import {
   DynamoDBClient,
   PutItemCommand,
   GetItemCommand,
+  TransactWriteItemsCommand,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { createDynamoDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
 import { listUnpausedPersonalMediaUploadJobs } from "../../src/repositories/personalMediaUploadQueue";
+import { buildPersonalMediaClaimTransaction } from "../../src/services/personalUploadTransactions";
 import type { PersonalMediaUploadJobRecord } from "../../src/types/db";
+import { deploymentControlKeySchema } from "../fixtures/deploymentControlKeySchema";
 
 const prefix = "paused-queue-" + randomUUID();
 const tables = {
@@ -19,7 +22,7 @@ const tables = {
   statusIndex: "StatusUpdatedAtIndex",
 };
 const client = new DynamoDBClient({
-  endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
+  endpoint: process.env.TEST_DYNAMODB_ENDPOINT,
   region: "local",
   maxAttempts: 1,
   credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
@@ -65,14 +68,7 @@ beforeAll(async () => {
     new CreateTableCommand({
       TableName: tables.deploymentControl,
       BillingMode: "PAY_PER_REQUEST",
-      AttributeDefinitions: [
-        { AttributeName: "pk", AttributeType: "S" },
-        { AttributeName: "sk", AttributeType: "S" },
-      ],
-      KeySchema: [
-        { AttributeName: "pk", KeyType: "HASH" },
-        { AttributeName: "sk", KeyType: "RANGE" },
-      ],
+      ...deploymentControlKeySchema,
     }),
   );
   await client.send(
@@ -129,3 +125,62 @@ test.each([
     }
   },
 );
+
+const claimTransaction = (uploadId: string, instanceId: string) => {
+  const claimId = randomUUID();
+  return buildPersonalMediaClaimTransaction(
+    {
+      job: job(uploadId, "2026-01-01T08:00:00.000Z", {
+        status: "processing",
+        processingOwnerInstanceId: instanceId,
+        processingClaimId: claimId,
+        attempts: 1,
+        claimExpiresAt: 160,
+      }),
+      instanceId,
+      nowEpochSeconds: 100,
+      expectedAttempts: 0,
+      maxAttempts: 3,
+      claimId,
+    },
+    {
+      deploymentControl: tables.deploymentControl,
+      personalMediaUpload: tables.uploadTable,
+    },
+  );
+};
+test("two concurrent real claims of one upload with no runtime record: exactly one wins", async () => {
+  const uploadId = "race-" + randomUUID();
+  await put(tables.uploadTable, job(uploadId, "2026-01-01T08:00:00.000Z"));
+  const claims = ["synthetic-worker-a", "synthetic-worker-b"].map(
+    (instanceId) => claimTransaction(uploadId, instanceId),
+  );
+  const results = await Promise.allSettled(
+    claims.map((claim) => client.send(new TransactWriteItemsCommand(claim))),
+  );
+  expect(
+    results.filter((result) => result.status === "fulfilled"),
+  ).toHaveLength(1);
+  const loser = results.findIndex((result) => result.status === "rejected");
+  await expect(
+    client.send(new TransactWriteItemsCommand(claims[loser])),
+  ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+  const stored = await client.send(
+    new GetItemCommand({
+      TableName: tables.uploadTable,
+      Key: marshall({ uploadId }),
+      ConsistentRead: true,
+    }),
+  );
+  const winner = claims[1 - loser].TransactItems![1].Put!.Item!;
+  expect(unmarshall(stored.Item!)).toEqual(unmarshall(winner));
+});
+test("a paused draft still refuses a real claim", async () => {
+  await expect(
+    client.send(
+      new TransactWriteItemsCommand(
+        claimTransaction(rows[0].uploadId, "synthetic-worker"),
+      ),
+    ),
+  ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+});

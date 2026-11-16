@@ -23,6 +23,18 @@ import {
 } from "../utils/purchaseAnalytics";
 import type { PaidTier } from "../types/pricing";
 import type { InteractionReceipt } from "../types/db";
+import { classifyDeliveryError } from "./meetingDelivery";
+import {
+  getNextAvailableAt,
+  getRollingUsageForGuild,
+  getRollingWindowMs,
+} from "./meetingUsageService";
+
+const SECONDS_PER_MINUTE = 60;
+const MS_PER_SECOND = 1000;
+/** The weekly warning shows once this share of the allowance, or this many minutes, remain. */
+const WEEKLY_WARNING_SHARE = 0.2;
+const WEEKLY_WARNING_MIN_MINUTES = 60;
 
 type ResolvedLimits = Awaited<ReturnType<typeof getGuildLimits>>;
 export type RecordingLimitInput = RecordingLimitContext & {
@@ -72,7 +84,7 @@ export type RecordingLimitState = {
   durationContent?: string;
   deliveryUnknown?: boolean;
 };
-type NoticeChannel = {
+export type NoticeChannel = {
   send: (payload: MessageCreateOptions) => Promise<NoticeMessage>;
 };
 
@@ -274,11 +286,13 @@ function noticeResult(
     },
   });
 }
+/** A discord.js 4xx, or a REST rejection the delivery module classifies as permanent. */
 function definitelyRejectedNotice(error: unknown): boolean {
   return (
-    error instanceof DiscordAPIError &&
-    error.status >= 400 &&
-    error.status < 500
+    (error instanceof DiscordAPIError &&
+      error.status >= 400 &&
+      error.status < 500) ||
+    classifyDeliveryError(error) === "permanent"
   );
 }
 export async function deliverRecordingLimitNotice<T>(
@@ -420,4 +434,65 @@ async function notifyOwnedRecordingLimit(
     }
   }
   return undefined;
+}
+
+/**
+ * Whether the weekly allowance notice is due after a meeting ends, and what it
+ * says: exhausted, or nearly so. Plain data in, so a live meeting and a saved
+ * row share the decision; the caller sends it with `notifyRecordingLimit`.
+ */
+export async function weeklyLimitNoticeAfterMeeting(input: {
+  guildId: string;
+  userId?: string;
+  signal?: AbortSignal;
+}): Promise<RecordingLimitInput | undefined> {
+  const { signal } = input;
+  signal?.throwIfAborted();
+  const resolved = await getGuildLimits(input.guildId);
+  signal?.throwIfAborted();
+  const limitMinutes = resolved.limits.maxMeetingMinutesRolling;
+  if (!limitMinutes) return undefined;
+  const usage = await getRollingUsageForGuild(input.guildId);
+  signal?.throwIfAborted();
+  const limitSeconds = limitMinutes * SECONDS_PER_MINUTE;
+  const remainingMinutes = Math.max(
+    0,
+    Math.ceil((limitSeconds - usage.usedSeconds) / SECONDS_PER_MINUTE),
+  );
+  const thresholdMinutes = Math.max(
+    WEEKLY_WARNING_MIN_MINUTES,
+    Math.ceil(limitMinutes * WEEKLY_WARNING_SHARE),
+  );
+  const common = {
+    guildId: input.guildId,
+    userId: input.userId,
+    limitType: "weekly_recording" as const,
+    limitMinutes,
+    usedMinutes: usage.usedSeconds / SECONDS_PER_MINUTE,
+    resolved,
+  };
+  if (usage.usedSeconds < limitSeconds)
+    return remainingMinutes > thresholdMinutes
+      ? undefined
+      : {
+          ...common,
+          limitSurface: "weekly_warning",
+          outcome: "near_limit",
+          message: `About ${remainingMinutes} ${remainingMinutes === 1 ? "minute remains" : "minutes remain"} in this server's rolling-week recording allowance.`,
+        };
+  const nextAvailableAt = getNextAvailableAt(
+    usage.meetings,
+    Date.parse(usage.windowStartIso),
+    getRollingWindowMs(),
+    limitSeconds,
+  );
+  const nextLabel = nextAvailableAt
+    ? `You can record again after <t:${Math.floor(Date.parse(nextAvailableAt) / MS_PER_SECOND)}:R>.`
+    : "You can record again once older meetings roll out of the window.";
+  return {
+    ...common,
+    limitSurface: "weekly_after_meeting",
+    outcome: "exhausted_after_meeting",
+    message: `This server has used its rolling-week recording allowance. ${nextLabel}`,
+  };
 }

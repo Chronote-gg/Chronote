@@ -12,6 +12,8 @@ import {
   type MeetingUpdateProgress,
   presentationPartSchema,
 } from "../types/meetingUpdateDelivery";
+import { getRuntimeInstanceId } from "./runtimeInstanceService";
+import { operationSignal } from "./shutdownSignal";
 import {
   MeetingDeliveryStopped,
   MEETING_UPDATE_REQUEST_TIMEOUT_MS,
@@ -28,6 +30,13 @@ export function createDeliveryContext(
   input: MeetingDeliveryRunInput,
 ) {
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000));
+  const owner = getRuntimeInstanceId();
+  /**
+   * Follows shutdown and the worker's stop. A lost renewal does not abort it:
+   * cancelling the request in flight would turn a known result into an unknown
+   * one, and guard() already refuses every later operation.
+   */
+  const signal = operationSignal(...(input.signal ? [input.signal] : []));
   let claim: MeetingDeliveryClaim | null = null;
   let attempt: DeliveryAttemptProgress["attempt"] | null = null;
   let summary: { id?: string; channel?: string } | null = null;
@@ -35,7 +44,6 @@ export function createDeliveryContext(
   function selectBotId(id: string) {
     botId = id;
   }
-  let invokedAdmission = false;
   let renewalFailed = false;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -49,44 +57,30 @@ export function createDeliveryContext(
     );
     return next;
   }
-  function invokedWrite() {
-    invokedAdmission = true;
-  }
   const timeout = deps.requestTimeoutMs ?? MEETING_UPDATE_REQUEST_TIMEOUT_MS;
-  const mainSignal = () =>
-    AbortSignal.any([
-      input.work.signal,
-      ...(input.signal ? [input.signal] : []),
-      AbortSignal.timeout(timeout),
-    ]);
+  /** Terminal writes are conditioned on the exact claim, so they still run after the job stops. */
   async function effect<T>(
     run: (signal: AbortSignal) => Promise<T>,
     terminal = false,
   ): Promise<T> {
-    if (terminal && claim) {
-      const signal = AbortSignal.timeout(timeout);
-      return input.work.trackTerminalEffect(() => run(signal), claim, signal);
-    }
-    const signal = mainSignal();
-    return input.work.trackEffect(() => {
-      signal.throwIfAborted();
-      return run(signal);
-    });
+    if (terminal && claim) return run(AbortSignal.timeout(timeout));
+    const bounded = AbortSignal.any([signal, AbortSignal.timeout(timeout)]);
+    bounded.throwIfAborted();
+    return run(bounded);
   }
   function acquireAttempt(
     row: DeliveryHistory,
     prepared: DeliveryAttemptProgress["attempt"],
-    authority: Parameters<typeof deps.repository.claim>[0]["authority"],
   ) {
     return effect((signal) => {
-      invokedWrite();
       return deps.repository.claim({
         key: input.key,
         expectedContentRevision:
           readMeetingUpdateRevisions(row).contentRevision,
         expectedDeliveryRevision: row.updateDelivery.revision,
         attempt: prepared,
-        authority,
+        ownerInstanceId: owner,
+        now: now(),
         signal,
       });
     });
@@ -141,17 +135,12 @@ export function createDeliveryContext(
   function capture(
     row: DeliveryHistory,
     expectedAttempt: DeliveryAttemptProgress["attempt"],
-    authority: Parameters<typeof deps.repository.claim>[0]["authority"],
   ) {
     const progress = row.updateDelivery.progress;
-    const expectedOwner =
-      authority.kind === "serving"
-        ? authority.context.instanceId
-        : authority.ownership.ownerInstanceId;
     if (
       !("attempt" in progress) ||
       !isDeepStrictEqual(progress.attempt, expectedAttempt) ||
-      progress.claim.ownerInstanceId !== expectedOwner
+      progress.claim.ownerInstanceId !== owner
     )
       throw new MeetingDeliveryStopped("Acquired claim changed before capture");
     attempt = progress.attempt;
@@ -167,12 +156,9 @@ export function createDeliveryContext(
       instanceId: progress.claim.ownerInstanceId,
       expiresAt: progress.claim.leaseExpiresAt,
     };
-    input.work.recordClaim(claim);
-    input.work.claimed();
   }
-  async function admitClaimMutation(row: DeliveryHistory) {
-    await input.work.authority();
-    input.signal?.throwIfAborted();
+  function admitClaimMutation(row: DeliveryHistory) {
+    signal.throwIfAborted();
     const progress = own(row);
     if (
       row.updateDelivery.policy.kind !== "active" ||
@@ -187,7 +173,7 @@ export function createDeliveryContext(
     terminal = true,
   ): Promise<DeliveryHistory> {
     const current = await read(terminal);
-    if (!terminal) await admitClaimMutation(current);
+    if (!terminal) admitClaimMutation(current);
     if (claim) {
       const progress = own(current);
       if (change.kind === "progress" && "attempt" in change.progress) {
@@ -218,7 +204,6 @@ export function createDeliveryContext(
     try {
       acknowledged =
         (await effect((signal) => {
-          invokedWrite();
           return deps.repository.transition({
             key: input.key,
             expectedDeliveryRevision: row.updateDelivery.revision,
@@ -241,7 +226,6 @@ export function createDeliveryContext(
         ...claim,
         expiresAt: after.updateDelivery.progress.claim.leaseExpiresAt,
       };
-      input.work.recordClaim(claim);
     }
     void acknowledged;
     return after;
@@ -287,17 +271,11 @@ export function createDeliveryContext(
     reason?: string,
   ): MeetingDeliveryRunResult {
     const base = {
-      ...(!invokedAdmission
-        ? { noClaim: { kind: "never_admitted" as const } }
-        : {}),
       capturedRevision:
         attempt?.contentRevision ??
         (row && "attempt" in row.updateDelivery.progress
           ? row.updateDelivery.progress.attempt.contentRevision
           : null),
-      ...(row
-        ? { durable: { deliveryRevision: row.updateDelivery.revision, claim } }
-        : {}),
     };
     if (kind === "retryable")
       return {
@@ -340,7 +318,7 @@ export function createDeliveryContext(
   }
   async function guard() {
     if (renewalFailed) throw new MeetingDeliveryStopped("Renewal is unproven");
-    await input.work.authority();
+    signal.throwIfAborted();
     const row = await read();
     const progress = own(row);
     assertPointers(row);
@@ -352,18 +330,16 @@ export function createDeliveryContext(
         progress.attempt.contentRevision
     )
       throw new MeetingDeliveryStopped(
-        "Captured work was superseded or fenced",
+        "Captured attempt was superseded or stopped",
       );
     return row;
   }
   function startRenewals() {
     function schedule() {
-      if (stopped || input.work.signal.aborted || input.signal?.aborted) return;
+      if (stopped || signal.aborted) return;
       timer = setTimeout(() => {
         renewal = serialize(async () => {
-          if (stopped || input.work.signal.aborted || input.signal?.aborted)
-            return;
-          await input.work.authority();
+          if (stopped || signal.aborted) return;
           const row = await read();
           if (!("attempt" in row.updateDelivery.progress)) return;
           const progress = own(row);
@@ -406,6 +382,7 @@ export function createDeliveryContext(
   return {
     deps,
     input,
+    signal,
     now,
     effect,
     read,
@@ -417,7 +394,6 @@ export function createDeliveryContext(
     result,
     guard,
     serialize,
-    invokedWrite,
     acquireAttempt,
     startRenewals,
     stopRenewals,

@@ -7,6 +7,7 @@ import {
   RootRoute,
   Route,
   Router,
+  useRouterState,
 } from "@tanstack/react-router";
 import { z } from "zod";
 import {
@@ -15,6 +16,8 @@ import {
   RECORDING_LIMIT_SURFACES,
 } from "../utils/purchaseAnalytics";
 import MarketingLayout from "./layouts/MarketingLayout";
+import { useEffect } from "react";
+import { useAuth } from "./contexts/AuthContext";
 
 const PortalLayout = lazyRouteComponent(() => import("./layouts/PortalLayout"));
 const SuperAdminLayout = lazyRouteComponent(
@@ -60,6 +63,11 @@ const ContactFeedback = lazyRouteComponent(
 );
 
 function RootLayout() {
+  const { onPublicNavigation } = useAuth();
+  const path = useRouterState({ select: (state) => state.location.pathname });
+  useEffect(() => {
+    if (!/^\/(portal|admin|live)(\/|$)/.test(path)) onPublicNavigation();
+  }, [path, onPublicNavigation]);
   return <Outlet />;
 }
 

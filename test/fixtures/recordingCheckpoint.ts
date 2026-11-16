@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { createMockDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
+import { inMemoryCheckpointStore } from "./checkpointStore";
 import { createRecordingCheckpointService } from "../../src/services/recordingCheckpointService";
-import { history } from "../deployment/controlFixtures";
+import { history } from "./meetingHistory";
 import type { RecordingCaptureProvenance } from "../../src/types/recordingCheckpoint";
 export const capture: RecordingCaptureProvenance = {
   guildId: history.guildId,
@@ -55,12 +55,7 @@ export function fixture() {
       },
     ],
   ]);
-  const repository = createMockDeploymentControlRepository(
-    new Map(),
-    histories,
-    leases,
-  );
-  const objects = new Map<string, Buffer>();
+  const { repository, objects } = inMemoryCheckpointStore(histories, leases);
   const upload = jest.fn(
     async (
       key: string,

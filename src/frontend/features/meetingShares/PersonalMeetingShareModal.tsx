@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Group, Modal, Stack, Text, Textarea } from "@mantine/core";
+import { useAuthModalDraft } from "../../hooks/useAuthNavigationBlocker";
 
 export type PersonalMeetingShareGrant =
   | { targetType: "user"; userId: string }
@@ -8,7 +9,7 @@ export type PersonalMeetingShareGrant =
 export type PersonalMeetingShareModalProps = {
   opened: boolean;
   onClose: () => void;
-  meetingTitle: string;
+  meetingTitle?: string;
   accessGrants: PersonalMeetingShareGrant[];
   saving: boolean;
   error: string | null;
@@ -39,7 +40,7 @@ const joinGrantIds = (
 export function PersonalMeetingShareModal({
   opened,
   onClose,
-  meetingTitle,
+  meetingTitle = "Meeting",
   accessGrants,
   saving,
   error,
@@ -47,12 +48,13 @@ export function PersonalMeetingShareModal({
 }: PersonalMeetingShareModalProps) {
   const [userIdsText, setUserIdsText] = useState("");
   const [guildIdsText, setGuildIdsText] = useState("");
+  const { dirty, markDirty } = useAuthModalDraft(opened, saving);
 
   useEffect(() => {
-    if (!opened) return;
+    if (!opened || dirty) return;
     setUserIdsText(joinGrantIds(accessGrants, "user"));
     setGuildIdsText(joinGrantIds(accessGrants, "guild"));
-  }, [accessGrants, opened]);
+  }, [accessGrants, opened, dirty]);
 
   return (
     <Modal
@@ -73,7 +75,10 @@ export function PersonalMeetingShareModal({
           placeholder="123456789012345678"
           minRows={3}
           value={userIdsText}
-          onChange={(event) => setUserIdsText(event.currentTarget.value)}
+          onChange={(event) => {
+            setUserIdsText(event.currentTarget.value);
+            markDirty();
+          }}
           data-testid="personal-share-user-ids"
         />
         <Textarea
@@ -82,7 +87,10 @@ export function PersonalMeetingShareModal({
           placeholder="123456789012345678"
           minRows={3}
           value={guildIdsText}
-          onChange={(event) => setGuildIdsText(event.currentTarget.value)}
+          onChange={(event) => {
+            setGuildIdsText(event.currentTarget.value);
+            markDirty();
+          }}
           data-testid="personal-share-guild-ids"
         />
         {error ? (

@@ -102,12 +102,7 @@ async function verifyApplySource(get, repository, planSha, applySha) {
   return "ahead";
 }
 // Workflows that move production traffic or roles that the Apply may change.
-const productionWriters = [
-  "deploy.yml",
-  "production-cutover.yml",
-  "introduce-production.yml",
-  "production-introduction.yml",
-];
+const productionWriters = ["deploy.yml"];
 const activeStatuses = ["in_progress", "queued", "waiting", "pending"];
 // Apply has its own concurrency group, so it checks for running writers itself.
 async function assertProductionIdle(get, repository) {

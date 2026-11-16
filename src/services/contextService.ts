@@ -1,4 +1,3 @@
-import { isFixture } from "./fixtureInputService";
 import { CONFIG_KEYS } from "../config/keys";
 import { MeetingData } from "../types/meeting-data";
 import { MeetingHistory, type DictionaryEntry } from "../types/db";
@@ -71,7 +70,6 @@ export async function collectMeetingContext(
   availability: "available" | "unavailable";
   data: MeetingContextData;
 }> {
-  if (isFixture(meeting)) return { availability: "available", data: {} };
   const contextData = initialMeetingContext(meeting);
 
   try {

@@ -321,3 +321,31 @@ test("projection reports the ineligible reason and never negative attempts", () 
     attemptsRemaining: 0,
   });
 });
+
+describe("a lifecycle version 2 row with its finish marker", () => {
+  const delivering = {
+    lifecycleVersion: 2 as const,
+    processing: failedNotes,
+    finish: { attempts: 0, phase: "deliver" as const },
+  };
+
+  test("is blocked while the marker is present", () => {
+    expect(eligibility(delivering)).toEqual({
+      eligible: false,
+      reason: "processing_in_progress",
+    });
+  });
+
+  test("is eligible after the finish marker is released", () => {
+    expect(eligibility({ ...delivering, finish: undefined })).toMatchObject({
+      eligible: true,
+      stages: ["notes", "summary"],
+    });
+  });
+
+  test("leaves a legacy row with a finish field unchanged", () => {
+    expect(
+      eligibility({ ...delivering, lifecycleVersion: undefined }),
+    ).toMatchObject({ eligible: true, stages: ["notes", "summary"] });
+  });
+});

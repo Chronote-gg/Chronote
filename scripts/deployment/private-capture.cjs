@@ -4,7 +4,6 @@ const { z } = require("zod");
 const s3 = require("@aws-sdk/client-s3");
 const { digest } = require("./collector-payload.cjs");
 const { boundedBody } = require("./collector-principal.cjs");
-const { captureNamespace } = require("./collector-command.cjs");
 const { bindingHash } = require("./binding-hash.cjs");
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const storageBinding = z
@@ -95,37 +94,6 @@ async function checkStore(send, b, now) {
   );
   assert.ok(now() < b.retentionUntil, "retention binding expired");
 }
-function createPrivateCapture({ m, manifestSha256, ...options }) {
-  return createStore({
-    ...options,
-    storeId: m.evidenceStoreId,
-    validUntil: m.validUntil,
-    namespace: captureNamespace(m, manifestSha256),
-  });
-}
-const preparationSchema = z
-  .object({
-    kind: z.enum([
-      "production-introduction-preparation",
-      "rehearsal-introduction-preparation",
-    ]),
-    operationId: z.string().uuid(),
-    sourceSha: z.string().regex(/^[a-f0-9]{40}$/),
-    evidenceStoreId: z.string().min(1).max(128),
-    validUntil: z.number().int().positive(),
-  })
-  .strict();
-function createPreparationCapture({ preparation, binding, client, now }) {
-  const identity = preparationSchema.parse(preparation);
-  return createStore({
-    binding,
-    client,
-    now,
-    storeId: identity.evidenceStoreId,
-    validUntil: identity.validUntil,
-    namespace: `${identity.kind}/${identity.operationId}/${identity.sourceSha}`,
-  });
-}
 function createTerraformCapture({
   invocation,
   binding,
@@ -141,29 +109,6 @@ function createTerraformCapture({
     storeId: binding?.storeId,
     validUntil: now() + 21600,
     namespace: `terraform/${i.environment}/${i.runId}/1/${digest(JSON.stringify(i))}`,
-  });
-}
-function createVerificationCapture({
-  identity,
-  purpose,
-  binding,
-  client,
-  now,
-}) {
-  z.object({
-    runId: z.string().regex(/^[1-9]\d{0,15}$/),
-    sourceSha: z.string().regex(/^[a-f0-9]{40}$/),
-  })
-    .strict()
-    .parse(identity);
-  z.enum(["payload", "report"]).parse(purpose);
-  return createStore({
-    binding,
-    client,
-    now,
-    storeId: binding.storeId,
-    validUntil: (now ?? (() => Math.floor(Date.now() / 1000)))() + 900,
-    namespace: `terraform/production/verification/${identity.runId}/1/${identity.sourceSha}/${purpose}`,
   });
 }
 function createStore({
@@ -315,8 +260,5 @@ function createStore({
 }
 module.exports = {
   storageBinding,
-  createPrivateCapture,
-  createPreparationCapture,
   createTerraformCapture,
-  createVerificationCapture,
 };

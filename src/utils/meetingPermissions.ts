@@ -24,3 +24,12 @@ export function canUserEndMeeting(
 
   return canGuildMemberEndMeeting(meeting.guild.members.cache.get(userId));
 }
+
+/** For a session known only by its lease: whoever started it, or a member who may end any meeting. */
+export function canMemberEndLease(
+  member: GuildMember | null | undefined,
+  userId: string,
+  startTriggeredByUserId?: string,
+): boolean {
+  return startTriggeredByUserId === userId || canGuildMemberEndMeeting(member);
+}

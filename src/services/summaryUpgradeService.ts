@@ -8,7 +8,21 @@ import { resolveGuildSubscription } from "./subscriptionService";
 const UPGRADE_COOLDOWN_SECONDS = 7 * 24 * 60 * 60;
 const UPGRADE_LOOKUP_BUDGET_MS = 1000;
 
-function hasReadyRecordedNotes(meeting: MeetingData): boolean {
+/** What the offer reads, so a saved history row can be shaped into it as well as a live meeting. */
+export type SummaryUpgradeMeeting = Pick<
+  MeetingData,
+  | "guildId"
+  | "meetingId"
+  | "cancelled"
+  | "transcribeMeeting"
+  | "generateNotes"
+  | "notesText"
+  | "processing"
+  | "startTime"
+  | "endTime"
+>;
+
+function hasReadyRecordedNotes(meeting: SummaryUpgradeMeeting): boolean {
   return (
     meeting.transcribeMeeting &&
     meeting.generateNotes &&
@@ -19,7 +33,7 @@ function hasReadyRecordedNotes(meeting: MeetingData): boolean {
 }
 
 async function getSummaryRecordedSeconds(
-  meeting: MeetingData,
+  meeting: SummaryUpgradeMeeting,
   endTime: Date,
   signal: AbortSignal,
 ) {
@@ -46,7 +60,7 @@ async function getSummaryRecordedSeconds(
 }
 
 async function prepareSummaryUpgrade(
-  meeting: MeetingData,
+  meeting: SummaryUpgradeMeeting,
   signal: AbortSignal,
 ): Promise<{ url: string; recordedSeconds: number } | undefined> {
   if (
@@ -111,7 +125,7 @@ async function prepareSummaryUpgrade(
   }
 }
 
-export async function claimSummaryUpgrade(meeting: MeetingData) {
+export async function claimSummaryUpgrade(meeting: SummaryUpgradeMeeting) {
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<undefined>((resolve) => {

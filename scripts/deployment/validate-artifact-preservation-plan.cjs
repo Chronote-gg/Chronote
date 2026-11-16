@@ -131,6 +131,11 @@ function unchanged(change) {
   );
   assert.deepEqual(change.before, change.after);
 }
+function checkComputedMask(key, value) {
+  if (key === "tags_all" && typeof value !== "boolean")
+    assert.deepEqual(value, {});
+  else assert.equal(typeof value, "boolean");
+}
 function checkAuthority(change, b) {
   const computed = [
     "arn",
@@ -143,7 +148,7 @@ function checkAuthority(change, b) {
   assert.ok(!hasUnknown(without(change.after_unknown ?? {}, computed)));
   for (const key of computed) {
     if (Object.hasOwn(change.after_unknown ?? {}, key))
-      assert.equal(typeof change.after_unknown[key], "boolean");
+      checkComputedMask(key, change.after_unknown[key]);
     if (change.after_unknown?.[key] === true)
       assert.equal(change.after[key] ?? null, null);
     else if (["arn", "id"].includes(key))

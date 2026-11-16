@@ -1,9 +1,26 @@
 /** @jest-environment node */
 import { Buffer } from "node:buffer";
 import { test, expect } from "@jest/globals";
-import { createPrivateCapture } from "../../scripts/deployment/private-capture.cjs";
-import { privateCaptureFixture as fixture } from "../fixtures/deployment/privateCapture.js";
+import { createTerraformCapture } from "../../scripts/deployment/private-capture.cjs";
+import { privateCaptureFixture } from "../fixtures/deployment/privateCapture.js";
 import { digest } from "../../scripts/deployment/collector-payload.cjs";
+import { invocation } from "../fixtures/deployment/terraformWorkflow.js";
+
+const FIXED_NOW_SECONDS = 1000;
+const RETENTION_COVERING_OPERATION = 40000;
+function fixture() {
+  const f = privateCaptureFixture();
+  f.binding.retentionUntil = RETENTION_COVERING_OPERATION;
+  return {
+    ...f,
+    options: {
+      invocation,
+      binding: f.binding,
+      client: f.client,
+      now: () => FIXED_NOW_SECONDS,
+    },
+  };
+}
 
 const policy = {
   Statement: [
@@ -56,7 +73,7 @@ test.each([reorderedPolicy, JSON.stringify(policy, null, 2)])(
   "canonical policy binding permits representation changes through capture and readback (%#)",
   async (text) => {
     const f = policyFixture(text),
-      store = createPrivateCapture(f.options),
+      store = createTerraformCapture(f.options),
       value = { evidence: "synthetic" };
     await expect(store.checkReady()).resolves.toBeUndefined();
     const ref = await store.capture(value);
@@ -67,12 +84,12 @@ test.each([reorderedPolicy, JSON.stringify(policy, null, 2)])(
 
 test("legacy raw policy binding preserves exact noncanonical matching", async () => {
   const f = policyFixture(reorderedPolicy, digest(reorderedPolicy)),
-    store = createPrivateCapture(f.options),
+    store = createTerraformCapture(f.options),
     value = { legacy: true };
   expect(await store.readCapture(await store.capture(value))).toEqual(value);
   const changed = policyFixture(canonicalPolicy, digest(reorderedPolicy));
   await expect(
-    createPrivateCapture(changed.options).capture(value),
+    createTerraformCapture(changed.options).capture(value),
   ).rejects.toThrow();
   expect(changed.objects.size).toBe(0);
 });
@@ -90,7 +107,7 @@ test.each([undefined, false, true, null, "false", 0])(
       }
       return result;
     };
-    const operation = createPrivateCapture(f.options).capture({
+    const operation = createTerraformCapture(f.options).capture({
       synthetic: true,
     });
     if (bucketKey === undefined || bucketKey === false)
@@ -118,7 +135,7 @@ test.each([
     f = policyFixture(
       result === "{malformed" ? result : JSON.stringify(changed),
     ),
-    store = createPrivateCapture(f.options);
+    store = createTerraformCapture(f.options);
   await expect(store.checkReady()).rejects.toThrow();
   await expect(store.capture({ evidence: "synthetic" })).rejects.toThrow();
   expect(f.calls.some((c) => c.constructor.name === "PutObjectCommand")).toBe(
@@ -128,7 +145,7 @@ test.each([
 
 test("private capture uses conditional one-attempt creation and exact version original-byte readback", async () => {
   const f = fixture(),
-    store = createPrivateCapture(f.options),
+    store = createTerraformCapture(f.options),
     value = { z: "private", a: 1 };
   const ref = await store.capture(value);
   expect(ref.versionId).toBe("v1");
@@ -163,7 +180,7 @@ test.each([
           blockedEncryptionTypes;
       return result;
     };
-    const store = createPrivateCapture(f.options);
+    const store = createTerraformCapture(f.options);
     await expect(store.checkReady()).resolves.toBeUndefined();
     expect(f.calls.some((c) => c.constructor.name === "PutObjectCommand")).toBe(
       false,
@@ -244,7 +261,7 @@ test.each([
       mutate(result.ServerSideEncryptionConfiguration.Rules);
     return result;
   };
-  await expect(createPrivateCapture(f.options).checkReady()).rejects.toThrow(
+  await expect(createTerraformCapture(f.options).checkReady()).rejects.toThrow(
     "UNKNOWN: encryption",
   );
   expect(f.calls.some((c) => c.constructor.name === "PutObjectCommand")).toBe(
@@ -255,7 +272,7 @@ test.each([
 test("missing configuration refuses before any transport", () => {
   const f = fixture();
   expect(() =>
-    createPrivateCapture({ ...f.options, binding: undefined }),
+    createTerraformCapture({ ...f.options, binding: undefined }),
   ).toThrow();
   expect(f.calls).toHaveLength(0);
 });
@@ -309,7 +326,7 @@ test.each([
         ? { Rules: [{ Status: "Enabled", Expiration: { Days: 1 } }] }
         : send(c);
   await expect(async () => {
-    const store = createPrivateCapture(f.options);
+    const store = createTerraformCapture(f.options);
     await store.capture({ a: 1 });
   }).rejects.toThrow(/UNKNOWN|retention|privacy|lifecycle|version|bytes/);
   expect(
@@ -319,26 +336,8 @@ test.each([
 });
 
 test("Terraform capture derives a separate strict invocation namespace and checks storage before provider work", async () => {
-  const { createTerraformCapture } =
-    await import("../../scripts/deployment/private-capture.cjs");
   const f = fixture();
-  f.binding.retentionUntil = 40000;
-  const invocation = {
-    repository: "Chronote-gg/Chronote",
-    sourceSha: "a".repeat(40),
-    workflowPath: ".github/workflows/terraform-plan.yml",
-    runId: "10",
-    runAttempt: 1,
-    environment: "production",
-    workspace: "default",
-    scope: "full",
-  };
-  const store = createTerraformCapture({
-    invocation,
-    binding: f.binding,
-    client: f.client,
-    now: () => 1000,
-  });
+  const store = createTerraformCapture(f.options);
   await store.checkReady();
   expect(f.calls.some((c) => c.constructor.name === "PutObjectCommand")).toBe(
     false,

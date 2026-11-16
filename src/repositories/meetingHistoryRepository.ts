@@ -7,7 +7,6 @@ import type {
 import {
   inventoryGuildShareIndexMetadataPage,
   getGuildShareIndexMetadataStrong,
-  getDeploymentControlRepository,
   getMeetingUpdateDeliveryRepository,
 } from "../db";
 import type { MeetingUpdateDeliveryRepository } from "./meetingUpdateDeliveryRepository";
@@ -20,16 +19,13 @@ import {
   getRecentMeetingsForGuild,
   updateMeetingArchive,
   updateMeetingAccessGrants,
-  updateMeetingStatus,
   updateMeetingTags,
   writeMeetingHistory,
 } from "../db";
 import type { MeetingHistory, MeetingAccessGrant } from "../types/db";
-import { MEETING_STATUS, type MeetingStatus } from "../types/meetingLifecycle";
+import { MEETING_STATUS } from "../types/meetingLifecycle";
 
 import { getMockStore } from "./mockStore";
-
-import type { HistoryTransition } from "../types/deploymentControl";
 
 export type MeetingHistoryRepository = Pick<
   MeetingUpdateDeliveryRepository,
@@ -41,10 +37,6 @@ export type MeetingHistoryRepository = Pick<
     guildId: string,
     options: MeetingBrowsePageOptions,
   ) => Promise<MeetingBrowsePage<MeetingHistory>>;
-  transitionOwned: (input: HistoryTransition) => Promise<"applied" | "stale">;
-  getOwned: (
-    key: HistoryTransition["key"],
-  ) => Promise<MeetingHistory | undefined>;
   write: (history: MeetingHistory) => Promise<void>;
   get: (
     guildId: string,
@@ -76,11 +68,6 @@ export type MeetingHistoryRepository = Pick<
       signal?: AbortSignal;
     },
   ) => Promise<MeetingHistory[]>;
-  updateStatus: (
-    guildId: string,
-    channelIdTimestamp: string,
-    status: MeetingStatus,
-  ) => Promise<void>;
   updateArchive: (params: {
     guildId: string;
     channelId_timestamp: string;
@@ -121,10 +108,6 @@ const ownedOperations = {
       MeetingUpdateDeliveryRepository["updateContentAndDelivery"]
     >
   ) => getMeetingUpdateDeliveryRepository().updateContentAndDelivery(...args),
-  transitionOwned: (input: HistoryTransition) =>
-    getDeploymentControlRepository().transitionMeetingHistory(input),
-  getOwned: (key: HistoryTransition["key"]) =>
-    getDeploymentControlRepository().getMeetingHistory(key),
 };
 const realRepository: MeetingHistoryRepository = {
   inventoryGuildShareMetadataPage: inventoryGuildShareIndexMetadataPage,
@@ -174,7 +157,6 @@ const realRepository: MeetingHistoryRepository = {
     );
     return filterArchivedMeetings(active, options);
   },
-  updateStatus: updateMeetingStatus,
   updateArchive: updateMeetingArchive,
   updateTags: updateMeetingTags,
   updateAccessGrants: updateMeetingAccessGrants,
@@ -298,19 +280,6 @@ const mockRepository: MeetingHistoryRepository = {
     );
     if (idx === -1) return;
     items[idx] = { ...items[idx], tags: tags ?? [] };
-    getMockStore().meetingHistoryByGuild.set(guildId, items);
-  },
-  async updateStatus(guildId, channelIdTimestamp, status) {
-    const items = getMockStore().meetingHistoryByGuild.get(guildId) ?? [];
-    const idx = items.findIndex(
-      (item) => item.channelId_timestamp === channelIdTimestamp,
-    );
-    if (idx === -1) return;
-    items[idx] = {
-      ...items[idx],
-      status,
-      updatedAt: new Date().toISOString(),
-    };
     getMockStore().meetingHistoryByGuild.set(guildId, items);
   },
   async updateArchive({

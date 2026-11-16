@@ -355,6 +355,8 @@ export function SiteHeader({
   const computedScheme = useComputedColorScheme("dark");
   const isDark = computedScheme === "dark";
   const { state: authState, loginUrl, logoutUrl, loading, user } = useAuth();
+  const switchAccountUrl = new URL(logoutUrl, window.location.href);
+  switchAccountUrl.searchParams.set("interaction", "consent");
 
   const showPortalCta = context !== "portal-select";
   const showGithubLink = true;
@@ -384,7 +386,7 @@ export function SiteHeader({
       loginUrl={loginUrl}
       loading={loading}
       user={user}
-      logoutUrl={logoutUrl}
+      logoutUrl={switchAccountUrl.toString()}
       showGithubLink={showGithubLink}
       isMobile={isMobile}
       isDark={isDark}

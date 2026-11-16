@@ -7,7 +7,9 @@ import {
   User,
   VoiceBasedChannel,
 } from "discord.js";
-import { endTtsOnlySession, getMeeting } from "../meetings";
+import { getMeeting } from "../meetings";
+import { closeMeeting } from "../services/meetingClose";
+import { MEETING_END_REASONS } from "../types/meetingLifecycle";
 import {
   buildUserSpeechSettingsRecord,
   fetchUserSpeechSettings,
@@ -395,11 +397,16 @@ const handleStop: TtsSubcommandHandler = async (interaction, guildId) => {
     return;
   }
   if (meeting.sessionMode === "tts_only") {
-    await endTtsOnlySession(meeting);
+    // Close always frees the server, so the reply need not wait on it.
+    const closed = closeMeeting(meeting, {
+      endReason: MEETING_END_REASONS.BUTTON,
+      endTriggeredByUserId: interaction.user.id,
+    });
     await interaction.reply({
       content: "Stopped the TTS-only session.",
       ephemeral: true,
     });
+    await closed;
     return;
   }
   meeting.ttsQueue?.stopAndClear();

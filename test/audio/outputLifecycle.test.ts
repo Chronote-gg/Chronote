@@ -7,14 +7,7 @@ import {
 } from "../../src/audio";
 import { ensureMeetingTempDirSync } from "../../src/services/tempFileService";
 import type { MeetingData } from "../../src/types/meeting-data";
-import { getMeetingArtifactProducer } from "../../src/services/meetingArtifactProducer";
-import { createArtifactProducerRegistry } from "../../src/services/artifactProducerRegistry";
-import path from "node:path";
 import { ChildProcess } from "node:child_process";
-
-jest.mock("../../src/services/meetingArtifactProducer", () => ({
-  getMeetingArtifactProducer: jest.fn(),
-}));
 
 jest.mock("../../src/services/tempFileService", () => ({
   ensureMeetingTempDirSync: jest.fn(() => "fixture-temp"),
@@ -93,51 +86,26 @@ test("unresolved encoder close is bounded and reports unresolved cleanup", async
   jest.useRealTimers();
 });
 
-test("artifact writer remains owned after cleanup timeout until the encoder actually settles", async () => {
+test("output stays open after cleanup timeout until the encoder actually settles", async () => {
   jest.useFakeTimers();
   const { meeting, process } = fixture();
-  const producer = createArtifactProducerRegistry().claim({
-    directory: path.resolve("fixture-temp"),
-    owner: {
-      guildId: "guild",
-      meetingId: "meeting",
-      ownerInstanceId: "worker",
-      executionVersion: 1,
-    },
-  });
-  jest.mocked(getMeetingArtifactProducer).mockReturnValueOnce(producer);
   try {
     openOutputFile(meeting);
-    expect(producer.pendingWrites).toBe(1);
     const closing = closeFailedInitializationOutput(meeting);
     await jest.advanceTimersByTimeAsync(5_001);
     expect(await closing).toBe(false);
-    expect(producer.pendingWrites).toBe(1);
-    expect(() => producer.freeze()).toThrow();
     process.emit("end");
-    expect(producer.pendingWrites).toBe(0);
-    expect(producer.freeze().files[0].state).toBe("known");
+    expect(await closeFailedInitializationOutput(meeting)).toBe(true);
   } finally {
     jest.useRealTimers();
   }
 });
 
-test("an encoder error retains artifact ownership until the spawned child actually closes", async () => {
+test("an encoder error keeps the output open until the spawned child actually closes", async () => {
   jest.useFakeTimers();
   const { meeting, process } = fixture();
   const child = new ChildProcess();
   Object.assign(process, { ffmpegProc: child });
-  const registry = createArtifactProducerRegistry();
-  const producer = registry.claim({
-    directory: path.resolve("fixture-temp"),
-    owner: {
-      guildId: "guild",
-      meetingId: "meeting",
-      ownerInstanceId: "worker",
-      executionVersion: 1,
-    },
-  });
-  jest.mocked(getMeetingArtifactProducer).mockReturnValueOnce(producer);
   const warning = jest
     .spyOn(console, "error")
     .mockImplementation(() => undefined);
@@ -148,13 +116,8 @@ test("an encoder error retains artifact ownership until the spawned child actual
     const closing = closeFailedInitializationOutput(meeting);
     await jest.advanceTimersByTimeAsync(5_001);
     expect(await closing).toBe(false);
-    expect(producer.pendingWrites).toBe(1);
-    expect(registry.seal()).toBe(false);
     child.emit("close", 1, null);
     expect(await closeFailedInitializationOutput(meeting)).toBe(true);
-    expect(producer.pendingWrites).toBe(0);
-    expect(registry.seal()).toBe(true);
-    expect(producer.freeze().files[0].state).toBe("uncertain");
   } finally {
     warning.mockRestore();
     jest.useRealTimers();

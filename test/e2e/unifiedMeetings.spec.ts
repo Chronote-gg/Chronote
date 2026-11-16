@@ -91,19 +91,26 @@ test("legacy and direct detail links preserve selection and close to the list", 
 
 test("sign in returns to the requested meeting filters", async ({ page }) => {
   await mockUnifiedMeetings(page, { signedOut: true });
+  let redirect: URL | undefined;
+  let navigations = 0;
+  await page.route("**/auth/discord?**", async (route) => {
+    navigations++;
+    const target = new URL(route.request().url()).searchParams.get("redirect");
+    if (!target) throw new Error("Missing return destination");
+    redirect = new URL(target);
+    await mockUnifiedMeetings(page);
+    await route.fulfill({
+      status: 302,
+      headers: { location: target },
+      body: "",
+    });
+  });
   await page.goto("/portal/meetings?scope=personal&attended=true");
-  const link = page
-    .getByRole("link", { name: "Connect Discord", exact: true })
-    .last();
-  await expect(link).toBeVisible();
-  const href = await link.getAttribute("href");
-  expect(href).not.toBeNull();
-  const redirect = new URL(href!, page.url()).searchParams.get("redirect");
-  expect(redirect).toContain("/portal/meetings?scope=personal&attended=true");
-  await mockUnifiedMeetings(page);
-  await page.goto(redirect!);
   await expect(page.getByLabel("Only meetings I attended")).toBeChecked();
   await expect(page.getByTestId("library-meeting-row")).toHaveCount(1);
+  expect(navigations).toBe(1);
+  expect(redirect?.searchParams.get("scope")).toBe("personal");
+  expect(redirect?.searchParams.get("attended")).toBe("true");
 });
 
 for (const member of [true, false])

@@ -18,7 +18,6 @@ export type MeetingSummaries = {
 };
 
 type MeetingSummaryInput = {
-  observeGeneration?: import("../types/fixtureEvidence").GenerationObserver;
   recentMeetingNames?: string;
   savedPrompt?: MeetingNotesInput["savedSummary"];
   frozenModel?: NonNullable<
@@ -157,8 +156,6 @@ export async function generateMeetingSummaries(
       });
     input.signal?.throwIfAborted();
     const content = await generateOpenAIText({
-      observeGeneration: input.observeGeneration,
-      generationOperation: "summary",
       model: modelChoice.model,
       input: messages,
       modelParams: chatParams,

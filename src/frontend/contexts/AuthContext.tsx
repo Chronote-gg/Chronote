@@ -2,6 +2,8 @@ import React, {
   createContext,
   useContext,
   useEffect,
+  useCallback,
+  useSyncExternalStore,
   useMemo,
   useRef,
   useState,
@@ -9,14 +11,47 @@ import React, {
 import { buildApiUrl } from "../services/apiClient";
 import { trpc } from "../services/trpc";
 import { identifyUser, resetAnalyticsIdentity } from "../services/analytics";
-import { resetMeetingSessionQueries } from "../queryClient";
+import {
+  cancelMeetingSessionQueries,
+  resumeMeetingSessionQueries,
+  resetMeetingSessionQueries,
+} from "../queryClient";
+import {
+  advanceAuthRequestGeneration,
+  setAuthRequestGeneration,
+  setAuthRequestsAllowed,
+  subscribeAuthTransport,
+  createRecoveryUrl,
+  readRecoveryAttempt,
+  clearRecoveryAttempt,
+  readRecoveryOutcome,
+  removeRecoveryOutcome,
+  navigateToDiscord,
+  hasAuthNavigationBlockers,
+  subscribeAuthNavigationBlockers,
+} from "../services/authRecovery";
 
-type AuthState = "unknown" | "authenticated" | "unauthenticated";
+type AuthState =
+  | "unknown"
+  | "authenticated"
+  | "unauthenticated"
+  | "unavailable"
+  | "recovery-required"
+  | "recovering";
 
 type AuthContextValue = {
   state: AuthState;
   loading: boolean;
   protectedQueriesReady: boolean;
+  actorKey: number;
+  navigationBlocked: boolean;
+  ensureProtectedSession: () => Promise<void>;
+  retryRecovery: () => Promise<void>;
+  onPublicNavigation: () => void;
+  continueRecovery: (options?: {
+    interactive?: boolean;
+    discardWork?: boolean;
+  }) => void;
   loginUrl: string;
   logoutUrl: string;
   refresh: () => Promise<void>;
@@ -66,86 +101,237 @@ const buildLogoutUrl = (location?: Location) =>
     resolveLogoutRedirect(location),
   )}`;
 
+type RecoveryState =
+  "idle" | "checking" | "required" | "recovering" | "unavailable";
+function resolveAuthState(
+  loading: boolean,
+  recovery: RecoveryState,
+  unavailable: boolean,
+  authenticated: boolean,
+): AuthState {
+  if (loading) return "unknown";
+  if (recovery === "required") return "recovery-required";
+  if (recovery === "recovering") return "recovering";
+  if (recovery === "unavailable" || unavailable) return "unavailable";
+  return authenticated ? "authenticated" : "unauthenticated";
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const authQuery = trpc.auth.me.useQuery(undefined, {
-    retry: false,
-  });
-  const loading = authQuery.isLoading;
-  const state: AuthState = loading
-    ? "unknown"
-    : authQuery.data
-      ? "authenticated"
-      : "unauthenticated";
-
-  const loginUrl = buildLoginUrl(getBrowserLocation());
-  const logoutUrl = buildLogoutUrl(getBrowserLocation());
-
-  const userId = authQuery.data?.id;
-  const actor = state === "unknown" ? undefined : (userId ?? null);
+  const authQuery = trpc.auth.me.useQuery(undefined, { retry: false });
+  const [initialGeneration] = useState(advanceAuthRequestGeneration);
+  const requestGeneration = useRef(initialGeneration);
+  const [recovery, setRecovery] = useState<RecoveryState>(() =>
+    readRecoveryOutcome() === "failed" ? "required" : "idle",
+  );
+  const navigationBlocked = useSyncExternalStore(
+    subscribeAuthNavigationBlockers,
+    hasAuthNavigationBlockers,
+    () => false,
+  );
+  const check = useRef<Promise<void> | null>(null);
+  const episodeChecked = useRef(false);
+  const episodePath = useRef<string | null>(null);
+  const departing = useRef(false);
+  const loading = authQuery.isLoading || recovery === "checking";
+  const state = resolveAuthState(
+    loading,
+    recovery,
+    Boolean(authQuery.error),
+    Boolean(authQuery.data),
+  );
+  const actor = authQuery.isLoading ? undefined : (authQuery.data?.id ?? null);
   const transition = useRef({ actor, generation: 0 });
+  const retainedActor = useRef<string | null>(null);
+  const actorKey = useRef(0);
+  if (actor && actor !== retainedActor.current) {
+    retainedActor.current = actor;
+    actorKey.current++;
+  }
   if (transition.current.actor !== actor) {
     transition.current = {
       actor,
       generation: transition.current.generation + 1,
     };
+    requestGeneration.current = advanceAuthRequestGeneration();
   }
+  setAuthRequestGeneration(requestGeneration.current);
   const generation = transition.current.generation;
   const [readyGeneration, setReadyGeneration] = useState<number>();
   const protectedQueriesReady =
-    actor !== undefined && readyGeneration === generation;
+    state === "authenticated" && readyGeneration === generation;
+  setAuthRequestsAllowed(protectedQueriesReady);
+
+  useEffect(() => {
+    removeRecoveryOutcome();
+    return () => setAuthRequestsAllowed(true);
+  }, []);
   useEffect(() => {
     if (actor === undefined) return;
     let current = true;
-    void resetMeetingSessionQueries().then(() => {
+    const reset =
+      actor === null && hasAuthNavigationBlockers()
+        ? cancelMeetingSessionQueries()
+        : resetMeetingSessionQueries();
+    void reset.then(() => {
       if (current) setReadyGeneration(generation);
     });
     return () => {
       current = false;
     };
   }, [actor, generation]);
+
+  const refetch = authQuery.refetch;
+  const refresh = useCallback(async () => {
+    await refetch({ cancelRefetch: false });
+  }, [refetch]);
+  const reconcile = useCallback((): Promise<void> => {
+    if (check.current) return check.current;
+    if (episodeChecked.current) {
+      setRecovery("required");
+      return Promise.resolve();
+    }
+    episodeChecked.current = true;
+    requestGeneration.current = advanceAuthRequestGeneration();
+    setAuthRequestsAllowed(false);
+    setRecovery("checking");
+    const pending = (async () => {
+      await cancelMeetingSessionQueries();
+      const result = await refetch();
+      if (result.error) {
+        setRecovery("unavailable");
+        return;
+      }
+      check.current = null;
+      setRecovery("idle");
+      if (result.data) {
+        setAuthRequestsAllowed(true);
+        await resumeMeetingSessionQueries();
+      }
+    })()
+      .catch(() => setRecovery("unavailable"))
+      .finally(() => {
+        check.current = null;
+      });
+    check.current = pending;
+    return pending;
+  }, [refetch]);
+
+  useEffect(
+    () =>
+      subscribeAuthTransport((event) => {
+        if (event.generation !== requestGeneration.current) return;
+        if (event.kind === "check") {
+          void refresh();
+          return;
+        }
+        if (event.kind === "authorized-operation") {
+          if (
+            episodePath.current === null ||
+            episodePath.current === event.path
+          ) {
+            episodeChecked.current = false;
+            episodePath.current = null;
+            clearRecoveryAttempt();
+          }
+        } else {
+          episodePath.current ??= event.path;
+          void reconcile();
+        }
+      }),
+    [reconcile, refresh],
+  );
+
+  const ensureProtectedSession = useCallback(async () => {
+    if (authQuery.isLoading || authQuery.error) return;
+    const attempt = readRecoveryAttempt();
+    if (attempt) {
+      const canonical = (path: string) =>
+        path.replace(/\/$/, "").replace(/^\/portal$/, "/portal/meetings");
+      if (
+        canonical(
+          new URL(attempt.destination, window.location.origin).pathname,
+        ) !== canonical(window.location.pathname)
+      ) {
+        clearRecoveryAttempt();
+        episodeChecked.current = false;
+        episodePath.current = null;
+        setRecovery("idle");
+      }
+    }
+    if (!authQuery.error && Date.now() - authQuery.dataUpdatedAt < 30_000)
+      return;
+    await reconcile();
+  }, [
+    authQuery.isLoading,
+    authQuery.error,
+    authQuery.dataUpdatedAt,
+    reconcile,
+  ]);
+  const retryRecovery = useCallback(async () => {
+    episodeChecked.current = false;
+    await reconcile();
+  }, [reconcile]);
+  const onPublicNavigation = useCallback(() => {
+    clearRecoveryAttempt();
+    episodeChecked.current = false;
+    episodePath.current = null;
+    setRecovery("idle");
+  }, []);
+  const continueRecovery = useCallback(
+    (options: { interactive?: boolean; discardWork?: boolean } = {}) => {
+      if (
+        departing.current ||
+        (hasAuthNavigationBlockers() && !options.discardWork)
+      )
+        return;
+      const url = createRecoveryUrl(
+        buildLoginUrl(getBrowserLocation()),
+        options.interactive,
+      );
+      if (!url) {
+        setRecovery("required");
+        return;
+      }
+      departing.current = true;
+      setRecovery("recovering");
+      navigateToDiscord(url);
+    },
+    [],
+  );
+
+  const retainedUser = useRef(authQuery.data);
+  if (authQuery.data) retainedUser.current = authQuery.data;
+  const userId = authQuery.data?.id;
   const wasAuthenticated = useRef(false);
   useEffect(() => {
-    // "unknown" means the query is still in flight, so neither branch applies
-    // yet; acting on it would reset the identity on every page load.
     if (state === "authenticated" && userId) {
       identifyUser(userId);
       wasAuthenticated.current = true;
-      return;
-    }
-    // Reset only on a real authenticated -> unauthenticated transition. Doing
-    // it on every logged-out load would mint a new anonymous id each time,
-    // which breaks return-visit and funnel continuity for visitors who have
-    // never signed in.
-    if (state === "unauthenticated" && wasAuthenticated.current) {
+    } else if (state === "unauthenticated" && wasAuthenticated.current) {
       resetAnalyticsIdentity();
       wasAuthenticated.current = false;
     }
   }, [state, userId]);
-
-  const refetch = authQuery.refetch;
-  const value = useMemo(
-    () => ({
-      state,
-      loading,
-      protectedQueriesReady,
-      loginUrl,
-      logoutUrl,
-      user: authQuery.data ?? null,
-      refresh: async () => {
-        await refetch();
-      },
-    }),
-    [
-      state,
-      loading,
-      protectedQueriesReady,
-      loginUrl,
-      logoutUrl,
-      refetch,
-      authQuery.data,
-    ],
-  );
-
+  const loginUrl = buildLoginUrl(getBrowserLocation());
+  const logoutUrl = buildLogoutUrl(getBrowserLocation());
+  const value: AuthContextValue = {
+    state,
+    loading,
+    protectedQueriesReady,
+    actorKey: actorKey.current,
+    navigationBlocked,
+    loginUrl,
+    logoutUrl,
+    user:
+      authQuery.data ??
+      (navigationBlocked ? retainedUser.current : null) ??
+      null,
+    refresh,
+    ensureProtectedSession,
+    retryRecovery,
+    continueRecovery,
+    onPublicNavigation,
+  };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
