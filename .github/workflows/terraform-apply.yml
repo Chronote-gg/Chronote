@@ -1,6 +1,6 @@
 name: Terraform Apply
 
-run-name: Terraform Apply ${{ inputs.environment }} plan=${{ inputs.plan_run_id }}
+run-name: Terraform Apply ${{ inputs.environment }} plan=${{ inputs.plan_run_id }} sha256=${{ inputs.plan_sha256 }}
 
 on:
   workflow_dispatch:
@@ -15,6 +15,10 @@ on:
           - production
       plan_run_id:
         description: Run ID of the reviewed Terraform Plan, made from this same master commit
+        required: true
+        type: string
+      plan_sha256:
+        description: Encrypted plan SHA-256 from the reviewed plan's summary
         required: true
         type: string
 
@@ -39,10 +43,12 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       TF_WORKSPACE: ${{ inputs.environment == 'production' && 'default' || 'sandbox' }}
+      TF_LOG: ""
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       GH_TOKEN: ${{ github.token }}
       PLAN_RUN_ID: ${{ inputs.plan_run_id }}
       ENVIRONMENT: ${{ inputs.environment }}
+      PLAN_SHA256: ${{ inputs.plan_sha256 }}
     steps:
       - name: Require master
         run: test "$GITHUB_REF" = refs/heads/master
@@ -67,11 +73,14 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/plan
 
-      - name: Decrypt plan
+      # The approval binds this digest; nothing is decrypted unless the
+      # downloaded file is exactly the one the reviewed summary named.
+      - name: Verify and decrypt plan
         env:
           TERRAFORM_PLAN_PASSPHRASE: ${{ secrets.TERRAFORM_PLAN_PASSPHRASE }}
         run: |
-          echo "Encrypted plan SHA-256: $(sha256sum "$RUNNER_TEMP/plan/plan.tgz.enc" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          [[ "$PLAN_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          echo "$PLAN_SHA256  $RUNNER_TEMP/plan/plan.tgz.enc" | sha256sum --check --quiet
           openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass env:TERRAFORM_PLAN_PASSPHRASE -in "$RUNNER_TEMP/plan/plan.tgz.enc" | tar -xz -C _infra
 
       - name: Configure AWS credentials
@@ -93,11 +102,36 @@ jobs:
 
       # A saved plan carries its own variables and refuses to apply against
       # state that changed since it was made, so there is no replan here.
+      # Output goes only to the encrypted log, as in the plan.
       - name: Apply the saved plan
         run: |
-          terraform -chdir=_infra init -input=false -lockfile=readonly
-          terraform -chdir=_infra apply -input=false -lock-timeout=5m tfplan > /dev/null
+          set +x
+          unset TF_LOG TF_LOG_CORE TF_LOG_PROVIDER TF_LOG_PATH
+          log="$RUNNER_TEMP/terraform.log"
+          fail() { echo "::error::terraform $1 failed with exit code $2; read the encrypted terraform log artifact"; exit 1; }
+          terraform -chdir=_infra init -input=false -lockfile=readonly >> "$log" 2>&1 || fail init $?
+          terraform -chdir=_infra apply -input=false -lock-timeout=5m tfplan >> "$log" 2>&1 || fail apply $?
+
+      - name: Encrypt log
+        if: always()
+        env:
+          TERRAFORM_PLAN_PASSPHRASE: ${{ secrets.TERRAFORM_PLAN_PASSPHRASE }}
+        run: |
+          log="$RUNNER_TEMP/terraform.log"
+          if [ -f "$log" ] && [ -n "$TERRAFORM_PLAN_PASSPHRASE" ]; then
+            openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -pass env:TERRAFORM_PLAN_PASSPHRASE -in "$log" -out "$log.enc"
+          fi
+          rm -f "$log"
+
+      - name: Upload encrypted log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: terraform-apply-log-${{ inputs.environment }}
+          path: ${{ runner.temp }}/terraform.log.enc
+          retention-days: 1
+          if-no-files-found: ignore
 
       - name: Remove plaintext plan
         if: always()
-        run: rm -rf _infra/tfplan "$RUNNER_TEMP/plan"
+        run: rm -rf _infra/tfplan "$RUNNER_TEMP/plan" "$RUNNER_TEMP/terraform.log"

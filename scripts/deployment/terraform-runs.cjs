@@ -27,7 +27,8 @@ function github(token, request = fetch) {
 
 const planWorkflow = ".github/workflows/terraform-plan.yml";
 
-// Apply runs only the artifact of a successful plan of this exact commit.
+// Apply runs only the artifact of a successful first-attempt plan of this
+// exact commit: a re-run could replace the artifact that was reviewed.
 async function verifyPlanRun(get, { repository, runId, environment, sha }) {
   const run = await get(`/repos/${repository}/actions/runs/${runId}`);
   assert.equal(String(run.id), String(runId));
@@ -47,6 +48,19 @@ async function verifyPlanRun(get, { repository, runId, environment, sha }) {
     run.head_sha,
     sha,
     "Apply must check out the commit the plan was made from",
+  );
+  assert.equal(
+    run.run_attempt,
+    1,
+    "A re-run plan cannot be applied; plan again",
+  );
+  const artifacts = await get(
+    `/repos/${repository}/actions/runs/${runId}/artifacts?name=terraform-plan-${environment}`,
+  );
+  assert.equal(
+    artifacts.total_count,
+    1,
+    "The plan has no changes; there is nothing to apply",
   );
   return run;
 }
@@ -122,39 +136,61 @@ const actionKinds = new Map([
   ["delete", "destroy"],
 ]);
 
-// Reads only addresses and actions from `terraform show -json`: the plan's
-// before/after values carry secrets and must never reach the summary.
-function planSummary(plan, { sha, digest }) {
-  const changes = plan.resource_changes
-    .map(({ address, change }) => ({
+// Changes a reviewer must read even when they look routine: identity,
+// encryption, network exposure, the approval gate and credentials.
+const sensitiveType =
+  /^(aws_iam_|aws_kms_|aws_s3_bucket_policy$|aws_s3_bucket_public_access_block$|aws_security_group|aws_default_security_group$|aws_vpc_security_group_|aws_secretsmanager_|github_repository_environment|github_actions_\w*secret)/;
+
+// Reads only types, addresses and actions from `terraform show -json`: the
+// plan's before/after values carry secrets and must never reach the summary.
+function planSummary(plan, { sha, digest, attempt }) {
+  const changes = (plan.resource_changes ?? [])
+    .map(({ address, type, change }) => ({
       address,
+      type,
       kind: actionKinds.get(change.actions.join(",")),
     }))
     .filter((change) => change.kind);
-  const count = (kind) => changes.filter((c) => c.kind === kind).length;
-  const line = ({ address, kind }) => `- \`${address}\` ${kind}`;
-  const dangerous = changes.filter((c) =>
-    ["replace", "destroy"].includes(c.kind),
-  );
-  return [
+  const header = [
     "## Terraform Plan",
     "",
     `Commit: \`${sha}\``,
-    `Encrypted plan SHA-256: \`${digest}\``,
+    `Plan run attempt: ${attempt}`,
+  ];
+  if (!changes.length)
+    return [
+      ...header,
+      "",
+      "No changes. Nothing was uploaded and there is nothing to apply.",
+      "",
+    ].join("\n");
+  const count = (kind) => changes.filter((c) => c.kind === kind).length;
+  const flagged = (title, list) =>
+    list.length
+      ? [
+          `### :warning: ${title}`,
+          "",
+          ...list.map((c) => `- **\`${c.address}\` ${c.kind}**`),
+          "",
+        ]
+      : [];
+  return [
+    ...header,
+    `Encrypted plan SHA-256 (\`plan_sha256\`): \`${digest}\``,
     "",
     `${count("add")} to add, ${count("change")} to change, ${count("replace")} to replace, ${count("destroy")} to destroy.`,
     "",
-    ...(dangerous.length
-      ? [
-          "### :warning: Replace or destroy",
-          "",
-          ...dangerous.map((c) => `- **\`${c.address}\` ${c.kind}**`),
-          "",
-        ]
-      : []),
+    ...flagged(
+      "Security-sensitive",
+      changes.filter((c) => sensitiveType.test(c.type)),
+    ),
+    ...flagged(
+      "Replace or destroy",
+      changes.filter((c) => ["replace", "destroy"].includes(c.kind)),
+    ),
     "### All changes",
     "",
-    ...(changes.length ? changes.map(line) : ["No changes."]),
+    ...changes.map(({ address, kind }) => `- \`${address}\` ${kind}`),
     "",
   ].join("\n");
 }
@@ -170,9 +206,9 @@ module.exports = {
 async function main([command, ...args]) {
   const { GITHUB_REPOSITORY: repository, GH_TOKEN: token } = process.env;
   if (command === "plan-summary") {
-    const [planPath, sha, digest] = args;
+    const [planPath, sha, attempt, digest] = args;
     const plan = JSON.parse(readFileSync(planPath, "utf8"));
-    process.stdout.write(planSummary(plan, { sha, digest }));
+    process.stdout.write(planSummary(plan, { sha, attempt, digest }));
     return;
   }
   const get = github(token);

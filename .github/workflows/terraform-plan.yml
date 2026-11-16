@@ -32,6 +32,7 @@ jobs:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       TF_WORKSPACE: ${{ inputs.environment == 'production' && 'default' || 'sandbox' }}
+      TF_LOG: ""
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
     steps:
       - name: Require master
@@ -71,16 +72,30 @@ jobs:
           GITHUB_VARS_JSON: ${{ toJSON(vars) }}
         run: python3 scripts/deployment/terraform-tfvars.py
 
+      # Terraform output can carry values, so it goes only to a log file that
+      # is uploaded encrypted; on failure the job prints the exit code alone.
       - name: Plan
+        id: plan
         run: |
-          terraform -chdir=_infra init -input=false -lockfile=readonly
-          terraform -chdir=_infra plan -input=false -lock-timeout=5m -out=tfplan > /dev/null
+          set +x
+          unset TF_LOG TF_LOG_CORE TF_LOG_PROVIDER TF_LOG_PATH
+          log="$RUNNER_TEMP/terraform.log"
+          fail() { echo "::error::terraform $1 failed with exit code $2; read the encrypted terraform log artifact"; exit 1; }
+          terraform -chdir=_infra init -input=false -lockfile=readonly >> "$log" 2>&1 || fail init $?
+          status=0
+          terraform -chdir=_infra plan -input=false -lock-timeout=5m -detailed-exitcode -out=tfplan >> "$log" 2>&1 || status=$?
+          case "$status" in
+            0) echo "changes=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "changes=true" >> "$GITHUB_OUTPUT" ;;
+            *) fail plan "$status" ;;
+          esac
 
       # The saved plan holds every variable value, including credentials, so
       # only the encrypted bundle leaves the runner. The Lambda archives are
       # data-source outputs the apply reads from disk, so they travel with it.
       - name: Encrypt plan
         id: bundle
+        if: steps.plan.outputs.changes == 'true'
         env:
           TERRAFORM_PLAN_PASSPHRASE: ${{ secrets.TERRAFORM_PLAN_PASSPHRASE }}
         run: |
@@ -91,16 +106,19 @@ jobs:
           rm "$RUNNER_TEMP/plan.tgz"
           echo "sha256=$(sha256sum "$RUNNER_TEMP/plan.tgz.enc" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
-      # Only addresses and actions reach the summary; values never do.
+      # Only types, addresses and actions reach the summary; values never do.
       - name: Summarize changes
         env:
           PLAN_SHA256: ${{ steps.bundle.outputs.sha256 }}
         run: |
-          terraform -chdir=_infra show -json tfplan > "$RUNNER_TEMP/plan.json"
-          node scripts/deployment/terraform-runs.cjs plan-summary "$RUNNER_TEMP/plan.json" "$GITHUB_SHA" "$PLAN_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          set +x
+          log="$RUNNER_TEMP/terraform.log"
+          terraform -chdir=_infra show -json tfplan > "$RUNNER_TEMP/plan.json" 2>> "$log" || { echo "::error::terraform show failed with exit code $?"; exit 1; }
+          node scripts/deployment/terraform-runs.cjs plan-summary "$RUNNER_TEMP/plan.json" "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT" "$PLAN_SHA256" >> "$GITHUB_STEP_SUMMARY"
           rm "$RUNNER_TEMP/plan.json"
 
       - name: Upload encrypted plan
+        if: steps.plan.outputs.changes == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: terraform-plan-${{ inputs.environment }}
@@ -108,6 +126,26 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+      - name: Encrypt log
+        if: always()
+        env:
+          TERRAFORM_PLAN_PASSPHRASE: ${{ secrets.TERRAFORM_PLAN_PASSPHRASE }}
+        run: |
+          log="$RUNNER_TEMP/terraform.log"
+          if [ -f "$log" ] && [ -n "$TERRAFORM_PLAN_PASSPHRASE" ]; then
+            openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -pass env:TERRAFORM_PLAN_PASSPHRASE -in "$log" -out "$log.enc"
+          fi
+          rm -f "$log"
+
+      - name: Upload encrypted log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: terraform-plan-log-${{ inputs.environment }}
+          path: ${{ runner.temp }}/terraform.log.enc
+          retention-days: 1
+          if-no-files-found: ignore
+
       - name: Remove plaintext plan
         if: always()
-        run: rm -f _infra/tfplan _infra/terraform.auto.tfvars.json "$RUNNER_TEMP/plan.tgz" "$RUNNER_TEMP/plan.json"
+        run: rm -f _infra/tfplan _infra/terraform.auto.tfvars.json "$RUNNER_TEMP/plan.tgz" "$RUNNER_TEMP/plan.json" "$RUNNER_TEMP/terraform.log"

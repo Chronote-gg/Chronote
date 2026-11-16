@@ -49,17 +49,25 @@ describe("verifyPlanRun", () => {
     status: "completed",
     conclusion: "success",
     head_sha: sha,
+    run_attempt: 1,
     ...overrides,
   });
-  const verify = (run, environment = "production") =>
-    verifyPlanRun(async () => run, {
+  const artifacts = (count = 1) => ({
+    total_count: count,
+    artifacts: Array.from({ length: count }, () => ({
+      name: "terraform-plan-production",
+      expired: false,
+    })),
+  });
+  const verify = (run, environment = "production", found = artifacts()) =>
+    verifyPlanRun(async (path) => (path.includes("/artifacts") ? found : run), {
       repository,
       runId: "42",
       environment,
       sha,
     });
 
-  test("accepts a successful master plan of the same commit", async () => {
+  test("accepts a successful first-attempt master plan of the same commit", async () => {
     await expect(verify(planRun())).resolves.toMatchObject({ id: 42 });
   });
 
@@ -70,12 +78,19 @@ describe("verifyPlanRun", () => {
     ["a running plan", { status: "in_progress", conclusion: null }],
     ["another commit", { head_sha: "b".repeat(40) }],
     ["a fork", { head_repository: { full_name: "fork/Chronote" } }],
+    ["a re-run plan", { run_attempt: 2 }],
   ])("refuses %s", async (_name, overrides) => {
     await expect(verify(planRun(overrides))).rejects.toThrow();
   });
 
   test("refuses a plan made for the other environment", async () => {
     await expect(verify(planRun(), "sandbox")).rejects.toThrow();
+  });
+
+  test("refuses a plan with no changes, which uploads no plan", async () => {
+    await expect(verify(planRun(), "production", artifacts(0))).rejects.toThrow(
+      "The plan has no changes; there is nothing to apply",
+    );
   });
 });
 
@@ -184,8 +199,9 @@ describe("waitForApplyIdle", () => {
 
 describe("planSummary", () => {
   const secret = "SYNTHETIC-SECRET-VALUE";
-  const change = (address, actions) => ({
+  const change = (address, type, actions) => ({
     address,
+    type,
     change: {
       actions,
       before: { value: secret },
@@ -197,16 +213,33 @@ describe("planSummary", () => {
   const plan = {
     variables: { OPENAI_API_KEY: { value: secret } },
     resource_changes: [
-      change("aws_s3_bucket.a", ["create"]),
-      change("aws_iam_policy.b", ["update"]),
-      change("aws_lb.c", ["delete", "create"]),
-      change("aws_lb.d", ["create", "delete"]),
-      change("aws_sns_topic.e", ["delete"]),
-      change("aws_vpc.f", ["no-op"]),
-      change("data.aws_caller_identity.g", ["read"]),
+      change("aws_s3_bucket.a", "aws_s3_bucket", ["create"]),
+      change("aws_iam_policy.b", "aws_iam_policy", ["update"]),
+      change("aws_lb.c", "aws_lb", ["delete", "create"]),
+      change("aws_lb.d", "aws_lb", ["create", "delete"]),
+      change("aws_sns_topic.e", "aws_sns_topic", ["delete"]),
+      change("aws_vpc.f", "aws_vpc", ["no-op"]),
+      change("data.aws_caller_identity.g", "aws_caller_identity", ["read"]),
+      change("aws_kms_key_policy.h", "aws_kms_key_policy", ["update"]),
+      change(
+        "github_repository_environment.i",
+        "github_repository_environment",
+        ["update"],
+      ),
+      change(
+        "github_actions_environment_secret.j",
+        "github_actions_environment_secret",
+        ["create"],
+      ),
+      change("aws_security_group.k", "aws_security_group", ["update"]),
+      change("aws_s3_bucket_policy.l", "aws_s3_bucket_policy", ["update"]),
+      change("aws_secretsmanager_secret.m", "aws_secretsmanager_secret", [
+        "create",
+      ]),
     ],
   };
-  const summary = planSummary(plan, { sha, digest: "d".repeat(64) });
+  const meta = { sha, digest: "d".repeat(64), attempt: "1" };
+  const summary = planSummary(plan, meta);
 
   test("never prints a value from the plan", () => {
     expect(summary).not.toContain(secret);
@@ -215,30 +248,47 @@ describe("planSummary", () => {
 
   test("counts each kind of change and lists every changed address", () => {
     expect(summary).toContain(
-      "1 to add, 1 to change, 2 to replace, 1 to destroy.",
+      "3 to add, 5 to change, 2 to replace, 1 to destroy.",
     );
-    for (const address of [
-      "aws_s3_bucket.a",
-      "aws_iam_policy.b",
-      "aws_lb.c",
-      "aws_sns_topic.e",
-    ])
+    for (const address of ["aws_s3_bucket.a", "aws_iam_policy.b", "aws_lb.c"])
       expect(summary).toContain(`\`${address}\``);
     expect(summary).not.toContain("aws_vpc.f");
     expect(summary).not.toContain("data.aws_caller_identity.g");
   });
 
-  test("calls out replace and destroy before the full list", () => {
-    const warning = summary.indexOf("Replace or destroy");
-    expect(warning).toBeGreaterThan(0);
-    expect(warning).toBeLessThan(summary.indexOf("All changes"));
-    expect(summary).toContain("- **`aws_lb.c` replace**");
-    expect(summary).toContain("- **`aws_sns_topic.e` destroy**");
+  test("flags security-sensitive changes and replace or destroy before the full list", () => {
+    const flagged = summary.slice(0, summary.indexOf("### All changes"));
+    for (const line of [
+      "- **`aws_iam_policy.b` change**",
+      "- **`aws_kms_key_policy.h` change**",
+      "- **`github_repository_environment.i` change**",
+      "- **`github_actions_environment_secret.j` add**",
+      "- **`aws_security_group.k` change**",
+      "- **`aws_s3_bucket_policy.l` change**",
+      "- **`aws_secretsmanager_secret.m` add**",
+      "- **`aws_lb.c` replace**",
+      "- **`aws_sns_topic.e` destroy**",
+    ])
+      expect(flagged).toContain(line);
+    expect(flagged).not.toContain("aws_s3_bucket.a`");
   });
 
-  test("records the commit and the encrypted plan digest", () => {
+  test("records the commit, attempt and encrypted plan digest", () => {
     expect(summary).toContain(`Commit: \`${sha}\``);
-    expect(summary).toContain(`Encrypted plan SHA-256: \`${"d".repeat(64)}\``);
+    expect(summary).toContain("Plan run attempt: 1");
+    expect(summary).toContain(
+      `Encrypted plan SHA-256 (\`plan_sha256\`): \`${"d".repeat(64)}\``,
+    );
+  });
+
+  test("a plan with no changes says so, whether or not resources are listed", () => {
+    for (const empty of [{}, { resource_changes: [] }]) {
+      const text = planSummary(empty, { sha, attempt: "1" });
+      expect(text).toContain(
+        "No changes. Nothing was uploaded and there is nothing to apply.",
+      );
+      expect(text).not.toContain("SHA-256");
+    }
   });
 });
 
@@ -264,16 +314,45 @@ describe("workflow shape", () => {
     expect(scripts(applyJob)).not.toContain("-target");
   });
 
-  test("only the encrypted bundle is uploaded, for one day", () => {
-    const uploads = planJob.steps.filter((s) =>
+  const uploads = (job) =>
+    job.steps.filter((s) =>
       String(s.uses).startsWith("actions/upload-artifact"),
     );
-    expect(uploads).toHaveLength(1);
-    expect(uploads[0].with.path).toBe("${{ runner.temp }}/plan.tgz.enc");
-    expect(uploads[0].with["retention-days"]).toBe(1);
+
+  test("only encrypted files are uploaded, for one day", () => {
+    for (const job of [planJob, applyJob])
+      for (const upload of uploads(job)) {
+        expect(upload.with.path).toMatch(/\.enc$/);
+        expect(upload.with["retention-days"]).toBe(1);
+      }
+    expect(uploads(planJob).map((u) => u.with.path)).toEqual([
+      "${{ runner.temp }}/plan.tgz.enc",
+      "${{ runner.temp }}/terraform.log.enc",
+    ]);
     expect(step(planJob, "Encrypt plan").run).toContain(
       "openssl enc -aes-256-cbc",
     );
+  });
+
+  test("a plan with no changes uploads no plan", () => {
+    for (const name of ["Encrypt plan", "Upload encrypted plan"])
+      expect(step(planJob, name).if).toBe(
+        "steps.plan.outputs.changes == 'true'",
+      );
+    expect(step(planJob, "Plan").run).toContain("-detailed-exitcode");
+  });
+
+  test("Terraform output never reaches the job log", () => {
+    for (const job of [planJob, applyJob]) {
+      expect(job.env.TF_LOG).toBe("");
+      const commands = scripts(job)
+        .split("\n")
+        .filter((line) => /^\s*terraform /.test(line));
+      expect(commands.length).toBeGreaterThan(0);
+      for (const command of commands)
+        expect(command).toMatch(/>>? "\$(log|RUNNER_TEMP\/plan\.json)"/);
+      expect(scripts(job)).not.toMatch(/set -x/);
+    }
   });
 
   test("the summary step writes only the redacted plan summary", () => {
@@ -282,13 +361,12 @@ describe("workflow shape", () => {
       .split("\n")
       .filter((line) => line.includes("GITHUB_STEP_SUMMARY"));
     expect(writes).toEqual([
-      'node scripts/deployment/terraform-runs.cjs plan-summary "$RUNNER_TEMP/plan.json" "$GITHUB_SHA" "$PLAN_SHA256" >> "$GITHUB_STEP_SUMMARY"',
+      'node scripts/deployment/terraform-runs.cjs plan-summary "$RUNNER_TEMP/plan.json" "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT" "$PLAN_SHA256" >> "$GITHUB_STEP_SUMMARY"',
     ]);
     expect(summary).toContain('rm "$RUNNER_TEMP/plan.json"');
-    expect(scripts(planJob)).toContain("-out=tfplan > /dev/null");
   });
 
-  test("apply checks the plan run and production idleness before it decrypts", () => {
+  test("apply checks the plan run, idleness and the digest before it decrypts", () => {
     const names = applyJob.steps.map((s) => s.name);
     const verify = names.indexOf(
       "Verify the plan run is a successful plan of this commit",
@@ -306,15 +384,26 @@ describe("workflow shape", () => {
     expect(step(applyJob, "Download encrypted plan").with["run-id"]).toBe(
       "${{ inputs.plan_run_id }}",
     );
+    const decrypt = step(applyJob, "Verify and decrypt plan").run.split("\n");
+    const check = decrypt.findIndex((line) =>
+      line.includes("sha256sum --check"),
+    );
+    const openssl = decrypt.findIndex((line) =>
+      line.includes("openssl enc -d"),
+    );
+    expect(check).toBeGreaterThanOrEqual(0);
+    expect(check).toBeLessThan(openssl);
+    expect(applyJob.env.PLAN_SHA256).toBe("${{ inputs.plan_sha256 }}");
   });
 
-  test("apply applies the saved plan and has only the two inputs", () => {
+  test("apply applies the saved plan and takes the three reviewed inputs", () => {
     expect(step(applyJob, "Apply the saved plan").run).toContain(
       "apply -input=false -lock-timeout=5m tfplan",
     );
     expect(Object.keys(applyWorkflow.on.workflow_dispatch.inputs)).toEqual([
       "environment",
       "plan_run_id",
+      "plan_sha256",
     ]);
     expect(applyWorkflow.concurrency.group).toBe(
       "chronote-terraform-${{ inputs.environment }}",
