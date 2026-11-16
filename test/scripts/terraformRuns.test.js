@@ -321,3 +321,51 @@ describe("workflow shape", () => {
     );
   });
 });
+
+describe("Terraform role trust and sessions", () => {
+  const read = (path) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+  const workflowName = (file) => parse(read(`.github/workflows/${file}`)).name;
+  const role = read("_infra/production-bootstrap/terraform-role.tf");
+
+  test("only the Plan and Apply workflows may assume the Terraform role", () => {
+    const claim = role.match(
+      /"token\.actions\.githubusercontent\.com:workflow"\s*=\s*\[([^\]]*)\]/,
+    )?.[1];
+    expect(claim).toBeDefined();
+    expect([...claim.matchAll(/"([^"]+)"/g)].map((m) => m[1])).toEqual([
+      workflowName("terraform-apply.yml"),
+      workflowName("terraform-plan.yml"),
+    ]);
+  });
+
+  test("the Plan session is read-only apart from the state lock", () => {
+    const credentials = parse(
+      read(".github/workflows/terraform-plan.yml"),
+    ).jobs.plan.steps.find((s) => s.name === "Configure AWS credentials").with;
+    expect(credentials["managed-session-policies"]).toBe(
+      "arn:aws:iam::aws:policy/ReadOnlyAccess",
+    );
+    const inline = JSON.parse(credentials["inline-session-policy"]);
+    const actions = inline.Statement.flatMap((s) => [s.Action].flat());
+    expect(actions.sort()).toEqual([
+      "dynamodb:DeleteItem",
+      "dynamodb:PutItem",
+      "kms:Decrypt",
+      "secretsmanager:GetSecretValue",
+    ]);
+    const lock = inline.Statement.find((s) =>
+      [s.Action].flat().includes("dynamodb:PutItem"),
+    );
+    expect(lock.Resource).toBe(
+      "arn:aws:dynamodb:*:*:table/meeting-notes-terraform-state-locks",
+    );
+  });
+
+  test("the Apply session is the full role", () => {
+    const credentials = parse(
+      read(".github/workflows/terraform-apply.yml"),
+    ).jobs.apply.steps.find((s) => s.name === "Configure AWS credentials").with;
+    expect(credentials["managed-session-policies"]).toBeUndefined();
+    expect(credentials["inline-session-policy"]).toBeUndefined();
+  });
+});

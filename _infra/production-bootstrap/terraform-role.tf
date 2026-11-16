@@ -14,6 +14,8 @@ resource "aws_iam_role" "production_terraform" {
         "token.actions.githubusercontent.com:repository_id"       = var.github_repository_id
         "token.actions.githubusercontent.com:repository_owner_id" = var.github_owner_id
         "token.actions.githubusercontent.com:ref"                 = "refs/heads/master"
+        # Only these two workflows; deploy jobs in the same environment cannot.
+        "token.actions.githubusercontent.com:workflow" = ["Terraform Apply", "Terraform Plan"]
       } }
     }]
   })
@@ -28,8 +30,9 @@ resource "aws_iam_role" "production_terraform" {
 locals {
   region_account = "us-east-1:${var.production_account_id}"
   iam_arn        = "arn:aws:iam::${var.production_account_id}"
-  # Production and Sandbox share the account, so production writes are bound
-  # by the meeting-notes-prod- name wherever an ARN carries the name.
+  # The role held by an approved Apply is close to account administrator; the
+  # controls are the workflow-pinned OIDC trust, the master ref and the owner's
+  # approval. Names, tags and the inline denies only limit accidents.
   named_resources = [
     "arn:aws:dynamodb:${local.region_account}:table/meeting-notes-prod-*",
     "arn:aws:s3:::meeting-notes-prod-*",
@@ -58,8 +61,11 @@ locals {
     "ec2:*Vpc*", "ec2:*Subnet*", "ec2:*InternetGateway*", "ec2:*Route*", "ec2:*SecurityGroup*", "ec2:*FlowLogs", "ec2:CreateTags", "ec2:DeleteTags",
     "cloudfront:*", "acm:*", "appconfig:*", "aps:*", "grafana:*", "elasticache:*",
     "ce:*CostCategoryDefinition", "ce:TagResource", "ce:UntagResource",
-    "route53:ChangeResourceRecordSets", "ecs:RegisterTaskDefinition", "ecs:DeregisterTaskDefinition",
-    "kms:CreateKey", "kms:PutKeyPolicy", "kms:EnableKeyRotation", "kms:UpdateKeyDescription", "kms:TagResource", "kms:UntagResource",
+    "route53:ChangeResourceRecordSets", "ecs:RegisterTaskDefinition", "ecs:DeregisterTaskDefinition", "kms:CreateKey",
+  ]
+  # The application key carries the provider's default Environment tag.
+  key_actions = [
+    "kms:PutKeyPolicy", "kms:EnableKeyRotation", "kms:UpdateKeyDescription", "kms:TagResource", "kms:UntagResource",
     "kms:CreateGrant", "kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*",
   ]
   iam_write_actions = [
@@ -75,6 +81,7 @@ locals {
       # These ARNs carry generated IDs, not names. Sandbox resources of these
       # types are protected by the inline SandboxResources deny instead.
       { Sid = "GeneratedIdResources", Effect = "Allow", Action = local.generated_id_actions, Resource = "*" },
+      { Sid = "ProductionKeys", Effect = "Allow", Action = local.key_actions, Resource = "arn:aws:kms:${local.region_account}:key/*", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "prod" } } },
       { Sid = "IamWrites", Effect = "Allow", Action = local.iam_write_actions, Resource = concat(local.iam_roles, ["${local.iam_arn}:policy/meeting-notes-prod-*"]) },
       { Sid = "IamAttachments", Effect = "Allow", Action = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"], Resource = local.iam_roles, Condition = { ArnLike = { "iam:PolicyARN" = local.attachable_policies } } },
       { Sid = "ApplicationState", Effect = "Allow", Action = "s3:PutObject", Resource = "arn:aws:s3:::${local.state_bucket}/${local.state_key}" },
@@ -112,6 +119,8 @@ resource "aws_iam_role_policy" "production_terraform" {
     Version = "2012-10-17"
     Statement = [
       { Sid = "OwnIdentity", Effect = "Deny", NotAction = ["iam:Get*", "iam:List*"], Resource = [local.terraform_role_arn, "${local.iam_arn}:policy/meeting-notes-prod-terraform*", "${local.iam_arn}:oidc-provider/*"] },
+      { Sid = "RolesOutsideApplication", Effect = "Deny", Action = ["iam:UpdateAssumeRolePolicy", "iam:PutRolePolicy", "iam:AttachRolePolicy", "iam:PassRole"], NotResource = local.iam_roles },
+      { Sid = "PrivilegedPolicies", Effect = "Deny", Action = ["iam:AttachRolePolicy", "iam:AttachUserPolicy", "iam:AttachGroupPolicy"], Resource = "*", Condition = { ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::aws:policy/AdministratorAccess", "arn:aws:iam::aws:policy/IAMFullAccess", "arn:aws:iam::aws:policy/PowerUserAccess"] } } },
       { Sid = "BootstrapState", Effect = "Deny", Action = ["s3:PutObject", "s3:DeleteObject*"], Resource = "arn:aws:s3:::${local.state_bucket}/meeting-notes-terraform/*-bootstrap/*" },
       # ReadOnlyAccess would otherwise read meeting data, which Terraform never needs.
       { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:Export*", "s3:GetObject*"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-prod-*", "arn:aws:s3:::meeting-notes-prod-*/*"] },

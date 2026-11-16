@@ -176,6 +176,22 @@ run "policy_limits" {
     error_message = "The inline policy holds only the guardrails."
   }
   assert {
+    condition     = jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:workflow"] == ["Terraform Apply", "Terraform Plan"]
+    error_message = "Only the Terraform Plan and Apply workflows may assume the role."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : !anytrue([for a in flatten([s.Action]) : startswith(a, "kms:") && a != "kms:CreateKey"]) || s.Condition == { StringEquals = { "aws:ResourceTag/Environment" = "prod" } }])
+    error_message = "KMS key use and key policy writes reach only keys tagged Environment = prod."
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "RolesOutsideApplication"]) == { Sid = "RolesOutsideApplication", Effect = "Deny", Action = ["iam:UpdateAssumeRolePolicy", "iam:PutRolePolicy", "iam:AttachRolePolicy", "iam:PassRole"], NotResource = ["arn:aws:iam::123456789012:role/meeting-notes-prod-*", "arn:aws:iam::123456789012:role/vpc_flow_logs_role"] }
+    error_message = "Trust, inline policy, attachment and PassRole must be denied for any role outside the application."
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "PrivilegedPolicies"]).Condition.ArnEquals["iam:PolicyARN"] == ["arn:aws:iam::aws:policy/AdministratorAccess", "arn:aws:iam::aws:policy/IAMFullAccess", "arn:aws:iam::aws:policy/PowerUserAccess"]
+    error_message = "Attaching administrator, IAM full or power user access must be denied."
+  }
+  assert {
     condition     = one([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : s if s.Sid == "ApplicationState"]).Resource == "arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/state" && one([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : s if s.Sid == "ApplicationStateLocks"]).Condition["ForAllValues:StringEquals"]["dynamodb:LeadingKeys"] == ["meeting-notes-terraform-state-bucket/meeting-notes-terraform/state", "meeting-notes-terraform-state-bucket/meeting-notes-terraform/state-md5"]
     error_message = "State and lock writes must exclude bootstrap and Sandbox keys."
   }
