@@ -491,16 +491,37 @@ test("a transcript upload failure keeps the chat log", async () => {
   expect(world.current().chatS3Key).toMatch(/chat.json$/);
 });
 
-test("the local directory survives a failed attempt and is removed after completion", async () => {
+// Only the closing worker's first attempt uses the normal loader; every retry
+// loads through the recovery loader from the saved checkpoint.
+test("a failed processing attempt frees the local directory and the retry finishes from the recovery input", async () => {
   const world = setup(processingRow());
   const { directory } = await recordingDirectory();
-  const normal = { source: "normal" as const, localDirectory: directory };
   jest.mocked(getNotes).mockRejectedValueOnce(new Error("Synthetic outage"));
-  await world.finish(loads(finishInput(normal)));
+  await world.finish(
+    loads(finishInput({ source: "normal", localDirectory: directory })),
+  );
   expect(world.current().finish).toMatchObject({ attempts: 1 });
-  expect(await exists(directory)).toBe(true);
-  await world.finish(loads(finishInput(normal)));
+  expect(await exists(directory)).toBe(false);
+  await world.finish(loads(finishInput({ source: "recovery" })));
+  expect(world.current()).toMatchObject({
+    status: "complete",
+    notes: GENERATED_NOTE,
+  });
   expect(world.current().finish).toBeUndefined();
+});
+
+test("an aborted attempt frees the local directory", async () => {
+  const world = setup(processingRow());
+  const { directory } = await recordingDirectory();
+  const external = new AbortController();
+  jest.mocked(getNotes).mockImplementationOnce(async () => {
+    external.abort();
+    throw new Error("Synthetic abort");
+  });
+  await world.finish(
+    loads(finishInput({ source: "normal", localDirectory: directory })),
+    { signal: external.signal },
+  );
   expect(await exists(directory)).toBe(false);
 });
 
