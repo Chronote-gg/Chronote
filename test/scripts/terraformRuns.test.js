@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, test } from "@jest/globals";
 import { parse } from "yaml";
 import {
@@ -301,11 +301,9 @@ describe("workflow shape", () => {
   const step = (job, name) => job.steps.find((s) => s.name === name);
   const scripts = (job) => job.steps.map((s) => s.run ?? "").join("\n");
 
-  test("both jobs run in the chosen environment, on master only", () => {
-    for (const job of [planJob, applyJob]) {
-      expect(job.environment).toBe("${{ inputs.environment }}");
+  test("both jobs run on master only", () => {
+    for (const job of [planJob, applyJob])
       expect(job.steps[0].run).toBe('test "$GITHUB_REF" = refs/heads/master');
-    }
   });
 
   test("the plan is one full plan with no targeting", () => {
@@ -411,50 +409,71 @@ describe("workflow shape", () => {
   });
 });
 
-describe("Terraform role trust and sessions", () => {
+describe("Terraform roles and environments", () => {
   const read = (path) => readFileSync(path, "utf8").replace(/\r\n/g, "\n");
-  const workflowName = (file) => parse(read(`.github/workflows/${file}`)).name;
+  const workflow = (file) => parse(read(`.github/workflows/${file}`));
   const role = read("_infra/production-bootstrap/terraform-role.tf");
+  // Each aws_iam_role block with the environment and workflow its trust pins.
+  const trusts = Object.fromEntries(
+    [
+      ...role.matchAll(
+        /^resource "aws_iam_role" "(\w+)" \{\n([\s\S]*?)\n\}$/gm,
+      ),
+    ].map(([, label, body]) => [
+      label,
+      {
+        environment: body.match(/:environment:([\w-]+)"/)?.[1],
+        workflow: body.match(
+          /githubusercontent\.com:workflow"\s*=\s*"([^"]+)"/,
+        )?.[1],
+      },
+    ]),
+  );
 
-  test("only the Plan and Apply workflows may assume the Terraform role", () => {
-    const claim = role.match(
-      /"token\.actions\.githubusercontent\.com:workflow"\s*=\s*\[([^\]]*)\]/,
-    )?.[1];
-    expect(claim).toBeDefined();
-    expect([...claim.matchAll(/"([^"]+)"/g)].map((m) => m[1])).toEqual([
-      workflowName("terraform-apply.yml"),
-      workflowName("terraform-plan.yml"),
-    ]);
-  });
-
-  test("the Plan session is read-only apart from the state lock", () => {
-    const credentials = parse(
-      read(".github/workflows/terraform-plan.yml"),
-    ).jobs.plan.steps.find((s) => s.name === "Configure AWS credentials").with;
-    expect(credentials["managed-session-policies"]).toBe(
-      "arn:aws:iam::aws:policy/ReadOnlyAccess",
-    );
-    const inline = JSON.parse(credentials["inline-session-policy"]);
-    const actions = inline.Statement.flatMap((s) => [s.Action].flat());
-    expect(actions.sort()).toEqual([
-      "dynamodb:DeleteItem",
-      "dynamodb:PutItem",
-      "kms:Decrypt",
-      "secretsmanager:GetSecretValue",
-    ]);
-    const lock = inline.Statement.find((s) =>
-      [s.Action].flat().includes("dynamodb:PutItem"),
-    );
-    expect(lock.Resource).toBe(
-      "arn:aws:dynamodb:*:*:table/meeting-notes-terraform-state-locks",
+  test("the Apply role trusts only the Apply workflow in its own environment", () => {
+    const apply = workflow("terraform-apply.yml");
+    expect(trusts.production_terraform).toEqual({
+      environment: "production-terraform",
+      workflow: apply.name,
+    });
+    expect(apply.jobs.apply.environment).toBe(
+      "${{ inputs.environment == 'production' && 'production-terraform' || 'sandbox' }}",
     );
   });
 
-  test("the Apply session is the full role", () => {
-    const credentials = parse(
-      read(".github/workflows/terraform-apply.yml"),
-    ).jobs.apply.steps.find((s) => s.name === "Configure AWS credentials").with;
-    expect(credentials["managed-session-policies"]).toBeUndefined();
-    expect(credentials["inline-session-policy"]).toBeUndefined();
+  test("the Plan role trusts only the Plan workflow in production", () => {
+    const plan = workflow("terraform-plan.yml");
+    expect(trusts.production_terraform_plan).toEqual({
+      environment: "production",
+      workflow: plan.name,
+    });
+    expect(plan.jobs.plan.environment).toBe("${{ inputs.environment }}");
+  });
+
+  test("Terraform never manages the Apply environment", () => {
+    for (const name of readdirSync("_infra").filter((n) => n.endsWith(".tf")))
+      expect(read(`_infra/${name}`)).not.toContain("production-terraform");
+  });
+
+  test("neither workflow narrows its role with a session policy", () => {
+    for (const [file, job] of [
+      ["terraform-plan.yml", "plan"],
+      ["terraform-apply.yml", "apply"],
+    ]) {
+      const credentials = workflow(file).jobs[job].steps.find(
+        (s) => s.name === "Configure AWS credentials",
+      ).with;
+      expect(credentials["managed-session-policies"]).toBeUndefined();
+      expect(credentials["inline-session-policy"]).toBeUndefined();
+    }
+  });
+
+  test("every decrypt pipeline fails when openssl fails", () => {
+    const steps = [
+      ...workflow("terraform-apply.yml").jobs.apply.steps,
+      ...workflow("terraform-plan.yml").jobs.plan.steps,
+    ].filter((s) => /openssl enc -d[^\n]*\|/.test(s.run ?? ""));
+    expect(steps.length).toBeGreaterThan(0);
+    for (const step of steps) expect(step.run).toMatch(/^set -o pipefail$/m);
   });
 });

@@ -37,8 +37,10 @@ jobs:
     name: Terraform Apply
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    # The environment's required reviewer approves every Apply before it starts.
-    environment: ${{ inputs.environment }}
+    # production-terraform is made by hand, never by Terraform, with the owner
+    # as its only reviewer, so a plan can never weaken the gate. It is the only
+    # environment the production Apply role trusts. Sandbox applies in sandbox.
+    environment: ${{ inputs.environment == 'production' && 'production-terraform' || 'sandbox' }}
     env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
@@ -79,6 +81,7 @@ jobs:
         env:
           TERRAFORM_PLAN_PASSPHRASE: ${{ secrets.TERRAFORM_PLAN_PASSPHRASE }}
         run: |
+          set -o pipefail
           [[ "$PLAN_SHA256" =~ ^[0-9a-f]{64}$ ]]
           echo "$PLAN_SHA256  $RUNNER_TEMP/plan/plan.tgz.enc" | sha256sum --check --quiet
           openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass env:TERRAFORM_PLAN_PASSPHRASE -in "$RUNNER_TEMP/plan/plan.tgz.enc" | tar -xz -C _infra

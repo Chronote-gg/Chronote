@@ -55,8 +55,8 @@ run "enabled" {
     enable_production_terraform_role = true
   }
   assert {
-    condition     = length(aws_s3_bucket.private_evidence) + length(aws_s3_bucket_public_access_block.private_evidence) + length(aws_s3_bucket_ownership_controls.private_evidence) + length(aws_s3_bucket_versioning.private_evidence) + length(aws_s3_bucket_server_side_encryption_configuration.private_evidence) + length(aws_s3_bucket_policy.private_evidence) + length(aws_iam_role.production_terraform) + length(aws_iam_role_policy.production_terraform) + length(aws_iam_role_policy_attachment.production_terraform_read_only) + length(aws_iam_policy.production_terraform_delivery) + length(aws_iam_role_policy_attachment.production_terraform_delivery) == 11
-    error_message = "Bootstrap owns the six evidence bucket resources and the role at their existing addresses, plus the role's three policies."
+    condition     = length(aws_s3_bucket.private_evidence) + length(aws_s3_bucket_public_access_block.private_evidence) + length(aws_s3_bucket_ownership_controls.private_evidence) + length(aws_s3_bucket_versioning.private_evidence) + length(aws_s3_bucket_server_side_encryption_configuration.private_evidence) + length(aws_s3_bucket_policy.private_evidence) + length(aws_iam_role.production_terraform) + length(aws_iam_role_policy.production_terraform) + length(aws_iam_role_policy_attachment.production_terraform_read_only) + length(aws_iam_policy.production_terraform_delivery) + length(aws_iam_role_policy_attachment.production_terraform_delivery) + length(aws_iam_role.production_terraform_plan) + length(aws_iam_role_policy.production_terraform_plan) + length(aws_iam_role_policy_attachment.production_terraform_plan_read_only) == 14
+    error_message = "Bootstrap owns the six evidence bucket resources and the role at their existing addresses, plus the Apply role's three policies and the Plan role with its two."
   }
   assert {
     condition     = aws_s3_bucket.private_evidence[0].force_destroy == false && aws_s3_bucket_public_access_block.private_evidence[0].block_public_acls && aws_s3_bucket_public_access_block.private_evidence[0].ignore_public_acls && aws_s3_bucket_public_access_block.private_evidence[0].block_public_policy && aws_s3_bucket_public_access_block.private_evidence[0].restrict_public_buckets && one(aws_s3_bucket_ownership_controls.private_evidence[0].rule).object_ownership == "BucketOwnerEnforced" && one(aws_s3_bucket_versioning.private_evidence[0].versioning_configuration).status == "Enabled"
@@ -71,8 +71,8 @@ run "enabled" {
     error_message = "The role and its inline policy keep their installed names, so neither is replaced."
   }
   assert {
-    condition     = jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:Chronote-gg/Chronote:environment:production" && jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master" && jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_id"] == var.github_repository_id && jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_owner_id"] == var.github_owner_id && aws_iam_role.production_terraform[0].max_session_duration == 3600
-    error_message = "Trust must bind production, master and both immutable IDs for one hour."
+    condition     = jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:Chronote-gg/Chronote:environment:production-terraform" && jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master" && jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_id"] == var.github_repository_id && jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_owner_id"] == var.github_owner_id && aws_iam_role.production_terraform[0].max_session_duration == 3600
+    error_message = "Apply trust must bind production-terraform, master and both immutable IDs for one hour."
   }
 }
 run "foreign_account" {
@@ -152,16 +152,16 @@ run "policy_limits" {
     error_message = "IAM writes, PassRole included, reach only meeting-notes-prod- roles and policies and the legacy flow log role, never a wildcard resource."
   }
   assert {
-    condition     = alltrue([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : s.Sid == "GeneratedIdResources" && !anytrue([for a in s.Action : startswith(a, "iam:") || startswith(a, "s3:") || startswith(a, "dynamodb:") || startswith(a, "sts:")]) if s.Resource == "*"])
-    error_message = "Only the generated-ID statement may use a wildcard resource, and it grants no IAM, S3, DynamoDB or STS action."
+    condition     = alltrue([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : contains(["GeneratedIdResources", "ProductionKeyCreation"], s.Sid) && !anytrue([for a in s.Action : startswith(a, "iam:") || startswith(a, "s3:") || startswith(a, "dynamodb:") || startswith(a, "sts:")]) if s.Resource == "*"])
+    error_message = "Only the generated-ID and tag-bound key creation statements may use a wildcard resource, and they grant no IAM, S3, DynamoDB or STS action."
   }
   assert {
     condition     = one([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : s if s.Sid == "IamAttachments"]).Condition.ArnLike["iam:PolicyARN"] == ["arn:aws:iam::123456789012:policy/meeting-notes-prod-*", "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy", "arn:aws:iam::aws:policy/service-role/AmazonGrafanaCloudWatchAccess", "arn:aws:iam::aws:policy/AmazonPrometheusQueryAccess"]
     error_message = "Roles may be given only application policies and the three AWS managed policies that _infra uses."
   }
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "OwnIdentity"]) == { Sid = "OwnIdentity", Effect = "Deny", NotAction = ["iam:Get*", "iam:List*"], Resource = ["arn:aws:iam::123456789012:role/meeting-notes-prod-github-terraform", "arn:aws:iam::123456789012:policy/meeting-notes-prod-terraform*", "arn:aws:iam::123456789012:oidc-provider/*"] }
-    error_message = "The role must be denied changing itself, its policies and the GitHub OIDC provider."
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "OwnIdentity"]) == { Sid = "OwnIdentity", Effect = "Deny", NotAction = ["iam:Get*", "iam:List*"], Resource = ["arn:aws:iam::123456789012:role/meeting-notes-prod-github-terraform*", "arn:aws:iam::123456789012:policy/meeting-notes-prod-terraform*", "arn:aws:iam::123456789012:oidc-provider/*"] }
+    error_message = "The Apply role must be denied changing itself, the Plan role, their policies and the GitHub OIDC provider."
   }
   assert {
     condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s if s.Sid == "BootstrapState"]) == { Sid = "BootstrapState", Effect = "Deny", Action = ["s3:PutObject", "s3:DeleteObject*"], Resource = "arn:aws:s3:::meeting-notes-terraform-state-bucket/meeting-notes-terraform/*-bootstrap/*" }
@@ -176,11 +176,27 @@ run "policy_limits" {
     error_message = "The inline policy holds only the guardrails."
   }
   assert {
-    condition     = jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:workflow"] == ["Terraform Apply", "Terraform Plan"]
-    error_message = "Only the Terraform Plan and Apply workflows may assume the role."
+    condition     = jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:Chronote-gg/Chronote:environment:production-terraform" && jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:workflow"] == "Terraform Apply" && jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master"
+    error_message = "Only the Terraform Apply workflow, in the hand-made production-terraform environment on master, may assume the Apply role."
   }
   assert {
-    condition     = alltrue([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : !anytrue([for a in flatten([s.Action]) : startswith(a, "kms:") && a != "kms:CreateKey"]) || s.Condition == { StringEquals = { "aws:ResourceTag/Environment" = "prod" } }])
+    condition     = aws_iam_role.production_terraform_plan[0].name == "meeting-notes-prod-github-terraform-plan" && jsondecode(aws_iam_role.production_terraform_plan[0].assume_role_policy).Statement[0].Condition.StringEquals == { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com", "token.actions.githubusercontent.com:sub" = "repo:Chronote-gg/Chronote:environment:production", "token.actions.githubusercontent.com:repository_id" = var.github_repository_id, "token.actions.githubusercontent.com:repository_owner_id" = var.github_owner_id, "token.actions.githubusercontent.com:ref" = "refs/heads/master", "token.actions.githubusercontent.com:workflow" = "Terraform Plan" }
+    error_message = "Only the Terraform Plan workflow, in production on master, may assume the Plan role."
+  }
+  assert {
+    condition     = aws_iam_role_policy_attachment.production_terraform_plan_read_only[0].policy_arn == "arn:aws:iam::aws:policy/ReadOnlyAccess" && aws_iam_role_policy_attachment.production_terraform_plan_read_only[0].role == "meeting-notes-prod-github-terraform-plan"
+    error_message = "The Plan role reads through ReadOnlyAccess."
+  }
+  assert {
+    condition     = toset(flatten([for s in jsondecode(aws_iam_role_policy.production_terraform_plan[0].policy).Statement : s.Action if s.Effect == "Allow"])) == toset(["dynamodb:PutItem", "dynamodb:DeleteItem", "secretsmanager:GetSecretValue", "kms:Decrypt"]) && one([for s in jsondecode(aws_iam_role_policy.production_terraform_plan[0].policy).Statement : s.Sid if s.Effect == "Deny"]) == "CustomerData"
+    error_message = "Beyond ReadOnlyAccess the Plan role may only take the state lock and read secrets a refresh needs, and is denied customer data."
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : s if s.Sid == "ProductionKeyCreation"]) == { Sid = "ProductionKeyCreation", Effect = "Allow", Action = ["kms:CreateKey", "kms:TagResource"], Resource = "*", Condition = { StringEquals = { "aws:RequestTag/Environment" = "prod" } } }
+    error_message = "A KMS key may be created only with the production Environment tag in the request."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : !anytrue([for a in flatten([s.Action]) : startswith(a, "kms:")]) || s.Sid == "ProductionKeyCreation" || s.Condition == { StringEquals = { "aws:ResourceTag/Environment" = "prod" } }])
     error_message = "KMS key use and key policy writes reach only keys tagged Environment = prod."
   }
   assert {

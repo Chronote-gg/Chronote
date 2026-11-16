@@ -53,10 +53,6 @@ jobs:
           role-duration-seconds: 3600
           unset-current-credentials: true
           mask-aws-account-id: true
-          # Plan holds read-only access plus the state lock and secret reads a
-          # refresh needs; only the approved Apply job holds the role's writes.
-          managed-session-policies: arn:aws:iam::aws:policy/ReadOnlyAccess
-          inline-session-policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["dynamodb:PutItem","dynamodb:DeleteItem"],"Resource":"arn:aws:dynamodb:*:*:table/meeting-notes-terraform-state-locks"},{"Effect":"Allow","Action":"secretsmanager:GetSecretValue","Resource":"arn:aws:secretsmanager:*:*:secret:meeting-notes-*"},{"Effect":"Allow","Action":"kms:Decrypt","Resource":"*","Condition":{"StringLike":{"kms:ViaService":"secretsmanager.*.amazonaws.com"}}}]}'
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
