@@ -547,10 +547,12 @@ separate `site-delivery` scope below, not this one. GitHub variables such as `PR
 again on Apply. It requires the existing key and HTTPS listener as no-ops, allows
 create or update only at those addresses, and refuses replacements, deletes, moves
 and imports. Both new roles must trust only the in-account GitHub provider for the
-`production` and `production-deploy` environment subjects. The scope also creates
-the `production-deploy` GitHub environment (no reviewer, no admin bypass, `master`
-only) and its Terraform-managed deploy variables, built from stable names so they
-read no serving service or distribution; see `docs/deployment.md`. The five policy documents may not grant `*`,
+`production` and `production-deploy` environment subjects, the `master` ref and the
+`Meeting Notes Bot Deploy` workflow. The scope also creates the `production-deploy`
+GitHub environment (no reviewer, no admin bypass, `master` only) and the variables
+Terraform writes to `production`, with the same values (except the static
+`AWS_ACCESS_KEY_ID`), built from names and locals so they read no serving service,
+task definition, log group, repository or distribution; see `docs/deployment.md`. The five policy documents may not grant `*`,
 `iam:*` or `sts:*`, use NotAction or NotResource, or pair `Resource: "*"` with
 anything but Describe or List actions, registry login and the ECS Exec channels.
 Apply passes the account from the private storage binding; the CLI takes it as its
