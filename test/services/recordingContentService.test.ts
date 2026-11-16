@@ -36,6 +36,7 @@ import {
   savedRecordingSettingsSchema,
 } from "../../src/types/recordingContent";
 import type { CheckpointArtifactInput } from "../../src/types/recordingCheckpoint";
+import { z } from "zod";
 
 test("completedTranscriptionCheckpointSurvivesWithoutFinalization", async () => {
   const { meeting, artifacts } = await fixture();
@@ -92,26 +93,144 @@ test("later model/context changes cannot rewrite original generation settings", 
   ).toThrow();
 });
 
-test("legacy recording settings default speech detection off and language to en", async () => {
+// The removed fields as the pre-simplification worker required them
+// (origin/master before the simplification, src/types/recordingContent.ts).
+const preSimplificationModel = z
+  .object({
+    model: z.string().min(1),
+    provider: z.literal("openai"),
+    params: z.object({}).passthrough(),
+  })
+  .strict();
+const preSimplificationFinalPass = z
+  .object({
+    maxSnippetMilliseconds: z.number().int().min(1).max(7_200_000),
+    chunkSeconds: z.number().int().min(1).max(7200),
+    maxRequestBytes: z
+      .number()
+      .int()
+      .min(1)
+      .max(25 * 1024 * 1024),
+    targetMaxChunkBytes: z
+      .number()
+      .int()
+      .min(1)
+      .max(25 * 1024 * 1024),
+    segmentBatchMaxChars: z.number().int().min(1).max(1_000_000),
+    minConfidence: z.number().min(0).max(1),
+    maxDropRatio: z.number().min(0).max(1),
+    maxChangeRatio: z.number().min(0).max(1),
+    previousTailChars: z.number().int().min(0).max(1_000_000),
+    minChunkSeconds: z.number().int().min(1).max(7200),
+    estimatedMp3BytesPerSecond: z
+      .number()
+      .int()
+      .min(1)
+      .max(25 * 1024 * 1024),
+    repeatWindowSeconds: z.number().int().min(1).max(7200),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.minChunkSeconds <= value.chunkSeconds &&
+      value.targetMaxChunkBytes <= value.maxRequestBytes &&
+      value.minChunkSeconds * value.estimatedMp3BytesPerSecond <=
+        value.targetMaxChunkBytes,
+  );
+const preSimplificationSettings = z.object({
+  processing: z.object({
+    cleanupMinimumRetainedLineRatio: z.number(),
+    finalPass: preSimplificationFinalPass,
+  }),
+  models: z.object({ transcriptionCoalesce: preSimplificationModel }),
+  transcription: z.object({
+    language: z.literal("auto"),
+    promptEchoEnabled: z.literal(false),
+    voteEnabled: z.literal(false),
+    finalPassEnabled: z.literal(false),
+  }),
+  dictionary: z.object({ maxCharsTranscription: z.number() }),
+});
+const preSimplificationPrompts = z.object({
+  transcription: z.object({
+    availability: z.literal("available"),
+    value: z.object({ type: z.literal("text"), template: z.literal("") }),
+  }),
+});
+const preSimplificationProcessing = z.object({
+  finalPass: z.literal("disabled"),
+});
+
+test("new recordings stay finishable by a pre-simplification worker", async () => {
+  const { meeting, artifacts } = await fixture();
+  startRecordingContentCheckpoint(meeting);
+  await meeting.recordingContentTask;
+  const context = generationContextSchema.parse(
+    JSON.parse(Buffer.from(artifacts.at(-1)!.bytes).toString()),
+  );
+  if (context.settings.availability !== "available")
+    throw new Error("Original recording settings unavailable");
+  preSimplificationSettings.parse(context.settings.value);
+  preSimplificationPrompts.parse(context.prompts);
+  meeting.audioData.audioFiles.push({
+    userId: "speaker",
+    timestamp: 2000,
+    transcript: "Usable generated speech",
+    processing: false,
+    audioOnlyProcessing: false,
+  });
+  checkpointCompletedTranscription(meeting, {
+    cleanup: "disabled",
+    finalText: "Usable generated speech",
+  });
+  const transcript = completedTranscriptionSchema.parse(
+    JSON.parse(Buffer.from(artifacts.at(-1)!.bytes).toString()),
+  );
+  preSimplificationProcessing.parse(transcript.processing);
+});
+
+test("older recording shapes still parse", async () => {
   const { meeting, artifacts } = await fixture();
   startRecordingContentCheckpoint(meeting);
   await meeting.recordingContentTask;
   const payload = generationContextSchema.parse(
     JSON.parse(Buffer.from(artifacts.at(-1)!.bytes).toString()),
   );
-  expect(payload.settings.availability).toBe("available");
   if (payload.settings.availability !== "available")
     throw new Error("Original recording settings unavailable");
-  const { speechDetectionMode, language, ...legacyTranscription } =
-    payload.settings.value.transcription;
+  const saved = payload.settings.value;
+  const { speechDetectionMode, ...withoutMode } = saved.transcription;
   expect(speechDetectionMode).toBe("off");
-  expect(language).toBe("en");
   const legacySettings = savedRecordingSettingsSchema.parse({
-    ...payload.settings.value,
-    transcription: legacyTranscription,
+    ...saved,
+    models: { ...saved.models, transcriptionCoalesce: saved.models.notes },
+    processing: {
+      ...saved.processing,
+      finalPass: { chunkSeconds: 300, repeatWindowSeconds: 180 },
+    },
+    transcription: {
+      ...withoutMode,
+      language: "en",
+      promptEchoEnabled: true,
+      voteEnabled: true,
+      finalPassEnabled: true,
+    },
   });
   expect(legacySettings.transcription.speechDetectionMode).toBe("off");
-  expect(legacySettings.transcription.language).toBe("en");
+  expect(
+    completedTranscriptionSchema.parse({
+      schemaVersion: 1,
+      kind: "completed_transcription",
+      capture: payload.capture,
+      capturedAt: payload.capturedAt,
+      processing: {
+        finalPass: "acknowledged",
+        cleanup: "disabled",
+        finalText: "Saved before the simplification.",
+      },
+      entries: [],
+    }).processing?.finalText,
+  ).toBe("Saved before the simplification.");
 });
 
 test("disabled generation does not fetch unused templates", async () => {
@@ -270,16 +389,15 @@ test("snapshot settlement waits for every real lookup even when context fails fi
     .mockRejectedValueOnce(new Error("generated context unavailable"));
   let complete!: () => void;
   jest.mocked(snapshotRecordingPrompt).mockImplementationOnce(
-    (name, type, label) =>
+    (name, label) =>
       new Promise((resolve) => {
-        expect(type).toBe("text");
         complete = () =>
           resolve({
             name,
-            type: "text",
+            type: "chat",
             label,
             version: 1,
-            template: "{{transcript}}",
+            template: [{ role: "user", content: "{{transcript}}" }],
           });
       }),
   );
@@ -358,9 +476,7 @@ test.each([false, true])(
       captureRecordingTranscriptScope(meeting, meeting.audioData.audioFiles);
     checkpointCompletedTranscription(
       meeting,
-      finalized
-        ? { finalPass: "acknowledged", cleanup: "disabled", finalText: "" }
-        : undefined,
+      finalized ? { cleanup: "disabled", finalText: "" } : undefined,
     );
     const payload = completedTranscriptionSchema.parse(
       JSON.parse(Buffer.from(artifacts.at(-1)!.bytes).toString()),
@@ -369,7 +485,7 @@ test.each([false, true])(
     expect(payload.omitted).toEqual(omitted);
     if (finalized)
       expect(payload.processing).toEqual({
-        finalPass: "acknowledged",
+        finalPass: "disabled",
         cleanup: "disabled",
         finalText: "",
         correspondence: omitted,
@@ -404,7 +520,7 @@ test("failed finalization keeps immutable pre-pass baseline and sole late text e
   meeting.audioData.audioFiles.push(baseline);
   checkpointCompletedTranscription(meeting);
   guardRecordingFinalization(meeting);
-  Object.assign(baseline, { finalPassTranscript: "Mutated finalized words" });
+  Object.assign(baseline, { transcript: "Mutated finalized words" });
   const before = artifacts.length;
   checkpointCompletedTranscription(meeting);
   expect(artifacts).toHaveLength(before);
@@ -424,7 +540,7 @@ test("failed finalization keeps immutable pre-pass baseline and sole late text e
     "Sole late TTS text",
   ]);
   expect(lastTranscript(artifacts).processing).toBeUndefined();
-  Object.assign(late, { finalPassTranscript: "Later mutable output" });
+  Object.assign(late, { transcript: "Later mutable output" });
   checkpointCompletedTranscription(meeting);
   expect(lastTranscript(artifacts).entries.map((entry) => entry.text)).toEqual([
     "Original pre-pass words",
@@ -480,13 +596,12 @@ test.each(["pcm", "text_only"] as const)(
       audioOnlyProcessing: false,
     });
     checkpointCompletedTranscription(meeting, {
-      finalPass: "acknowledged",
       cleanup: "acknowledged",
       finalText: "  exact aggregate\n",
     });
     const result = lastTranscript(artifacts);
     expect(result.processing).toEqual({
-      finalPass: "acknowledged",
+      finalPass: "disabled",
       cleanup: "acknowledged",
       finalText: "  exact aggregate\n",
       correspondence: first.transcriptCorrespondence,
@@ -746,7 +861,6 @@ test("actual compile freezes selected membership before asynchronous cleanup", a
   const finalText = await compiled;
   checkpointCompletedTranscription(meeting, {
     finalText,
-    finalPass: "disabled",
     cleanup: "acknowledged",
   });
   expect(finalText).not.toContain("Outside held cleanup");

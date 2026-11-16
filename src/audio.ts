@@ -14,7 +14,6 @@ import {
   getOrCreateAudioFileData,
   runFastTranscription,
   canReuseFastTranscript,
-  coalesceSnippetTranscription,
   appendSnippetPcm,
 } from "./services/audioSnippetService";
 import {
@@ -402,14 +401,6 @@ export function startProcessingSnippet(
                   }),
                 ).catch(() => {});
               }
-
-              await coalesceSnippetTranscription(
-                meeting,
-                snippet,
-                audioFileData,
-                inputCorrespondence,
-                transcription,
-              );
             })
             .catch((error) => {
               console.error(

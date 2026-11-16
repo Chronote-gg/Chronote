@@ -3,23 +3,12 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import type { AudioFileData } from "../types/audio";
 import type { RecoveryContent, RecoveryReader } from "./meetingRecoveryContent";
-import {
-  InvalidRecoveryContent,
-  transcriptionInput,
-} from "./meetingRecoveryContent";
+import { InvalidRecoveryContent } from "./meetingRecoveryContent";
 import { compileSavedChatPrompt } from "./savedRecordingPrompt";
 import {
   cleanupContentTranscription,
   retainCleanupTranscript,
 } from "./transcriptionCleanupService";
-import type { TranscriptionContentInput } from "./transcriptionService";
-import {
-  runContentTranscriptionFinalPass,
-  type FinalPassContent,
-} from "./transcriptionFinalPassService";
-import { renderMixedPcmTracks } from "./mixedPcmService";
-import { ensureMeetingTempDir } from "./tempFileService";
-import type { RecoveryArtifactScope } from "./recoveryArtifactScope";
 import { resolveAudioFileText } from "../utils/audioTranscript";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 import { formatParticipantLabel } from "../utils/participants";
@@ -72,93 +61,6 @@ function transcriptionVariables(content: RecoveryContent) {
     events: context.events,
     channelNames: context.channelNames,
   };
-}
-function completeVerifiedAudio(content: RecoveryContent) {
-  return (
-    content.manifest.captureState.kind === "complete" &&
-    !content.context.captureIncomplete &&
-    content.missing.length === 0
-  );
-}
-async function originalFinalPass(
-  content: RecoveryContent,
-  reader: RecoveryReader,
-  files: AudioFileData[],
-  signal: AbortSignal,
-  effect: TranscriptionContentInput["effect"],
-  artifacts?: RecoveryArtifactScope,
-) {
-  const settings = originalSettings(content);
-  const saved = content.context.prompts.finalPass;
-  if (!settings.processing || saved?.availability !== "available")
-    throw new InvalidRecoveryContent(
-      "Original finalized-pass inputs unavailable",
-    );
-  const variables = transcriptionVariables(content);
-  const transcription = transcriptionInput(content.context, signal, effect);
-  const startedAt = content.manifest.capture.captureStartedAt;
-  if (!startedAt)
-    throw new InvalidRecoveryContent("Finalized capture start unavailable");
-  const input: FinalPassContent = {
-    meetingId: content.manifest.capture.meetingId,
-    creator: { id: content.context.creatorId },
-    guild: { id: content.manifest.capture.guildId },
-    voiceChannel: { id: content.manifest.capture.channelId },
-    startTime: new Date(startedAt),
-    participants: new Map(content.context.participants.map((p) => [p.id, p])),
-    audioData: { audioFiles: files },
-    signal,
-    effect,
-    enabled: true,
-    settings: settings.processing.finalPass,
-    transcriptionModel: settings.models.transcription.model,
-    transcriptionLanguage: settings.transcription.language,
-    reconcileModel: settings.models.transcriptionCoalesce,
-    prompt: transcription.prompt,
-    finalPassPrompt: async (request) => ({
-      ...compileSavedChatPrompt(saved.value, {
-        ...variables,
-        chunkIndex: String(request.chunkIndex),
-        chunkCount: String(request.chunkCount),
-        chunkTranscript: request.chunkTranscript,
-        previousChunkTail: request.previousChunkTail.trim() || "None.",
-        chunkLogprobSummary: request.chunkLogprobSummary,
-        baselineSegmentsBlock: request.baselineSegments
-          .map(
-            (segment) =>
-              `[${segment.segmentId}] [${segment.speaker} @ ${segment.startedAt}] ${segment.text}`,
-          )
-          .join("\n"),
-      }),
-      source: "langfuse",
-    }),
-  };
-  const base = artifacts?.directory ?? (await ensureMeetingTempDir(input));
-  const directory = await fs.mkdtemp(path.join(base, "recovery-final-pass-"));
-  try {
-    const tracks = await writeVerifiedTracks(
-      content,
-      reader,
-      directory,
-      signal,
-    );
-    if (!tracks.length)
-      throw new InvalidRecoveryContent(
-        "Complete finalized-pass audio unavailable",
-      );
-    const mixedFile = path.join(directory, "mixed.mp3");
-    const mixed = await renderMixedPcmTracks(tracks, mixedFile, signal);
-    if (!mixed) throw new Error("Recovery audio rendering failed");
-    return await runContentTranscriptionFinalPass(
-      input,
-      { audioFilePath: mixed },
-      { ensureTempDir: async () => directory },
-    );
-  } finally {
-    // A recovery scope removes its whole directory; a leftover here is the sweep's.
-    if (!artifacts)
-      await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
-  }
 }
 async function writePcmInterval(
   handle: import("node:fs/promises").FileHandle,
@@ -262,32 +164,7 @@ async function writeTrackIntervals(
   if (cursor !== bytes.byteLength)
     throw new InvalidRecoveryContent("Finalized PCM coverage size mismatch");
 }
-type FinalPassOutcome =
-  "acknowledged" | "fallback" | "disabled" | "not_applicable";
 type CleanupOutcome = "acknowledged" | "fallback" | "disabled";
-
-async function applyOriginalFinalPass(
-  content: RecoveryContent,
-  reader: RecoveryReader,
-  files: AudioFileData[],
-  signal: AbortSignal,
-  effect: TranscriptionContentInput["effect"],
-  runFinalPass: boolean,
-  artifacts?: RecoveryArtifactScope,
-): Promise<FinalPassOutcome> {
-  if (!originalSettings(content).transcription.finalPassEnabled)
-    return "disabled";
-  if (!runFinalPass || !completeVerifiedAudio(content)) return "not_applicable";
-  const result = await originalFinalPass(
-    content,
-    reader,
-    files,
-    signal,
-    effect,
-    artifacts,
-  );
-  return result.fallbackApplied ? "fallback" : "acknowledged";
-}
 
 /**
  * Cleans a transcript with the meeting's saved cleanup prompt, model and
@@ -346,28 +223,15 @@ export async function cleanupWithSavedSettings(
 
 export async function processRecoveryTranscript(
   content: RecoveryContent,
-  reader: RecoveryReader,
   files: AudioFileData[],
   signal: AbortSignal,
-  effect: TranscriptionContentInput["effect"],
-  runFinalPass: boolean,
-  artifacts?: RecoveryArtifactScope,
 ) {
   if (!files.length) return "";
-  const finalPass = await applyOriginalFinalPass(
-    content,
-    reader,
-    files,
-    signal,
-    effect,
-    runFinalPass,
-    artifacts,
-  );
   const { finalText, cleanup } = await cleanupWithSavedSettings(
     content,
     formattedTranscript(content, files),
     signal,
   );
-  content.processing = { finalPass, cleanup, finalText };
+  content.processing = { cleanup, finalText };
   return finalText;
 }

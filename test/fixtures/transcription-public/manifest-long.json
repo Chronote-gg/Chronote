@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "name": "public-transcription-manifest-long",
+  "prompt": "<glossary>(do not include in transcript):\nServer Name: Lantern Hollow Guild\nChannel: Story Circle\nServer Description: Lantern Hollow is a reading club for Victorian art criticism and classic children's fantasy. Members meet every week to read chapters aloud and discuss them. Newcomers are welcome to listen before joining in.\nAttendees: Marigold, Thaddeus, Wren\nBot Names: Chronote\nDictionary terms:\n- Quilter\n- Linnell\n- Leighton\n- Ruskin\n- Kaliko\n- Ruggedo\n- Polychrome\n- Shaggy\n- Betsy\n- Brion\n- Irolg\n- Brandd\n- Lantern Hollow\n- Story Circle\n- Bramblewick\n- Fennimore Press\n- Tuppence Reading List\n- Moonquill\n- Gallery Night\n- Inkwell Award\nMeeting Context: Weekly read-aloud session and chapter discussion\nTranscript instruction: Do not include any glossary text in the transcript.\n</glossary>\n",
+  "cases": [
+    {
+      "id": "long-141231-0017-0024",
+      "file": "long-141231-0017-0024.ogg",
+      "sha256": "42f59c7d3021505879845f506626d405753751efeb71c2d8849c58b765017bff",
+      "split": "holdout",
+      "tags": ["speech", "long-segment"],
+      "label": {
+        "kind": "speech",
+        "transcript": "He asked the handler who was kneading his aching muscles A red haired mountain of a man with an apparently inexhaustible store of energy There could be little art in this last and final round of fencing Just thrust and parry and victory to the stronger Every man who entered the twenties had his own training tricks There appeared to be an immediate association with the death trauma as if the two were inextricably linked into one The strength that enables someone in a trance to hold his body stiff and unsupported except at two points the head and heels This is physically impossible when conscious",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0017..0024 joined with 0.6 s silence (CC BY 4.0)"
+      }
+    },
+    {
+      "id": "part-141231-0017",
+      "file": "part-141231-0017.ogg",
+      "sha256": "85fbb9034de02b40a55cb5a4a23c3671b30329d1ecaa1e748c8448728959b079",
+      "split": "holdout",
+      "tags": ["speech", "long-segment-part"],
+      "label": {
+        "kind": "speech",
+        "transcript": "He asked the handler who was kneading his aching muscles",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0017 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "part-141231-0018",
+      "file": "part-141231-0018.ogg",
+      "sha256": "1d316ec569d114fc523e4594425b34d70c0e561086a8242e2ec738b4119aab1b",
+      "split": "holdout",
+      "tags": ["speech", "long-segment-part"],
+      "label": {
+        "kind": "speech",
+        "transcript": "A red haired mountain of a man with an apparently inexhaustible store of energy",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0018 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "part-141231-0019",
+      "file": "part-141231-0019.ogg",
+      "sha256": "50e5f0a871c53b750258372c68714d7f306eb3fa1dcf07d0128c68bade65e33f",
+      "split": "holdout",
+      "tags": ["speech", "long-segment-part"],
+      "label": {
+        "kind": "speech",
+        "transcript": "There could be little art in this last and final round of fencing",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0019 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "part-141231-0020",
+      "file": "part-141231-0020.ogg",
+      "sha256": "2c96bf4c13e02adc827b874090314697431a42c2ff0a703fe0bb537ae3b88427",
+      "split": "holdout",
+      "tags": ["speech", "long-segment-part"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Just thrust and parry and victory to the stronger",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0020 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "part-141231-0021",
+      "file": "part-141231-0021.ogg",
+      "sha256": "9c2eeffed0042830ea29b6021dafcee5e3f997e82960d12fd4636520ebfdfe9a",
+      "split": "holdout",
+      "tags": ["speech", "long-segment-part"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Every man who entered the twenties had his own training tricks",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0021 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "part-141231-0022",
+      "file": "part-141231-0022.ogg",
+      "sha256": "acd3997f3dfcb475cd2419cb8a62981021523e97772eb9d993c687c97858b8a4",
+      "split": "holdout",
+      "tags": ["speech", "long-segment-part"],
+      "label": {
+        "kind": "speech",
+        "transcript": "There appeared to be an immediate association with the death trauma as if the two were inextricably linked into one",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0022 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "part-141231-0023",
+      "file": "part-141231-0023.ogg",
+      "sha256": "36246cbb392be55b2719b75e62a987a58bb384572e77c485b8969fe970a4b997",
+      "split": "holdout",
+      "tags": ["speech", "long-segment-part"],
+      "label": {
+        "kind": "speech",
+        "transcript": "The strength that enables someone in a trance to hold his body stiff and unsupported except at two points the head and heels",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0023 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "part-141231-0024",
+      "file": "part-141231-0024.ogg",
+      "sha256": "4c3eee7d17b0da5c32f279a6fdf9a47c0e908981947b1e1e1ed337bffa6cf792",
+      "split": "holdout",
+      "tags": ["speech", "long-segment-part"],
+      "label": {
+        "kind": "speech",
+        "transcript": "This is physically impossible when conscious",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0024 (CC BY 4.0), reference is the corpus transcript"
+      }
+    }
+  ]
+}

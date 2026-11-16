@@ -2,7 +2,7 @@
 
 ## Overview
 
-Chronote records voice audio, builds per speaker snippets, and runs transcription in two passes. A fast pass gives early results during short pauses, while the slow pass finalizes a snippet after longer silence or a max snippet wall. The system keeps longer contiguous snippets to preserve accuracy, then uses optional coalescing to merge fast and slow outputs when premium is enabled. On low-confidence slow snippets, it can run a second no-prompt transcription and select the better candidate.
+Chronote records voice audio, builds per speaker snippets, and runs transcription in two passes. A fast pass gives early results during short pauses, while the slow pass finalizes a snippet after longer silence or a max snippet wall. The system keeps longer contiguous snippets to preserve accuracy. Each snippet is one ASR request with no prompt and no language hint, followed by deterministic guards. The slow pass text is the transcript text; no language model rewrites individual snippets. See [ADR-20261116](adr-20261116-transcription-simplification.md).
 
 ## Product decisions
 
@@ -16,30 +16,24 @@ Chronote records voice audio, builds per speaker snippets, and runs transcriptio
 - Snippets are per speaker and store raw PCM chunks, a start timestamp, and recent fast transcript metadata.
 - Fast transcription is triggered after the fast silence threshold and only when snippet duration exceeds the minimum snippet seconds.
 - Slow transcription finalizes after the slow silence threshold or after the max snippet wall.
-- Fast only finalization can skip the slow pass if the latest fast transcript covers the full snippet byte length.
+- Fast only finalization can skip the slow pass if the latest fast transcript covers the full snippet byte length. That fast result already passed the same guards on the same bytes.
+- A settled slow result is authoritative, including an empty one a guard suppressed. An earlier fast result never resurfaces for that snippet, so the compiled notes input, `transcript.json` segments and the live timeline agree.
 - Interjection splitting checks for a validated interjection snippet before finalizing other paused snippets.
 - Noise gate checks peak levels in short windows and skips snippets that are very quiet and lack speech-like peaks.
-- Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`) and can be adjusted for experiments, including removing the prompt entirely.
-- Guardrails include a loudness gate (noise gate metrics plus token logprobs), a syllable rate gate for short snippets, and a prompt echo gate to suppress prompt repetition.
-- Vote fallback runs a no-prompt candidate for low-confidence slow snippets and picks the better result with a deterministic arbiter (suppression flags, prompt echo, logprobs, repetition checks, and a hard reject for punctuation-only outputs like `.`).
-- The finalized audio pass rejects trivial replacement text, so punctuation-only edits do not overwrite an existing snippet transcript.
-- The finalized audio pass transcribes `TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS` (300 s) chunks. The transcription model caps output near 2,000 tokens per request, so the earlier 900 s chunks came back truncated on dense speech, and the reconcile prompt could drop the uncovered lines as "not in the chunk transcript".
-- The finalized audio pass also drops repeated low-information snippets from the same speaker when they recur in a short window, which helps clean up bursts of greeting-style hallucinations.
+- The ASR model is `models.transcription` (default `gpt-transcribe`; options `gpt-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`). Personal uploads use the same key. Requests send `temperature: 0`, `response_format: "json"` and `include: ["logprobs"]`, with no `prompt` and no `language`, so the provider detects the spoken language and has no glossary text to echo back.
+- The dictionary does not steer ASR. It feeds notes, cleanup, ask and other text prompts only.
+- Guardrails include a loudness gate (noise gate metrics plus token logprobs), hard silence suppression, a syllable rate gate for short snippets, and suppression of punctuation-only output.
 
 ## Snippet ASR retries
 
-Each prompt or no-prompt candidate owns at most four ASR attempts, including
+Each snippet request owns at most four ASR attempts, including
 the first. Only connection failures, timeouts and HTTP 408, 409, 429 or 5xx
 responses can retry. Cancellation, local input failures, other 4xx responses,
 quota exhaustion and an explicit `x-should-retry: false` are terminal.
-Prompt preparation, guards and attachment failures do not retry ASR.
+Guards and attachment failures do not retry ASR.
 
 Each attempt opens and closes a fresh upload stream and disables SDK retries
-for that snippet request. A successful prompted candidate is retained when
-the no-prompt vote retries. Both candidates exhausting their budgets permit
-up to eight ASR attempts. This can change recovery opportunity and worst-case
-work compared with a single whole-workflow budget; it does not guarantee
-lower cost or latency on every path.
+for that snippet request.
 
 Retries use Cockatiel's decorrelated exponential backoff, starting at 128 ms
 with exponent 2 and a 30,000 ms cap. Valid Retry-After values from 0 through
@@ -49,23 +43,14 @@ dispatches; issued requests and streams still settle before cleanup.
 The shared bulkhead holds two complete logical transcriptions with up to
 100 queued jobs. Logical starts remain spaced by 800 ms. The breaker counts
 five exhausted transient ASR operations before opening for 10,000 ms;
-unrelated prompt or guard errors cannot trip it. Text Responses, finalized
-audio verification and personal upload retry policies are unchanged.
+unrelated guard errors cannot trip it. Text Responses and personal upload
+retry policies are separate.
 
 ## Personal upload transcription
 
-Personal uploads and desktop recordings send no `language` hint, so the
-provider detects the spoken language. A forced English hint badly truncated
-non-English recordings.
-
-Live meeting snippets and the finalized audio pass take their hint from the
-`transcription.language` setting (global superadmin and server admin scopes,
-default `en`). `auto` omits the `language` field so the provider detects the
-language; any other value is sent as an ISO-639-1 code. The value is captured
-in the meeting runtime config when the meeting starts, and both paths read
-that one value, so the final-pass reconcile never compares transcripts in two
-languages. It is frozen into the saved recording settings, and recovery reruns
-reuse the saved value. Records saved before the setting existed parse as `en`.
+Personal uploads and desktop recordings, like live snippets, send no
+`language` hint, so the provider detects the spoken language. A forced English
+hint badly truncated non-English recordings.
 
 Normalized audio is always split into
 `PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS` (300 s) chunks before
@@ -93,16 +78,19 @@ ffmpeg encoding still cannot be cancelled and must finish before cleanup.
 
 ## Langfuse usage and cost
 
-Transcription traces report the exact token usage returned by OpenAI so
-Langfuse can calculate costs using the provider's input and output rates.
+Transcription traces report the usage OpenAI returns. The default
+`gpt-transcribe` reports duration, recorded as the `input_audio_seconds` usage
+key and priced per second. `gpt-4o-transcribe` and `gpt-4o-mini-transcribe`
+report tokens, recorded as `input`, `output` and `total` and priced per token.
 
-- Usage details use Langfuse's `input`, `output`, and `total` keys.
-- Returned usage is retained even if a later vote, guard or cancellation fails.
-- Each trace records whether accounting is `priced`, `partial`, or `unpriced`.
+- Returned usage is retained even if a later guard or cancellation fails.
+- Each trace records whether token accounting is `priced`, `partial`, or
+  `unpriced`. A duration-only response counts as `unpriced` here even though
+  its `input_audio_seconds` usage carries a per-second price.
   Existing request counts describe returned responses. A transient failure
   followed by one priced response has one returned request but partial cost.
-- Attempt counters distinguish logical candidates, SDK invocations, actual
-  fetch entries and extra invocations. A fetch entry is not proof of provider
+- Attempt counters distinguish SDK invocations, actual fetch entries and
+  extra invocations. A fetch entry is not proof of provider
   receipt or billing; a lost response has unknown usage.
 - Attempt usage coverage is `not_attempted`, `complete`, `partial` or
   `unknown`. Valid duration usage is known but does not establish token
@@ -115,8 +103,7 @@ Langfuse can calculate costs using the provider's input and output rates.
   failure and cancellation, before attachment drainage. Diagnostic failures
   cannot replace the provider result.
 
-Attempt metadata uses the `transcription` prefix for
-`LogicalCandidateCount`, `SdkInvocationCount`, `HttpDispatchAttemptCount`,
+Attempt metadata uses the `transcription` prefix for `SdkInvocationCount`, `HttpDispatchAttemptCount`,
 `RetryCount`, `KnownUsageAttemptCount`, `UnknownUsageAttemptCount` and
 `AttemptUsageCoverage`. These diagnostics add no content or identifiers.
 Existing two-argument accounting callers retain their legacy operational
@@ -124,13 +111,15 @@ duration fallback; that fallback is not attributed token cost.
 
 Pricing checklist:
 
-- Match the deployed `gpt-4o-transcribe` model definition against that exact
-  model name.
-- Set `input` and `output` per-token prices to the current OpenAI rates.
+- Match the deployed transcription model definition (default `gpt-transcribe`)
+  against that exact model name. `gpt-transcribe` reports duration usage
+  rather than tokens, so it needs a per-second price.
+- For the token-reporting models, set `input` and `output` per-token prices to
+  the current OpenAI rates.
 - Keep the usage keys and model definition aligned; Langfuse price keys must
   exactly match the generation's usage-detail keys.
-- Verify new production observations show both token usage and non-null cost
-  before treating cost coverage as complete.
+- Verify new production observations show usage (seconds or tokens) and
+  non-null cost before treating cost coverage as complete.
 
 ## Config keys
 
@@ -149,9 +138,6 @@ All values are set via the config system. For the noise gate, only `enabled`, `a
 - `transcription.suppression.minWords`
 - `transcription.suppression.minSyllables`
 - `transcription.suppression.maxSyllablesPerSecond`
-- `transcription.promptEcho.enabled`
-- `transcription.vote.enabled`
-- `transcription.finalPass.enabled`
 - `transcription.noiseGate.enabled`
 - `transcription.noiseGate.windowMs`
 - `transcription.noiseGate.peakDbfs`
@@ -159,6 +145,14 @@ All values are set via the config system. For the noise gate, only `enabled`, `a
 - `transcription.noiseGate.minPeakAboveNoiseDb`
 - `transcription.noiseGate.applyToFast`
 - `transcription.noiseGate.applyToSlow`
+- `models.transcription`
+
+Stored values for removed keys (`transcription.language`,
+`transcription.promptEcho.enabled`, `transcription.vote.enabled`,
+`transcription.finalPass.enabled`, `models.transcriptionCoalesce` and
+`dictionary.maxChars.transcription` with its `.pro` and `.cap` variants) are
+ignored. Saved recordings that carry them still parse and recover; recovery
+re-transcribes uncovered audio with the frozen model and no prompt.
 
 ## Interjection behavior
 
@@ -180,9 +174,7 @@ The noise gate is a lightweight, peak-based check to skip clips that are very qu
 - Low-confidence transcripts from quiet audio are suppressed using token logprobs, even when a snippet makes it past the gate. Quiet audio uses avg or min logprob checks.
 - Hard silence suppression drops snippets whose peak stays below `transcription.suppression.hardSilenceDbfs`, regardless of logprobs.
 - Syllable rate suppression drops short snippets that exceed the configured syllables-per-second threshold once word and syllable minimums are met.
-- Prompt echo suppression runs after transcription and is independent of the loudness gate.
-- Punctuation-only outputs are treated as trivial text. The vote arbiter will not let a punctuation-only no-prompt retry beat a real prompt transcript, and the final pass will not apply punctuation-only replacements.
-- After final-pass edits are applied, repeated low-information snippets from the same speaker are filtered when they recur within a short window and closely match an earlier kept phrase.
+- Punctuation-only outputs are treated as trivial text and suppressed.
 
 ## Cleanup behavior
 

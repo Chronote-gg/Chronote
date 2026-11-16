@@ -1,18 +1,13 @@
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 jest.mock("../../src/services/savedRecordingPrompt", () => ({
   ...jest.requireActual("../../src/services/savedRecordingPrompt"),
-  snapshotRecordingPrompt: jest.fn(
-    async (name: string, type: string, label: string) => ({
-      name,
-      type,
-      label,
-      version: 11,
-      template:
-        type === "text"
-          ? "{{transcript}}"
-          : [{ role: "user", content: "{{transcript}} {{notes}}" }],
-    }),
-  ),
+  snapshotRecordingPrompt: jest.fn(async (name: string, label: string) => ({
+    name,
+    type: "chat",
+    label,
+    version: 11,
+    template: [{ role: "user", content: "{{transcript}} {{notes}}" }],
+  })),
 }));
 jest.mock("../../src/services/contextService", () => ({
   ...jest.requireActual("../../src/services/contextService"),

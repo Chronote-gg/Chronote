@@ -8,7 +8,6 @@ export const DICTIONARY_DEFINITION_MAX_LENGTH = 400;
 
 export type DictionaryBudgets = {
   maxEntries: number;
-  maxCharsTranscription: number;
   maxCharsContext: number;
 };
 
@@ -20,25 +19,21 @@ export type DictionaryItem = {
 
 export type DictionaryUsage = {
   totalEntries: number;
-  transcription: { entries: number; chars: number };
   context: { entries: number; chars: number };
 };
 
 export const DEFAULT_DICTIONARY_BUDGETS: DictionaryBudgets = {
   maxEntries: 200,
-  maxCharsTranscription: 2000,
   maxCharsContext: 6000,
 };
 
 const DEFAULT_PRO_BUDGETS: DictionaryBudgets = {
   maxEntries: 400,
-  maxCharsTranscription: 4000,
   maxCharsContext: 12000,
 };
 
 const DEFAULT_CAPS: DictionaryBudgets = {
   maxEntries: 500,
-  maxCharsTranscription: 6000,
   maxCharsContext: 20000,
 };
 
@@ -59,10 +54,6 @@ export const resolveDictionaryBudgets = (
       valuesByKey?.[CONFIG_KEYS.dictionary.maxEntries],
       DEFAULT_DICTIONARY_BUDGETS.maxEntries,
     ),
-    maxCharsTranscription: toNumber(
-      valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsTranscription],
-      DEFAULT_DICTIONARY_BUDGETS.maxCharsTranscription,
-    ),
     maxCharsContext: toNumber(
       valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsContext],
       DEFAULT_DICTIONARY_BUDGETS.maxCharsContext,
@@ -73,10 +64,6 @@ export const resolveDictionaryBudgets = (
       valuesByKey?.[CONFIG_KEYS.dictionary.maxEntriesPro],
       DEFAULT_PRO_BUDGETS.maxEntries,
     ),
-    maxCharsTranscription: toNumber(
-      valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsTranscriptionPro],
-      DEFAULT_PRO_BUDGETS.maxCharsTranscription,
-    ),
     maxCharsContext: toNumber(
       valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsContextPro],
       DEFAULT_PRO_BUDGETS.maxCharsContext,
@@ -86,10 +73,6 @@ export const resolveDictionaryBudgets = (
     maxEntries: toNumber(
       valuesByKey?.[CONFIG_KEYS.dictionary.maxEntriesCap],
       DEFAULT_CAPS.maxEntries,
-    ),
-    maxCharsTranscription: toNumber(
-      valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsTranscriptionCap],
-      DEFAULT_CAPS.maxCharsTranscription,
     ),
     maxCharsContext: toNumber(
       valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsContextCap],
@@ -104,11 +87,6 @@ export const resolveDictionaryBudgets = (
 
   return {
     maxEntries: pick(base.maxEntries, pro.maxEntries, caps.maxEntries),
-    maxCharsTranscription: pick(
-      base.maxCharsTranscription,
-      pro.maxCharsTranscription,
-      caps.maxCharsTranscription,
-    ),
     maxCharsContext: pick(
       base.maxCharsContext,
       pro.maxCharsContext,
@@ -247,17 +225,10 @@ export const buildDictionaryPromptLines = (
   entries: DictionaryItem[],
   budgets: DictionaryBudgets,
 ): {
-  transcriptionLines: string[];
   contextLines: string[];
   usage: DictionaryUsage;
 } => {
   const normalized = normalizeDictionaryEntries(entries);
-  const transcription = buildLines(
-    normalized,
-    (entry) => `- ${entry.term}`,
-    budgets.maxEntries,
-    budgets.maxCharsTranscription,
-  );
   const context = buildLines(
     normalized,
     (entry) =>
@@ -269,14 +240,9 @@ export const buildDictionaryPromptLines = (
   );
 
   return {
-    transcriptionLines: transcription.lines,
     contextLines: context.lines,
     usage: {
       totalEntries: normalized.length,
-      transcription: {
-        entries: transcription.entries,
-        chars: transcription.chars,
-      },
       context: { entries: context.entries, chars: context.chars },
     },
   };

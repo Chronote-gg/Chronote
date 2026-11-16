@@ -7,6 +7,12 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Simpler, more accurate transcription (November 16)
+
+- Discord meetings now use a newer speech recognition model and detect the spoken language of each snippet, so meetings in other languages are no longer forced into English. The transcription language setting is gone.
+- Chronote no longer rewrites transcripts with extra language model passes during or after a meeting. In our tests those passes occasionally dropped or changed real speech. Transcripts and notes are ready sooner after a meeting ends.
+- Dictionary terms now improve notes and cleanup only; they are no longer sent to speech recognition, where they could appear in the transcript as if someone had said them. See [Dictionary](/features/#dictionary).
+
 ### Smoother portal sign-in (November 12)
 
 - Expired sessions reconnect through Discord and return to the requested page. Returning users can skip another approval click when Discord recognizes their existing grant. The portal warns before leaving unfinished edits or an upload. See [Sign in to the portal](/getting-started/#sign-in-to-the-portal).

@@ -1,5 +1,4 @@
 import type { SpeechDetectionMode } from "./speechDetection";
-import type { TranscriptionLanguage } from "./transcriptionLanguage";
 
 export type ConfigScope = "global" | "server" | "channel" | "user" | "meeting";
 export type ConfigValueType = "boolean" | "string" | "number" | "select";
@@ -11,7 +10,6 @@ export type ModelRole =
   | "dictionaryTeaching"
   | "transcription"
   | "transcriptionCleanup"
-  | "transcriptionCoalesce"
   | "imageCaption"
   | "image"
   | "imagePrompt"
@@ -102,15 +100,12 @@ export type ResolvedConfigSnapshot = {
 export type MeetingRuntimeConfig = {
   transcription: {
     speechDetectionMode: SpeechDetectionMode;
-    language: TranscriptionLanguage;
     suppressionEnabled: boolean;
     suppressionHardSilenceDbfs: number;
     suppressionRateMaxSeconds: number;
     suppressionRateMinWords: number;
     suppressionRateMinSyllables: number;
     suppressionRateMaxSyllablesPerSecond: number;
-    promptEchoEnabled: boolean;
-    voteEnabled: boolean;
     fastSilenceMs: number;
     slowSilenceMs: number;
     minSnippetSeconds: number;
@@ -127,7 +122,6 @@ export type MeetingRuntimeConfig = {
       applyToFast: boolean;
       applyToSlow: boolean;
     };
-    finalPassEnabled: boolean;
   };
   premiumTranscription: {
     enabled: boolean;
@@ -135,7 +129,6 @@ export type MeetingRuntimeConfig = {
   };
   dictionary: {
     maxEntries: number;
-    maxCharsTranscription: number;
     maxCharsContext: number;
   };
   autoRecordCancellation: {

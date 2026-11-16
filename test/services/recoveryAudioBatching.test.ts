@@ -15,11 +15,7 @@ import {
   recoverTranscript,
   recoveryPcmBudget,
 } from "../../src/services/meetingRecoveryContent";
-import {
-  pcmArtifact,
-  recoveryFixture,
-  savedTranscriptionPrompt,
-} from "./meetingRecoveryFixtures";
+import { pcmArtifact, recoveryFixture } from "./meetingRecoveryFixtures";
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -28,7 +24,6 @@ async function recover(
 ) {
   const f = await recoveryFixture("", {
     artifacts,
-    context: savedTranscriptionPrompt,
     transcript: (saved) => {
       saved.entries = [];
     },
@@ -54,7 +49,7 @@ test("recovery batches contiguous tiny artifacts without losing their PCM proven
   const call = jest.mocked(transcribeContentSnippet).mock.calls[0];
   expect(call[1].timestamp).toBe(Date.parse(f.claim.history.timestamp) + 5000);
   expect(call[1].chunks).toEqual([Buffer.concat(pieces)]);
-  const files = jest.mocked(processRecoveryTranscript).mock.calls[0][2];
+  const files = jest.mocked(processRecoveryTranscript).mock.calls[0][1];
   expect(files[0].transcriptCorrespondence).toEqual({
     kind: "pcm",
     spans: pieces.map((bytes, sequence) => ({
@@ -101,7 +96,6 @@ test.each(["saved", "omitted"])(
   "recovery does not bridge or replay a %s span between artifacts",
   async (kind) => {
     const f = await recoveryFixture("Saved speech.", {
-      context: savedTranscriptionPrompt,
       artifacts: [0, 1, 2].map((sequence) =>
         pcmArtifact("user:123", sequence, Buffer.alloc(3840, sequence + 1), [
           { startOffsetMs: sequence * 20, durationMs: 20 },
@@ -141,7 +135,6 @@ test.each(["missing", "cancelled"])(
   "a %s later slice releases the batch reservation without provider dispatch",
   async (failure) => {
     const f = await recoveryFixture("", {
-      context: savedTranscriptionPrompt,
       artifacts: [0, 1].map((sequence) =>
         pcmArtifact("user:456", sequence, Buffer.alloc(3840), [
           { startOffsetMs: sequence * 20, durationMs: 20 },
@@ -219,7 +212,7 @@ test("batched recovery retains speech around a short group the VAD skips", async
   expect(
     transcribe.mock.calls.map(([, snippet]) => snippet.chunks[0].length),
   ).toEqual([19200, 19200, 11520, 26880]);
-  const files = jest.mocked(processRecoveryTranscript).mock.calls[0][2];
+  const files = jest.mocked(processRecoveryTranscript).mock.calls[0][1];
   expect(files.map((file) => file.transcript)).toEqual([
     "First speech.",
     "Second speech.",

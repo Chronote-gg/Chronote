@@ -184,7 +184,7 @@ async function processingMessageSettled(
 
 /**
  * Builds the finish input from what the closing worker holds: the in-memory
- * transcript compile, the final pass and the locally mixed recording.
+ * transcript compile and the locally mixed recording.
  */
 export async function loadNormalFinishInput(
   meeting: MeetingData,
@@ -214,7 +214,7 @@ export async function loadNormalFinishInput(
   let transcript = "";
   if (meeting.transcribeMeeting) {
     const compile = createMeetingTranscriptCompiler(client, meeting);
-    await compileFinalTranscript(meeting, compile, recordingPath);
+    await compileFinalTranscript(meeting, compile);
     // Failed, partial-on-complete or lossy transcription throws, as the old
     // path does, so the attempt is retried rather than saved as terminal.
     assertMeetingProcessingSucceeded(meeting);

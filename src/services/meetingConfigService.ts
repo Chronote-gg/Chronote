@@ -1,6 +1,5 @@
 import { CONFIG_KEYS } from "../config/keys";
 import { resolveSpeechDetectionMode } from "../config/speechDetection";
-import { resolveTranscriptionLanguage } from "../config/transcriptionLanguage";
 import { CONFIG_REGISTRY, getConfigEntry } from "../config/registry";
 import type { ConfigTier, MeetingRuntimeConfig } from "../config/types";
 import { resolveConfigSnapshot } from "./unifiedConfigService";
@@ -50,9 +49,6 @@ export async function resolveMeetingRuntimeConfig(input: {
       speechDetectionMode: resolveSpeechDetectionMode(
         requireValue(snapshot, CONFIG_KEYS.transcription.speechDetectionMode),
       ),
-      language: resolveTranscriptionLanguage(
-        requireValue(snapshot, CONFIG_KEYS.transcription.language),
-      ),
       suppressionEnabled: Boolean(
         requireValue(snapshot, CONFIG_KEYS.transcription.suppressionEnabled),
       ),
@@ -85,12 +81,6 @@ export async function resolveMeetingRuntimeConfig(input: {
           snapshot,
           CONFIG_KEYS.transcription.suppressionRateMaxSyllablesPerSecond,
         ),
-      ),
-      promptEchoEnabled: Boolean(
-        requireValue(snapshot, CONFIG_KEYS.transcription.promptEchoEnabled),
-      ),
-      voteEnabled: Boolean(
-        requireValue(snapshot, CONFIG_KEYS.transcription.voteEnabled),
       ),
       fastSilenceMs: Number(
         requireValue(snapshot, CONFIG_KEYS.transcription.fastSilenceMs),
@@ -154,9 +144,6 @@ export async function resolveMeetingRuntimeConfig(input: {
           ),
         ),
       },
-      finalPassEnabled: Boolean(
-        requireValue(snapshot, CONFIG_KEYS.transcription.finalPassEnabled),
-      ),
     },
     premiumTranscription: {
       enabled: Boolean(

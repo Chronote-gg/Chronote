@@ -12,8 +12,6 @@ const meeting = {
   runtimeConfig: {
     transcription: {
       suppressionEnabled: false,
-      promptEchoEnabled: false,
-      voteEnabled: false,
       noiseGate: { enabled: false },
     },
     modelParams: {},
@@ -105,14 +103,6 @@ async function loadModule(options: {
       }),
     })),
   }));
-  jest.doMock("../../src/services/transcriptionPromptService", () => ({
-    getTranscriptionPrompt: jest.fn().mockResolvedValue({
-      prompt: "",
-      langfusePrompt: undefined,
-    }),
-    getTranscriptionCleanupPrompt: jest.fn(),
-    getTranscriptionCoalescePrompt: jest.fn(),
-  }));
   jest.doMock("../../src/services/openaiClient", () => ({
     createOpenAIClient: jest.fn(() => ({
       audio: { transcriptions: { create } },
@@ -152,39 +142,6 @@ async function loadModule(options: {
 }
 
 describe("transcribeSnippet terminal result", () => {
-  test("returns successful empty text when both production vote candidates fail the quality floor", async () => {
-    const { service, create } = await loadModule({
-      providerResult: "The Den",
-      providerLogprobs: [{ logprob: -3 }],
-    });
-    const content: import("../../src/services/transcriptionService").TranscriptionContentInput =
-      {
-        meetingId: meeting.meetingId,
-        creator: meeting.creator,
-        guild: meeting.guild,
-        voiceChannel: meeting.voiceChannel,
-        runtimeConfig: {
-          ...meeting.runtimeConfig!,
-          transcription: {
-            ...meeting.runtimeConfig!.transcription,
-            voteEnabled: true,
-          },
-        },
-        signal: new AbortController().signal,
-        effect: (run) => run(),
-        prompt: async () => ({
-          prompt: "Synthetic glossary",
-          source: "fallback",
-        }),
-      };
-    await expect(
-      service.transcribeContentSnippet(content, snippet),
-    ).resolves.toMatchObject({
-      status: "succeeded",
-      text: "",
-    });
-    expect(create).toHaveBeenCalledTimes(2);
-  });
   test("returns successful empty text as a completed transcription", async () => {
     const { service } = await loadModule({ providerResult: "" });
     await expect(service.transcribeSnippet(meeting, snippet)).resolves.toEqual({

@@ -8,14 +8,14 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 
 ## What this project is
 
-- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-4o-transcribe), generates notes with GPT-6.1 Sol, and posts results back to Discord.
+- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-transcribe), generates notes with GPT-6.1 Sol, and posts results back to Discord.
 - Supports auto-recording, meeting history in DynamoDB, context injection (server/channel/meeting), dictionary terms for prompt context, and a user-driven notes correction flow using LLMs.
 
 ## Tech stack
 
 - Runtime: Node.js 24.22.2, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
-- AI: openai SDK; gpt-4o-transcribe for transcription; gpt-6.1-sol for notes; gpt-5.2 for summaries, cleanup, corrections and image prompts; gpt-5-mini for live gate; DALL-E 3 for images.
+- AI: openai SDK; gpt-transcribe for transcription; gpt-6.1-sol for notes; gpt-5.2 for summaries, cleanup, corrections and image prompts; gpt-5-mini for live gate; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts.
 - Storage: AWS DynamoDB (tables include MeetingHistory, MeetingUserIndex, PersonalMediaUploadJob, PersonalRecordingSegment, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
@@ -47,11 +47,10 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Transcription, notes, and image generation: `src/services/transcriptionService.ts`, `src/services/notesService.ts`, `src/services/imageService.ts`.
   - Prompt builders live in `src/services/*PromptService.ts`.
   - Builds context from server/channel/meeting and recent history (`services/contextService.ts`).
-- Transcription prompt is Langfuse-managed (`chronote-transcription-prompt`). Guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs), a prompt echo gate, and a low-confidence prompt/no-prompt vote fallback on slow snippets.
-  - A finalized audio verification pass can run at meeting end (`transcription.finalPass.enabled`) to auto-apply high-confidence hallucination fixes before notes generation.
+- Live snippet ASR sends `models.transcription` (default `gpt-transcribe`) one request with no prompt and no language hint, so the provider detects the language. Guardrails are the pre-ASR noise gate, speech admission, and post-ASR quiet-audio logprob, hard silence, syllable rate and punctuation-only suppression. A settled slow result, including a suppressed empty one, is authoritative. See `docs/adr-20261116-transcription-simplification.md`.
   - GPT prompts tuned for cleanup, notes, and optional image generation.
 - Dictionary management: `commands/dictionary.ts`, `services/dictionaryService.ts`
-  - Terms are injected into transcription and context prompts, definitions are used outside transcription to reduce prompt bloat.
+  - Terms and definitions feed notes, cleanup, Ask and other text prompts. The dictionary does not steer ASR.
 - Notes correction flow: `commands/notesCorrections.ts`
   - "Suggest correction" button -> modal (single textarea).
   - Fetches saved notes + transcript from DB, uses the notes-correction model with a "minimal edits, do not copy transcript" prompt, shows a compact line diff, requires approval (meeting creator or ManageChannels if auto-record), saves canonical MeetingHistory plus durable update intent through the shared action and bumps version/last editor. The worker verifies later Discord delivery separately, preserving existing approval and Notion rules.
@@ -75,8 +74,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
   cache control without breakpoints, including continuations. Older overrides
   omit unsupported fields. Preserve prompt ordering. See
   `docs/adr-20261022-sol-notes-caching.md`.
-- Langfuse prompt sync uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`, `LANGFUSE_PROMPT_DICTIONARY_TEACHING`.
-- Optional Langfuse prompt override for the finalized audio pass: `LANGFUSE_PROMPT_TRANSCRIPTION_FINAL_PASS`.
+- Langfuse prompt sync uses `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_DICTIONARY_TEACHING`.
 - Langfuse MCP tooling uses `node scripts/setup-langfuse-mcp-auth.js` to write `.opencode/langfuse.mcp.auth`, `.opencode/langfuse.public`, and `.opencode/langfuse.secret` for OpenCode. Codex and Claude Code still expect `LANGFUSE_MCP_AUTH` in the environment.
 - Other env defaults: `PORT` (3001), `NODE_ENV`, Dynamo local toggles via `USE_LOCAL_DYNAMODB`.
 - Cloud dev bootstrap: run `./scripts/setup-cloud-dev.sh` to sync uv, install scc into `.bin/`, install lizard into `.venv/bin/`, and install Playwright browsers (no flags needed). Add `.bin` and `.venv/bin` to `PATH` for `yarn code:stats`.
@@ -120,7 +118,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Auto-record will end meeting if channel empties.
 - Server meeting transcript and audio access controls are enforced at read-time delivery boundaries. They apply retroactively to guild meetings, do not alter storage or internal notes processing, and do not apply to personal meetings.
 - Prompt fragments live in `prompts/_fragments` and are composed via `extends` in front matter. `prompts:pull` skips prompts that use `extends` unless `--force` is passed.
-- Transcription guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs), a prompt echo gate using similarity checks, and a low-confidence prompt/no-prompt vote fallback on slow snippets.
+- Transcription guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs) and punctuation-only suppression. ASR receives no prompt and no language hint.
 - **Current outbound network rules (ECS service SG)**: temporarily allowing all egress (UDP/TCP any port) for Discord voice debugging. Previously it was limited to TCP 443 and DNS (53) only. Remember to tighten this once voice is stable and update this note.
 - Avoid `in`/`instanceof`/`typeof` hedging for core platform APIs; we target a known Node/SDK set. Prefer simple, direct calls with minimal branching.
 - Config UX: treat overrides as implicit (setting a value creates an override), show a clear inherited vs overridden indicator, keep a reset-to-default action, and avoid disabling inputs just to signal default values.

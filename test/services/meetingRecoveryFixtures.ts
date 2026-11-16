@@ -33,32 +33,6 @@ export function pcmArtifact(
     checksumSha256: createHash("sha256").update(bytes).digest("hex"),
   };
 }
-/**
- * Saved settings that ran no final pass. A recovered capture whose manifest
- * records it complete reruns the original final pass, which needs its own
- * saved prompt.
- */
-export function withoutFinalPass(
-  saved: ReturnType<typeof generationContextSchema.parse>,
-) {
-  if (saved.settings.availability === "available")
-    saved.settings.value.transcription.finalPassEnabled = false;
-}
-/** Saves the text transcription prompt that recovery re-transcription requires. */
-export function savedTranscriptionPrompt(
-  saved: ReturnType<typeof generationContextSchema.parse>,
-) {
-  saved.prompts.transcription = {
-    availability: "available",
-    value: {
-      name: "original",
-      type: "text",
-      label: "original",
-      version: 1,
-      template: "Saved transcription prompt",
-    },
-  };
-}
 export async function recoveryFixture(
   text = "We agreed to finish the release testing tomorrow.",
   options: {
@@ -194,7 +168,6 @@ export async function recoveryFixture(
           meetingSummary: model,
           transcription: model,
           transcriptionCleanup: model,
-          transcriptionCoalesce: model,
         },
         transcription: runtimeConfig.transcription,
         premiumTranscription: runtimeConfig.premiumTranscription,

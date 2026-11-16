@@ -11,7 +11,6 @@ export type AsrOutcome =
 type FixtureOptions = {
   outcomes: AsrOutcome[];
   signal?: AbortSignal;
-  prompt?: string;
   openError?: Error;
   readError?: Error;
   multipartError?: Error;
@@ -90,16 +89,13 @@ export async function buildAsrFixture(options: FixtureOptions) {
   const signal = options.signal ?? controller.signal;
   const run = () =>
     request.runTranscriptionRequest({
-      candidate: "prompt",
       file: "/synthetic/request.wav",
       signal,
       request: {
-        model: "gpt-4o-transcribe",
-        language: "en",
+        model: "gpt-transcribe",
         temperature: 0,
         response_format: "json",
         include: ["logprobs"],
-        prompt: options.prompt ?? "Project terminology.",
       },
       ledger,
       clientOptions: {

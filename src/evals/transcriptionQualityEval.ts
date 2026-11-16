@@ -26,6 +26,7 @@ import {
   type TranscriptionQualityRun,
 } from "./transcriptionQualityCase";
 import { summarizeTranscriptionScores } from "./transcriptionMetrics";
+import { buildTranscriptionRequest } from "../services/transcriptionRequest";
 import {
   transcriptionVadReportSchema,
   validateVadCase,
@@ -136,6 +137,7 @@ export async function runTranscriptionQualityEval(args: string[]) {
     vadReport,
     cacheRoot,
     output,
+    language,
   } = await readQualityOptions(args);
   await fs.mkdir(cacheRoot, { recursive: true });
   const tempDir = await fs.mkdtemp(path.join(cacheRoot, "run-"));
@@ -188,7 +190,12 @@ export async function runTranscriptionQualityEval(args: string[]) {
         timeout: 60000,
       });
     }
-    const transcriber = createQualityTranscriber(client, model, maxRequests);
+    const transcriber = createQualityTranscriber(
+      client,
+      model,
+      maxRequests,
+      language,
+    );
     const runCases = async () => {
       outer: for (const { item, pcm, pcmFile, wavFile, decodeMs } of prepared) {
         for (let run = 1; run <= runs; run++) {
@@ -259,6 +266,7 @@ export async function runTranscriptionQualityEval(args: string[]) {
                   runs,
                   policy,
                   prompt,
+                  language,
                   mode,
                   passMode,
                   speechDetector,
@@ -283,6 +291,7 @@ export async function runTranscriptionQualityEval(args: string[]) {
             mode,
             passMode,
             model: model ?? null,
+            language,
             prompt,
             policy,
             force,
@@ -422,7 +431,7 @@ async function readQualityOptions(args: string[]) {
   const { mode, passMode } = qualityModes(args);
   const runs = numberFlag(args, "--runs", 3, 20);
   const maxRequests = numberFlag(args, "--max-requests", 100, 200);
-  const maxSeconds = numberFlag(args, "--max-clip-seconds", 30, 60);
+  const maxSeconds = numberFlag(args, "--max-clip-seconds", 30, 180);
   const split = flag(args, "--split");
   if (split && split !== "tune" && split !== "holdout")
     throw new Error("--split must be tune or holdout");
@@ -432,10 +441,7 @@ async function readQualityOptions(args: string[]) {
       ? JSON.parse(await fs.readFile(path.resolve(policyFile), "utf8"))
       : {},
   );
-  const promptFile = flag(args, "--prompt-file");
-  const prompt = promptFile
-    ? await fs.readFile(path.resolve(promptFile), "utf8")
-    : corpus.prompt;
+  const prompt = await readComparisonPrompt(args);
   const force = args.includes("--force");
   const selected = corpus.cases.filter(
     (item) => !split || item.split === split,
@@ -457,6 +463,7 @@ async function readQualityOptions(args: string[]) {
   if (!cases.length || cases.length > 200)
     throw new Error("Select between 1 and 200 corpus cases");
   const { cacheRoot, output } = artifactPaths(args, mode, passMode);
+  const language = readComparisonLanguage(args);
   return {
     manifestPath,
     corpus,
@@ -478,7 +485,22 @@ async function readQualityOptions(args: string[]) {
     vadReport,
     cacheRoot,
     output,
+    language,
   };
+}
+
+// Production sends no prompt; a prompt file reproduces the former prompted path for comparison.
+async function readComparisonPrompt(args: string[]) {
+  const promptFile = flag(args, "--prompt-file");
+  return promptFile ? await fs.readFile(path.resolve(promptFile), "utf8") : "";
+}
+
+// Production omits the language so the provider detects it; a code forces one for comparison.
+function readComparisonLanguage(args: string[]) {
+  const language = flag(args, "--language");
+  if (language !== undefined && !/^[a-z]{2}$/.test(language))
+    throw new Error("--language must be an ISO-639-1 code; omit it for auto");
+  return language;
 }
 
 function summarizeQualityGroups(results: CorpusRun[]) {
@@ -514,19 +536,20 @@ function createQualityTranscriber(
   client: OpenAI | undefined,
   model: string | undefined,
   maxRequests: number,
+  language: string | undefined,
 ) {
   let requests = 0;
   return (wavFile: string) => async (requestPrompt?: string) => {
     if (requests >= maxRequests)
       throw new TranscriptionBudgetExhausted("Request budget exhausted");
     requests++;
+    // The production request, so pipeline mode cannot drift from the bot.
+    const { include, ...request } = buildTranscriptionRequest(model!, language);
     const response = await client!.audio.transcriptions.create({
       file: createReadStream(wavFile),
-      model: model!,
-      language: "en",
-      temperature: 0,
-      response_format: "json",
-      include: ["logprobs"],
+      ...request,
+      // whisper-1 cannot return logprobs and leaves the guards without them.
+      ...(model!.startsWith("gpt-") ? { include } : {}),
       ...(requestPrompt ? { prompt: requestPrompt } : {}),
     });
     return {
@@ -557,6 +580,7 @@ function validateQualityArguments(args: string[]) {
     "--speech-mode",
     "--batch-size",
     "--batch-index",
+    "--language",
   ]);
   for (const argument of args.filter((item) => item.startsWith("--")))
     if (!allowed.has(argument))

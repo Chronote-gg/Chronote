@@ -204,11 +204,10 @@ async function meetingWithCheckpoint(
     fixtures = await import("../services/meetingRecoveryFixtures");
   });
   if (!fixtures) throw new Error("expected the recovery fixtures");
-  const { pcmArtifact, recoveryFixture, savedTranscriptionPrompt } = fixtures;
+  const { pcmArtifact, recoveryFixture } = fixtures;
   const fixture = await recoveryFixture(SAVED_TEXT, {
     guildId: FINISH_GUILD_ID,
     timestamp,
-    context: savedTranscriptionPrompt,
     artifacts: [
       pcmArtifact("user:123", 0, Buffer.alloc(bytes, 1), [
         { startOffsetMs: 0, durationMs: SAVED_AUDIO_MS },

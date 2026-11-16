@@ -4,7 +4,6 @@ export const CONFIG_KEYS = {
   },
   transcription: {
     speechDetectionMode: "transcription.speechDetection.mode",
-    language: "transcription.language",
     premiumEnabled: "transcription.premium.enabled",
     premiumCleanupEnabled: "transcription.premium.cleanup.enabled",
     suppressionEnabled: "transcription.suppression.enabled",
@@ -14,8 +13,6 @@ export const CONFIG_KEYS = {
     suppressionRateMinSyllables: "transcription.suppression.minSyllables",
     suppressionRateMaxSyllablesPerSecond:
       "transcription.suppression.maxSyllablesPerSecond",
-    promptEchoEnabled: "transcription.promptEcho.enabled",
-    voteEnabled: "transcription.vote.enabled",
     fastSilenceMs: "transcription.fastSilenceMs",
     slowSilenceMs: "transcription.slowSilenceMs",
     minSnippetSeconds: "transcription.minSnippetSeconds",
@@ -31,7 +28,6 @@ export const CONFIG_KEYS = {
     noiseGateMinPeakAboveNoiseDb: "transcription.noiseGate.minPeakAboveNoiseDb",
     noiseGateApplyToFast: "transcription.noiseGate.applyToFast",
     noiseGateApplyToSlow: "transcription.noiseGate.applyToSlow",
-    finalPassEnabled: "transcription.finalPass.enabled",
   },
   models: {
     notes: "models.notes",
@@ -40,7 +36,6 @@ export const CONFIG_KEYS = {
     dictionaryTeaching: "models.dictionaryTeaching",
     transcription: "models.transcription",
     transcriptionCleanup: "models.transcriptionCleanup",
-    transcriptionCoalesce: "models.transcriptionCoalesce",
     image: "models.image",
     imagePrompt: "models.imagePrompt",
     ask: "models.ask",
@@ -94,9 +89,6 @@ export const CONFIG_KEYS = {
     maxEntries: "dictionary.maxEntries",
     maxEntriesPro: "dictionary.maxEntries.pro",
     maxEntriesCap: "dictionary.maxEntries.cap",
-    maxCharsTranscription: "dictionary.maxChars.transcription",
-    maxCharsTranscriptionPro: "dictionary.maxChars.transcription.pro",
-    maxCharsTranscriptionCap: "dictionary.maxChars.transcription.cap",
     maxCharsContext: "dictionary.maxChars.context",
     maxCharsContextPro: "dictionary.maxChars.context.pro",
     maxCharsContextCap: "dictionary.maxChars.context.cap",

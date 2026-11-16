@@ -44,7 +44,7 @@ If the active-meeting message persists after a few minutes, use **Support** in t
 
 **Causes and fixes**:
 
-1. **Missing dictionary terms.** In Server Settings, use **Teach Chronote** to describe frequently used names, acronyms, and jargon, then review the proposed spellings. You can also add one exact term with `/dictionary add`. This is the single most effective way to improve transcription accuracy.
+1. **Missing dictionary terms.** In Server Settings, use **Teach Chronote** to describe frequently used names, acronyms, and jargon, then review the proposed spellings. You can also add one exact term with `/dictionary add`. Notes use these spellings even when the raw transcript misspells a name.
 2. **No context set.** Run `/context set-server` and `/context set-channel` to give the AI background on your team and meeting purpose.
 3. **Poor audio quality.** Ask participants to use headsets, reduce background noise, and speak clearly. Very quiet audio may be filtered by Chronote's noise gate before it reaches transcription.
 4. **Low speaking volume.** The noise gate suppresses audio below a threshold. Participants who are very quiet may have their speech skipped.

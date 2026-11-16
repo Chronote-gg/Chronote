@@ -20,7 +20,6 @@ const pcm = Buffer.alloc(48000 * 4);
 for (let i = 0; i < pcm.length; i += 2) pcm.writeInt16LE(4000, i);
 const options = {
   pcm,
-  prompt: "",
   passMode: "slow" as const,
   policy: {},
   force: false,
@@ -169,21 +168,20 @@ test("invalid batch and conflicting VAD options stop before source decode or pro
     ]),
   ).rejects.toThrow("conflicts");
 });
-test("25 slow cases repeated three times require no more than 150 SDK attempts", async () => {
+test("25 slow cases repeated three times make exactly 75 SDK attempts", async () => {
   let total = 0;
   for (let i = 0; i < 75; i++) {
     const r = await runTranscriptionQualityCase({
       ...options,
-      prompt: "Dictionary: The Den",
       mode: "pipeline",
       transcribe: async () => {
         total++;
         return { text: "The Den", logprobs: [{ logprob: -3 }] };
       },
     });
-    expect(r.requests).toBe(2);
+    expect(r.requests).toBe(1);
   }
-  expect(total).toBe(150);
+  expect(total).toBe(75);
 });
 
 test("shadow submits provider work before detector completion", async () => {

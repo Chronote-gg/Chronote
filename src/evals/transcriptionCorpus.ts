@@ -25,8 +25,6 @@ const label = z.discriminatedUnion("kind", [
 export const transcriptionPolicySchema = z
   .object({
     suppressionEnabled: z.boolean().optional(),
-    promptEchoEnabled: z.boolean().optional(),
-    voteEnabled: z.boolean().optional(),
     suppressionHardSilenceDbfs: z.number().min(-120).max(0).optional(),
     suppressionRateMaxSeconds: z.number().positive().optional(),
     suppressionRateMinWords: z.number().int().nonnegative().optional(),

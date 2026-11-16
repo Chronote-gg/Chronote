@@ -149,15 +149,12 @@ jest.mock("../services/meetingNameService", () => ({
 }));
 jest.mock("../services/savedRecordingPrompt", () => ({
   ...jest.requireActual("../services/savedRecordingPrompt"),
-  snapshotRecordingPrompt: jest.fn(async (name, type, label) => ({
+  snapshotRecordingPrompt: jest.fn(async (name, label) => ({
     name,
-    type,
+    type: "chat",
     label,
     version: 1,
-    template:
-      type === "text"
-        ? "{{transcript}}"
-        : [{ role: "user", content: "{{transcript}}" }],
+    template: [{ role: "user", content: "{{transcript}}" }],
   })),
 }));
 import {
@@ -420,9 +417,14 @@ describe("initializeMeeting", () => {
       expect(first.settings.availability).toBe("available");
       if (first.settings.availability !== "available")
         throw new Error("Original settings missing");
-      expect(first.settings.value.transcription).toEqual(
-        meeting.runtimeConfig!.transcription,
-      );
+      // Plus the constant fields pre-simplification workers require.
+      expect(first.settings.value.transcription).toEqual({
+        ...meeting.runtimeConfig!.transcription,
+        language: "auto",
+        promptEchoEnabled: false,
+        voteEnabled: false,
+        finalPassEnabled: false,
+      });
       expect(first.settings.value.autoCompletion).toEqual(
         completionSnapshot(meeting)!.policy,
       );

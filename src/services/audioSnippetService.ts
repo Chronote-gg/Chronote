@@ -1,13 +1,6 @@
-import type {
-  AudioSnippet,
-  AudioFileData,
-  TranscriptVariant,
-} from "../types/audio";
+import type { AudioSnippet, AudioFileData } from "../types/audio";
 import type { MeetingData } from "../types/meeting-data";
-import type {
-  TranscriptCorrespondence,
-  PcmSpan,
-} from "../types/transcriptCorrespondence";
+import type { PcmSpan } from "../types/transcriptCorrespondence";
 import {
   BYTES_PER_SAMPLE,
   CHANNELS,
@@ -27,15 +20,10 @@ import {
   getMeetingProcessingSignal,
   runMeetingProcessingEffect,
 } from "./meetingProcessingLifetime";
-import {
-  transcribeSnippet,
-  coalesceTranscription,
-} from "./transcriptionService";
+import { transcribeSnippet } from "./transcriptionService";
 import { checkpointCompletedTranscription } from "./recordingContentService";
 import {
   copyCorrespondence,
-  combineCorrespondence,
-  containsPcmSpans,
   appendPcmSpan,
 } from "../utils/transcriptCorrespondence";
 import {
@@ -45,7 +33,6 @@ import {
 import { isTrivialTranscriptionText } from "../utils/transcriptionText";
 import { nowIso } from "../utils/time";
 import { maybeRespondLive } from "../liveVoice";
-import { getModelChoice, buildModelOverrides } from "./modelFactory";
 
 export function getAudioBytes(audio: AudioSnippet): number {
   if (typeof audio.audioBytes === "number") {
@@ -259,25 +246,6 @@ export function runFastTranscription(
   ).catch(() => {});
 }
 
-/** Coalescing may only use fast candidates inside the finalized snippet input. */
-function validateFastCandidateCorrespondence(
-  inputCorrespondence: TranscriptCorrespondence | undefined,
-  fastCandidates: readonly TranscriptVariant[],
-): void {
-  if (
-    inputCorrespondence?.kind === "pcm" &&
-    fastCandidates.some(
-      (entry) =>
-        entry.correspondence?.kind === "pcm" &&
-        !containsPcmSpans(
-          inputCorrespondence.spans,
-          entry.correspondence.spans,
-        ),
-    )
-  )
-    throw new Error("Fast transcript input exceeds finalized snippet");
-}
-
 export function canReuseFastTranscript(
   meeting: MeetingData,
   snippet: AudioSnippet,
@@ -307,61 +275,6 @@ export function canReuseFastTranscript(
         )))
   );
 }
-export async function coalesceSnippetTranscription(
-  meeting: MeetingData,
-  snippet: AudioSnippet,
-  audioFileData: AudioFileData,
-  inputCorrespondence: TranscriptCorrespondence | undefined,
-  transcription: string,
-): Promise<void> {
-  const premium = meeting.runtimeConfig?.premiumTranscription;
-  if (
-    premium?.enabled &&
-    transcription.trim().length > 0 &&
-    audioFileData.fastTranscripts &&
-    audioFileData.fastTranscripts.length > 0
-  ) {
-    try {
-      const fastCandidates = audioFileData.fastTranscripts.map((entry) => ({
-        ...entry,
-        correspondence: copyCorrespondence(entry.correspondence),
-      }));
-      validateFastCandidateCorrespondence(inputCorrespondence, fastCandidates);
-      const coalesced = await coalesceTranscription(meeting, {
-        slowTranscript: transcription,
-        fastTranscripts: fastCandidates,
-      });
-      if (getMeetingProcessingSignal(meeting).aborted) return;
-      if (coalesced && coalesced.trim().length > 0) {
-        audioFileData.coalescedTranscript = coalesced;
-        audioFileData.coalescedCorrespondence = combineCorrespondence([
-          inputCorrespondence,
-          ...fastCandidates.map((entry) => entry.correspondence),
-        ]);
-        audioFileData.coalesceMeta = {
-          model: getModelChoice(
-            "transcriptionCoalesce",
-            buildModelOverrides(meeting.runtimeConfig?.modelChoices),
-          ).model,
-          usedFastRevisions: audioFileData.fastTranscripts.map(
-            (entry) => entry.revision,
-          ),
-          createdAt: nowIso(),
-        };
-        audioFileData.transcript = coalesced;
-        audioFileData.transcriptCorrespondence = copyCorrespondence(
-          audioFileData.coalescedCorrespondence,
-        );
-      }
-    } catch (error) {
-      console.error(
-        `Failed to coalesce transcription for user ${snippet.userId}:`,
-        error,
-      );
-    }
-  }
-}
-
 export function appendSnippetPcm(
   snippet: AudioSnippet,
   chunk: Buffer,

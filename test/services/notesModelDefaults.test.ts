@@ -70,7 +70,7 @@ test("resolves the configured notes default to Sol with low reasoning", async ()
     notesCorrection: "gpt-5.2",
     transcriptionCleanup: "gpt-5.2",
     imagePrompt: "gpt-5.2",
-    transcription: "gpt-4o-transcribe",
+    transcription: "gpt-transcribe",
   });
   expect(resolved.getModelChoice("meetingSummary").model).toBe("gpt-5.2");
   expect(resolved.getModelChoice("transcriptionCleanup").model).toBe("gpt-5.2");

@@ -70,8 +70,6 @@ const DEFAULT_TRANSCRIPTION_CONFIG: MeetingRuntimeConfig["transcription"] = {
   suppressionRateMinSyllables: TRANSCRIPTION_RATE_MIN_SYLLABLES,
   suppressionRateMaxSyllablesPerSecond:
     TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
-  promptEchoEnabled: true,
-  voteEnabled: true,
   fastSilenceMs: FAST_SILENCE_THRESHOLD,
   slowSilenceMs: SILENCE_THRESHOLD,
   minSnippetSeconds: MINIMUM_TRANSCRIPTION_LENGTH,
@@ -80,7 +78,6 @@ const DEFAULT_TRANSCRIPTION_CONFIG: MeetingRuntimeConfig["transcription"] = {
   interjectionEnabled: false,
   interjectionMinSpeakerSeconds: MINIMUM_TRANSCRIPTION_LENGTH,
   noiseGate: DEFAULT_NOISE_GATE_CONFIG,
-  finalPassEnabled: false,
 };
 
 const buildRuntimeConfig = (
@@ -103,7 +100,6 @@ const buildRuntimeConfig = (
     },
     dictionary: {
       maxEntries: 3,
-      maxCharsTranscription: 200,
       maxCharsContext: 500,
       ...overrides.dictionary,
     },
@@ -138,7 +134,6 @@ const dictionaryFixture = () => ({
   dictionaryEntries: [DICTIONARY_ENTRY],
   dictionaryBudgets: {
     maxEntries: 5,
-    maxCharsTranscription: 200,
     maxCharsContext: 200,
   },
 });
@@ -205,7 +200,6 @@ describe("contextService", () => {
     expect(result.dictionaryEntries).toHaveLength(1);
     expect(result.dictionaryBudgets).toEqual({
       maxEntries: 3,
-      maxCharsTranscription: 200,
       maxCharsContext: 500,
     });
     expect(result.recentMeetings).toHaveLength(1);

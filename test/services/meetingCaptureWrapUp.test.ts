@@ -9,9 +9,6 @@ jest.mock("../../src/audio", () => ({
 jest.mock("../../src/services/autoRecordCancellationService", () => ({
   evaluateAutoRecordCancellation: jest.fn(async () => ({ cancel: false })),
 }));
-jest.mock("../../src/services/transcriptionFinalPassService", () => ({
-  runTranscriptionFinalPass: jest.fn(),
-}));
 jest.mock("../../src/services/transcriptCompilationService", () => ({
   compileTranscriptions: jest.fn(async () => "Cancelled transcript"),
 }));
@@ -38,28 +35,12 @@ import {
 } from "../../src/services/meetingCaptureWrapUp";
 import { checkpointCompletedTranscription } from "../../src/services/recordingContentService";
 import { compileTranscriptions } from "../../src/services/transcriptCompilationService";
-import { runTranscriptionFinalPass } from "../../src/services/transcriptionFinalPassService";
 import type { MeetingData } from "../../src/types/meeting-data";
 import { MEETING_END_REASONS } from "../../src/types/meetingLifecycle";
 
 const START_MS = Date.parse("2025-01-01T00:00:00.000Z");
 const ELEVEN_MINUTES_MS = 11 * 60 * 1000;
 const TWO_MINUTES_MS = 2 * 60 * 1000;
-
-const finalPass = {
-  enabled: true,
-  applied: true,
-  processedChunks: 1,
-  totalChunks: 1,
-  totalSegments: 1,
-  candidateEdits: 0,
-  acceptedEdits: 0,
-  replacedSegments: 0,
-  droppedSegments: 0,
-  rejectedTrivialEdits: 0,
-  repetitionFilteredSegments: 0,
-  fallbackApplied: false,
-};
 
 function meetingFor(overrides: Partial<MeetingData> = {}): MeetingData {
   return {
@@ -101,7 +82,6 @@ beforeEach(() => {
   jest.clearAllMocks();
   jest.spyOn(console, "log").mockImplementation(() => undefined);
   jest.spyOn(console, "error").mockImplementation(() => undefined);
-  jest.mocked(runTranscriptionFinalPass).mockResolvedValue(finalPass);
   jest.mocked(waitForFinishProcessing).mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => jest.restoreAllMocks());
@@ -235,7 +215,7 @@ test("deliberately suppressed empty speech is classified empty", async () => {
     }),
   ];
 
-  await compileFinalTranscript(meeting, async () => "", "synthetic.mp3");
+  await compileFinalTranscript(meeting, async () => "");
 
   expect(meeting.processing?.transcription).toBe("empty");
 });
@@ -252,13 +232,11 @@ test("transcribed speech is classified ready and the processed transcription is 
       cleanupAcknowledged?.("acknowledged");
       return "Fixture speech";
     },
-    "synthetic.mp3",
   );
 
   expect(meeting.processing?.transcription).toBe("ready");
   expect(meeting.finalTranscript).toBe("Fixture speech");
   expect(checkpointCompletedTranscription).toHaveBeenLastCalledWith(meeting, {
-    finalPass: "acknowledged",
     cleanup: "acknowledged",
     finalText: "Fixture speech",
   });
@@ -271,11 +249,7 @@ test("an incomplete capture with usable speech is classified partial", async () 
     audioFile({ transcript: "Fixture speech", processing: false }),
   ];
 
-  await compileFinalTranscript(
-    meeting,
-    async () => "Fixture speech",
-    "synthetic.mp3",
-  );
+  await compileFinalTranscript(meeting, async () => "Fixture speech");
 
   expect(meeting.processing?.transcription).toBe("partial");
 });
@@ -286,46 +260,12 @@ test("a transcription still pending after the wait is classified failed", async 
     audioFile({ transcript: "Fixture speech", processing: true }),
   ];
 
-  await compileFinalTranscript(
-    meeting,
-    async () => "Fixture speech",
-    "synthetic.mp3",
-  );
+  await compileFinalTranscript(meeting, async () => "Fixture speech");
 
   expect(meeting.processing?.transcription).toBe("failed");
 });
 
-test("the optional final pass fallback keeps the usable baseline transcript", async () => {
-  jest.mocked(runTranscriptionFinalPass).mockResolvedValueOnce({
-    ...finalPass,
-    applied: false,
-    candidateEdits: 1,
-    fallbackApplied: true,
-    fallbackReason: "guardrail_threshold",
-  });
-  const meeting = meetingFor();
-  meeting.audioData.audioFiles = [
-    audioFile({ transcript: "Fixture speech", processing: false }),
-  ];
-
-  await compileFinalTranscript(
-    meeting,
-    async ({ cleanupAcknowledged } = {}) => {
-      cleanupAcknowledged?.("disabled");
-      return "Fixture speech";
-    },
-    "synthetic.mp3",
-  );
-
-  expect(meeting.processing?.transcription).toBe("ready");
-  expect(meeting.audioData.audioFiles[0].transcript).toBe("Fixture speech");
-  expect(checkpointCompletedTranscription).toHaveBeenLastCalledWith(
-    meeting,
-    expect.objectContaining({ finalPass: "fallback" }),
-  );
-});
-
-test("a cancelled meeting keeps a transcript compiled without the final pass", async () => {
+test("a cancelled meeting keeps a best-effort transcript", async () => {
   const meeting = meetingFor();
   meeting.audioData.audioFiles = [
     audioFile({ transcript: "Fixture speech", processing: true }),
@@ -338,7 +278,6 @@ test("a cancelled meeting keeps a transcript compiled without the final pass", a
 
   expect(waitForFinishProcessing).toHaveBeenCalledWith(meeting);
   expect(compileTranscriptions).toHaveBeenCalledWith(client, meeting);
-  expect(runTranscriptionFinalPass).not.toHaveBeenCalled();
   expect(meeting.finalTranscript).toBe("Cancelled transcript");
 });
 

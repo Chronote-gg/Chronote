@@ -129,8 +129,6 @@ for (const entry of ["live page", "dashboard"] as const) {
         DEFAULT_SPEECH_POLICY.policyFingerprint,
       );
       file.slowTranscript = "";
-      file.coalescedTranscript = "older guess";
-      file.finalPassTranscript = "late guess";
       const after = buildLiveMeetingTimelineEvents(meeting);
       const ids = new Set(after.map((event) => event.id));
       const removedEventIds = before

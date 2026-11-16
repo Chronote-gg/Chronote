@@ -42,7 +42,7 @@ jest.mock("../../src/services/subscriptionService", () => ({
 }));
 const scopedRuntimeConfig = {
   premiumTranscription: { enabled: true, cleanupEnabled: true },
-  dictionary: { maxEntries: 3, maxCharsTranscription: 10, maxCharsContext: 20 },
+  dictionary: { maxEntries: 3, maxCharsContext: 20 },
   visionCaptions: { enabled: false, maxImages: 0, maxTotalChars: 0 },
   modelChoices: {
     notes: "channel-notes-model",

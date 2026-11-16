@@ -456,9 +456,6 @@ test("speech still open when stop is pressed reaches the transcript the notes in
   const live = await startRecording(w, {
     send: jest.fn(async () => undefined),
   });
-  // The final pass would spend the scripted notes responses; this test is about the snippet hand-off.
-  if (live.runtimeConfig)
-    live.runtimeConfig.transcription.finalPassEnabled = false;
   const pcm = spokenPcm();
   live.audioData.currentSnippets.set(FINISH_SPEAKER.id, {
     userId: FINISH_SPEAKER.id,

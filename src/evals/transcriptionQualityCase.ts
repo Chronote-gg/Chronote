@@ -18,11 +18,11 @@ import {
   evaluateNoiseGate,
   isNoiseGateEnabled,
 } from "../utils/audioNoiseGate";
+import type { Transcription } from "openai/resources/audio";
 import {
+  guardTranscription,
   resolveTranscriptionGuardConfig,
-  selectTranscription,
-  type RawTranscriptionCandidate,
-} from "../services/transcriptionSelectionService";
+} from "../services/transcriptionService";
 import type { TranscriptionEvalPolicy } from "./transcriptionCorpus";
 import type { TranscriptionVadDecision } from "./transcriptionVadReport";
 import {
@@ -31,6 +31,11 @@ import {
 } from "./transcriptionMetrics";
 
 export type TranscriptionQualityMode = "provider" | "pipeline" | "preflight";
+export type RawTranscription = {
+  text: string;
+  logprobs?: { logprob?: number }[];
+  usage?: Transcription["usage"];
+};
 export type TranscriptionQualityRun = {
   status: "succeeded" | "skipped" | "eligible" | "failed";
   reason?:
@@ -57,19 +62,11 @@ export type TranscriptionQualityRun = {
   requests: number;
   durationMs: number;
   text?: string;
-  selectedId?: "prompt" | "no_prompt" | "none";
-  candidates: {
-    id: "prompt" | "no_prompt";
-    raw: RawTranscriptionCandidate;
-    flags: string[];
-    text: string;
-  }[];
+  raw?: RawTranscription;
+  flags: string[];
   score: TranscriptionScore;
   noiseMetrics: ReturnType<typeof evaluateNoiseGate>["metrics"];
   vad?: TranscriptionVadDecision;
-  voteDecision?: Awaited<
-    ReturnType<typeof selectTranscription>
-  >["voteDecision"];
 };
 
 export class TranscriptionBudgetExhausted extends Error {}
@@ -78,7 +75,8 @@ export class TranscriptionBudgetExhausted extends Error {}
 export async function runTranscriptionQualityCase(input: {
   pcm: Buffer;
   reference?: string;
-  prompt: string;
+  /** Sent to the provider only for comparisons with the former prompted path; production sends none. */
+  prompt?: string;
   passMode: "fast" | "slow";
   mode: TranscriptionQualityMode;
   policy: TranscriptionEvalPolicy;
@@ -88,7 +86,7 @@ export async function runTranscriptionQualityCase(input: {
     TranscriptionInputRequest,
     "mode" | "pcmFile" | "wavFile" | "policyFingerprint" | "detector"
   >;
-  transcribe: (prompt?: string) => Promise<RawTranscriptionCandidate>;
+  transcribe: (prompt?: string) => Promise<RawTranscription>;
 }): Promise<TranscriptionQualityRun> {
   const started = performance.now();
   const audioSeconds =
@@ -110,7 +108,7 @@ export async function runTranscriptionQualityCase(input: {
     submittedAudioSeconds: 0,
     requests: 0,
     durationMs: 0,
-    candidates: [],
+    flags: [],
     score: { scored: false },
     noiseMetrics: gate.metrics,
     vad: input.vad,
@@ -147,32 +145,16 @@ export async function runTranscriptionQualityCase(input: {
       }
     };
     try {
-      if (input.mode === "provider") {
-        const raw = await request(input.prompt.trim() || undefined);
-        result.candidates.push({
-          id: "prompt",
-          raw,
-          flags: [],
-          text: raw.text,
-        });
-        result.text = raw.text;
-        result.selectedId = "prompt";
-      } else {
-        const rawCandidates: RawTranscriptionCandidate[] = [];
+      const raw = await request(input.prompt?.trim() || undefined);
+      result.raw = raw;
+      result.text = raw.text;
+      if (input.mode === "pipeline") {
         const guardConfig = resolveTranscriptionGuardConfig(
           input.policy,
           input.force ? false : undefined,
         );
-        const selection = await selectTranscription({
-          transcribe: async (prompt) => {
-            const raw = await request(prompt);
-            rawCandidates.push(raw);
-            return raw;
-          },
-          prompt: input.prompt.trim() || undefined,
-          passMode: input.passMode,
-          voteEnabled: input.policy.voteEnabled ?? true,
-          guardConfig,
+        const guarded = await guardTranscription({
+          raw,
           audioSeconds,
           noiseGateMetrics:
             input.pcm.length &&
@@ -180,17 +162,11 @@ export async function runTranscriptionQualityCase(input: {
               guardConfig.suppressionEnabled)
               ? gate.metrics
               : undefined,
-          onCandidate: (candidate) =>
-            result.candidates.push({
-              id: candidate.candidateId,
-              raw: rawCandidates[rawCandidates.length - 1],
-              flags: candidate.guardResult.flags,
-              text: candidate.guardResult.text,
-            }),
+          guardConfig,
+          traceMetadata: {},
         });
-        result.text = selection.selected.guardResult.text;
-        result.selectedId = selection.selected.candidateId;
-        result.voteDecision = selection.voteDecision;
+        result.text = guarded.text;
+        result.flags = guarded.review.flags;
       }
       result.status = "succeeded";
       result.score = scoreTranscription(input.reference, result.text);
@@ -207,7 +183,7 @@ export async function runTranscriptionQualityCase(input: {
         category: result.reason,
         status: status.success ? status.data.status : null,
       };
-      // Partial candidates are retained, but a failed run is never graded as silence.
+      // A failed run is never graded as silence.
     }
     return finish();
   };

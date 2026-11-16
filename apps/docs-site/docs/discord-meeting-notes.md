@@ -30,7 +30,7 @@ See [Meeting Lifecycle](/core-concepts/meeting-lifecycle/) for the complete reco
 
 ## Transcription language
 
-Discord voice meetings are transcribed as English by default. Server admins can change this in **Server Settings** under **Advanced** -> **Transcription** -> **Transcription language**. Choose a fixed language when every meeting in the server uses it, which helps accuracy. Choose `auto` to let Chronote detect the spoken language of each audio snippet. Each meeting keeps the language it had when it started, so a change applies to new meetings.
+Chronote detects the spoken language of each audio snippet, so meetings held in a language other than English are transcribed in that language. There is no language setting to configure.
 
 ## Experimental speech detection
 
@@ -82,4 +82,4 @@ Chronote has a free server plan. To test the workflow:
 2. Complete the short [Getting Started](/getting-started/) setup.
 3. Run one real voice meeting and review the notes with the participants.
 
-That first completed meeting is the best test: it shows whether the transcript recognizes your terminology, whether the note structure fits the group, and which context or dictionary entries would improve the next result.
+That first completed meeting is the best test: it shows whether the notes spell your terminology correctly, whether the note structure fits the group, and which context or dictionary entries would improve the next notes.

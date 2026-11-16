@@ -38,11 +38,10 @@ TTS-only sessions skip capture entirely. Chronote does not subscribe to user voi
 
 Processing begins when the meeting ends. The embed updates to show "processing" status. This stage involves several steps:
 
-1. **Transcription**: Each audio snippet is sent to OpenAI's transcription model with a prompt that includes your dictionary terms and context. Quality checks filter out noise, prompt echoes, and low-confidence segments.
-2. **Finalized audio verification**: After mixed audio is built, Chronote can run a final verification pass against the full recording and apply only high-confidence hallucination fixes before notes generation.
-3. **Transcript cleanup**: A language model pass cleans up the raw transcription for readability.
-4. **Notes generation**: The full transcript, chat log, participant roster, server/channel/meeting context, dictionary entries (with definitions), and recent meeting history are sent to a language model that produces structured meeting notes.
-5. **Artifact upload**: The audio recording, transcript, and chat log are uploaded to cloud storage.
+1. **Transcription**: Each audio snippet is sent to OpenAI's transcription model, which detects the spoken language. Quality checks filter out noise, silence, and low-confidence text from quiet audio.
+2. **Transcript cleanup**: A language model pass cleans up the raw transcription for readability.
+3. **Notes generation**: The full transcript, chat log, participant roster, server/channel/meeting context, dictionary entries (with definitions), and recent meeting history are sent to a language model that produces structured meeting notes.
+4. **Artifact upload**: The audio recording, transcript, and chat log are uploaded to cloud storage.
 
 The processing step typically takes 1-3 minutes depending on meeting length.
 
@@ -106,6 +105,6 @@ Several factors influence the quality of transcription and notes:
 | Server context   | `/context set-server`           | Helps the AI understand your team, project, and domain |
 | Channel context  | `/context set-channel`          | Adds channel-specific context (e.g., "design reviews") |
 | Meeting context  | `/startmeeting context:` option | Describes this specific meeting's topic                |
-| Dictionary terms | `/dictionary add`               | Corrects spelling of names, acronyms, jargon           |
+| Dictionary terms | `/dictionary add`               | Corrects spelling of names and jargon in notes         |
 | Audio quality    | Participant microphone settings | Clearer audio produces more accurate transcription     |
 | Speaking volume  | Participant microphone levels   | Very quiet audio may be filtered by the noise gate     |

@@ -16,7 +16,6 @@ import {
 import {
   type createTranscriptionAttemptLedger,
   type TranscriptionAttemptOutcome,
-  type TranscriptionCandidateId,
 } from "../observability/transcriptionAttempts";
 import { createOpenAIClient } from "./openaiClient";
 import {
@@ -28,7 +27,6 @@ const nativeFetch = globalThis.fetch;
 const failureScopes = new AsyncLocalStorage<WeakSet<Error>>();
 
 type RequestInput = {
-  candidate: TranscriptionCandidateId;
   file: string;
   signal: AbortSignal;
   request: Omit<TranscriptionCreateParamsNonStreaming<"json">, "file">;
@@ -126,9 +124,9 @@ function retryAfterDelay(error: unknown) {
 }
 
 async function runAttempt(input: RequestInput): Promise<Transcription> {
-  const { signal, ledger, candidate } = input;
+  const { signal, ledger } = input;
   signal.throwIfAborted();
-  const attempt = ledger.beginAttempt(candidate);
+  const attempt = ledger.beginAttempt();
   try {
     const client = createOpenAIClient(input.clientOptions, {
       fetch: attempt.wrapFetch(input.transport?.fetch ?? nativeFetch),
@@ -157,7 +155,6 @@ async function runAttempt(input: RequestInput): Promise<Transcription> {
 export async function runTranscriptionRequest(
   input: RequestInput,
 ): Promise<Transcription> {
-  input.ledger.beginCandidate(input.candidate);
   const generator = new ExponentialBackoff({
     initialDelay: TRANSCRIPTION_RETRY_INITIAL_DELAY_MS,
     exponent: TRANSCRIPTION_RETRY_EXPONENT,
@@ -182,4 +179,19 @@ export async function runTranscriptionRequest(
       await setTimeout(delay, undefined, { signal: input.signal });
     }
   }
+}
+
+/**
+ * The production ASR request. Live audio sends no prompt and no language hint,
+ * so the provider detects the language and has nothing to echo back. Only a
+ * recording frozen with a fixed language passes `language`.
+ */
+export function buildTranscriptionRequest(model: string, language?: string) {
+  return {
+    model,
+    temperature: 0,
+    response_format: "json" as const,
+    include: ["logprobs" as const],
+    ...(language ? { language } : {}),
+  };
 }

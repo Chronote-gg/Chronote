@@ -3,6 +3,7 @@ import { completedTextResponse } from "../../src/testSupport/openaiResponse";
 import type { ChatEntry } from "../../src/types/chat";
 import type { MeetingRuntimeConfig } from "../../src/config/types";
 import type { MeetingData } from "../../src/types/meeting-data";
+import { DEFAULT_NOISE_GATE_CONFIG } from "../../src/utils/audioNoiseGate";
 
 type LoadOptions = {
   mockEnabled?: boolean;
@@ -78,15 +79,12 @@ const buildRuntimeConfig = (
   const base: MeetingRuntimeConfig = {
     transcription: {
       speechDetectionMode: "off",
-      language: "en",
       suppressionEnabled: true,
       suppressionHardSilenceDbfs: -60,
       suppressionRateMaxSeconds: 3,
       suppressionRateMinWords: 4,
       suppressionRateMinSyllables: 8,
       suppressionRateMaxSyllablesPerSecond: 7,
-      promptEchoEnabled: true,
-      voteEnabled: true,
       fastSilenceMs: 500,
       slowSilenceMs: 1000,
       minSnippetSeconds: 1,
@@ -94,16 +92,7 @@ const buildRuntimeConfig = (
       fastFinalizationEnabled: false,
       interjectionEnabled: false,
       interjectionMinSpeakerSeconds: 1,
-      noiseGate: {
-        enabled: true,
-        windowMs: 20,
-        peakDbfs: -45,
-        minActiveWindows: 2,
-        minPeakAboveNoiseDb: 15,
-        applyToFast: true,
-        applyToSlow: true,
-      },
-      finalPassEnabled: false,
+      noiseGate: { ...DEFAULT_NOISE_GATE_CONFIG, enabled: true },
     },
     premiumTranscription: {
       enabled: false,
@@ -111,7 +100,6 @@ const buildRuntimeConfig = (
     },
     dictionary: {
       maxEntries: 0,
-      maxCharsTranscription: 0,
       maxCharsContext: 0,
     },
     autoRecordCancellation: {

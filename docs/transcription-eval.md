@@ -4,7 +4,7 @@ This CLI runs repeated transcription passes against labeled audio and measures u
 
 ## Production pipeline corpus runs
 
-Use `--manifest` to compare the raw provider with the same audio gate, conversion, transcript guards, and candidate selection used by the bot. No Langfuse dataset is required. Corpus tracing stays disabled and results stay in an ignored artifact directory.
+Use `--manifest` to compare the raw provider with the same audio gate, conversion, speech admission and transcript guards used by the bot. Pipeline mode sends one unprompted request per run with no language hint, as production does, and grades it through the exported production `guardTranscription`. No Langfuse dataset is required. Corpus tracing stays disabled and results stay in an ignored artifact directory.
 
 ```powershell
 npm run eval:transcription:corpus -- --speech
@@ -18,9 +18,43 @@ Corpus preparation generates eight nonspeech controls. `--speech` adds eight sho
 
 Each manifest case requires an audio SHA-256, split, tags, and explicit speech/nonspeech/unreviewed label with provenance. Every repetition is scored. An empty expected transcript means nonspeech; an absent reference is unscored. Provider failures and exhausted budgets stay unscored, retain request accounting, and cause a nonzero exit code. SDK retries are disabled in corpus mode. Usage is retained for every successful response; dollar cost is unpriced.
 
-`--policy` loads validated guard settings, `--prompt-file` changes the prompt, and `--split tune` limits development runs. Keep a fresh holdout separate from tuning. `--vad-report` applies experimental detector decisions bound to each clip's hash. The optional Silero Python script is an offline experiment and does not change the production bot.
+`--policy` loads validated guard settings, `--prompt-file` sends a prompt for comparison with the former prompted path, `--language <code>` forces a language hint for comparison, and `--split tune` limits development runs. Keep a fresh holdout separate from tuning. `--vad-report` applies experimental detector decisions bound to each clip's hash. The optional Silero Python script is an offline experiment and does not change the production bot.
 
 Keep real recordings, references, and results in the private ops workspace. Use `--artifact-dir D:/bench/chronote-ops/.cache/transcription-eval`, with any explicit `--output` inside that directory. Production recording replay retains the private ops authorization requirement.
+
+### Public corpus and variant comparison
+
+`test/fixtures/transcription-public/` holds a committed public corpus (LibriSpeech and FLEURS speech under CC BY 4.0, generated non-speech, quiet, short, long-pause and Japanese cases) with a made-up server glossary as its grading prompt. Its README records provenance. Run it after `yarn build` with the same environment the other evals need (`scripts/mock.env.example` plus a real `OPENAI_API_KEY`):
+
+```powershell
+npm run eval:transcription -- --manifest test/fixtures/transcription-public/manifest.json --mode pipeline --pass-mode slow --speech-detector production --speech-mode enforce --runs 2 --max-requests 200
+```
+
+Vary one thing at a time to compare variants: `--prompt-file test/fixtures/transcription-public/glossary-prompt.txt` (the former production prompt) or `terms-prompt.txt` (dictionary terms only), `--language en` (force a language hint; the default omits it), `--mode provider` (raw ASR with every gate off) and `--model`. Logprobs are requested from every `gpt-*` model; `whisper-1` runs without them. `manifest-long.json` compares one 48 s segment with its eight utterances; `--max-clip-seconds` allows up to 180 s.
+
+The summary adds `cer` for CJK references (kept out of `wer`), `speechMostlyDroppedRate` (under half the reference words) and `unwantedWordsPerSilenceRun`.
+
+### New pipeline results, 2026-11-16
+
+Two runs per case, slow pass, speech detector enforced. Baseline A is the former path (`gpt-4o-transcribe`, glossary prompt, forced `en`, echo gate and vote). The new path sends no prompt and no language hint.
+
+| set                                               | A                      | `gpt-transcribe` | `gpt-4o-mini-transcribe` |
+| ------------------------------------------------- | ---------------------- | ---------------- | ------------------------ |
+| Public, original 25 cases, WER                    | 0.071                  | 0.036            | 0.052                    |
+| Public, 38 cases with short cuts, WER             | not run                | 0.048            | 0.068                    |
+| Public long segment, WER                          | 0.005                  | 0.005            | 0.005                    |
+| Public nonspeech hallucination                    | 0                      | 0                | 0                        |
+| Public term recall                                | 1.00                   | 0.55             | 0.46                     |
+| Private English meeting 1 (references agree), WER | 0.144                  | 0.073            | 0.077                    |
+| Private English meeting 2 (references agree), WER | 0.105                  | 0.068            | 0.090                    |
+| Private Japanese meeting, CER                     | 0.109                  | 0.106            | 0.106                    |
+| Private nonspeech hallucination rate              | 0 to 0.67              | 0                | 0                        |
+| Empty output on speech                            | 0                      | 0                | 0                        |
+| List price per audio minute                       | $0.006 plus vote calls | $0.0045          | $0.003                   |
+
+Public references are exact LibriSpeech and FLEURS text. Private references are local faster-whisper `large-v3` and `large-v3-turbo` drafts, not human checked. On the public human-referenced cases the ranking is `whisper-1` 0.033, new `gpt-transcribe` 0.036, new `gpt-4o-mini-transcribe` 0.052, baseline A 0.071, unprompted `gpt-4o-transcribe` 0.090 to 0.100. Term recall drops because the glossary is no longer sent.
+
+On 19 public and 11 private short English clips (1 to 3 s), auto language produced no non-English output for `gpt-transcribe` or `gpt-4o-mini-transcribe` (0 of 90 pipeline runs). `gpt-4o-transcribe` without a language hint returned another language on 4 of 33 private runs, which matters for a rollback to that model.
 
 See [the October 13 findings and run instructions](analysis/2026-10-13-transcription-quality-evals.md) for the corpus format, optional speech detector, observed results, and release limits.
 
@@ -179,11 +213,10 @@ Pipeline provider replay of private recordings requires its separate authorizati
 For an authorized replay, repeat each numbered batch until the split is exhausted,
 replace `production` with `off` for baseline (omit `--speech-mode`), and repeat
 both comparisons with `--pass-mode fast`. Baseline and candidate must use identical
-source, model, prompt, echo and other policy settings, split, and repetitions.
+source, model, prompt, language and other policy settings, split, and repetitions.
 Selection sorts case IDs after split filtering, then takes at most 25 cases.
 An out-of-range batch errors before decoding or provider setup. Three repetitions
-of 25 slow clips allow at most 150 SDK invocations, including prompt/no-prompt
-voting. SDK retries are disabled. Failed submitted calls count toward work;
+of 25 slow clips make 75 SDK invocations. SDK retries are disabled. Failed submitted calls count toward work;
 budget exhaustion is incomplete. Eligible preflight rows remain unscored and
 cannot satisfy pipeline acceptance.
 
@@ -204,7 +237,7 @@ Waiting only to collect its completed artifact is excluded from end-to-end time.
 Older reports that cached off-mode conversion used a different boundary and must
 be regenerated before a matched latency comparison.
 
-Final-pass exact-coverage reuse, changed PCM and whole-meeting
+Recovery re-transcription of changed PCM and whole-meeting
 reprocessing can add SDK calls that this snippet replay does not model; use live
 SDK counters to measure those calls, and never extrapolate guaranteed savings.
 

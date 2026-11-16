@@ -1,4 +1,4 @@
-import { isAudioFileSpeechRejected } from "../utils/audioTranscript";
+import { resolveAudioFileText } from "../utils/audioTranscript";
 import { promises as fs } from "node:fs";
 import { MeetingData } from "../types/meeting-data";
 import { uploadVerifiedObjectToS3 } from "./storageService";
@@ -80,26 +80,13 @@ function buildTranscriptJson(
     messageId?: string;
   }[],
 ) {
-  const resolveSegmentText = (
-    file: MeetingData["audioData"]["audioFiles"][0],
-  ) =>
-    isAudioFileSpeechRejected(file)
-      ? ""
-      : file.finalPassTranscript !== undefined
-        ? file.finalPassTranscript
-        : (file.coalescedTranscript ??
-          file.slowTranscript ??
-          file.transcript ??
-          (file.fastTranscripts && file.fastTranscripts.length > 0
-            ? file.fastTranscripts[file.fastTranscripts.length - 1].text
-            : undefined));
   const builtSegments =
     segments ??
     [
       ...meeting.audioData.audioFiles.map((file) => ({
         userId: file.userId,
         timestamp: file.timestamp,
-        text: resolveSegmentText(file),
+        text: resolveAudioFileText(file),
         source: file.source,
         messageId: file.messageId,
       })),

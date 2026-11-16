@@ -66,7 +66,6 @@ test("exhaustion dispatches exactly four times with SDK retries disabled", async
   ).toEqual(["0", "0", "0", "0"]);
   expect(f.closedStreams).toHaveLength(4);
   expect(f.ledger.snapshot()).toMatchObject({
-    logicalCandidateCount: 1,
     sdkInvocationCount: 4,
     httpDispatchAttemptCount: 4,
     retryCount: 3,
@@ -253,8 +252,8 @@ test("SDK-returned usage survives abort before the result publication fence", as
   const f = await buildAsrFixture({ outcomes: [validResponse] });
   const beginAttempt = f.ledger.beginAttempt;
   const returned = jest.fn();
-  jest.spyOn(f.ledger, "beginAttempt").mockImplementation((candidate) => {
-    const attempt = beginAttempt(candidate);
+  jest.spyOn(f.ledger, "beginAttempt").mockImplementation(() => {
+    const attempt = beginAttempt();
     const recordReturnedUsage = attempt.recordReturnedUsage;
     jest.spyOn(attempt, "recordReturnedUsage").mockImplementation((usage) => {
       expect(f.signal.aborted).toBe(false);
@@ -335,11 +334,7 @@ test.each([false, true])(
     await f.run();
     expect(f.fetch).toHaveBeenCalledTimes(1);
     expect(f.bodies[0]).toContain("synthetic wav bytes");
-    for (const value of [
-      "gpt-4o-transcribe",
-      "Project terminology.",
-      "logprobs",
-    ]) {
+    for (const value of ["gpt-transcribe", "logprobs"]) {
       expect(f.bodies[0]).toContain(value);
     }
     expect(f.requests[0]?.headers.get("authorization")).toBe(

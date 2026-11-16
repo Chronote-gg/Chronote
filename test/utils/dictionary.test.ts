@@ -40,15 +40,12 @@ describe("dictionary utils", () => {
     ];
     const budgets = {
       maxEntries: 1,
-      maxCharsTranscription: 200,
       maxCharsContext: 200,
     };
 
     const result = buildDictionaryPromptLines(entries, budgets);
 
-    expect(result.transcriptionLines).toEqual(["- Alpha"]);
     expect(result.contextLines).toEqual(["- Alpha: First"]);
-    expect(result.usage.transcription.entries).toBe(1);
     expect(result.usage.context.entries).toBe(1);
   });
 
@@ -57,9 +54,6 @@ describe("dictionary utils", () => {
       [CONFIG_KEYS.dictionary.maxEntries]: 250,
       [CONFIG_KEYS.dictionary.maxEntriesPro]: 600,
       [CONFIG_KEYS.dictionary.maxEntriesCap]: 300,
-      [CONFIG_KEYS.dictionary.maxCharsTranscription]: 1000,
-      [CONFIG_KEYS.dictionary.maxCharsTranscriptionPro]: 5000,
-      [CONFIG_KEYS.dictionary.maxCharsTranscriptionCap]: 2000,
       [CONFIG_KEYS.dictionary.maxCharsContext]: 3000,
       [CONFIG_KEYS.dictionary.maxCharsContextPro]: 15000,
       [CONFIG_KEYS.dictionary.maxCharsContextCap]: 8000,
@@ -68,14 +62,12 @@ describe("dictionary utils", () => {
     const freeBudgets = resolveDictionaryBudgets(valuesByKey, "free");
     expect(freeBudgets).toEqual({
       maxEntries: 250,
-      maxCharsTranscription: 1000,
       maxCharsContext: 3000,
     });
 
     const proBudgets = resolveDictionaryBudgets(valuesByKey, "pro");
     expect(proBudgets).toEqual({
       maxEntries: 300,
-      maxCharsTranscription: 2000,
       maxCharsContext: 8000,
     });
   });

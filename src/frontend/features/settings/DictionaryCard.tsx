@@ -130,10 +130,6 @@ export function DictionaryCard({
             {budgets.maxEntries} most recent entries.
           </Text>
           <Text size="xs" c="dimmed">
-            Transcription prompt: {usage.transcription.entries} entries,{" "}
-            {usage.transcription.chars}/{budgets.maxCharsTranscription} chars.
-          </Text>
-          <Text size="xs" c="dimmed">
             Context prompts: {usage.context.entries} entries,{" "}
             {usage.context.chars}/{budgets.maxCharsContext} chars.
           </Text>

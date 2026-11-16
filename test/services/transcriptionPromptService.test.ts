@@ -1,7 +1,6 @@
 import { describe, expect, test, jest } from "@jest/globals";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { DictionaryEntry } from "../../src/types/db";
-import type { TranscriptVariant } from "../../src/types/audio";
 import {
   formatContextForPrompt as realFormatContextForPrompt,
   type MeetingContextData,
@@ -59,7 +58,6 @@ const buildMeeting = (): MeetingData => {
     runtimeConfig: {
       dictionary: {
         maxEntries: 10,
-        maxCharsTranscription: 200,
         maxCharsContext: 500,
       },
     },
@@ -72,10 +70,6 @@ const buildMeeting = (): MeetingData => {
  */
 const loadModule = async (contextData?: MeetingContextData) => {
   jest.resetModules();
-  const getLangfuseTextPrompt = jest.fn().mockResolvedValue({
-    prompt: "",
-    source: "fallback",
-  });
   const getLangfuseChatPrompt = jest.fn().mockResolvedValue({
     messages: [],
     source: "fallback",
@@ -88,16 +82,11 @@ const loadModule = async (contextData?: MeetingContextData) => {
     : jest.fn().mockReturnValue("formatted-context");
   const config = {
     langfuse: {
-      transcriptionPromptName: "chronote-transcription-prompt",
       transcriptionCleanupPromptName: "chronote-transcription-cleanup-chat",
-      transcriptionCoalescePromptName: "chronote-transcription-coalesce-chat",
-      transcriptionFinalPassPromptName:
-        "chronote-transcription-final-pass-chat",
     },
   };
 
   jest.doMock("../../src/services/langfusePromptService", () => ({
-    getLangfuseTextPrompt,
     getLangfuseChatPrompt,
   }));
   jest.doMock("../../src/services/contextService", () => ({
@@ -109,29 +98,11 @@ const loadModule = async (contextData?: MeetingContextData) => {
   const module = await import("../../src/services/transcriptionPromptService");
   return {
     module,
-    getLangfuseTextPrompt,
     getLangfuseChatPrompt,
   };
 };
 
 describe("transcriptionPromptService", () => {
-  test("getTranscriptionPrompt builds glossary variables", async () => {
-    const { module, getLangfuseTextPrompt } = await loadModule();
-    const meeting = buildMeeting();
-
-    await module.getTranscriptionPrompt(meeting);
-
-    const call = getLangfuseTextPrompt.mock.calls[0][0];
-    expect(call.name).toBe("chronote-transcription-prompt");
-    expect(call.variables.serverName).toBe("The Faceless");
-    expect(call.variables.channelName).toBe("Hall of Faces");
-    expect(call.variables.attendeesLine).toBe("Attendees: kitpup");
-    expect(call.variables.dictionaryBlock).toContain("- Vket");
-    expect(call.variables.meetingContextLine).toBe(
-      "Meeting Context: Weekly sync",
-    );
-  });
-
   test("getTranscriptionCleanupPrompt includes transcript and context", async () => {
     const { module, getLangfuseChatPrompt } = await loadModule();
     const meeting = buildMeeting();
@@ -145,60 +116,9 @@ describe("transcriptionPromptService", () => {
     expect(call.variables.attendees).toBe("kitpup");
   });
 
-  test("getTranscriptionCoalescePrompt formats fast transcripts", async () => {
-    const { module, getLangfuseChatPrompt } = await loadModule();
-    const meeting = buildMeeting();
-    const input = {
-      slowTranscript: "slow text",
-      fastTranscripts: [
-        {
-          revision: 1,
-          text: "fast text",
-          createdAt: "2025-01-01T00:00:00.000Z",
-        } as TranscriptVariant,
-      ],
-    };
-
-    await module.getTranscriptionCoalescePrompt(meeting, input);
-
-    const call = getLangfuseChatPrompt.mock.calls[0][0];
-    expect(call.name).toBe("chronote-transcription-coalesce-chat");
-    expect(call.variables.fastTranscriptBlock).toContain("(rev 1) fast text");
-    expect(call.variables.slowTranscript).toBe("slow text");
-  });
-
-  test("getTranscriptionFinalPassPrompt formats baseline segments", async () => {
-    const { module, getLangfuseChatPrompt } = await loadModule();
-    const meeting = buildMeeting();
-
-    await module.getTranscriptionFinalPassPrompt(meeting, {
-      chunkIndex: 1,
-      chunkCount: 3,
-      chunkTranscript: "hello from finalized audio",
-      previousChunkTail: "previous tail",
-      chunkLogprobSummary: "avgLogprob=-0.2",
-      baselineSegments: [
-        {
-          segmentId: "seg-1",
-          speaker: "Kit",
-          startedAt: "2025-01-01T00:00:00.000Z",
-          text: "hello world",
-        },
-      ],
-    });
-
-    const call = getLangfuseChatPrompt.mock.calls[0][0];
-    expect(call.name).toBe("chronote-transcription-final-pass-chat");
-    expect(call.variables.chunkIndex).toBe("1");
-    expect(call.variables.chunkCount).toBe("3");
-    expect(call.variables.chunkTranscript).toBe("hello from finalized audio");
-    expect(call.variables.baselineSegmentsBlock).toContain("[seg-1]");
-  });
-
   describe("notes-authoring context never reaches a transcript-shaping prompt", () => {
     // Guild context is free text. A guild that writes notes-formatting rules
-    // into it used to have them handed to the coalesce model, which obeyed
-    // them and wrote a structured summary into the transcript as speech.
+    // into it must not have them obeyed by the cleanup model as transcript text.
     const DIRECTIVE =
       "Always produce the output as a structured summary under the headings Overview, Decisions and Next Steps.";
     const directiveContext = (): MeetingContextData => ({
@@ -208,28 +128,13 @@ describe("transcriptionPromptService", () => {
       dictionaryEntries: buildMeeting().dictionaryEntries,
       dictionaryBudgets: {
         maxEntries: 10,
-        maxCharsTranscription: 400,
         maxCharsContext: 400,
       },
     });
 
     const callPrompt = {
-      coalesce: (module: TranscriptionPromptModule, meeting: MeetingData) =>
-        module.getTranscriptionCoalescePrompt(meeting, {
-          slowTranscript: "slow text",
-          fastTranscripts: [],
-        }),
       cleanup: (module: TranscriptionPromptModule, meeting: MeetingData) =>
         module.getTranscriptionCleanupPrompt(meeting, "raw transcript"),
-      finalPass: (module: TranscriptionPromptModule, meeting: MeetingData) =>
-        module.getTranscriptionFinalPassPrompt(meeting, {
-          chunkIndex: 1,
-          chunkCount: 1,
-          chunkTranscript: "hello",
-          previousChunkTail: "",
-          chunkLogprobSummary: "avgLogprob=-0.2",
-          baselineSegments: [],
-        }),
     };
 
     test.each(Object.keys(callPrompt) as (keyof typeof callPrompt)[])(
@@ -249,16 +154,5 @@ describe("transcriptionPromptService", () => {
         expect(formattedContext).toContain("- Vket");
       },
     );
-
-    test("snippet glossary keeps its dictionary terms", async () => {
-      const { module, getLangfuseTextPrompt } =
-        await loadModule(directiveContext());
-
-      await module.getTranscriptionPrompt(buildMeeting());
-
-      const { variables } = getLangfuseTextPrompt.mock.calls[0][0];
-      expect(variables.dictionaryBlock).toContain("- Vket");
-      expect(variables.attendeesLine).toBe("Attendees: kitpup");
-    });
   });
 });

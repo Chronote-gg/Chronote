@@ -30,7 +30,6 @@ import {
   compileTranscriptions,
   type MeetingTranscriptCompiler,
 } from "./transcriptCompilationService";
-import { runTranscriptionFinalPass } from "./transcriptionFinalPassService";
 
 const DISMISSED_AUTO_RECORD_COMPLETE_MIN_DURATION_MS = 10 * 60 * 1000;
 const DISMISSED_AUTO_RECORD_COMPLETE_MIN_CHAT_MESSAGES = 2;
@@ -177,13 +176,12 @@ function pendingTranscriptionCount(meeting: MeetingData): number | undefined {
 }
 
 /**
- * Runs the final pass and compile, sets the final transcript and the
- * transcription outcome, and preserves the processed transcription.
+ * Compiles the final transcript, sets the transcription outcome, and
+ * preserves the processed transcription.
  */
 export async function compileFinalTranscript(
   meeting: MeetingData,
   compile: MeetingTranscriptCompiler,
-  audioFilePath: string,
 ): Promise<void> {
   const pending = pendingTranscriptionCount(meeting);
   if (pending !== undefined) {
@@ -211,15 +209,6 @@ export async function compileFinalTranscript(
     throw new Error("Completed transcript preservation failed");
 
   guardRecordingFinalization(meeting);
-  const finalPassResult = await runMeetingEndStep(
-    meeting,
-    "transcription-final-pass",
-    () => runTranscriptionFinalPass(meeting, { audioFilePath }),
-  );
-  console.log("Transcription final pass completed.", {
-    meetingId: meeting.meetingId,
-    ...finalPassResult,
-  });
 
   let cleanupAcknowledged: "acknowledged" | "fallback" | "disabled" | undefined;
   const transcriptions = await runMeetingEndStep(
@@ -251,11 +240,6 @@ export async function compileFinalTranscript(
 
   if (!transcriptionStillPending && cleanupAcknowledged) {
     checkpointCompletedTranscription(meeting, {
-      finalPass: !finalPassResult.enabled
-        ? "disabled"
-        : finalPassResult.fallbackApplied
-          ? "fallback"
-          : "acknowledged",
       cleanup: cleanupAcknowledged,
       finalText: transcriptions,
     });
@@ -291,14 +275,12 @@ export function compileTranscriptForUpload(
   );
 }
 
-/** Cancelled meetings keep a best-effort transcript without the final pass. */
+/** Cancelled meetings keep a best-effort transcript. */
 export async function compileCancelledTranscript(
   client: Client,
   meeting: MeetingData,
 ): Promise<string | undefined> {
   if (!meeting.transcribeMeeting) return undefined;
-  // Cancelled-meeting uploads are best-effort recovery artifacts, so we skip
-  // the slower final transcription pass that only runs for fully finalized meetings.
   const pending = pendingTranscriptionCount(meeting);
   if (pending !== undefined) {
     console.log(

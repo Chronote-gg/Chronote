@@ -9,31 +9,19 @@ export function isAudioFileSpeechRejected(file: AudioFileData): boolean {
 export function resolveAudioFileTranscript(file: AudioFileData) {
   if (isAudioFileSpeechRejected(file))
     return { text: "", correspondence: file.terminalOmission };
+  // A settled slow result is authoritative, so a guard-suppressed snippet stays empty.
   const selected =
-    file.finalPassTranscript !== undefined
-      ? {
-          text: file.finalPassTranscript,
-          correspondence: file.finalPassCorrespondence,
-        }
-      : file.coalescedTranscript
+    file.slowTranscript !== undefined
+      ? { text: file.slowTranscript, correspondence: file.slowCorrespondence }
+      : file.transcript
         ? {
-            text: file.coalescedTranscript,
-            correspondence: file.coalescedCorrespondence,
+            text: file.transcript,
+            correspondence: file.transcriptCorrespondence,
           }
-        : file.slowTranscript
-          ? {
-              text: file.slowTranscript,
-              correspondence: file.slowCorrespondence,
-            }
-          : file.transcript
-            ? {
-                text: file.transcript,
-                correspondence: file.transcriptCorrespondence,
-              }
-            : (file.fastTranscripts?.at(-1) ?? {
-                text: "",
-                correspondence: undefined,
-              });
+        : (file.fastTranscripts?.at(-1) ?? {
+            text: "",
+            correspondence: undefined,
+          });
   const text = isTrivialTranscriptionText(selected.text)
     ? ""
     : selected.text.trim();

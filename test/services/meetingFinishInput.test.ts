@@ -73,12 +73,7 @@ import {
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { MeetingHistory } from "../../src/types/db";
 import { history } from "../fixtures/meetingHistory";
-import {
-  pcmArtifact,
-  recoveryFixture,
-  savedTranscriptionPrompt,
-  withoutFinalPass,
-} from "./meetingRecoveryFixtures";
+import { pcmArtifact, recoveryFixture } from "./meetingRecoveryFixtures";
 import {
   INTERRUPTED_CAPTURE_NOTICE,
   readRecoveryContent,
@@ -127,14 +122,6 @@ function pieces(count: number, sourceId = "user:123") {
   );
 }
 
-/** The saved prompt re-transcription needs, with no final pass to rerun for a complete capture. */
-function savedPromptWithoutFinalPass(
-  saved: Parameters<typeof savedTranscriptionPrompt>[0],
-) {
-  savedTranscriptionPrompt(saved);
-  withoutFinalPass(saved);
-}
-
 /** Saved entry for piece 1 of three; pieces 0 and 2 have no transcript yet. */
 function savedMiddlePiece(
   text = SAVED_TEXT,
@@ -142,7 +129,6 @@ function savedMiddlePiece(
 ) {
   return recoveryFixture(text, {
     captureState,
-    context: savedPromptWithoutFinalPass,
     artifacts: pieces(3),
     transcript: (saved) => {
       saved.entries[0].correspondence = {
@@ -359,7 +345,6 @@ test("recovery loader reuses a recorded transcript and omits its upload", async 
 
 test("recovery loader reads a 240 piece manifest with bounded concurrency", async () => {
   const f = await recoveryFixture("", {
-    context: savedTranscriptionPrompt,
     artifacts: pieces(LARGE_MANIFEST_PIECES),
     transcript: (saved) => {
       saved.entries = [];
@@ -490,7 +475,6 @@ const interruptedCaptureState = {
 function singleUntranscribedPiece(captureState?: RecordingCaptureState) {
   return recoveryFixture("", {
     captureState,
-    context: savedPromptWithoutFinalPass,
     artifacts: pieces(1),
     transcript: (saved) => {
       saved.entries = [];
@@ -572,9 +556,10 @@ test("an interrupted capture keeps the capture notice in the recovery notes inpu
 });
 
 const withoutSavedPrompts = (
-  saved: Parameters<typeof savedTranscriptionPrompt>[0],
+  saved: Parameters<
+    NonNullable<NonNullable<Parameters<typeof recoveryFixture>[1]>["context"]>
+  >[0],
 ) => {
-  savedTranscriptionPrompt(saved);
   saved.prompts.notes = { availability: "unavailable" };
   saved.prompts.summary = { availability: "unavailable" };
 };
@@ -619,10 +604,7 @@ test.each([
     const f = await recoveryFixture("", {
       requested,
       captureState: completeCapture,
-      context: (saved) => {
-        withoutSavedPrompts(saved);
-        withoutFinalPass(saved);
-      },
+      context: withoutSavedPrompts,
       artifacts: pieces(1),
       transcript: (saved) => {
         saved.entries = [];
@@ -828,7 +810,6 @@ describe("recovery evaluates auto-record cancellation", () => {
     const f = await recoveryFixture("", {
       captureState: completeCapture,
       context: (saved) => {
-        savedPromptWithoutFinalPass(saved);
         saved.chatContext = chatContext;
       },
       artifacts: pieces(1),

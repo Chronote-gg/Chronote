@@ -8,6 +8,8 @@ customModels:
   - gpt-5.2
   - gpt-5.1
   - gpt-5-mini
+  - gpt-transcribe
+  - gpt-4o-mini-transcribe
   - gpt-4o-transcribe
   - gpt-4o-transcribe-diarize
 extraHeadersEnv:
