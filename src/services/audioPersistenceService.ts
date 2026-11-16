@@ -305,15 +305,3 @@ async function buildOwnedMixedAudio(
   const filename = path.join(getMeetingTempDir(meeting), "recording_mixed.mp3");
   return await renderMixedPcmTracks(usable, filename, signal);
 }
-
-export async function cleanupSpeakerTracks(
-  meeting: MeetingData,
-): Promise<void> {
-  const dir = meeting.audioData.speakerTrackDir;
-  if (!dir) return;
-  try {
-    await fs.promises.rm(dir, { recursive: true, force: true });
-  } catch (error) {
-    console.error("Failed to clean up speaker track files:", error);
-  }
-}

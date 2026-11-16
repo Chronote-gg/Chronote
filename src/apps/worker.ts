@@ -39,7 +39,7 @@ import {
   configureCaptureProtection,
   getProtectedUntil,
 } from "../services/taskProtection";
-import { startLocalSweep } from "../services/tempFileService";
+import { clearTempBase, startLocalSweep } from "../services/tempFileService";
 import {
   flushTelemetry,
   runWorkerShutdown,
@@ -134,6 +134,12 @@ export async function startWorker(options: {
   console.log(`Mock mode: ${config.mock.enabled}`);
   await getWorkerIdentity();
   shutdown.throwIfAborted();
+  // Before the bot or web server can start a capture or an upload. Outside
+  // ECS another local process may share the directory, so it is left alone.
+  if (config.runtime.ecs)
+    await clearTempBase().catch((error: unknown) =>
+      console.warn("Temp directory clear at start-up failed", error),
+    );
   configureCaptureProtection({ latestLeaseCap });
   setLocalFinishStarter(runLocalFinish);
   await verifyDependencies(mode);

@@ -99,6 +99,29 @@ test("a temporary Discord error keeps the terminal status and retries delivery f
   expect(errorsLogged(MEETING_DELIVERY_FAILED_LOG)).toBe(0);
 });
 
+test("a delivery retry frees the local directory after uploading the recording, and the next attempt still delivers", async () => {
+  const world = setup(processingRow());
+  const { directory, recordingPath } = await recordingDirectory();
+  world.discord.state.fail = respondWith(SERVER_ERROR);
+  await world.finish(
+    loads(
+      finishInput({
+        source: "normal",
+        recordingPath,
+        localDirectory: directory,
+      }),
+    ),
+  );
+  expect(world.current().finish).toMatchObject({ phase: "deliver" });
+  expect(world.current().audioS3Key).toMatch(/audio_combined\.mp3$/);
+  expect(await exists(directory)).toBe(false);
+
+  world.discord.state.fail = undefined;
+  await world.finish(loads(finishInput()));
+  expect(world.current()).toMatchObject({ recovery: DONE_MARKER });
+  expect(world.current().finish).toBeUndefined();
+});
+
 test("a permanent Discord error marks delivery failed without the alarm log", async () => {
   const world = setup(processingRow());
   world.discord.state.fail = respondWith(FORBIDDEN);

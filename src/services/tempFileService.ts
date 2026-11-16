@@ -134,6 +134,19 @@ export async function sweepLocalMeetingDirs(
   }
 }
 
+/**
+ * Removes everything under the temp base, whatever its age. Only safe in a new
+ * ECS task before it takes any work: the task's disk is its own and nothing in
+ * it is live yet, while anything left there was a dead task's leftover.
+ */
+export async function clearTempBase(): Promise<void> {
+  for (const name of await listDirs(BASE_TEMP_DIR))
+    await fs.rm(path.join(BASE_TEMP_DIR, name), {
+      recursive: true,
+      force: true,
+    });
+}
+
 /** Sweeps now and then every `localSweepMs`; returns the stop function. */
 export function startLocalSweep(
   isLive: (meetingId: string) => boolean,

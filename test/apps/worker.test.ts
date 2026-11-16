@@ -62,7 +62,7 @@ test("nothing polls before the first eligibility", async () => {
   jest.useFakeTimers({ doNotFake: ["queueMicrotask", "nextTick"] });
   worker = await startWorker({ mode: "all" });
   expect(mockRegistry.started).toBe(1);
-  expect(mockStarted).toEqual(["webServer", "login"]);
+  expect(mockStarted).toEqual(["clearTemp", "webServer", "login"]);
 });
 
 test("identity is resolved once and the webhook receipt birth uses it", async () => {
@@ -75,7 +75,7 @@ test("identity is resolved once and the webhook receipt birth uses it", async ()
 test("a worker that is ready but not eligible starts no poller and no finisher", async () => {
   await jest.advanceTimersByTimeAsync(60_000);
   expect(mockRegistry.eligible).toBe(false);
-  expect(mockStarted).toEqual(["webServer", "login"]);
+  expect(mockStarted).toEqual(["clearTemp", "webServer", "login"]);
 });
 
 test("on first eligibility every poller, the finisher and the voice channel re-evaluation start once", () => {
@@ -85,7 +85,7 @@ test("on first eligibility every poller, the finisher and the voice channel re-e
   becomeEligible();
   becomeEligible();
   mockFailures.delete("processingRetry");
-  expect(mockStarted.slice(2).sort()).toEqual(
+  expect(mockStarted.slice(3).sort()).toEqual(
     ALL_ELIGIBLE_WORK.filter((job) => job !== "processingRetry").sort(),
   );
   expect(error).toHaveBeenCalledWith(

@@ -92,3 +92,9 @@ jest.mock("../../src/services/meetingFinisher", () => ({
 jest.mock("../../src/services/meetingControlWorkerService", () => ({
   stopMeetingControlCommandWorker: jest.fn(async () => {}),
 }));
+jest.mock("../../src/services/tempFileService", () => ({
+  clearTempBase: jest.fn(async () => {
+    mockStarted.push("clearTemp");
+  }),
+  startLocalSweep: jest.fn(() => () => {}),
+}));
