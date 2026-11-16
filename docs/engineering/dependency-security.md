@@ -223,3 +223,27 @@ Release references: [Node security release](https://github.com/nodejs/node/relea
 [Playwright](https://github.com/microsoft/playwright/releases/tag/v1.65.1),
 [AWS provider](https://github.com/hashicorp/terraform-provider-aws/releases/tag/v6.73.0),
 and [Grafana provider](https://github.com/grafana/terraform-provider-grafana/releases/tag/v4.55.0).
+
+### Opus qualification and review follow-up
+
+The refresh includes `@discordjs/opus` 0.11.0 from dependency PR #585, crossing
+the previous 0.10 minor family. Voice 0.19.2 declares no Opus peer range; its
+dependency report resolves the installed codec alongside prism-media 1.3.5. A
+Node 24.22.3 Linux check loads the native `OpusEncoder` and performs a synthetic
+48 kHz stereo, 960-frame (20 ms) encode/decode round trip, both directly and
+through prism-media's capture encoder/decoder streams. The streamed round trip
+produces one packet and 3,840 nonzero PCM bytes. The 167 audio tests also pass.
+These offline checks establish loader and codec API compatibility, not live
+Discord interoperability or production acceptance.
+
+Bootstrap permission-source links now cite the installed application provider
+6.73.0. Preserve the sandbox root's independent 6.69.1 pin. The refreshed
+application provider lock retains hashes for Linux amd64/arm64, macOS
+amd64/arm64 and Windows amd64, including explicit platform `h1:` hashes.
+
+Smithy's retry abort race creates a fresh `AbortError` with message
+`Request aborted` and no cause; it does not preserve the injected transport
+message. Cancellation tests therefore assert that stable error name while
+retaining the actual transport-settlement, watchdog and exact request-count
+checks that establish provenance. Requiring the removed message would reject
+the SDK's supported behavior.
