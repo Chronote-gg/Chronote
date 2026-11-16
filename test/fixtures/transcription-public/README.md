@@ -12,8 +12,6 @@ without private recordings. See `docs/transcription-eval.md` for the commands.
   by 4 s of silence (`long-pause`), one Japanese FLEURS utterance and seven
   generated non-speech clips (silence, low and moderate noise, a 0.5 s noise burst, mains hum,
   keyboard-like clicks, a breath-like swell).
-- `manifest-long.json` (9 cases): eight consecutive utterances joined into one
-  48 s segment, plus each utterance on its own, to compare segment lengths.
 - `glossary-prompt.txt`: a made-up server glossary in the former production
   prompt template, also stored as the manifest `prompt`. Production sends no
   prompt; pass it with `--prompt-file` to reproduce the former prompted path. Twelve of its dictionary terms occur in the speech
