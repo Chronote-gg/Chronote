@@ -60,13 +60,21 @@ permissions:
   id-token: write
 
 concurrency:
-  # Own group: a merge-triggered deploy must never displace a queued Apply.
+  # One Apply per environment at a time, never displaced by a deploy.
   group: chronote-terraform-${{ inputs.github_environment }}
   cancel-in-progress: false
 
 jobs:
   apply:
     name: Terraform Apply
+    # The backend deploy job's lock. A production Apply refuses while a
+    # deploy run is open (assertProductionIdle), but a merge after that check
+    # would otherwise roll out during the Apply; holding this lock makes the
+    # rollout queue behind it. GitHub keeps one pending job per group, so
+    # dispatch an Apply only when no deploy is running or queued.
+    concurrency:
+      group: backend-rollout-${{ inputs.github_environment }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 360
     environment: ${{ inputs.github_environment }}

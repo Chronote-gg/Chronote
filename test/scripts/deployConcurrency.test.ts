@@ -10,12 +10,14 @@ import { parse } from "yaml";
 
 type Job = {
   needs?: string | string[];
+  environment?: string;
   concurrency?: { group: string; "cancel-in-progress": boolean | string };
 };
+type Workflow = { concurrency?: unknown; jobs: Record<string, Job> };
 
-const deployment = parse(
-  readFileSync(".github/workflows/deploy.yml", "utf8"),
-) as { concurrency?: unknown; jobs: Record<string, Job> };
+const readWorkflow = (name: string) =>
+  parse(readFileSync(`.github/workflows/${name}`, "utf8")) as Workflow;
+const deployment = readWorkflow("deploy.yml");
 
 const CI_JOB = "ci";
 const deployJobs = Object.entries(deployment.jobs).filter(
@@ -85,4 +87,32 @@ test("every deploy job depends on CI, directly or transitively", () => {
   for (const [id] of deployJobs) {
     expect(`${id} reaches ci: ${reachesCi(id)}`).toBe(`${id} reaches ci: true`);
   }
+});
+
+// Deploy jobs run under the repository variable DEPLOY_ENVIRONMENT (set to the
+// unreviewed production-deploy environment once it is provisioned) and fall
+// back to the reviewed production environment while the variable is unset.
+test("every deploy job uses the switchable production environment", () => {
+  expect(deployJobs.length).toBeGreaterThan(0);
+  for (const [id, job] of deployJobs)
+    expect(`${id}: ${job.environment}`).toBe(
+      `${id}: \${{ vars.DEPLOY_ENVIRONMENT || 'production' }}`,
+    );
+});
+
+// A merge that lands during an Apply must queue its rollout behind the Apply
+// rather than start it, so Apply holds the same lock as each backend deploy.
+test("Terraform Apply holds the backend rollout lock of its environment", () => {
+  const apply = readWorkflow("terraform-apply.yml").jobs.apply.concurrency;
+  expect(apply).toEqual({
+    group: "backend-rollout-${{ inputs.github_environment }}",
+    "cancel-in-progress": false,
+  });
+  for (const [name, environment] of [
+    ["deploy.yml", "production"],
+    ["deploy-staging.yml", "sandbox"],
+  ])
+    expect(readWorkflow(name).jobs.deploybackend.concurrency?.group).toBe(
+      apply?.group.replace("${{ inputs.github_environment }}", environment),
+    );
 });

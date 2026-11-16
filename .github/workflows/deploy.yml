@@ -53,7 +53,7 @@ jobs:
     # Publish privacy/What's New notices before expanded capture goes live.
     needs: [ci, deploy-docs]
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ vars.DEPLOY_ENVIRONMENT || 'production' }}
     permissions:
       contents: read
       id-token: write
@@ -300,7 +300,7 @@ jobs:
     # The backend job already required CI and Docs.
     if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ vars.DEPLOY_ENVIRONMENT || 'production' }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -385,7 +385,7 @@ jobs:
       cancel-in-progress: false
     needs: [ci]
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ vars.DEPLOY_ENVIRONMENT || 'production' }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -554,7 +554,7 @@ jobs:
     needs: [deploybackend]
     if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ vars.DEPLOY_ENVIRONMENT || 'production' }}
     permissions:
       contents: read
       id-token: write
@@ -605,7 +605,7 @@ jobs:
     needs: [deploybackend]
     if: ${{ !cancelled() && needs.deploybackend.result == 'success' }}
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ vars.DEPLOY_ENVIRONMENT || 'production' }}
     timeout-minutes: 15
     permissions:
       contents: read
