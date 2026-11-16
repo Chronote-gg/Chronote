@@ -18,7 +18,7 @@ test("production deployment infrastructure exists independently of Sandbox", () 
   expect(source).not.toContain("environment:sandbox");
 });
 
-test("OIDC binds account provider, immutable repository, production and master", () => {
+test("OIDC binds account provider, immutable repository, the two deploy environments, master and the deploy workflow", () => {
   const role = block("resource", "production_deploy");
   for (const key of [
     "aud",
@@ -26,11 +26,18 @@ test("OIDC binds account provider, immutable repository, production and master",
     "repository_id",
     "repository_owner_id",
     "ref",
+    "workflow",
   ]) {
     expect(role).toContain(`token.actions.githubusercontent.com:${key}`);
   }
   expect(role).toContain('"refs/heads/master"');
-  expect(role).toContain(":environment:production");
+  expect(role).toContain('"Meeting Notes Bot Deploy"');
+  expect(role).toMatch(
+    /:sub"\s*=\s*\[for name in local\.production_deploy_environments : "repo:\$\{var\.github_owner\}\/\$\{var\.github_repository\}:environment:\$\{name\}"\]/,
+  );
+  expect(source).toMatch(
+    /production_deploy_environments\s*=\s*\["production", "production-deploy"\]/,
+  );
   expect(role).toContain(
     "data.aws_iam_openid_connect_provider.github_production_deploy[0].arn",
   );
