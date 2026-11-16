@@ -256,4 +256,47 @@ describe("AutoRecordJoinSuppressionService", () => {
     });
     expect(await svc.shouldSuppressAutoJoin("g1", "c1")).toBe(false);
   });
+
+  /** Starts a suppression whose first read waits until `settle` resolves or rejects it. */
+  function pendingSuppression(svc: AutoRecordJoinSuppressionService) {
+    let settle!: (fail: boolean) => void;
+    const gate = new Promise<void>((resolve, reject) => {
+      settle = (fail) =>
+        fail ? reject(new Error("synthetic outage")) : resolve();
+    });
+    const read = svc.read.bind(svc);
+    jest.spyOn(svc, "read").mockImplementationOnce(async (...args) => {
+      await gate;
+      return read(...args);
+    });
+    const write = svc.suppressUntilEmpty({
+      guildId: "g1",
+      channelId: "c1",
+      nonBotMemberIds: ["u1"],
+      reason: "explicit_end",
+      meetingId: "synthetic-meeting",
+    });
+    return { write, settle };
+  }
+
+  test("a join while the suppression write is pending is suppressed on this worker", async () => {
+    const svc = new AutoRecordJoinSuppressionService();
+    const { write, settle } = pendingSuppression(svc);
+
+    expect(await svc.shouldSuppressAutoJoin("g1", "c1")).toBe(true);
+    expect(await svc.shouldSuppressAutoJoin("g1", "c2")).toBe(false);
+
+    settle(false);
+    await write;
+    expect(await svc.shouldSuppressAutoJoin("g1", "c1")).toBe(true);
+  });
+
+  test("a suppression write that fails lifts the pending fence", async () => {
+    const svc = new AutoRecordJoinSuppressionService();
+    const { write, settle } = pendingSuppression(svc);
+
+    settle(true);
+    await expect(write).rejects.toThrow("synthetic outage");
+    expect(await svc.shouldSuppressAutoJoin("g1", "c1")).toBe(false);
+  });
 });

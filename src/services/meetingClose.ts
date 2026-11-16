@@ -55,6 +55,8 @@ export type CloseCause = {
   abnormal?: boolean;
   /** Set by shutdown: the epoch milliseconds by which the whole close must have ended. */
   deadlineMs?: number;
+  /** An explicit stop's suppression write, which the lease release waits on for a short bound. */
+  beforeRelease?: Promise<unknown>;
 };
 /** Resolves true once the normal loader has taken the meeting, which then owns ending its encoder. */
 export type LocalFinishStarter = (
@@ -360,11 +362,16 @@ export function createMeetingClose(deps: MeetingCloseDeps) {
     meeting: MeetingData,
     reservation: SessionReservation,
     lost: boolean,
+    beforeRelease: Promise<unknown> | undefined,
   ) {
     await attempt(meeting, "retire-capture", () =>
       deps.retireCapture(meeting, lost),
     );
     if (!lost) {
+      if (beforeRelease)
+        await attempt(meeting, "await-suppression", () =>
+          within(beforeRelease, LIFECYCLE.closeSuppressionWaitMs),
+        );
       try {
         await deps.lease.releaseSessionLease(reservation);
       } catch (error) {
@@ -463,7 +470,7 @@ export function createMeetingClose(deps: MeetingCloseDeps) {
       )
         claimOwner = owner;
     } finally {
-      await free(meeting, reservation, lost);
+      await free(meeting, reservation, lost, cause.beforeRelease);
       // Without a local finish nothing else would end the encoder this capture spawned.
       if (!claimOwner && reservation.sessionMode === "meeting")
         await endEncoder(meeting);

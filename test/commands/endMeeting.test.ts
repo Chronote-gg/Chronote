@@ -376,6 +376,19 @@ test("explicit stop suppresses auto-record rejoin for that channel", async () =>
   );
 });
 
+test("close holds the lease release on an explicit stop's suppression write", async () => {
+  const meeting = meetingFor({ isAutoRecording: true });
+  jest.mocked(getMeeting).mockReturnValue(meeting);
+
+  await handleEndMeetingButton(client, button(CREATOR));
+
+  expect(closeMeeting).toHaveBeenCalledWith(meeting, {
+    endReason: "button",
+    endTriggeredByUserId: CREATOR,
+    beforeRelease: expect.any(Promise),
+  });
+});
+
 test("an emptied channel ending an auto-recording sets no suppression", async () => {
   const meeting = meetingFor({
     isAutoRecording: true,

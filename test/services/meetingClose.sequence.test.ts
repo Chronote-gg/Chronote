@@ -421,3 +421,43 @@ test("close marks the meeting finishing before its first await", () => {
 
   expect(meeting.finishing).toBe(true);
 });
+
+test("an explicit stop's suppression that commits quickly lands before the lease release", async () => {
+  const meeting = meetingFor();
+  const t = setup([meeting]);
+  const suppression = new Promise((resolve) => setTimeout(resolve, 5)).then(
+    () => t.calls.push("suppressed"),
+  );
+
+  await t.close.closeMeeting(meeting, {
+    ...button,
+    beforeRelease: suppression,
+  });
+
+  const release = t.calls.indexOf("release");
+  expect(t.calls.slice(release - 2, release + 1)).toEqual([
+    "retire",
+    "suppressed",
+    "release",
+  ]);
+});
+
+test.each([
+  ["never settles", never],
+  ["fails", async () => Promise.reject(new Error("synthetic outage"))],
+])(
+  "a suppression write that %s holds the lease release only for the bound",
+  async (_label, write) => {
+    const meeting = meetingFor();
+    const t = setup([meeting], {
+      sleep: async (ms) => {
+        if (ms !== LIFECYCLE.closeSuppressionWaitMs) await never();
+      },
+    });
+
+    await t.close.closeMeeting(meeting, { ...button, beforeRelease: write() });
+
+    expect(t.deps.lease.releaseSessionLease).toHaveBeenCalledTimes(1);
+    expect(t.calls).toContain("drop");
+  },
+);

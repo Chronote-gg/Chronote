@@ -46,6 +46,7 @@ export const mockWorld = {
   subscribeFailure: false,
   autoRecordAll: false,
   destinationMissing: false,
+  suppressed: false,
   autostarts: [] as unknown[][],
   participants: 0,
   clearedMembers: [] as string[][],
@@ -227,7 +228,7 @@ jest.mock("../src/services/autoRecordJoinSuppressionService", () => {
         mockWorld.clearedMembers.push(options.nonBotMemberIds());
         mockRecord(worker, "suppression-clear");
       },
-      shouldSuppressAutoJoin: async () => false,
+      shouldSuppressAutoJoin: async () => mockWorld.suppressed,
     },
   };
 });
@@ -451,6 +452,7 @@ export function useRoutingWorkers() {
     mockWorld.subscribeFailure = false;
     mockWorld.autoRecordAll = false;
     mockWorld.destinationMissing = false;
+    mockWorld.suppressed = false;
     mockWorld.autostarts = [];
     mockWorld.participants = 0;
     mockWorld.clearedMembers = [];

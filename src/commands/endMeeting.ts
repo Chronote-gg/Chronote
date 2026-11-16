@@ -74,7 +74,9 @@ export async function handleEndMeetingOther(
  * What a stop does for the user before close: the processing state on the
  * recording message and, for an explicit stop of an auto-recording, the
  * suppression that keeps the bot from rejoining. Both run beside close so
- * neither can hold the server. Same close promise for every caller.
+ * neither can hold the server; close holds only its lease release on the
+ * suppression, for a short bound, so a start on any worker sees it. Same
+ * close promise for every caller.
  */
 export async function runEndMeetingFlow(
   options: EndMeetingFlowOptions,
@@ -102,16 +104,32 @@ export async function runEndMeetingFlow(
           error,
         }),
     );
-  const suppression = suppressionPersisted
-    ? undefined
-    : persistExplicitMeetingStop(meeting, cause.endReason).catch(
-        (error: unknown) =>
-          console.warn("Auto-record suppression was not saved", {
-            meetingId: meeting.meetingId,
-            error,
-          }),
-      );
-  await Promise.all([closeMeeting(meeting, cause), suppression]);
+  const suppression =
+    suppressionPersisted || !isExplicitAutoRecordStop(meeting, cause.endReason)
+      ? undefined
+      : persistAutoRecordSuppression(meeting, "explicit_end").catch(
+          (error: unknown) =>
+            console.warn("Auto-record suppression was not saved", {
+              meetingId: meeting.meetingId,
+              error,
+            }),
+        );
+  await Promise.all([
+    closeMeeting(
+      meeting,
+      suppression ? { ...cause, beforeRelease: suppression } : cause,
+    ),
+    suppression,
+  ]);
+}
+
+function isExplicitAutoRecordStop(
+  meeting: MeetingData,
+  endReason: MeetingData["endReason"],
+): boolean {
+  return Boolean(
+    meeting.isAutoRecording && EXPLICIT_STOP_REASONS.includes(endReason),
+  );
 }
 
 /** An explicit stop of an auto-recording keeps the bot out of the channel until it empties. */
@@ -119,8 +137,7 @@ export async function persistExplicitMeetingStop(
   meeting: MeetingData,
   endReason: MeetingData["endReason"],
 ) {
-  if (!meeting.isAutoRecording || !EXPLICIT_STOP_REASONS.includes(endReason))
-    return;
+  if (!isExplicitAutoRecordStop(meeting, endReason)) return;
   await persistAutoRecordSuppression(meeting, "explicit_end");
 }
 

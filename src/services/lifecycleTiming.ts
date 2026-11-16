@@ -25,6 +25,8 @@ export const LIFECYCLE = {
   shutdownFlushMs: 45_000,
   // A slow or rate-limited nickname call must not hold the server.
   closeNicknameMs: 5_000,
+  // How long close holds the lease release for an explicit stop's suppression write, so a start on any worker sees it.
+  closeSuppressionWaitMs: 2_000,
   // Bounds ending the audio encoder of a meeting no local finish loads.
   closeEncoderMs: 5_000,
   closeWriteAttempts: 3,

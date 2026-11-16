@@ -184,6 +184,13 @@ describe("voice state", () => {
     expect(mockWorld.autostarts).toEqual([]);
   });
 
+  test("a channel whose suppression is saved or still being written starts no auto-record", async () => {
+    mockWorld.autoRecordAll = true;
+    mockWorld.suppressed = true;
+    await voiceUpdate(workerA, null, "synthetic-voice");
+    expect(mockWorld.autostarts).toEqual([]);
+  });
+
   test("a channel with no auto-record setting starts nothing", async () => {
     await voiceUpdate(workerA, null, "synthetic-voice");
     expect(mockWorld.autostarts).toEqual([]);
