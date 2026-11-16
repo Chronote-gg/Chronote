@@ -44,55 +44,6 @@ test("OIDC binds account provider, immutable repository, the two deploy environm
   expect(role).not.toContain("StringLike");
 });
 
-test("fence writes are role scoped with no invented policy-name condition", () => {
-  expect(source).toMatch(
-    /Sid\s*=\s*"RuntimeAdmissionFence"[\s\S]*?Resource\s*=\s*aws_iam_role.ecs_task_app_role.arn/,
-  );
-  expect(source).toContain('"iam:PutRolePolicy"');
-  expect(source).toContain('"iam:DeleteRolePolicy"');
-  expect(source).not.toMatch(
-    /iam:(PolicyName|PolicyDocument|CreateRole|AttachRolePolicy|UpdateAssumeRolePolicy)/,
-  );
-});
-
-test("observation covers exactly the eight existing maintenance table slots", () => {
-  const observation =
-    source.match(
-      /Sid\s*=\s*"ProductionObservationAndPreflight"([\s\S]*?)\n\s*\},/,
-    )?.[1] ?? "";
-  const tables = [
-    ...observation.matchAll(/aws_dynamodb_table\.([a-z0-9_]+)\.arn/g),
-  ].map((match) => match[1]);
-  expect(tables.sort()).toEqual(
-    [
-      "active_meeting_table",
-      "meeting_history_table",
-      "meeting_control_command_table",
-      "personal_media_upload_job_table",
-      "personal_recording_segment_table",
-      "guild_subscription_table",
-      "stripe_webhook_event_table",
-      "payment_transaction_table",
-    ].sort(),
-  );
-  expect(source).not.toContain('resource "aws_dynamodb_table"');
-});
-
-test("artifact handoff checks add no meeting-history write permission", () => {
-  const check =
-    source.match(
-      /Sid\s*=\s*"ArtifactAuthorityChecks"([\s\S]*?)\n\s*\},/,
-    )?.[1] ?? "";
-  expect(
-    [...check.matchAll(/"(dynamodb:[^"]+)"/g)].map((match) => match[1]),
-  ).toEqual(["dynamodb:ConditionCheckItem"]);
-  expect(
-    [...check.matchAll(/aws_dynamodb_table\.([a-z0-9_]+)\.arn/g)].map(
-      (match) => match[1],
-    ),
-  ).toEqual(["meeting_history_table"]);
-});
-
 test("runtime Exec grants exactly four channel actions and no session authority", () => {
   const runtime = block("resource", "production_exec_channels");
   expect(
@@ -140,49 +91,43 @@ test("production wiring reuses routing and publishes its explicit role variable"
   );
 });
 
-test("policy readback covers every existing managed runtime attachment", () => {
-  const readback =
+// The deploy role runs from an environment with no reviewer, so it keeps only
+// what scripts/deployment/deploy.cjs and the deploy workflow call. The removed
+// grants served the deleted lifecycle coordinator.
+test("the deploy role carries no grant without a caller", () => {
+  for (const removed of [
+    "RuntimeAdmissionFence",
+    "RuntimeManagedPolicyReadback",
+    "RuntimePrincipalProbe",
+    "ProducerInventoryInRegion",
+    "ProducerTargetsInAccount",
+    "ScheduledProducerTargetsInAccount",
+    "ArtifactAuthorityChecks",
+    "ProductionObservationAndPreflight",
+  ])
+    expect(source).not.toContain(`"${removed}"`);
+  expect(source).not.toMatch(
+    /iam:PutRolePolicy|iam:DeleteRolePolicy|ecs:ExecuteCommand|application-autoscaling:|"events:|scheduler:|dynamodb:Scan|dynamodb:PutItem|dynamodb:UpdateItem|dynamodb:ConditionCheckItem/,
+  );
+  const statement = (sid) =>
     source.match(
-      /Sid\s*=\s*"RuntimeManagedPolicyReadback"([\s\S]*?)\n\s*\},/,
+      new RegExp(`Sid\\s*=\\s*"${sid}"([\\s\\S]*?)\\n\\s*\\},`),
     )?.[1] ?? "";
   expect(
-    [...readback.matchAll(/aws_iam_policy\.([a-z0-9_]+)\.arn/g)].map(
-      (match) => match[1],
-    ),
-  ).toEqual(["dynamodb_access_policy"]);
-  // The rest are constructed so a runtime Plan never refreshes their inputs.
-  const infra = ["main", "config", "bedrock-data-automation"]
-    .map((file) => readFileSync(`_infra/${file}.tf`, "utf8"))
-    .join("\n");
-  const declared = [
-    "kms_app_policy",
-    "transcripts_s3_policy",
-    "appconfig_access_policy",
-    "bedrock_data_automation_policy",
-    "bedrock_s3_policy",
-  ].map(
-    (name) =>
-      infra.match(
-        new RegExp(
-          `resource "aws_iam_policy" "${name}" \\{[\\s\\S]*?name\\s*=\\s*"\\$\\{local\\.name_prefix\\}-([^"]+)"`,
-        ),
-      )?.[1],
-  );
+    [
+      ...statement("DeploymentControlProtocol").matchAll(/"(dynamodb:[^"]+)"/g),
+    ].map((match) => match[1]),
+  ).toEqual(["dynamodb:Query"]);
   expect(
-    JSON.parse(readback.match(/for name in (\[[^\]]*\])/)?.[1] ?? "[]").sort(),
-  ).toEqual(declared.sort());
+    [
+      ...statement("ExistingTableKeysThroughDynamoDB").matchAll(
+        /aws_dynamodb_table\.([a-z0-9_]+)\.name/g,
+      ),
+    ].map((match) => match[1]),
+  ).toEqual(["deployment_control_table"]);
 });
 
-test("producer authority is discovery only and preserves the production approval prerequisite", () => {
-  const actions = [
-    ...source.matchAll(
-      /"((?:application-autoscaling|events|scheduler):[^"]+)"/g,
-    ),
-  ].map((match) => match[1]);
-  expect(actions).toHaveLength(9);
-  expect(actions.every((action) => /:(Describe|List|Get)/.test(action))).toBe(
-    true,
-  );
+test("the environment protection note matches the README", () => {
   expect(
     readFileSync("_infra/README.md", "utf8").replace(/\s+/g, " "),
   ).toContain(

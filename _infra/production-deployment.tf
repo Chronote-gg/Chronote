@@ -164,38 +164,9 @@ resource "aws_iam_role_policy" "production_deploy" {
       {
         Sid    = "DeploymentControlProtocol",
         Effect = "Allow",
-        Action = [
-          "dynamodb:GetItem",
-          "dynamodb:Query",
-          "dynamodb:Scan",
-          "dynamodb:PutItem",
-          "dynamodb:UpdateItem",
-          "dynamodb:ConditionCheckItem"
-        ],
+        # deploy.cjs reads the worker registry and nothing else.
+        Action   = ["dynamodb:Query"],
         Resource = aws_dynamodb_table.deployment_control_table.arn
-      },
-      {
-        Sid      = "ArtifactAuthorityChecks",
-        Effect   = "Allow",
-        Action   = ["dynamodb:ConditionCheckItem"],
-        Resource = aws_dynamodb_table.meeting_history_table.arn
-      },
-      {
-        Sid    = "ProductionObservationAndPreflight",
-        Effect = "Allow",
-        Action = [
-          "dynamodb:Scan"
-        ],
-        Resource = [
-          aws_dynamodb_table.active_meeting_table.arn,
-          aws_dynamodb_table.meeting_history_table.arn,
-          aws_dynamodb_table.meeting_control_command_table.arn,
-          aws_dynamodb_table.personal_media_upload_job_table.arn,
-          aws_dynamodb_table.personal_recording_segment_table.arn,
-          aws_dynamodb_table.guild_subscription_table.arn,
-          aws_dynamodb_table.stripe_webhook_event_table.arn,
-          aws_dynamodb_table.payment_transaction_table.arn
-        ]
       },
       {
         Sid    = "ExistingTableKeysThroughDynamoDB",
@@ -209,64 +180,9 @@ resource "aws_iam_role_policy" "production_deploy" {
             "kms:ViaService"                                  = "dynamodb.${var.aws_region}.amazonaws.com",
             "kms:CallerAccount"                               = data.aws_caller_identity.current.account_id,
             "kms:EncryptionContext:aws:dynamodb:subscriberId" = data.aws_caller_identity.current.account_id,
-            "kms:EncryptionContext:aws:dynamodb:tableName" = [
-              aws_dynamodb_table.deployment_control_table.name,
-              aws_dynamodb_table.active_meeting_table.name,
-              aws_dynamodb_table.meeting_history_table.name,
-              aws_dynamodb_table.meeting_control_command_table.name,
-              aws_dynamodb_table.personal_media_upload_job_table.name,
-              aws_dynamodb_table.personal_recording_segment_table.name,
-              aws_dynamodb_table.guild_subscription_table.name,
-              aws_dynamodb_table.stripe_webhook_event_table.name,
-              aws_dynamodb_table.payment_transaction_table.name
-            ]
+            "kms:EncryptionContext:aws:dynamodb:tableName"    = aws_dynamodb_table.deployment_control_table.name
           }
         }
-      },
-      {
-        # IAM cannot constrain the inline policy name or document; the reviewed executor must.
-        Sid      = "RuntimeAdmissionFence",
-        Effect   = "Allow",
-        Action   = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:PutRolePolicy", "iam:DeleteRolePolicy"],
-        Resource = aws_iam_role.ecs_task_app_role.arn
-      },
-      {
-        Sid      = "RuntimeManagedPolicyReadback",
-        Effect   = "Allow",
-        Action   = ["iam:GetPolicy", "iam:GetPolicyVersion"],
-        Resource = concat([aws_iam_policy.dynamodb_access_policy.arn], [for name in ["bot-kms-policy", "bot-transcripts-s3-policy", "bot-appconfig-policy", "bedrock-data-automation", "bedrock-eval-s3"] : "${local.production_account_arn}:policy/${local.name_prefix}-${name}"])
-      },
-      {
-        # Session policy binds the exact task; executor binds the reviewed probe command.
-        Sid      = "RuntimePrincipalProbe",
-        Effect   = "Allow",
-        Action   = ["ecs:ExecuteCommand"],
-        Resource = [aws_ecs_cluster.main.arn, "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/*"],
-        Condition = {
-          StringEquals = {
-            "ecs:container-name" = "${local.name_prefix}-bot"
-          }
-        }
-      },
-      {
-        # These discovery APIs do not support resource-level permissions.
-        Sid       = "ProducerInventoryInRegion",
-        Effect    = "Allow",
-        Action    = ["application-autoscaling:DescribeScalableTargets", "application-autoscaling:DescribeScalingPolicies", "application-autoscaling:DescribeScheduledActions", "events:ListEventBuses", "events:ListRules", "scheduler:ListSchedules"],
-        Resource  = "*",
-        Condition = { StringEquals = { "aws:RequestedRegion" = var.aws_region } }
-      },
-      {
-        Sid      = "ProducerTargetsInAccount",
-        Effect   = "Allow",
-        Action   = ["events:DescribeRule", "events:ListTargetsByRule"],
-        Resource = "arn:aws:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:rule/*"
-      },
-      {
-        Sid      = "ScheduledProducerTargetsInAccount",
-        Effect   = "Allow",
-        Action   = ["scheduler:GetSchedule"],
-        Resource = "arn:aws:scheduler:${var.aws_region}:${data.aws_caller_identity.current.account_id}:schedule/*/*"
       },
       {
         Sid    = "SecretVersionMetadataOnly",

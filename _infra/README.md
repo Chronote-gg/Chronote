@@ -786,50 +786,18 @@ in the repository settings whenever access changes.
 
 Service writes bind the existing service; PassRole binds the existing task and
 execution roles for ECS tasks. Routing reuses the existing HTTPS listener policy,
-two target groups and lifecycle ignores. Receipts reuse DeploymentControlTable.
-Observation scans only the eight existing maintenance tables. Runtime managed-policy
-readback covers the six existing application-role attachments. Unexpected policies
-or unreadable state must block preservation checks.
+two target groups and lifecycle ignores. The role reads the worker registry with
+`dynamodb:Query` on DeploymentControlTable and holds nothing the deploy path does
+not call: no inline policy writes, no ECS Exec, no producer discovery and no table
+scans. Those grants served the deleted lifecycle coordinator and were removed,
+because the role also runs from the reviewer-free `production-deploy`.
 
 The introduction role and acceptance collector allow `ecs:DescribeTaskDefinition` through a separate `RegionalDefinitionMetadata` statement with `Resource = "*"` and the configured `aws:RequestedRegion`. The [ECS authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ecs.html) does not support resource-level authorization for that operation. This permits regional task-definition metadata reads beyond the reviewed families. The source still validates exact reviewed definition ARNs, account, region and family; IAM does not enforce that narrower selection. The collector inherits this statement explicitly. No list, mutation or secret permission is added, and the four-target prerequisite plan cannot provision these roles. Effective permissions and any provisioning require separate execution approval.
 
-The role can put and delete inline policies only on the existing application role.
-AWS does not offer a condition for the inline policy name or its document. These
-permissions therefore can change other inline policies on that role. Task 5's
-reviewed executor must enforce the operation-owned name, exact deny document and
-hash, preserved original policies, approved predecessor and exact run/session.
-A session policy must narrow actions and resources for each phase; it cannot add
-unsupported name or document restrictions. Fence expiry blocks execution and never
-removes the deny automatically. See the [IAM authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_iam.html).
-
-ECS Exec permission binds this cluster and container. The reviewed session policy
-must narrow it to the exact legacy or candidate task; the executor must constrain
-the probe command. IAM cannot constrain command text. An actual task-principal
-refusal and later authorization are required evidence, not an IAM simulation.
 Only production's existing application role receives the four `ssmmessages`
 channel actions. Their required `Resource = "*"` follows the
 [message gateway authorization model](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ssmmessages.html).
 No general SSM session permission or secret-value read is granted.
-
-Producer discovery is read-only. Application Auto Scaling `DescribeScalableTargets`,
-`DescribeScalingPolicies` and `DescribeScheduledActions`, EventBridge
-`ListEventBuses` and `ListRules`, and Scheduler `ListSchedules` require resource
-wildcards here and are restricted to the deployment region. EventBridge
-`DescribeRule` and `ListTargetsByRule` can read rules in this account and region;
-Scheduler `GetSchedule` can read schedules in this account and region. Those ARN
-wildcards permit complete discovery before producer identities are known. See the
-[scaling](https://docs.aws.amazon.com/service-authorization/latest/reference/list_application-autoscaling.html),
-[EventBridge](https://docs.aws.amazon.com/service-authorization/latest/reference/list_eventbridge.html)
-and [Scheduler](https://docs.aws.amazon.com/service-authorization/latest/reference/list_scheduler.html)
-authorization references.
-
-No producer suspension or restoration authority is granted. The executor must
-retain complete paginated discovery and absent-controller evidence, then refuse
-unsupported or unbound controllers and competing writers. A producer requiring
-suspension needs an exact reviewed resource binding, a narrow source/session-policy
-extension and separate provider approval. Unrelated Grafana rotation stays outside
-mutation authority. These reads do not prove that every possible external writer
-is absent; the reviewed producer inventory must establish that boundary.
 
 Run the focused production identity source test and normal `terraform test`
 discovery with backend-disabled initialization. Mocked tests establish source

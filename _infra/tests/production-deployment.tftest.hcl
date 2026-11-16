@@ -180,20 +180,12 @@ run "production_identity_and_permissions" {
     error_message = "Service writes must bind only the existing service."
   }
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "RuntimeAdmissionFence"]) == aws_iam_role.ecs_task_app_role.arn
-    error_message = "Fence writes must bind only the existing runtime role."
-  }
-  assert {
     condition     = toset(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "PassOnlyProductionRuntimeRoles"])) == toset([aws_iam_role.ecs_task_app_role.arn, "arn:aws:iam::123456789012:role/meeting-notes-prod-ecs-task-exec-role"]) && one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Condition.StringEquals["iam:PassedToService"] if s.Sid == "PassOnlyProductionRuntimeRoles"]) == "ecs-tasks.amazonaws.com"
     error_message = "PassRole must bind only the two existing ECS roles and ECS tasks."
   }
   assert {
     condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "DeploymentControlProtocol"]) == aws_dynamodb_table.deployment_control_table.arn
     error_message = "Receipts must reuse the existing deployment control table."
-  }
-  assert {
-    condition     = toset(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "ProductionObservationAndPreflight"])) == toset([aws_dynamodb_table.active_meeting_table.arn, aws_dynamodb_table.meeting_history_table.arn, aws_dynamodb_table.meeting_control_command_table.arn, aws_dynamodb_table.personal_media_upload_job_table.arn, aws_dynamodb_table.personal_recording_segment_table.arn, aws_dynamodb_table.guild_subscription_table.arn, aws_dynamodb_table.stripe_webhook_event_table.arn, aws_dynamodb_table.payment_transaction_table.arn])
-    error_message = "Observation must bind the eight reviewed existing tables."
   }
   assert {
     condition     = jsondecode(aws_iam_policy.deployment_routing[0].policy).Statement[0].Resource == [aws_lb_listener.api_https[0].arn] && aws_iam_role_policy_attachment.production_deploy_routing[0].policy_arn == aws_iam_policy.deployment_routing[0].arn
@@ -223,12 +215,12 @@ run "constructed_runtime_names_match_serving_resources" {
     error_message = "Constructed service and task family ARNs must name the serving resources."
   }
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Condition.StringEquals["ecs:container-name"] if s.Sid == "RuntimePrincipalProbe"]) == jsondecode(aws_ecs_task_definition.app_task.container_definitions)[0].name && one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "ProductionImagePublish"]) == "arn:aws:ecr:us-east-1:123456789012:repository/${aws_ecr_repository.app_ecr_repo.name}"
-    error_message = "Constructed container and repository names must match the serving definitions."
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "ProductionImagePublish"]) == "arn:aws:ecr:us-east-1:123456789012:repository/${aws_ecr_repository.app_ecr_repo.name}"
+    error_message = "The constructed repository name must match the serving repository."
   }
   assert {
-    condition     = contains(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "PassOnlyProductionRuntimeRoles"]), "arn:aws:iam::123456789012:role/${aws_iam_role.ecs_task_execution_role.name}") && toset(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "RuntimeManagedPolicyReadback"])) == toset(concat([aws_iam_policy.dynamodb_access_policy.arn], [for p in [aws_iam_policy.kms_app_policy, aws_iam_policy.transcripts_s3_policy, aws_iam_policy.appconfig_access_policy, aws_iam_policy.bedrock_data_automation_policy, aws_iam_policy.bedrock_s3_policy] : "arn:aws:iam::123456789012:policy/${p.name}"]))
-    error_message = "Constructed execution role and managed policy ARNs must name the existing resources."
+    condition     = contains(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "PassOnlyProductionRuntimeRoles"]), "arn:aws:iam::123456789012:role/${aws_iam_role.ecs_task_execution_role.name}")
+    error_message = "The constructed execution role ARN must name the existing role."
   }
 }
 run "runtime_scope_never_reads_serving_service_or_task_definition" {
