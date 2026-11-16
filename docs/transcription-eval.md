@@ -27,10 +27,11 @@ Keep real recordings, references, and results in the private ops workspace. Use 
 `test/fixtures/transcription-public/` holds a committed public corpus (LibriSpeech and FLEURS speech under CC BY 4.0, generated non-speech, quiet, short, long-pause and Japanese cases) with a made-up server glossary as its grading prompt. Its README records provenance. Run it after `yarn build` with the same environment the other evals need (`scripts/mock.env.example` plus a real `OPENAI_API_KEY`):
 
 ```powershell
-npm run eval:transcription -- --manifest test/fixtures/transcription-public/manifest.json --mode pipeline --pass-mode slow --speech-detector production --speech-mode enforce --runs 2 --max-requests 200
+npm run eval:transcription -- --manifest test/fixtures/transcription-public/manifest.json --mode pipeline --pass-mode slow --speech-detector production --speech-mode enforce --runs 2 --max-requests 200 --batch-index 0
+npm run eval:transcription -- --manifest test/fixtures/transcription-public/manifest.json --mode pipeline --pass-mode slow --speech-detector production --speech-mode enforce --runs 2 --max-requests 200 --batch-index 1
 ```
 
-The corpus has 43 cases, so run `--batch-index 0` and `--batch-index 1`; each report's `complete` covers its own batch. It is a public `tune` set, never holdout evidence.
+The corpus has 43 cases, so run both batches; each report's `complete` covers its own batch. Non-speech metrics exist only in batch 1, and the Japanese case should be read from `byTag["non-english"]`. It is a public `tune` set, never holdout evidence.
 
 Vary one thing at a time to compare variants: `--prompt-file test/fixtures/transcription-public/glossary-prompt.txt` (the former production prompt) or `terms-prompt.txt` (dictionary terms only), `--language en` (force a language hint; the default omits it), `--mode provider` (raw ASR with every gate off) and `--model`. Logprobs are requested from every `gpt-*` model; `whisper-1` runs without them. `--max-clip-seconds` allows up to 180 s.
 

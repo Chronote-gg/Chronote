@@ -18,15 +18,18 @@ npm run eval:transcription -- --manifest test/fixtures/transcription-public/mani
 npm run eval:transcription -- --manifest test/fixtures/transcription-public/manifest.json --mode pipeline --pass-mode slow --runs 1 --batch-index 1
 ```
 
-Dictionary terms are sent as recognition keywords, as in production;
-`--no-keywords` runs without them. No language hint is sent unless `--language`
-forces one. `ja-fleurs-1607` is scored by `cer`, outside the pooled `wer`.
+Dictionary terms are sent as recognition keywords, as in production; each
+`tts-*` case sends its own case `dictionary`, so `byTag["dictionary-terms"]`
+measures dictionary support. `--no-keywords` runs without them, as the
+no-dictionary baseline. No prompt is sent unless `--prompt-file` passes one, and
+no language hint unless `--language` forces one. `ja-fleurs-1607` is scored by
+`cer`, outside the pooled `wer`.
 
 ## Contents
 
 - `manifest.json` (43 cases): eight normal LibriSpeech utterances, two attenuated
   by 35 dB (`quiet`), three naturally short utterances, sixteen 1-4 word cuts of
-  1-3 s (`cut`, three from the start of an utterance and thirteen added to
+  0.7-2.1 s (`cut`, three from the start of an utterance and thirteen added to
   measure language detection on short English speech), two utterances joined
   by 4 s of silence (`long-pause`), one Japanese FLEURS utterance and seven
   generated non-speech clips (silence, low and moderate noise, a 0.5 s noise burst, mains hum,
@@ -41,8 +44,8 @@ forces one. `ja-fleurs-1607` is scored by `cer`, outside the pooled `wer`.
   `dictionary`.
 - `glossary-prompt.txt`: a made-up server glossary in the former production
   prompt template, also stored as the manifest `prompt`. Production sends no
-  prompt; pass it with `--prompt-file` to reproduce the former prompted path. Twelve of its dictionary terms
-  occur in the speech references.
+  prompt; pass it with `--prompt-file` to reproduce the former prompted path.
+  Nine of its dictionary terms occur in the speech references (twelve occurrences).
 - `terms-prompt.txt`: the dictionary terms alone. `no-prompt.txt`: empty. Pass
   either with `--prompt-file`.
 
