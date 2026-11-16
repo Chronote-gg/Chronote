@@ -9,6 +9,7 @@ const meta: Meta<typeof DictionaryCard> = {
     entries: [],
     budgets: {
       maxEntries: 50,
+      maxCharsTranscription: 1_500,
       maxCharsContext: 4_000,
     },
     onUpsert: async () => undefined,

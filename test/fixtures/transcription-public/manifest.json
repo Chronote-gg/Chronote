@@ -2,6 +2,28 @@
   "version": 1,
   "name": "public-transcription-manifest",
   "prompt": "<glossary>(do not include in transcript):\nServer Name: Lantern Hollow Guild\nChannel: Story Circle\nServer Description: Lantern Hollow is a reading club for Victorian art criticism and classic children's fantasy. Members meet every week to read chapters aloud and discuss them. Newcomers are welcome to listen before joining in.\nAttendees: Marigold, Thaddeus, Wren\nBot Names: Chronote\nDictionary terms:\n- Quilter\n- Linnell\n- Leighton\n- Ruskin\n- Kaliko\n- Ruggedo\n- Polychrome\n- Shaggy\n- Betsy\n- Brion\n- Irolg\n- Brandd\n- Lantern Hollow\n- Story Circle\n- Bramblewick\n- Fennimore Press\n- Tuppence Reading List\n- Moonquill\n- Gallery Night\n- Inkwell Award\nMeeting Context: Weekly read-aloud session and chapter discussion\nTranscript instruction: Do not include any glossary text in the transcript.\n</glossary>\n",
+  "dictionary": [
+    "Quilter",
+    "Linnell",
+    "Leighton",
+    "Ruskin",
+    "Kaliko",
+    "Ruggedo",
+    "Polychrome",
+    "Shaggy",
+    "Betsy",
+    "Brion",
+    "Irolg",
+    "Brandd",
+    "Lantern Hollow",
+    "Story Circle",
+    "Bramblewick",
+    "Fennimore Press",
+    "Tuppence Reading List",
+    "Moonquill",
+    "Gallery Night",
+    "Inkwell Award"
+  ],
   "cases": [
     {
       "id": "ls-128104-0000",
@@ -489,6 +511,206 @@
         "provenance": "synthetic",
         "notes": "ffmpeg-generated: breath-like band-passed noise swell, 1.5 s"
       }
+    },
+    {
+      "id": "tts-syn-00",
+      "file": "tts-syn-00.ogg",
+      "sha256": "4bf27346ce54ef8618b556ab52eb2ec501d72c9f50428ca89f0e736fe707d18f",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Okay, so tonight the Kwylt raid starts at nine, and Xaerith is leading the first wing.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice coral"
+      },
+      "dictionary": [
+        "Kwylt",
+        "Xaerith",
+        "Vaelmora",
+        "Thornspire Keep",
+        "Gloomwarden",
+        "Drakkenhold",
+        "Ysolde",
+        "Brightmaw",
+        "Oathfyre",
+        "DKP"
+      ]
+    },
+    {
+      "id": "tts-syn-02",
+      "file": "tts-syn-02.ogg",
+      "sha256": "30f39ced2de6810e55d06baef075a9431b28ae7a246d6477ddfd95a8751f9cc6",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms", "noisy"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Thornspire Keep drops the healer trinket, so let's prioritize that run on Sunday.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice ash, mixed with generated pink noise"
+      },
+      "dictionary": [
+        "Kwylt",
+        "Xaerith",
+        "Vaelmora",
+        "Thornspire Keep",
+        "Gloomwarden",
+        "Drakkenhold",
+        "Ysolde",
+        "Brightmaw",
+        "Oathfyre",
+        "DKP"
+      ]
+    },
+    {
+      "id": "tts-syn-04",
+      "file": "tts-syn-04.ogg",
+      "sha256": "8a8cffb5c7f5c8f9bdd5f148177025f8578f7edaecf96c4cd970fdbf7dcb600a",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms"],
+      "label": {
+        "kind": "speech",
+        "transcript": "If we clear Drakkenhold before reset, everyone gets double DKP.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice onyx"
+      },
+      "dictionary": [
+        "Kwylt",
+        "Xaerith",
+        "Vaelmora",
+        "Thornspire Keep",
+        "Gloomwarden",
+        "Drakkenhold",
+        "Ysolde",
+        "Brightmaw",
+        "Oathfyre",
+        "DKP"
+      ]
+    },
+    {
+      "id": "tts-syn-05",
+      "file": "tts-syn-05.ogg",
+      "sha256": "3532ec0c63fc59488dd1c98042aa0606fbdf944d6e67b6b316696fd3ae7c6868",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms", "noisy"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Ysolde said she can tank, but Brightmaw needs to swap to healing.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice ash, mixed with generated pink noise"
+      },
+      "dictionary": [
+        "Kwylt",
+        "Xaerith",
+        "Vaelmora",
+        "Thornspire Keep",
+        "Gloomwarden",
+        "Drakkenhold",
+        "Ysolde",
+        "Brightmaw",
+        "Oathfyre",
+        "DKP"
+      ]
+    },
+    {
+      "id": "tts-syn-31",
+      "file": "tts-syn-31.ogg",
+      "sha256": "effbc7139f9feddaaf0b7e12b654d1759edecd4b38bf0fc1eae2a1ccfd8ddffc",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Tadhg, you need to call the flank earlier, we lost two rounds on that.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice onyx"
+      },
+      "dictionary": [
+        "Saoirse",
+        "Tadhg",
+        "Aoife",
+        "Wojciech",
+        "Xochitl",
+        "Ngozi",
+        "Grimhaven",
+        "Valkyrae Cup",
+        "Nhaelis",
+        "Siobhan"
+      ]
+    },
+    {
+      "id": "tts-syn-32",
+      "file": "tts-syn-32.ogg",
+      "sha256": "b1846003d23eae4532e5973a79b9cf395ff40ab3a832bb458dcfcc1fa236ef96",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms", "noisy"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Aoife and Wojciech are swapping roles for the Valkyrae Cup qualifier.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice ash, mixed with generated pink noise"
+      },
+      "dictionary": [
+        "Saoirse",
+        "Tadhg",
+        "Aoife",
+        "Wojciech",
+        "Xochitl",
+        "Ngozi",
+        "Grimhaven",
+        "Valkyrae Cup",
+        "Nhaelis",
+        "Siobhan"
+      ]
+    },
+    {
+      "id": "tts-syn-34",
+      "file": "tts-syn-34.ogg",
+      "sha256": "13ac426c2be7f1466e5227898e1ca178ce19fcc4bbc2faee6de8c583bd8dbd14",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Ngozi said the Grimhaven jerseys should arrive before the tournament.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice onyx"
+      },
+      "dictionary": [
+        "Saoirse",
+        "Tadhg",
+        "Aoife",
+        "Wojciech",
+        "Xochitl",
+        "Ngozi",
+        "Grimhaven",
+        "Valkyrae Cup",
+        "Nhaelis",
+        "Siobhan"
+      ]
+    },
+    {
+      "id": "tts-syn-35",
+      "file": "tts-syn-35.ogg",
+      "sha256": "05bf88a7b0d4c21bdef46e8f9d174be8c723a56a7f0660dfe96f9553d5fa943a",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms", "noisy"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Nhaelis is the map we keep losing on, so let's drill it twice this week.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice ash, mixed with generated pink noise"
+      },
+      "dictionary": [
+        "Saoirse",
+        "Tadhg",
+        "Aoife",
+        "Wojciech",
+        "Xochitl",
+        "Ngozi",
+        "Grimhaven",
+        "Valkyrae Cup",
+        "Nhaelis",
+        "Siobhan"
+      ]
     }
   ]
 }

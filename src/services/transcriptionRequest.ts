@@ -182,20 +182,57 @@ export async function runTranscriptionRequest(
   }
 }
 
+type TranscriptionModelCapabilities = {
+  keywords: boolean;
+  languageField: "language" | "languages";
+};
+
+// Verified against the API: gpt-transcribe takes `keywords` and a `languages`
+// list that replaces `language`; the older models reject both with HTTP 400.
+const TRANSCRIPTION_MODEL_CAPABILITIES: Record<
+  string,
+  TranscriptionModelCapabilities
+> = {
+  "gpt-transcribe": { keywords: true, languageField: "languages" },
+  "gpt-4o-transcribe": { keywords: false, languageField: "language" },
+  "gpt-4o-mini-transcribe": { keywords: false, languageField: "language" },
+  // Not selectable in production; the offline eval compares against it.
+  "whisper-1": { keywords: false, languageField: "language" },
+};
+
+export function transcriptionModelCapabilities(
+  model: string,
+): TranscriptionModelCapabilities {
+  const capabilities = TRANSCRIPTION_MODEL_CAPABILITIES[model];
+  if (!capabilities)
+    throw new Error(`Unsupported transcription model ${model}`);
+  return capabilities;
+}
+
 /**
  * The production ASR request. It sends no prompt, so the provider has nothing
- * to echo back, and a language hint only when the server pins one; auto lets
- * the provider detect the language.
+ * to echo back. A language hint goes out only when the server pins one; auto
+ * lets the provider detect the language. Dictionary keywords go out only to a
+ * model that accepts them.
  */
 export function buildTranscriptionRequest(
   model: string,
   language: TranscriptionLanguage,
+  keywords: readonly string[],
 ) {
+  const capabilities = transcriptionModelCapabilities(model);
   return {
     model,
     temperature: 0,
     response_format: "json" as const,
     include: ["logprobs" as const],
-    ...(language === "auto" ? {} : { language }),
+    ...(language === "auto"
+      ? {}
+      : capabilities.languageField === "languages"
+        ? { languages: [language] }
+        : { language }),
+    ...(capabilities.keywords && keywords.length
+      ? { keywords: [...keywords] }
+      : {}),
   };
 }

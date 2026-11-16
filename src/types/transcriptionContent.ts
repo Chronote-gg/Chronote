@@ -7,6 +7,8 @@ export type TranscriptionContentInput = {
   guild: { id: string };
   voiceChannel: { id: string };
   signal: AbortSignal;
+  /** Dictionary terms within the transcription budget, sent as recognition hints. */
+  keywords: readonly string[];
   runtimeConfig?: Pick<
     NonNullable<MeetingData["runtimeConfig"]>,
     "transcription" | "modelChoices"

@@ -448,6 +448,61 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "number", min: 0, step: 1 },
   },
   {
+    key: "dictionary.maxChars.transcription",
+    label: "Dictionary transcription chars",
+    description:
+      "Character budget for dictionary terms sent to speech recognition as keyword hints, at most 20 terms per request. Definitions are not included. Set to 0 to disable dictionary terms in transcription, clamped by the global transcription cap.",
+    category: "Dictionary",
+    group: "Advanced",
+    valueType: "number",
+    defaultValue: 2000,
+    scopes: {
+      global: scope(true, true, "superadmin", "number"),
+      server: scope(true, false, "admin", "number"),
+    },
+    ui: {
+      type: "number",
+      min: 0,
+      step: 100,
+      maxKey: "dictionary.maxChars.transcription.cap",
+    },
+  },
+  {
+    key: "dictionary.maxChars.transcription.pro",
+    label: "Dictionary transcription chars (pro)",
+    description:
+      "Pro tier character budget for dictionary terms sent to speech recognition as keyword hints. Definitions are not included, clamped by the global transcription cap.",
+    category: "Dictionary",
+    group: "Advanced",
+    valueType: "number",
+    defaultValue: 4000,
+    scopes: {
+      global: scope(true, true, "superadmin", "number"),
+      server: scope(true, false, "admin", "number"),
+    },
+    minTier: "pro",
+    ui: {
+      type: "number",
+      min: 0,
+      step: 100,
+      maxKey: "dictionary.maxChars.transcription.cap",
+    },
+  },
+  {
+    key: "dictionary.maxChars.transcription.cap",
+    label: "Dictionary transcription chars cap",
+    description:
+      "Global hard cap for dictionary characters sent to speech recognition.",
+    category: "Dictionary",
+    group: "Advanced",
+    valueType: "number",
+    defaultValue: 6000,
+    scopes: {
+      global: scope(true, true, "superadmin", "number"),
+    },
+    ui: { type: "number", min: 0, step: 100 },
+  },
+  {
     key: "dictionary.maxChars.context",
     label: "Dictionary context chars",
     description:

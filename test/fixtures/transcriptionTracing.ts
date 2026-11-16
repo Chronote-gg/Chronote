@@ -368,6 +368,7 @@ export async function buildTracingFixture(options: FixtureOptions = {}) {
     guild: { id: "guild" },
     voiceChannel: { id: "voice" },
     signal,
+    keywords: [],
     effect: (run) => lifetime.runMeetingProcessingEffect(owner, run),
   };
   const tasks: Promise<SnippetTranscriptionResult>[] = [];

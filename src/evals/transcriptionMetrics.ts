@@ -147,6 +147,48 @@ export function scoreTranscription(
   };
 }
 
+export type TermScore = { mentions: number; hits: number; insertions: number };
+
+function countPhrase(words: string[], phrase: string[]) {
+  let count = 0;
+  for (let index = 0; index + phrase.length <= words.length; index++)
+    if (phrase.every((word, offset) => words[index + offset] === word)) count++;
+  return count;
+}
+
+/** Exact dictionary spellings, case and punctuation ignored. An extra occurrence counts as an insertion. */
+export function scoreTerms(
+  reference: string | undefined,
+  text: string,
+  dictionary: readonly string[] = [],
+): TermScore {
+  const score = { mentions: 0, hits: 0, insertions: 0 };
+  if (reference === undefined) return score;
+  const expected = tokenize(reference);
+  const actual = tokenize(text);
+  for (const term of dictionary) {
+    const phrase = tokenize(term);
+    if (!phrase.length) continue;
+    const wanted = countPhrase(expected, phrase);
+    const found = countPhrase(actual, phrase);
+    score.mentions += wanted;
+    score.hits += Math.min(wanted, found);
+    score.insertions += Math.max(0, found - wanted);
+  }
+  return score;
+}
+
+export function summarizeTermScores(scores: TermScore[]) {
+  const mentions = scores.reduce((sum, score) => sum + score.mentions, 0);
+  const hits = scores.reduce((sum, score) => sum + score.hits, 0);
+  return {
+    termMentions: mentions,
+    termHits: hits,
+    termRecall: mentions ? hits / mentions : null,
+    termInsertions: scores.reduce((sum, score) => sum + score.insertions, 0),
+  };
+}
+
 const rate = <T>(items: T[], test: (item: T) => boolean) =>
   items.length ? items.filter(test).length / items.length : null;
 

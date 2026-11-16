@@ -128,7 +128,7 @@ Context stacks: server context applies to all meetings, channel context applies 
 
 ### `/dictionary`
 
-Manages a list of terms that are added to the notes and cleanup prompts. Requires **Manage Channels** permission.
+Manages a glossary of terms that guide speech recognition and are added to the notes and cleanup prompts. Requires **Manage Channels** permission.
 
 | Subcommand | Options                                                       | Description                     |
 | ---------- | ------------------------------------------------------------- | ------------------------------- |
@@ -139,7 +139,7 @@ Manages a list of terms that are added to the notes and cleanup prompts. Require
 
 All responses are ephemeral (visible only to you).
 
-Dictionary terms and their definitions are included in the notes and cleanup prompts, so names and jargon are spelled consistently in your notes. Speech recognition does not receive the dictionary.
+Dictionary terms are sent to speech recognition as recognition hints, terms only and up to 20 per audio snippet, so names and jargon are spelled correctly in the transcript. Definitions are not sent to speech recognition; terms and definitions are included in the notes and cleanup prompts. Keep the dictionary to terms people actually say: a long list of similar-sounding names makes recognition worse, not better.
 
 Members with **Manage Server** can also open **Server Settings** -> **Teach Chronote** and describe the vocabulary in ordinary language. Chronote creates temporary proposed entries and short descriptions, but no entry is added to the server dictionary until the member reviews the batch and approves that entry. Possible conflicts and proposals without an exact spelling start unchecked.
 

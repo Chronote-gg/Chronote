@@ -20,13 +20,16 @@ import {
 } from "../utils/audioNoiseGate";
 import type { Transcription } from "openai/resources/audio";
 import {
+  admittedKeywords,
   guardTranscription,
   resolveTranscriptionGuardConfig,
 } from "../services/transcriptionService";
 import type { TranscriptionEvalPolicy } from "./transcriptionCorpus";
 import type { TranscriptionVadDecision } from "./transcriptionVadReport";
 import {
+  scoreTerms,
   scoreTranscription,
+  type TermScore,
   type TranscriptionScore,
 } from "./transcriptionMetrics";
 
@@ -65,6 +68,9 @@ export type TranscriptionQualityRun = {
   raw?: RawTranscription;
   flags: string[];
   score: TranscriptionScore;
+  terms: TermScore;
+  /** Keywords the request carried after speech admission. */
+  keywordsSent: number;
   noiseMetrics: ReturnType<typeof evaluateNoiseGate>["metrics"];
   vad?: TranscriptionVadDecision;
 };
@@ -77,6 +83,10 @@ export async function runTranscriptionQualityCase(input: {
   reference?: string;
   /** Sent to the provider only for comparisons with the former prompted path; production sends none. */
   prompt?: string;
+  /** Dictionary terms the production budget selects; admission decides whether they are sent. */
+  keywords?: readonly string[];
+  /** The case dictionary, for term recall. */
+  dictionary?: readonly string[];
   passMode: "fast" | "slow";
   mode: TranscriptionQualityMode;
   policy: TranscriptionEvalPolicy;
@@ -86,7 +96,10 @@ export async function runTranscriptionQualityCase(input: {
     TranscriptionInputRequest,
     "mode" | "pcmFile" | "wavFile" | "policyFingerprint" | "detector"
   >;
-  transcribe: (prompt?: string) => Promise<RawTranscription>;
+  transcribe: (
+    prompt: string | undefined,
+    keywords: readonly string[],
+  ) => Promise<RawTranscription>;
 }): Promise<TranscriptionQualityRun> {
   const started = performance.now();
   const audioSeconds =
@@ -110,10 +123,16 @@ export async function runTranscriptionQualityCase(input: {
     durationMs: 0,
     flags: [],
     score: { scored: false },
+    terms: { mentions: 0, hits: 0, insertions: 0 },
+    keywordsSent: 0,
     noiseMetrics: gate.metrics,
     vad: input.vad,
   };
-  const finish = () => ({ ...result, durationMs: performance.now() - started });
+  const finish = () => ({
+    ...result,
+    terms: scoreTerms(input.reference, result.text ?? "", input.dictionary),
+    durationMs: performance.now() - started,
+  });
   const reason = skipReason(input, audioSeconds, gateConfig, gate);
   if (reason) {
     Object.assign(result, {
@@ -126,6 +145,8 @@ export async function runTranscriptionQualityCase(input: {
   }
   const execute = async () => {
     if (input.mode === "preflight") return finish();
+    const keywords = admittedKeywords(input.keywords ?? [], result.admission);
+    result.keywordsSent = keywords.length;
     const request = async (prompt?: string) => {
       // The callback enforces the global budget before making an HTTP request.
       // A rejected HTTP request counts too; a budget refusal does not.
@@ -133,7 +154,7 @@ export async function runTranscriptionQualityCase(input: {
       result.submittedAudioSeconds += audioSeconds;
       const requestStarted = performance.now();
       try {
-        return await input.transcribe(prompt);
+        return await input.transcribe(prompt, keywords);
       } catch (error) {
         if (error instanceof TranscriptionBudgetExhausted) {
           result.requests--;
@@ -155,6 +176,7 @@ export async function runTranscriptionQualityCase(input: {
         );
         const guarded = await guardTranscription({
           raw,
+          keywords,
           audioSeconds,
           noiseGateMetrics:
             input.pcm.length &&

@@ -87,6 +87,41 @@ test("unavailableAssessmentStillCallsProvider", async () => {
     assessment: { kind: "unavailable" },
   });
 });
+const scored = (kind: "speech" | "uncertain"): SpeechAssessment => ({
+  kind,
+  policyFingerprint: "test",
+  metrics: {
+    peakSpeechProbability: kind === "speech" ? 0.9 : 0.4,
+    maxConsecutiveSpeechFrames: 1,
+    scannedFrames: 1,
+    totalFrames: 1,
+    gain: 1,
+  },
+});
+test.each([
+  ["speech", ["Kwylt", "Xaerith"]],
+  ["uncertain", []],
+] as const)(
+  "keywords follow production admission on %s and term recall is graded",
+  async (kind, sent) => {
+    const requests: (readonly string[])[] = [];
+    const result = await runTranscriptionQualityCase({
+      ...options,
+      mode: "pipeline",
+      reference: "The Kwylt raid starts at nine.",
+      keywords: ["Kwylt", "Xaerith"],
+      dictionary: ["Kwylt", "Xaerith"],
+      production: production(scored(kind)),
+      transcribe: async (_prompt, keywords) => {
+        requests.push(keywords);
+        return { text: "The Kwylt raid starts at nine, Xaerith." };
+      },
+    });
+    expect(requests).toEqual([sent]);
+    expect(result.keywordsSent).toBe(sent.length);
+    expect(result.terms).toEqual({ mentions: 1, hits: 1, insertions: 1 });
+  },
+);
 test("preflight eligible remains unscored", async () => {
   const result = await runTranscriptionQualityCase({
     ...options,
@@ -339,7 +374,7 @@ test.each([
     service.shutdownSpeechDetector = async () => {};
     compiled('evals/transcriptionQualityEval.js').runTranscriptionQualityEval([
       '--manifest', process.argv[5], '--mode', mode, '--runs', '3', '--max-requests', '3',
-      '--model', 'controlled-model', '--artifact-dir', process.argv[6], '--output', process.argv[7],
+      '--model', 'gpt-transcribe', '--artifact-dir', process.argv[6], '--output', process.argv[7],
       '--speech-detector', speechMode === 'off' ? 'off' : 'production', ...(speechMode === 'off' ? [] : ['--speech-mode', speechMode])
     ]).then(() => fs.writeFileSync(process.argv[8], JSON.stringify({ conversions, submissions, assessments, cleanups }))).catch((error) => { console.error(error); process.exitCode = 1; });
   `,

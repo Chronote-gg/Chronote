@@ -14,6 +14,7 @@ import ffmpeg from "fluent-ffmpeg";
 import type OpenAI from "openai";
 import { BYTES_PER_SAMPLE, CHANNELS, RECORD_SAMPLE_RATE } from "../constants";
 import {
+  dictionaryForCase,
   referenceForCase,
   selectCorpusBatch,
   transcriptionCorpusSchema,
@@ -25,7 +26,14 @@ import {
   TranscriptionBudgetExhausted,
   type TranscriptionQualityRun,
 } from "./transcriptionQualityCase";
-import { summarizeTranscriptionScores } from "./transcriptionMetrics";
+import {
+  summarizeTermScores,
+  summarizeTranscriptionScores,
+} from "./transcriptionMetrics";
+import {
+  buildDictionaryPromptLines,
+  DEFAULT_DICTIONARY_BUDGETS,
+} from "../utils/dictionary";
 import { buildTranscriptionRequest } from "../services/transcriptionRequest";
 import {
   transcriptionLanguageSchema,
@@ -116,6 +124,8 @@ export function summarizeQualityRuns(results: CorpusRun[]) {
     ),
     totalDurationMs: results.reduce((sum, item) => sum + item.durationMs, 0),
     ...summarizeTranscriptionScores(results.map((item) => item.score)),
+    ...summarizeTermScores(results.map((item) => item.terms)),
+    keywordRequests: results.filter((item) => item.keywordsSent > 0).length,
   };
 }
 
@@ -142,6 +152,7 @@ export async function runTranscriptionQualityEval(args: string[]) {
     cacheRoot,
     output,
     language,
+    keywordsEnabled,
   } = await readQualityOptions(args);
   await fs.mkdir(cacheRoot, { recursive: true });
   const tempDir = await fs.mkdtemp(path.join(cacheRoot, "run-"));
@@ -202,10 +213,20 @@ export async function runTranscriptionQualityEval(args: string[]) {
     );
     const runCases = async () => {
       outer: for (const { item, pcm, pcmFile, wavFile, decodeMs } of prepared) {
+        const dictionary = dictionaryForCase(corpus, item);
+        // The production budget picks which terms a request may carry.
+        const keywords = keywordsEnabled
+          ? buildDictionaryPromptLines(
+              dictionary.map((term) => ({ term })),
+              DEFAULT_DICTIONARY_BUDGETS,
+            ).transcriptionKeywords
+          : [];
         for (let run = 1; run <= runs; run++) {
           const result = await runTranscriptionQualityCase({
             pcm,
             prompt,
+            keywords,
+            dictionary,
             passMode,
             mode,
             policy,
@@ -271,6 +292,7 @@ export async function runTranscriptionQualityEval(args: string[]) {
                   policy,
                   prompt,
                   language,
+                  keywordsEnabled,
                   mode,
                   passMode,
                   speechDetector,
@@ -296,6 +318,7 @@ export async function runTranscriptionQualityEval(args: string[]) {
             passMode,
             model: model ?? null,
             language,
+            keywordsEnabled,
             prompt,
             policy,
             force,
@@ -468,6 +491,8 @@ async function readQualityOptions(args: string[]) {
     throw new Error("Select between 1 and 200 corpus cases");
   const { cacheRoot, output } = artifactPaths(args, mode, passMode);
   const language = readComparisonLanguage(args);
+  // Production sends dictionary keywords; --no-keywords reproduces the path without them.
+  const keywordsEnabled = !args.includes("--no-keywords");
   return {
     manifestPath,
     corpus,
@@ -490,6 +515,7 @@ async function readQualityOptions(args: string[]) {
     cacheRoot,
     output,
     language,
+    keywordsEnabled,
   };
 }
 
@@ -540,25 +566,30 @@ function createQualityTranscriber(
   language: TranscriptionLanguage,
 ) {
   let requests = 0;
-  return (wavFile: string) => async (requestPrompt?: string) => {
-    if (requests >= maxRequests)
-      throw new TranscriptionBudgetExhausted("Request budget exhausted");
-    requests++;
-    // The production request, so pipeline mode cannot drift from the bot.
-    const { include, ...request } = buildTranscriptionRequest(model!, language);
-    const response = await client!.audio.transcriptions.create({
-      file: createReadStream(wavFile),
-      ...request,
-      // whisper-1 cannot return logprobs and leaves the guards without them.
-      ...(model!.startsWith("gpt-") ? { include } : {}),
-      ...(requestPrompt ? { prompt: requestPrompt } : {}),
-    });
-    return {
-      text: response.text,
-      logprobs: response.logprobs ?? [],
-      usage: response.usage,
+  return (wavFile: string) =>
+    async (requestPrompt: string | undefined, keywords: readonly string[]) => {
+      if (requests >= maxRequests)
+        throw new TranscriptionBudgetExhausted("Request budget exhausted");
+      requests++;
+      // The production request, so pipeline mode cannot drift from the bot.
+      const { include, ...request } = buildTranscriptionRequest(
+        model!,
+        language,
+        keywords,
+      );
+      const response = await client!.audio.transcriptions.create({
+        file: createReadStream(wavFile),
+        ...request,
+        // whisper-1 cannot return logprobs and leaves the guards without them.
+        ...(model!.startsWith("gpt-") ? { include } : {}),
+        ...(requestPrompt ? { prompt: requestPrompt } : {}),
+      });
+      return {
+        text: response.text,
+        logprobs: response.logprobs ?? [],
+        usage: response.usage,
+      };
     };
-  };
 }
 
 function validateQualityArguments(args: string[]) {
@@ -582,6 +613,7 @@ function validateQualityArguments(args: string[]) {
     "--batch-size",
     "--batch-index",
     "--language",
+    "--no-keywords",
   ]);
   for (const argument of args.filter((item) => item.startsWith("--")))
     if (!allowed.has(argument))

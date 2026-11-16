@@ -17,6 +17,8 @@ export const TRANSCRIPTION_IMPLEMENTATION_SOURCES = [
   "src/services/audioSnippetService.ts",
   "src/services/transcriptionInputService.ts",
   "src/services/transcriptionService.ts",
+  "src/services/transcriptionRequest.ts",
+  "src/utils/dictionary.ts",
   "src/config/modelChoices.ts",
   "src/services/speechDetectionService.ts",
   "src/services/speechDetectionPolicy.ts",

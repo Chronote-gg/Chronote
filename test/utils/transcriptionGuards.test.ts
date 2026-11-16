@@ -1,5 +1,8 @@
 import type { NoiseGateMetrics } from "../../src/utils/audioNoiseGate";
-import { applyTranscriptionGuards } from "../../src/utils/transcriptionGuards";
+import {
+  applyTranscriptionGuards,
+  keywordOnlyCount,
+} from "../../src/utils/transcriptionGuards";
 
 const quietMetrics: NoiseGateMetrics = {
   windowMs: 20,
@@ -27,6 +30,7 @@ describe("applyTranscriptionGuards", () => {
   test("does not publish punctuation-only recognizer output", () => {
     const result = applyTranscriptionGuards({
       transcription: "###",
+      keywords: [],
       suppressionEnabled: true,
     });
     expect(result.text).toBe("");
@@ -37,6 +41,7 @@ describe("applyTranscriptionGuards", () => {
   test("suppresses quiet low-confidence transcriptions", () => {
     const result = applyTranscriptionGuards({
       transcription: "I think we should start with the Vket event.",
+      keywords: [],
       suppressionEnabled: true,
       noiseGateMetrics: quietMetrics,
       logprobs: [{ logprob: -1.4 }, { logprob: -2.6 }],
@@ -55,6 +60,7 @@ describe("applyTranscriptionGuards", () => {
   test("keeps text when loudness metrics are missing", () => {
     const result = applyTranscriptionGuards({
       transcription: "hello there",
+      keywords: [],
       suppressionEnabled: true,
       logprobs: [{ logprob: -3 }],
     });
@@ -66,6 +72,7 @@ describe("applyTranscriptionGuards", () => {
   test("keeps text when suppression is disabled", () => {
     const result = applyTranscriptionGuards({
       transcription: "quiet but suppression is off",
+      keywords: [],
       suppressionEnabled: false,
       noiseGateMetrics: quietMetrics,
       logprobs: [{ logprob: -2.5 }],
@@ -78,6 +85,7 @@ describe("applyTranscriptionGuards", () => {
   test("suppresses quiet audio when min logprob is low", () => {
     const result = applyTranscriptionGuards({
       transcription: "We should coordinate on the Vket schedule.",
+      keywords: [],
       suppressionEnabled: true,
       noiseGateMetrics: quietMetrics,
       logprobs: [{ logprob: -0.1 }, { logprob: -2.6 }, { logprob: -0.2 }],
@@ -96,6 +104,7 @@ describe("applyTranscriptionGuards", () => {
   test("suppresses hard silence even with confident logprobs", () => {
     const result = applyTranscriptionGuards({
       transcription: "hello there",
+      keywords: [],
       suppressionEnabled: true,
       hardSilenceDbfs: -60,
       noiseGateMetrics: hardSilenceMetrics,
@@ -112,6 +121,7 @@ describe("applyTranscriptionGuards", () => {
     const result = applyTranscriptionGuards({
       transcription:
         "I think we should have a meeting to discuss the Vket event.",
+      keywords: [],
       suppressionEnabled: true,
       audioSeconds: 0.5,
       transcriptWordCount: 13,
@@ -131,6 +141,7 @@ describe("applyTranscriptionGuards", () => {
   test("keeps short acknowledgements below rate minimums", () => {
     const result = applyTranscriptionGuards({
       transcription: "Yeah, ok.",
+      keywords: [],
       suppressionEnabled: true,
       audioSeconds: 0.8,
       transcriptWordCount: 2,
@@ -143,5 +154,54 @@ describe("applyTranscriptionGuards", () => {
 
     expect(result.text).toBe("Yeah, ok.");
     expect(result.flags).toEqual([]);
+  });
+
+  const keywords = ["Brightwater", "Mistral Hall", "BITRATE", "GTM"];
+
+  test.each([
+    "Brightwater, Mistral Hall, BITRATE.",
+    "GTM. Brightwater.",
+    "GTM。 BITRATE",
+  ])("suppresses output listing only keywords: %s", (transcription) => {
+    const result = applyTranscriptionGuards({
+      transcription,
+      keywords,
+      suppressionEnabled: true,
+    });
+    expect(result.text).toBe("");
+    expect(result.suppressed).toBe(true);
+    expect(result.flags).toEqual(["suppressed_keyword_list"]);
+  });
+
+  test.each([
+    ["a single keyword alone", "BITRATE."],
+    ["keywords inside speech", "Brightwater and GTM are next."],
+    ["a repeated single keyword", "GTM, GTM."],
+  ])("keeps %s", (_, transcription) => {
+    const result = applyTranscriptionGuards({
+      transcription,
+      keywords,
+      suppressionEnabled: true,
+    });
+    expect(result.text).toBe(transcription);
+    expect(result.flags).toEqual([]);
+  });
+
+  test("keeps a keyword list when no keywords were sent", () => {
+    const result = applyTranscriptionGuards({
+      transcription: "Brightwater, BITRATE.",
+      keywords: [],
+      suppressionEnabled: true,
+    });
+    expect(result.text).toBe("Brightwater, BITRATE.");
+  });
+});
+
+describe("keywordOnlyCount", () => {
+  test("matches multi-word keywords before their parts", () => {
+    expect(
+      keywordOnlyCount("Mistral Hall Mistral", ["Mistral", "Mistral Hall"]),
+    ).toBe(2);
+    expect(keywordOnlyCount("", ["Mistral"])).toBe(0);
   });
 });

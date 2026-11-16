@@ -2,7 +2,7 @@
 
 ## Overview
 
-Chronote records voice audio, builds per speaker snippets, and runs transcription in two passes. A fast pass gives early results during short pauses, while the slow pass finalizes a snippet after longer silence or a max snippet wall. The system keeps longer contiguous snippets to preserve accuracy. Each snippet is one ASR request with no prompt, and a language hint only when the server pins one, followed by deterministic guards. The slow pass text is the transcript text; no language model rewrites individual snippets. See [ADR-20261116](adr-20261116-transcription-simplification.md).
+Chronote records voice audio, builds per speaker snippets, and runs transcription in two passes. A fast pass gives early results during short pauses, while the slow pass finalizes a snippet after longer silence or a max snippet wall. The system keeps longer contiguous snippets to preserve accuracy. Each snippet is one ASR request with no prompt, the server dictionary terms as keyword hints when the speech detector judged the snippet to be speech, and a language hint only when the server pins one, followed by deterministic guards. The slow pass text is the transcript text; no language model rewrites individual snippets. See [ADR-20261116](adr-20261116-transcription-simplification.md).
 
 ## Product decisions
 
@@ -20,8 +20,10 @@ Chronote records voice audio, builds per speaker snippets, and runs transcriptio
 - A settled slow result is authoritative, including an empty one a guard suppressed. An earlier fast result never resurfaces for that snippet, so the compiled notes input, `transcript.json` segments and the live timeline agree.
 - Interjection splitting checks for a validated interjection snippet before finalizing other paused snippets.
 - Noise gate checks peak levels in short windows and skips snippets that are very quiet and lack speech-like peaks.
-- The ASR model is `models.transcription` (default `gpt-transcribe`; options `gpt-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`). Personal uploads use the same key. Requests send `temperature: 0`, `response_format: "json"` and `include: ["logprobs"]`, with no `prompt`, so the provider has no glossary text to echo back.
-- The dictionary does not steer ASR. It feeds notes, cleanup, ask and other text prompts only.
+- The ASR model is `models.transcription` (default `gpt-transcribe`; options `gpt-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`). Personal uploads use the same key. Requests send `temperature: 0`, `response_format: "json"` and `include: ["logprobs"]`, with no `prompt`, so the provider has no glossary text to echo back. Personal uploads send no keywords and no language hint.
+- What each model accepts comes from the capability table in `services/transcriptionRequest.ts`, never from guessing: `gpt-transcribe` takes `keywords` and a `languages` list (the API refuses `language` and `languages` together), while `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` reject both `keywords` and `languages` with HTTP 400 and take the singular `language`. An unknown model id throws.
+- Dictionary terms steer recognition as `keywords`: terms only, no definitions, chosen by `buildDictionaryPromptLines` (newest `updatedAt` first, then alphabetical) within `dictionary.maxEntries` and `dictionary.maxChars.transcription`, capped at 20 per request (`TRANSCRIPTION_KEYWORD_LIMIT`). A term containing `<`, `>`, a carriage return or a line feed is skipped, because one such keyword makes the API reject the whole request. Fast and slow passes both send them. Definitions feed notes, cleanup, ask and other text prompts.
+- Keywords go out only when speech detection runs in `enforce` mode and assessed the snippet as `speech`. Uncertain, unavailable, forced and unassessed (`off`, `shadow`) snippets are sent without them, because uncertain noise sent with keywords came back as a lone keyword. An output made only of two or more distinct sent keywords is suppressed as a list dump (`suppressed_keyword_list`); a single keyword alone is kept, since people do say one name on its own.
 - Guardrails include a loudness gate (noise gate metrics plus token logprobs), hard silence suppression, a syllable rate gate for short snippets, and suppression of punctuation-only output.
 
 ## Snippet ASR retries
@@ -54,8 +56,9 @@ non-English recordings.
 
 Live meeting snippets take their hint from the `transcription.language`
 setting (global superadmin and server admin scopes, default `auto`). `auto`
-omits the `language` field so the provider detects the language; any other
-value is sent as an ISO-639-1 code. Pinning is recommended for servers that
+omits the language hint so the provider detects the language; any other
+value is sent as an ISO-639-1 code, as `languages: [code]` to `gpt-transcribe`
+and as `language` to the older models. Pinning is recommended for servers that
 mostly speak one language other than English: on short Japanese clips, auto
 detection returned another language on 1.8% of runs, all on clips under one
 second, while a pinned `ja` returned none. The value is captured in the
@@ -158,12 +161,14 @@ All values are set via the config system. For the noise gate, only `enabled`, `a
 - `transcription.noiseGate.applyToFast`
 - `transcription.noiseGate.applyToSlow`
 - `models.transcription`
+- `dictionary.maxChars.transcription` (with `.pro` and `.cap`), the character budget for keyword hints
 
 Stored values for removed keys (`transcription.promptEcho.enabled`, `transcription.vote.enabled`,
-`transcription.finalPass.enabled`, `models.transcriptionCoalesce` and
-`dictionary.maxChars.transcription` with its `.pro` and `.cap` variants) are
+`transcription.finalPass.enabled` and `models.transcriptionCoalesce`) are
 ignored. Saved recordings that carry them still parse and recover; recovery
-re-transcribes uncovered audio with the frozen model and language and no prompt.
+re-transcribes uncovered audio with the frozen model and language, no prompt,
+and keywords rebuilt from the saved dictionary entries and saved
+`dictionary.maxChars.transcription` budget when the frozen model accepts them.
 
 ## Interjection behavior
 

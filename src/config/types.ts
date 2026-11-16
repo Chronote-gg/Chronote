@@ -131,6 +131,7 @@ export type MeetingRuntimeConfig = {
   };
   dictionary: {
     maxEntries: number;
+    maxCharsTranscription: number;
     maxCharsContext: number;
   };
   autoRecordCancellation: {

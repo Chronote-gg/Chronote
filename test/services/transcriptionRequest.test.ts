@@ -6,6 +6,11 @@ import {
   validResponse,
 } from "../fixtures/transcriptionRequest";
 import { deferred, flushTurn } from "../fixtures/transcriptionTracing";
+import {
+  buildTranscriptionRequest,
+  transcriptionModelCapabilities,
+} from "../../src/services/transcriptionRequest";
+import { MODEL_SELECTION_OPTIONS } from "../../src/config/modelChoices";
 
 afterEach(() => jest.restoreAllMocks());
 
@@ -423,4 +428,41 @@ test("default transport fixture replaces a synthetic inherited credential before
   expect(f.requests[0]?.headers.get("authorization")).toBe(
     "Bearer test-openai-api-key",
   );
+});
+
+describe("buildTranscriptionRequest", () => {
+  test.each(MODEL_SELECTION_OPTIONS.transcription)(
+    "selectable model %s has declared capabilities",
+    (model) => {
+      expect(() => transcriptionModelCapabilities(model)).not.toThrow();
+    },
+  );
+
+  test("gpt-transcribe takes keywords and a languages list", () => {
+    expect(
+      buildTranscriptionRequest("gpt-transcribe", "ja", ["Kwylt"]),
+    ).toMatchObject({ languages: ["ja"], keywords: ["Kwylt"] });
+  });
+
+  test.each(["gpt-4o-transcribe", "gpt-4o-mini-transcribe"])(
+    "%s gets the singular language and never keywords",
+    (model) => {
+      const request = buildTranscriptionRequest(model, "ja", ["Kwylt"]);
+      expect(request).toMatchObject({ language: "ja" });
+      expect(request).not.toHaveProperty("languages");
+      expect(request).not.toHaveProperty("keywords");
+    },
+  );
+
+  test("an empty dictionary sends no keywords field", () => {
+    expect(
+      buildTranscriptionRequest("gpt-transcribe", "auto", []),
+    ).not.toHaveProperty("keywords");
+  });
+
+  test("an unknown model is refused rather than guessed", () => {
+    expect(() =>
+      buildTranscriptionRequest("gpt-unknown-transcribe", "auto", []),
+    ).toThrow("Unsupported transcription model");
+  });
 });

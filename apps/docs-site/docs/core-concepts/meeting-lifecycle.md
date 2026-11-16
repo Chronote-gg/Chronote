@@ -38,7 +38,7 @@ TTS-only sessions skip capture entirely. Chronote does not subscribe to user voi
 
 Processing begins when the meeting ends. The embed updates to show "processing" status. This stage involves several steps:
 
-1. **Transcription**: Each audio snippet is sent to OpenAI's transcription model, which detects the spoken language unless the server pins one. Quality checks filter out noise, silence, and low-confidence text from quiet audio.
+1. **Transcription**: Each audio snippet is sent to OpenAI's transcription model, which detects the spoken language unless the server pins one. Snippets recognized as speech also carry up to 20 of your dictionary terms as recognition hints, so names and jargon are spelled correctly in the transcript. Quality checks filter out noise, silence, low-confidence text from quiet audio, and output that only lists dictionary terms.
 2. **Transcript cleanup**: A language model pass cleans up the raw transcription for readability.
 3. **Notes generation**: The full transcript, chat log, participant roster, server/channel/meeting context, dictionary entries (with definitions), and recent meeting history are sent to a language model that produces structured meeting notes.
 4. **Artifact upload**: The audio recording, transcript, and chat log are uploaded to cloud storage.
@@ -105,6 +105,6 @@ Several factors influence the quality of transcription and notes:
 | Server context   | `/context set-server`           | Helps the AI understand your team, project, and domain |
 | Channel context  | `/context set-channel`          | Adds channel-specific context (e.g., "design reviews") |
 | Meeting context  | `/startmeeting context:` option | Describes this specific meeting's topic                |
-| Dictionary terms | `/dictionary add`               | Corrects spelling of names and jargon in notes         |
+| Dictionary terms | `/dictionary add`               | Corrects spelling of names, acronyms, jargon           |
 | Audio quality    | Participant microphone settings | Clearer audio produces more accurate transcription     |
 | Speaking volume  | Participant microphone levels   | Very quiet audio may be filtered by the noise gate     |

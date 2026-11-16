@@ -52,7 +52,7 @@ const legacy = z.unknown().optional();
 const budgets = z
   .object({
     maxEntries: number,
-    maxCharsTranscription: legacy,
+    maxCharsTranscription: number,
     maxCharsContext: number,
   })
   .strict();

@@ -25,7 +25,7 @@ Chronote is a Discord bot that records voice meetings, transcribes the conversat
 
 ## Key capabilities
 
-- **Per-speaker transcription**, with context and dictionary terms that keep names and jargon spelled correctly in your notes.
+- **Per-speaker transcription** with configurable context and dictionary terms for domain accuracy.
 - **Auto-recording** at the server or channel level, so meetings are captured without manual commands.
 - **Notes correction** workflow where any attendee can suggest edits, reviewed and approved before applying.
 - **Meeting history** with full transcripts, audio, chat logs, and versioned notes.

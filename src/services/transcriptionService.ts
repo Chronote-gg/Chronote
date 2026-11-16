@@ -216,6 +216,8 @@ type TranscriptionTraceContext = {
 /** The post-ASR guards every live transcription passes, shared with the offline eval. */
 export async function guardTranscription(input: {
   raw: { text?: string; logprobs?: { logprob?: number }[] };
+  /** Keywords the request carried. */
+  keywords: readonly string[];
   audioSeconds: number;
   noiseGateMetrics?: NoiseGateMetrics;
   guardConfig: ReturnType<typeof resolveTranscriptionGuardConfig>;
@@ -230,6 +232,7 @@ export async function guardTranscription(input: {
   });
   const guardResult = applyTranscriptionGuards({
     transcription: raw,
+    keywords: input.keywords,
     ...guardConfig,
     noiseGateMetrics: input.noiseGateMetrics,
     audioSeconds: input.audioSeconds,
@@ -269,6 +272,22 @@ export async function guardTranscription(input: {
   };
 }
 
+/**
+ * Keywords go out only with a snippet the speech detector judged to be speech.
+ * Uncertain audio sent with keywords was answered with a keyword alone, and the
+ * same audio without them came back empty
+ * (docs/adr-20261116-transcription-simplification.md).
+ */
+export function admittedKeywords(
+  keywords: readonly string[],
+  admission: SpeechAdmission | undefined,
+): readonly string[] {
+  return admission?.kind === "assessed" &&
+    admission.assessment.kind === "speech"
+    ? keywords
+    : [];
+}
+
 async function transcribeInternal(
   meeting: TranscriptionContentInput,
   file: string,
@@ -281,6 +300,7 @@ async function transcribeInternal(
     "transcription",
     getMeetingModelOverrides(meeting),
   );
+  const keywords = admittedKeywords(meeting.keywords, context.speechAdmission);
   const traceMetadata = {
     transcriptionQueueWaitMs: queueWaitMs,
     guildId: meeting.guild.id,
@@ -292,6 +312,7 @@ async function transcribeInternal(
     audioBytes: context.audioBytes,
     noiseGateEnabled: context.noiseGateEnabled,
     noiseGateMode: passMode,
+    keywordCount: keywords.length,
     ...speechAdmissionMetadata(context.speechAdmission),
   };
   const ledger = createTranscriptionAttemptLedger(traceMetadata.audioSeconds);
@@ -317,6 +338,7 @@ async function transcribeInternal(
       request: buildTranscriptionRequest(
         modelChoice.model,
         meetingTranscriptionLanguage(meeting.runtimeConfig),
+        keywords,
       ),
     });
     if (transcription.text.trim() && !transcription.logprobs?.length) {
@@ -328,6 +350,7 @@ async function transcribeInternal(
     }
     const guarded = await guardTranscription({
       raw: transcription,
+      keywords,
       audioSeconds: context.audioSeconds,
       noiseGateMetrics: context.noiseGateMetrics,
       guardConfig,

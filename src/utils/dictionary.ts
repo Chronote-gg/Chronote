@@ -8,6 +8,7 @@ export const DICTIONARY_DEFINITION_MAX_LENGTH = 400;
 
 export type DictionaryBudgets = {
   maxEntries: number;
+  maxCharsTranscription: number;
   maxCharsContext: number;
 };
 
@@ -19,21 +20,25 @@ export type DictionaryItem = {
 
 export type DictionaryUsage = {
   totalEntries: number;
+  transcription: { entries: number; chars: number };
   context: { entries: number; chars: number };
 };
 
 export const DEFAULT_DICTIONARY_BUDGETS: DictionaryBudgets = {
   maxEntries: 200,
+  maxCharsTranscription: 2000,
   maxCharsContext: 6000,
 };
 
 const DEFAULT_PRO_BUDGETS: DictionaryBudgets = {
   maxEntries: 400,
+  maxCharsTranscription: 4000,
   maxCharsContext: 12000,
 };
 
 const DEFAULT_CAPS: DictionaryBudgets = {
   maxEntries: 500,
+  maxCharsTranscription: 6000,
   maxCharsContext: 20000,
 };
 
@@ -54,6 +59,10 @@ export const resolveDictionaryBudgets = (
       valuesByKey?.[CONFIG_KEYS.dictionary.maxEntries],
       DEFAULT_DICTIONARY_BUDGETS.maxEntries,
     ),
+    maxCharsTranscription: toNumber(
+      valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsTranscription],
+      DEFAULT_DICTIONARY_BUDGETS.maxCharsTranscription,
+    ),
     maxCharsContext: toNumber(
       valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsContext],
       DEFAULT_DICTIONARY_BUDGETS.maxCharsContext,
@@ -64,6 +73,10 @@ export const resolveDictionaryBudgets = (
       valuesByKey?.[CONFIG_KEYS.dictionary.maxEntriesPro],
       DEFAULT_PRO_BUDGETS.maxEntries,
     ),
+    maxCharsTranscription: toNumber(
+      valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsTranscriptionPro],
+      DEFAULT_PRO_BUDGETS.maxCharsTranscription,
+    ),
     maxCharsContext: toNumber(
       valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsContextPro],
       DEFAULT_PRO_BUDGETS.maxCharsContext,
@@ -73,6 +86,10 @@ export const resolveDictionaryBudgets = (
     maxEntries: toNumber(
       valuesByKey?.[CONFIG_KEYS.dictionary.maxEntriesCap],
       DEFAULT_CAPS.maxEntries,
+    ),
+    maxCharsTranscription: toNumber(
+      valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsTranscriptionCap],
+      DEFAULT_CAPS.maxCharsTranscription,
     ),
     maxCharsContext: toNumber(
       valuesByKey?.[CONFIG_KEYS.dictionary.maxCharsContextCap],
@@ -87,6 +104,11 @@ export const resolveDictionaryBudgets = (
 
   return {
     maxEntries: pick(base.maxEntries, pro.maxEntries, caps.maxEntries),
+    maxCharsTranscription: pick(
+      base.maxCharsTranscription,
+      pro.maxCharsTranscription,
+      caps.maxCharsTranscription,
+    ),
     maxCharsContext: pick(
       base.maxCharsContext,
       pro.maxCharsContext,
@@ -191,7 +213,22 @@ export const normalizeDictionaryEntries = (entries: DictionaryItem[]) => {
   });
 };
 
-type LineResult = { lines: string[]; chars: number; entries: number };
+type LineResult = {
+  lines: string[];
+  used: NormalizedEntry[];
+  chars: number;
+  entries: number;
+};
+
+/**
+ * More keywords is not better: at 100 term recall fell and sound-alike terms
+ * replaced spoken ones, while 20 showed neither
+ * (docs/adr-20261116-transcription-simplification.md).
+ */
+export const TRANSCRIPTION_KEYWORD_LIMIT = 20;
+
+// The provider rejects the whole request when any keyword contains one of these.
+const UNSENDABLE_KEYWORD = /[<>\r\n]/;
 
 const buildLines = (
   entries: NormalizedEntry[],
@@ -200,10 +237,11 @@ const buildLines = (
   maxChars: number,
 ): LineResult => {
   if (maxEntries <= 0 || maxChars <= 0) {
-    return { lines: [], chars: 0, entries: 0 };
+    return { lines: [], used: [], chars: 0, entries: 0 };
   }
 
   const lines: string[] = [];
+  const used: NormalizedEntry[] = [];
   let chars = 0;
   let entriesUsed = 0;
 
@@ -214,21 +252,29 @@ const buildLines = (
     const nextChars = chars + line.length + (lines.length > 0 ? 1 : 0);
     if (nextChars > maxChars) break;
     lines.push(line);
+    used.push(entry);
     chars = nextChars;
     entriesUsed += 1;
   }
 
-  return { lines, chars, entries: entriesUsed };
+  return { lines, used, chars, entries: entriesUsed };
 };
 
 export const buildDictionaryPromptLines = (
   entries: DictionaryItem[],
   budgets: DictionaryBudgets,
 ): {
+  transcriptionKeywords: string[];
   contextLines: string[];
   usage: DictionaryUsage;
 } => {
   const normalized = normalizeDictionaryEntries(entries);
+  const transcription = buildLines(
+    normalized.filter((entry) => !UNSENDABLE_KEYWORD.test(entry.term)),
+    (entry) => `- ${entry.term}`,
+    Math.min(budgets.maxEntries, TRANSCRIPTION_KEYWORD_LIMIT),
+    budgets.maxCharsTranscription,
+  );
   const context = buildLines(
     normalized,
     (entry) =>
@@ -240,9 +286,14 @@ export const buildDictionaryPromptLines = (
   );
 
   return {
+    transcriptionKeywords: transcription.used.map((entry) => entry.term),
     contextLines: context.lines,
     usage: {
       totalEntries: normalized.length,
+      transcription: {
+        entries: transcription.entries,
+        chars: transcription.chars,
+      },
       context: { entries: context.entries, chars: context.chars },
     },
   };

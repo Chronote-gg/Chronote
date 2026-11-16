@@ -28,6 +28,7 @@ import type {
 import { createRecordingCheckpointService } from "./recordingCheckpointService";
 import { compileSavedChatPrompt } from "./savedRecordingPrompt";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
+import { buildDictionaryPromptLines } from "../utils/dictionary";
 import { chatContextVariables } from "./notesPromptService";
 import {
   transcribeContentSnippet,
@@ -180,6 +181,10 @@ export function transcriptionInput(
     voiceChannel: { id: context.capture.channelId },
     signal,
     effect,
+    keywords: buildDictionaryPromptLines(
+      context.context.dictionaryEntries,
+      settings.dictionary,
+    ).transcriptionKeywords,
     runtimeConfig: {
       transcription: settings.transcription,
       modelChoices: { transcription: settings.models.transcription.model },

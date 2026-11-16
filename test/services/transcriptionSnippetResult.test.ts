@@ -109,7 +109,7 @@ async function loadModule(options: {
     })),
   }));
   jest.doMock("../../src/services/modelFactory", () => ({
-    getModelChoice: jest.fn(() => ({ model: "mock-transcription" })),
+    getModelChoice: jest.fn(() => ({ model: "gpt-transcribe" })),
   }));
   jest.doMock("../../src/services/meetingModelOverrides", () => ({
     getMeetingModelOverrides: jest.fn(),

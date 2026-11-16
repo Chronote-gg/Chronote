@@ -83,7 +83,7 @@ jest.mock("../../src/services/openaiClient", () => ({
   },
 }));
 jest.mock("../../src/services/modelFactory", () => ({
-  getModelChoice: () => ({ model: "test" }),
+  getModelChoice: () => ({ model: "gpt-transcribe" }),
   buildModelOverrides: () => undefined,
 }));
 jest.mock("../../src/services/langfuseClient", () => ({
@@ -167,6 +167,7 @@ test("abort during detection cannot finalize a nonspeech rejection or count a sk
     voiceChannel: meeting.voiceChannel,
     runtimeConfig: meeting.runtimeConfig,
     signal: controller.signal,
+    keywords: [],
     effect: (run) => run(),
   };
   await expect(transcribeContentSnippet(input, snippet)).resolves.toMatchObject(
@@ -247,17 +248,72 @@ test("live request on the default auto language sends no prompt and no language 
   const request = mockCreate.mock.calls[0][0];
   expect(request).not.toHaveProperty("prompt");
   expect(request).not.toHaveProperty("language");
+  expect(request).not.toHaveProperty("languages");
   expect(request).toMatchObject({
     response_format: "json",
     include: ["logprobs"],
     temperature: 0,
   });
 });
-test("live request sends the language a server pins", async () => {
+test("live request sends the language a server pins as gpt-transcribe languages", async () => {
   const meeting = buildMeeting("off");
   meeting.runtimeConfig!.transcription.language = "ja";
   await transcribeSnippet(meeting, snippet);
-  expect(mockCreate.mock.calls[0][0]).toMatchObject({ language: "ja" });
+  const request = mockCreate.mock.calls[0][0];
+  expect(request).toMatchObject({ languages: ["ja"] });
+  expect(request).not.toHaveProperty("language");
+});
+const dictionaryMeeting = () => {
+  const meeting = buildMeeting("enforce");
+  meeting.dictionaryEntries = [
+    {
+      guildId: "test-guild",
+      termKey: "kwylt",
+      term: "Kwylt",
+      definition: "Raid leader, never sent to speech recognition",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      createdBy: "test-user",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      updatedBy: "test-user",
+    },
+  ];
+  return meeting;
+};
+test.each(["fast", "slow"] as const)(
+  "%s pass sends dictionary terms as keywords on assessed speech",
+  async (noiseGateMode) => {
+    mockAssess.mockResolvedValue(assessment("speech"));
+    await transcribeSnippet(dictionaryMeeting(), snippet, { noiseGateMode });
+    expect(mockCreate.mock.calls[0][0]).toMatchObject({ keywords: ["Kwylt"] });
+    expect(mockClientMetadata).toMatchObject({ keywordCount: 1 });
+  },
+);
+test.each([
+  ["uncertain speech", "enforce", assessment("uncertain")],
+  ["an unassessed snippet", "off", assessment("speech")],
+] as const)("%s carries no keywords", async (_, mode, result) => {
+  mockAssess.mockResolvedValue(result);
+  const meeting = dictionaryMeeting();
+  meeting.runtimeConfig!.transcription.speechDetectionMode = mode;
+  await transcribeSnippet(meeting, snippet);
+  expect(mockCreate.mock.calls[0][0]).not.toHaveProperty("keywords");
+});
+test("a keyword list answer to keyword hints is suppressed", async () => {
+  mockAssess.mockResolvedValue(assessment("speech"));
+  const meeting = dictionaryMeeting();
+  meeting.dictionaryEntries!.push({
+    ...meeting.dictionaryEntries![0],
+    termKey: "xaerith",
+    term: "Xaerith",
+  });
+  mockCreate.mockImplementation(async ({ file }) => {
+    await consumeFile(file);
+    return { text: "Kwylt, Xaerith.", logprobs: [] };
+  });
+  await expect(transcribeSnippet(meeting, snippet)).resolves.toMatchObject({
+    status: "succeeded",
+    text: "",
+  });
 });
 test("off supplies the baseline without acquiring a detector", async () => {
   expect(await transcribeSnippet(buildMeeting("off"), snippet)).toMatchObject({

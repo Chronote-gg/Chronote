@@ -11,7 +11,7 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 - Discord meetings now use a newer speech recognition model and detect the spoken language of each snippet by default, so meetings in other languages are no longer forced into English. Servers that mostly speak one language other than English can still pin it under **Transcription language**, which avoids occasional misdetection of very short utterances. See [Discord meeting notes](/discord-meeting-notes/#transcription-language).
 - Chronote no longer rewrites transcripts with extra language model passes during or after a meeting. In our tests those passes occasionally dropped or changed real speech. Transcripts and notes are ready sooner after a meeting ends.
-- Dictionary terms now improve notes and cleanup only; they are no longer sent to speech recognition, where they could appear in the transcript as if someone had said them. See [Dictionary](/features/#dictionary).
+- Dictionary terms are now sent to speech recognition as dedicated recognition hints (terms only, up to 20 per snippet) instead of as part of a written prompt, which spells names and jargon correctly far more often and is much less likely to write glossary terms into the transcript on background noise. Definitions still go to notes and cleanup. See [Dictionary](/features/#dictionary).
 
 ### Smoother portal sign-in (November 12)
 

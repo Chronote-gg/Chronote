@@ -82,4 +82,4 @@ Chronote has a free server plan. To test the workflow:
 2. Complete the short [Getting Started](/getting-started/) setup.
 3. Run one real voice meeting and review the notes with the participants.
 
-That first completed meeting is the best test: it shows whether the notes spell your terminology correctly, whether the note structure fits the group, and which context or dictionary entries would improve the next notes.
+That first completed meeting is the best test: it shows whether the transcript recognizes your terminology, whether the note structure fits the group, and which context or dictionary entries would improve the next result.

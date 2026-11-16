@@ -103,7 +103,6 @@ const PRE_SIMPLIFICATION_WORKER_FIELDS = {
     voteEnabled: false,
     finalPassEnabled: false,
   },
-  dictionary: { maxCharsTranscription: 0 },
   transcriptionCoalesceModel: {
     model: "gpt-5-mini",
     provider: "openai",
@@ -176,10 +175,7 @@ function settings(meeting: MeetingData): SavedRecordingSettings {
       ...PRE_SIMPLIFICATION_WORKER_FIELDS.transcription,
     },
     premiumTranscription: runtime.premiumTranscription,
-    dictionary: {
-      ...runtime.dictionary,
-      ...PRE_SIMPLIFICATION_WORKER_FIELDS.dictionary,
-    },
+    dictionary: runtime.dictionary,
     visionCaptions: runtime.visionCaptions,
     notes: {
       longStoryTestMode: config.notes.longStoryTestMode,

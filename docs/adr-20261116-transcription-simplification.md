@@ -37,22 +37,35 @@ hurting transcripts:
    Requests keep `temperature: 0`, JSON output and logprobs for the guards.
    The per-server `transcription.language` setting stays, with its default
    changed from `en` to `auto`: auto sends no language hint, and a pinned
-   language is sent as an ISO-639-1 code. Stored overrides keep working.
-2. Delete the prompt echo gate, the vote and its second call, the ASR prompt
-   and its Langfuse prompt, coalesce, the finalized-audio pass and its repeat
-   filter and the dictionary transcription budget. Delete, not flag off.
-3. Keep the noise gate, speech admission, the quiet-audio logprob, hard
+   language is sent as an ISO-639-1 code: `languages: [code]` for
+   `gpt-transcribe`, `language` for the older models. Stored overrides keep
+   working.
+2. Server dictionary terms reach ASR through the model's dedicated
+   `keywords` parameter, never the prompt: terms only, chosen by the existing
+   dictionary ordering (newest first) and the restored
+   `dictionary.maxChars.transcription` budget, at most 20 per request, and
+   skipped when they contain `<`, `>` or a line break. They go out on fast
+   and slow passes only when speech detection in `enforce` mode assessed the
+   snippet as `speech`. An output made only of two or more distinct sent
+   keywords is suppressed inside `guardTranscription`. A per-model
+   capability table decides the keyword and language fields; an unknown
+   model throws.
+3. Delete the prompt echo gate, the vote and its second call, the ASR prompt
+   and its Langfuse prompt, coalesce, and the finalized-audio pass and its
+   repeat filter. Delete, not flag off.
+4. Keep the noise gate, speech admission, the quiet-audio logprob, hard
    silence, syllable rate and punctuation-only guards, retries and the
    breaker, fast and slow passes, cleanup and notes.
-4. A settled slow result, including an empty one a guard suppressed, is
+5. A settled slow result, including an empty one a guard suppressed, is
    authoritative. Fast text no longer resurfaces for that snippet, so the
    notes input, `transcript.json` segments and the live timeline agree. Fast
    reuse stays because a reused fast result passed the same guards on the same
    bytes.
-5. Saved recordings keep parsing: removed settings, prompts and processing
+6. Saved recordings keep parsing: removed settings, prompts and processing
    fields are accepted and ignored. Recovery re-transcribes uncovered audio
-   with the frozen model and language and no prompt. Stored config values
-   for removed keys are ignored.
+   with the frozen model and language, no prompt, and keywords rebuilt from
+   the saved dictionary entries and saved budget, so the keywords themselves
+   are not frozen. Stored config values for removed keys are ignored.
 
 ## Consequences
 
@@ -92,15 +105,53 @@ Negative:
   wrong-language runs. Servers that mostly speak one language other than
   English should pin it.
 
-- Term recall on the public corpus drops from 1.00 to about 0.55 because the
-  glossary is no longer sent. The dictionary now reaches notes and cleanup
-  only.
 - Rollback to `gpt-4o-transcribe` is one setting, `models.transcription`, but
   that model without a language hint returned another language on 4 of 33
-  short private English clips (12%).
+  short private English clips (12%). It and `gpt-4o-mini-transcribe` reject
+  `keywords` with HTTP 400, so a rollback also loses dictionary spelling, and
+  both are deprecated with shutdown on 2027-02-26. It is a weaker rollback
+  than it looks.
+- Keywords in a language other than the speech can cost accuracy: the public
+  Japanese clip sent with the English public dictionary was exact in 3 of 8
+  runs, against 8 of 8 without keywords.
 - Remote Langfuse prompts `chronote-transcription-prompt`,
   `chronote-transcription-coalesce-chat` and
   `chronote-transcription-final-pass-chat` remain until retired by hand.
+
+### Dictionary keywords
+
+Measured with `gpt-transcribe`, temperature 0, three runs per clip, every raw
+output replayed through the production gates and guards. Synthetic clips are
+made-up terms read by TTS; real clips are cuts of production meetings whose
+stored transcript has the term and an unprompted local model hears it.
+
+| term recall, exact spelling  | no hint | `keywords`, 20 terms | `keywords`, 100 terms |
+| ---------------------------- | ------- | -------------------- | --------------------- |
+| Synthetic esoteric (201)     | 73      | 198                  | 145                   |
+| Public glossary (30)         | 18      | 28                   | 21                    |
+| Real production clips (129)  | 103     | 126                  | 114                   |
+| Non-English given names (54) | 6       | 54                   | not separated         |
+
+- No false insertions on term-free sentences or short real words at either
+  size, and no latency cost. At 100 terms recall falls and sound-alike
+  distractors replace the spoken term (15 of 120 synthetic runs); at 20 none
+  did. Production dictionaries hold 1 to 5 terms, so the cap of 20 binds only
+  large dictionaries and keeps them where the measurement showed no harm.
+- A comma list of terms in `prompt` was worse on every set and echoed the
+  whole list on noise; it is not used.
+- Noise: on 12 real non-speech snippets from one meeting (36 runs) whose
+  20-keyword list was the server's 4 terms plus 16 distractors, the guards
+  passed 6 keyword-only outputs: three lone keywords on a snippet assessed
+  `uncertain`, two lone keywords and one whole-list dump on a snippet
+  assessed `speech`. Sending keywords only on assessed speech removed the
+  first three and cost no term recall on the synthetic, public or real term
+  clips, which were all assessed `speech`. Suppressing two or more distinct
+  keywords alone removed the dump. Two lone keywords remain (2 of 36 runs).
+  Suppressing a lone keyword as well would have removed them, but 984 of
+  29,698 stored segments in the four servers with a dictionary are exactly one
+  term; the former prompt inserted terms, so how many were spoken is unknown,
+  and every spoken one would be lost. With the server's own 4 terms only, the
+  same 36 runs returned no text at all, before any guard.
 
 ## Alternatives Considered
 
@@ -108,7 +159,15 @@ Negative:
   nonspeech hallucination, because the vote and echo gate were what blanked
   hallucinations.
 - Send dictionary terms only as the prompt: replaced real one or two word
-  utterances with a glossary term in 4 of 12 short runs.
+  utterances with a glossary term in 4 of 12 short runs, and as a comma list
+  it was the weakest hint on `gpt-transcribe`.
+- No dictionary in ASR, relying on notes to repair spelling: notes repaired
+  almost every misspelling, but the stored transcript (portal, MCP, search,
+  Notion export) kept it, and synthetic term recall was 0.36.
+- Also suppress a single keyword alone: removes the last measured echoes but
+  drops a person saying one name on its own.
+- Rebuild the prompt echo gate or the vote for keywords: the two rules above
+  removed the measured echoes without a second request.
 - Remove the language setting: the 0 of 90 English result supported it, but
   the short Japanese result above showed auto detection is worse for servers
   that speak one non-English language.
