@@ -2,13 +2,24 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { parse } = require("yaml");
-const { preparePlanIdentity } = require("./terraform-plan-identity.cjs");
+// TERRAFORM_PRIVATE_STORAGE_JSON names the production evidence bucket; it is
+// read here only for the account it binds and the values it must mask.
 function prepareSiteIdentity(text) {
-  const base = preparePlanIdentity(text, "{}").outputs;
   const binding = JSON.parse(text);
+  assert.match(binding.accountId, /^\d{12}$/);
+  assert.equal(binding.region, "us-east-1");
+  assert.equal(
+    binding.bucket,
+    `meeting-notes-prod-private-evidence-${binding.accountId}`,
+  );
+  assert.match(
+    binding.kmsKeyArn,
+    new RegExp(`^arn:aws:kms:us-east-1:${binding.accountId}:key/[a-f0-9-]{36}$`),
+  );
   const outputs = {
-    ...base,
-    role_arn: `arn:aws:iam::${base.account_id}:role/meeting-notes-prod-github-deploy`,
+    account_id: binding.accountId,
+    role_arn: `arn:aws:iam::${binding.accountId}:role/meeting-notes-prod-github-deploy`,
+    control_table: "meeting-notes-prod-DeploymentControlTable",
   };
   return {
     outputs,
@@ -16,8 +27,8 @@ function prepareSiteIdentity(text) {
       ...Object.values(outputs),
       binding.bucket,
       binding.kmsKeyArn,
-      `meeting-notes-prod-docs-${base.account_id}`,
-      `meeting-notes-prod-frontend-${base.account_id}`,
+      `meeting-notes-prod-docs-${binding.accountId}`,
+      `meeting-notes-prod-frontend-${binding.accountId}`,
     ],
   };
 }

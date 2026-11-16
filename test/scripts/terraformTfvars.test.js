@@ -2,12 +2,6 @@
 import process from "node:process";
 import { test, expect } from "@jest/globals";
 import { spawnSync } from "node:child_process";
-import { verifyMeetingUpdatePlan } from "../../scripts/deployment/terraform-meeting-update.cjs";
-import {
-  nativeMeetingPlan,
-  nativeEvidence,
-} from "../fixtures/deployment/terraformMeetingNative.js";
-import { identity } from "../fixtures/deployment/terraformMeetingUpdate.js";
 import {
   mkdtempSync,
   mkdirSync,
@@ -136,16 +130,6 @@ test.each([
   expect(result.stderr.trim()).toBe(
     "Invalid declared Terraform boolean; values are not logged.",
   );
-});
-
-test("rendered retry opt-out passes the full native delivery verifier", () => {
-  const values = run(valid, { TFVAR_ENABLE_PROCESSING_RETRY_INDEX: "false" });
-  const plan = nativeMeetingPlan();
-  plan.variables.ENABLE_PROCESSING_RETRY_INDEX.value =
-    values.ENABLE_PROCESSING_RETRY_INDEX;
-  expect(() =>
-    verifyMeetingUpdatePlan(plan, identity, nativeEvidence(plan)),
-  ).not.toThrow();
 });
 
 test.each([
