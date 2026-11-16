@@ -160,8 +160,8 @@ describe("applyTranscriptionGuards", () => {
 
   test.each([
     "Brightwater, Mistral Hall, BITRATE.",
-    "GTM. Brightwater.",
-    "GTM。 BITRATE",
+    "GTM. Brightwater. BITRATE",
+    "GTM。 BITRATE。 Mistral Hall",
   ])("suppresses output listing only keywords: %s", (transcription) => {
     const result = applyTranscriptionGuards({
       transcription,
@@ -177,11 +177,13 @@ describe("applyTranscriptionGuards", () => {
     ["a single keyword alone", "BITRATE."],
     ["keywords inside speech", "Brightwater and GTM are next."],
     ["a repeated single keyword", "GTM, GTM."],
-  ])("keeps %s", (_, transcription) => {
+    ["two keywords said together", "Brightwater? GTM!"],
+    ["a list with suppression off", "Brightwater, GTM, BITRATE."],
+  ])("keeps %s", (label, transcription) => {
     const result = applyTranscriptionGuards({
       transcription,
       keywords,
-      suppressionEnabled: true,
+      suppressionEnabled: !label.includes("suppression off"),
     });
     expect(result.text).toBe(transcription);
     expect(result.flags).toEqual([]);

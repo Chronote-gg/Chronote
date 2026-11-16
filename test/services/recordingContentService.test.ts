@@ -29,7 +29,10 @@ import {
   captureRecordingTranscriptScope,
   guardRecordingFinalization,
 } from "../../src/services/recordingContentService";
-import { snapshotRecordingPrompt } from "../../src/services/savedRecordingPrompt";
+import {
+  savedPromptSchema,
+  snapshotRecordingPrompt,
+} from "../../src/services/savedRecordingPrompt";
 import { collectMeetingContext } from "../../src/services/contextService";
 import {
   generationContextSchema,
@@ -38,6 +41,9 @@ import {
 } from "../../src/types/recordingContent";
 import type { CheckpointArtifactInput } from "../../src/types/recordingCheckpoint";
 import { z } from "zod";
+import { autoCompletionPolicySchema } from "../../src/types/meetingCompletionPolicy";
+import { speechDetectionModeSchema } from "../../src/config/speechDetection";
+import { transcriptCorrespondenceSchema } from "../../src/types/transcriptCorrespondence";
 
 test("completedTranscriptionCheckpointSurvivesWithoutFinalization", async () => {
   const { meeting, artifacts } = await fixture();
@@ -94,72 +100,112 @@ test("later model/context changes cannot rewrite original generation settings", 
   ).toThrow();
 });
 
-// The removed fields as the pre-simplification worker required them
-// (origin/master before the simplification, src/types/recordingContent.ts).
-const preSimplificationModel = z
-  .object({
-    model: z.string().min(1),
-    provider: z.literal("openai"),
-    params: z.object({}).passthrough(),
-  })
-  .strict();
-const preSimplificationFinalPass = z
-  .object({
-    maxSnippetMilliseconds: z.number().int().min(1).max(7_200_000),
-    chunkSeconds: z.number().int().min(1).max(7200),
-    maxRequestBytes: z
-      .number()
-      .int()
-      .min(1)
-      .max(25 * 1024 * 1024),
-    targetMaxChunkBytes: z
-      .number()
-      .int()
-      .min(1)
-      .max(25 * 1024 * 1024),
-    segmentBatchMaxChars: z.number().int().min(1).max(1_000_000),
-    minConfidence: z.number().min(0).max(1),
-    maxDropRatio: z.number().min(0).max(1),
-    maxChangeRatio: z.number().min(0).max(1),
-    previousTailChars: z.number().int().min(0).max(1_000_000),
-    minChunkSeconds: z.number().int().min(1).max(7200),
-    estimatedMp3BytesPerSecond: z
-      .number()
-      .int()
-      .min(1)
-      .max(25 * 1024 * 1024),
-    repeatWindowSeconds: z.number().int().min(1).max(7200),
-  })
-  .strict()
-  .refine(
-    (value) =>
-      value.minChunkSeconds <= value.chunkSeconds &&
-      value.targetMaxChunkBytes <= value.maxRequestBytes &&
-      value.minChunkSeconds * value.estimatedMp3BytesPerSecond <=
-        value.targetMaxChunkBytes,
-  );
-const preSimplificationSettings = z.object({
-  processing: z.object({
-    cleanupMinimumRetainedLineRatio: z.number(),
-    finalPass: preSimplificationFinalPass,
-  }),
-  models: z.object({ transcriptionCoalesce: preSimplificationModel }),
-  transcription: z.object({
-    language: transcriptionLanguageSchema,
-    promptEchoEnabled: z.literal(false),
-    voteEnabled: z.literal(false),
-    finalPassEnabled: z.literal(false),
-  }),
-  dictionary: z.object({ maxCharsTranscription: z.number() }),
-});
-const preSimplificationPrompts = z.object({
-  transcription: z.object({
-    availability: z.literal("available"),
-    value: z.object({ type: z.literal("text"), template: z.literal("") }),
+// origin/master's strict schemas before the simplification
+// (src/types/recordingContent.ts), so a key the previous worker rejects fails here.
+const n = z.number().finite();
+const master = (shape: z.ZodRawShape) => z.object(shape).strict();
+const masterModel = master({
+  model: z.string().min(1),
+  provider: z.literal("openai"),
+  params: master({
+    temperature: n.optional(),
+    reasoning_effort: z
+      .enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
+      .optional(),
+    verbosity: z.enum(["low", "medium", "high"]).optional(),
   }),
 });
-const preSimplificationProcessing = z.object({
-  finalPass: z.literal("disabled"),
+const [secs, bytes] = [n.int().min(1).max(7200), n.int().min(1).max(26214400)];
+const masterFinalPass = master({
+  maxSnippetMilliseconds: n.int().min(1).max(7_200_000),
+  chunkSeconds: secs,
+  maxRequestBytes: bytes,
+  targetMaxChunkBytes: bytes,
+  segmentBatchMaxChars: n.int().min(1).max(1_000_000),
+  minConfidence: n.min(0).max(1),
+  maxDropRatio: n.min(0).max(1),
+  maxChangeRatio: n.min(0).max(1),
+  previousTailChars: n.int().min(0).max(1_000_000),
+  minChunkSeconds: secs,
+  estimatedMp3BytesPerSecond: bytes,
+  repeatWindowSeconds: secs,
+}).refine(
+  (v) =>
+    v.minChunkSeconds <= v.chunkSeconds &&
+    v.targetMaxChunkBytes <= v.maxRequestBytes &&
+    v.minChunkSeconds * v.estimatedMp3BytesPerSecond <= v.targetMaxChunkBytes,
+);
+const numbers = (...keys: string[]) =>
+  Object.fromEntries(keys.map((key) => [key, n]));
+const flags = (...keys: string[]) =>
+  Object.fromEntries(keys.map((key) => [key, z.boolean()]));
+const preSimplificationSettings = master({
+  autoCompletion: autoCompletionPolicySchema.optional(),
+  processing: master({
+    cleanupMinimumRetainedLineRatio: n.min(0).max(1),
+    finalPass: masterFinalPass,
+  }).optional(),
+  models: master({
+    notes: masterModel,
+    meetingSummary: masterModel,
+    transcription: masterModel,
+    transcriptionCleanup: masterModel,
+    transcriptionCoalesce: masterModel,
+  }),
+  transcription: master({
+    speechDetectionMode: speechDetectionModeSchema.default("off"),
+    language: transcriptionLanguageSchema.default("en"),
+    ...flags("suppressionEnabled", "promptEchoEnabled", "voteEnabled"),
+    ...flags("fastFinalizationEnabled", "interjectionEnabled"),
+    ...flags("finalPassEnabled"),
+    ...numbers("suppressionHardSilenceDbfs", "suppressionRateMaxSeconds"),
+    ...numbers("suppressionRateMinWords", "suppressionRateMinSyllables"),
+    ...numbers("suppressionRateMaxSyllablesPerSecond", "fastSilenceMs"),
+    ...numbers("slowSilenceMs", "minSnippetSeconds", "maxSnippetMs"),
+    ...numbers("interjectionMinSpeakerSeconds"),
+    noiseGate: master({
+      ...flags("enabled", "applyToFast", "applyToSlow"),
+      ...numbers("windowMs", "peakDbfs", "minActiveWindows"),
+      ...numbers("minPeakAboveNoiseDb"),
+    }),
+  }),
+  dictionary: master(
+    numbers("maxEntries", "maxCharsTranscription", "maxCharsContext"),
+  ),
+  premiumTranscription: master(flags("enabled", "cleanupEnabled")),
+  visionCaptions: master({
+    ...flags("enabled"),
+    ...numbers("maxImages", "maxTotalChars"),
+  }),
+  notes: master({
+    ...flags("longStoryTestMode", "contextTestMode", "enableMemory"),
+    ...numbers("longStoryTargetChars", "memoryDepth", "maxContextLength"),
+  }),
+});
+const masterPrompt = z
+  .union([
+    master({ availability: z.literal("unavailable") }),
+    master({ availability: z.literal("available"), value: savedPromptSchema }),
+  ])
+  .optional();
+const preSimplificationPrompts = master(
+  Object.fromEntries(
+    [
+      "notes",
+      "summary",
+      "transcription",
+      "cleanup",
+      "coalesce",
+      "finalPass",
+    ].map((key) => [key, masterPrompt]),
+  ),
+);
+const preSimplificationProcessing = master({
+  finalPass: z.enum(["acknowledged", "fallback", "disabled", "not_applicable"]),
+  cleanup: z.enum(["acknowledged", "fallback", "disabled"]),
+  finalText: z.string(),
+  correspondence: transcriptCorrespondenceSchema.optional(),
+  supplementalEntries: z.literal(true).optional(),
 });
 
 test("new recordings stay finishable by a pre-simplification worker", async () => {

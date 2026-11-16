@@ -273,19 +273,19 @@ export async function guardTranscription(input: {
 }
 
 /**
- * Keywords go out only with a snippet the speech detector judged to be speech.
- * Uncertain audio sent with keywords was answered with a keyword alone, and the
- * same audio without them came back empty
- * (docs/adr-20261116-transcription-simplification.md).
+ * Keywords are withheld only when the detector enforced a decision and judged
+ * the snippet uncertain or was unavailable. Uncertain audio sent with keywords
+ * was answered with a keyword alone, and the same audio without them came back
+ * empty (docs/adr-20261116-transcription-simplification.md).
  */
 export function admittedKeywords(
   keywords: readonly string[],
   admission: SpeechAdmission | undefined,
 ): readonly string[] {
   return admission?.kind === "assessed" &&
-    admission.assessment.kind === "speech"
-    ? keywords
-    : [];
+    admission.assessment.kind !== "speech"
+    ? []
+    : keywords;
 }
 
 async function transcribeInternal(

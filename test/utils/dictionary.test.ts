@@ -102,11 +102,11 @@ describe("dictionary utils", () => {
 
   test("transcription keywords skip terms the provider would reject", () => {
     const { transcriptionKeywords, contextLines } = buildDictionaryPromptLines(
-      [{ term: "<Guild>" }, { term: "a>b" }, { term: "Kwylt" }],
+      [{ term: "<Guild>" }, { term: "a>b" }, { term: "Kwylt\r\nRaid" }],
       DEFAULT_DICTIONARY_BUDGETS,
     );
 
-    expect(transcriptionKeywords).toEqual(["Kwylt"]);
+    expect(transcriptionKeywords).toEqual(["Kwylt Raid"]);
     expect(contextLines).toHaveLength(3);
   });
 

@@ -228,7 +228,8 @@ type LineResult = {
 export const TRANSCRIPTION_KEYWORD_LIMIT = 20;
 
 // The provider rejects the whole request when any keyword contains one of these.
-const UNSENDABLE_KEYWORD = /[<>\r\n]/;
+// Line breaks never get here: terms are whitespace-normalized first.
+const UNSENDABLE_KEYWORD = /[<>]/;
 
 const buildLines = (
   entries: NormalizedEntry[],

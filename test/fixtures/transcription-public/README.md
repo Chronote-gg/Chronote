@@ -5,18 +5,18 @@ without private recordings. See `docs/transcription-eval.md` for the commands.
 
 ## Contents
 
-- `manifest.json` (46 cases): eight normal LibriSpeech utterances, two attenuated
+- `manifest.json` (43 cases): eight normal LibriSpeech utterances, two attenuated
   by 35 dB (`quiet`), three naturally short utterances, sixteen 1-4 word cuts of
   1-3 s (`cut`, three from the start of an utterance and thirteen added to
   measure language detection on short English speech), two utterances joined
   by 4 s of silence (`long-pause`), one Japanese FLEURS utterance and seven
   generated non-speech clips (silence, low and moderate noise, a 0.5 s noise burst, mains hum,
-  keyboard-like clicks, a breath-like swell), plus eight synthetic sentences
-  full of made-up dictionary terms (`tts-*`, tag `dictionary-terms`), four of them
+  keyboard-like clicks, a breath-like swell), plus five synthetic sentences
+  full of made-up dictionary terms (`tts-*`, tag `dictionary-terms`), three of them
   mixed with pink noise.
 - The manifest `dictionary` is the made-up server's twenty terms. Production
   sends them as recognition keywords; `--no-keywords` runs without them. Each
-  `tts-*` case carries its own made-up server's ten terms as a case `dictionary`.
+  `tts-*` case carries its own made-up server's terms (eight or nine) as a case `dictionary`.
 - `glossary-prompt.txt`: a made-up server glossary in the former production
   prompt template, also stored as the manifest `prompt`. Production sends no
   prompt; pass it with `--prompt-file` to reproduce the former prompted path. Twelve of its dictionary terms occur in the speech

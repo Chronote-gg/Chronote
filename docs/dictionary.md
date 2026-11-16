@@ -21,7 +21,7 @@ The dictionary feature lets server admins add domain terms and optional definiti
 
 ## Prompt usage summary
 
-- Transcription: `gpt-transcribe` requests carry the terms as `keywords`, without definitions, when the speech detector judged the snippet to be speech. Terms containing `<`, `>` or a line break are skipped because the API rejects the whole request for them. Models without keyword support receive none.
+- Transcription: `gpt-transcribe` requests carry the terms as `keywords`, without definitions, unless enforced speech detection judged the snippet uncertain or was unavailable. Terms are whitespace-normalized, and terms containing `<` or `>` are skipped because the API rejects the whole request for them. Models without keyword support receive none.
 - Cleanup, notes: Uses a `Dictionary` block with terms and definitions.
 - Ask: Uses a `Dictionary` block alongside meeting context blocks to interpret proper nouns.
 

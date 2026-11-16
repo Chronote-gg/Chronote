@@ -44,10 +44,13 @@ hurting transcripts:
    `keywords` parameter, never the prompt: terms only, chosen by the existing
    dictionary ordering (newest first) and the restored
    `dictionary.maxChars.transcription` budget, at most 20 per request, and
-   skipped when they contain `<`, `>` or a line break. They go out on fast
-   and slow passes only when speech detection in `enforce` mode assessed the
-   snippet as `speech`. An output made only of two or more distinct sent
-   keywords is suppressed inside `guardTranscription`. A per-model
+   skipped when they contain `<` or `>` (terms are whitespace-normalized
+   first). They go out on fast and slow passes unless speech detection in
+   `enforce` mode assessed the snippet `uncertain` or was unavailable and
+   admitted it anyway; with detection `off`, in `shadow` or on forced
+   admission every admitted snippet carries them. With suppression enabled,
+   an output made only of three or more distinct sent keywords is suppressed
+   inside `guardTranscription`. A per-model
    capability table decides the keyword and language fields; an unknown
    model throws.
 3. Delete the prompt echo gate, the vote and its second call, the ASR prompt
@@ -114,6 +117,9 @@ Negative:
 - Keywords in a language other than the speech can cost accuracy: the public
   Japanese clip sent with the English public dictionary was exact in 3 of 8
   runs, against 8 of 8 without keywords.
+- A worker on the previous version finishing a recording made by this version
+  on a server with a pinned language sends the singular `language` to
+  `gpt-transcribe`; a live call on 2026-11-16 confirmed the API accepts it.
 - Remote Langfuse prompts `chronote-transcription-prompt`,
   `chronote-transcription-coalesce-chat` and
   `chronote-transcription-final-pass-chat` remain until retired by hand.
@@ -139,19 +145,24 @@ stored transcript has the term and an unprompted local model hears it.
   large dictionaries and keeps them where the measurement showed no harm.
 - A comma list of terms in `prompt` was worse on every set and echoed the
   whole list on noise; it is not used.
-- Noise: on 12 real non-speech snippets from one meeting (36 runs) whose
-  20-keyword list was the server's 4 terms plus 16 distractors, the guards
-  passed 6 keyword-only outputs: three lone keywords on a snippet assessed
-  `uncertain`, two lone keywords and one whole-list dump on a snippet
-  assessed `speech`. Sending keywords only on assessed speech removed the
-  first three and cost no term recall on the synthetic, public or real term
-  clips, which were all assessed `speech`. Suppressing two or more distinct
-  keywords alone removed the dump. Two lone keywords remain (2 of 36 runs).
-  Suppressing a lone keyword as well would have removed them, but 984 of
-  29,698 stored segments in the four servers with a dictionary are exactly one
-  term; the former prompt inserted terms, so how many were spoken is unknown,
-  and every spoken one would be lost. With the server's own 4 terms only, the
-  same 36 runs returned no text at all, before any guard.
+- Noise, measured with speech detection enforced: on 12 real non-speech
+  snippets from one meeting (36 runs) whose 20-keyword list was the server's
+  4 terms plus 16 distractors, the guards passed 6 keyword-only outputs:
+  three lone keywords on a snippet assessed `uncertain`, two lone keywords
+  and one whole-list dump on a snippet assessed `speech`. Withholding
+  keywords from the `uncertain` snippet removed the first three and cost no
+  term recall on the synthetic, public or real term clips, which were all
+  assessed `speech`. Suppressing three or more distinct keywords alone
+  removed the dump (it held all 20; no observed dump held fewer), while
+  "Sprint review." or two names said together survive. Two lone keywords
+  remain (2 of 36 runs). Suppressing a lone keyword as well would have
+  removed them, but 984 of 29,698 stored segments in the four servers with a
+  dictionary are exactly one term; the former prompt inserted terms, so how
+  many were spoken is unknown, and every spoken one would be lost. With
+  detection `off`, keywords go out on every admitted snippet, so the
+  unmitigated figure applies: 6 of 36 keyword-only outputs, 5 after the list
+  guard. With the server's own 4 terms only, the same 36 runs returned no
+  text at all, before any guard (0 of 36).
 
 ## Alternatives Considered
 

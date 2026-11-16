@@ -359,8 +359,8 @@ export function keywordOnlyCount(
 }
 
 // Noise sent with keywords can come back as a run of keywords and nothing else.
-// A single keyword alone is kept, because people do say one name on its own.
-const KEYWORD_LIST_MIN_TERMS = 2;
+// One or two keywords alone are kept, because people do say "Sprint review."
+const KEYWORD_LIST_MIN_TERMS = 3;
 
 export function applyTranscriptionGuards(input: {
   transcription: string;
@@ -419,6 +419,7 @@ export function applyTranscriptionGuards(input: {
     suppressedByRateMismatch: suppression.suppressedByRateMismatch,
   });
   const keywordList =
+    input.suppressionEnabled &&
     keywordOnlyCount(trimmed, input.keywords) >= KEYWORD_LIST_MIN_TERMS;
   const suppressed = suppression.suppressed || punctuationOnly || keywordList;
 

@@ -37,7 +37,7 @@ TTS-only mode must guarantee these behaviors:
 - Do not call `openOutputFile`.
 - Do not call `subscribeToUserVoice`.
 - Do not attach `receiver.speaking` handlers that feed the audio pipeline.
-- Do not run transcription, final-pass verification, cleanup, or notes generation.
+- Do not run transcription, cleanup, or notes generation.
 - Do not store chat as meeting history or transcript data unless we intentionally add a separate moderation/audit feature later.
 - Do not pass ambient chat history to an LLM for TTS. Only the specific text selected for speech may be sent to the TTS provider.
 - Do not enable live voice responses or live voice commands in the same session.

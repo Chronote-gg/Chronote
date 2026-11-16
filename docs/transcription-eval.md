@@ -4,7 +4,7 @@ This CLI runs repeated transcription passes against labeled audio and measures u
 
 ## Production pipeline corpus runs
 
-Use `--manifest` to compare the raw provider with the same audio gate, conversion, speech admission and transcript guards used by the bot. Pipeline mode sends one unprompted request per run with no language hint, as production does on the default `auto` setting, and grades it through the exported production `guardTranscription`. A manifest `dictionary` (or a case-level one for a case from another server) is turned into keywords by the production budget and sent through the production request builder when production speech admission assesses the clip as speech, so keywords need `--speech-detector production --speech-mode enforce`. `--no-keywords` reproduces the path without them. No Langfuse dataset is required. Corpus tracing stays disabled and results stay in an ignored artifact directory.
+Use `--manifest` to compare the raw provider with the same audio gate, conversion, speech admission and transcript guards used by the bot. Pipeline mode sends one unprompted request per run with no language hint, as production does on the default `auto` setting, and grades it through the exported production `guardTranscription`. A manifest `dictionary` (or a case-level one for a case from another server) is turned into keywords by the production budget and sent through the production request builder unless enforced production speech admission assesses the clip as uncertain or unavailable. `--no-keywords` reproduces the path without them. No Langfuse dataset is required. Corpus tracing stays disabled and results stay in an ignored artifact directory.
 
 ```powershell
 npm run eval:transcription:corpus -- --speech
@@ -56,7 +56,7 @@ Public references are exact LibriSpeech and FLEURS text. Private references are 
 
 ### Dictionary keywords, 2026-11-16
 
-Final code, `gpt-transcribe`, two runs per case, slow pass, speech detector enforced, both batches of the 46-case public corpus. Before is `--no-keywords`.
+Final code, `gpt-transcribe`, two runs per case, slow pass, speech detector enforced, both batches of the public corpus as it then stood (46 cases; three synthetic cases whose terms matched real names were removed afterwards). Before is `--no-keywords`.
 
 | set                                                  | before (no keywords) | after (keywords) |
 | ---------------------------------------------------- | -------------------- | ---------------- |
@@ -80,7 +80,7 @@ See [the October 13 findings and run instructions](analysis/2026-10-13-transcrip
 
 The Discord pipeline includes `transcription.speechDetection.mode`, with `off`, `shadow`, and `enforce` options. The default is `off`. It is a global superadmin setting in Experimental, captured at meeting start. Switching off changes new meetings and does not cancel detector work in an active meeting.
 
-Enforce mode gates whole snippets, retaining original audio and offsets. Uncertain or unavailable assessments preserve transcription. Forced transcription bypasses the detector. Exact audio and policy coverage can be reused, but uncertainty or a failed coverage proof can require additional final-pass SDK submissions. This behavior alone proves neither quality improvement nor request savings.
+Enforce mode gates whole snippets, retaining original audio and offsets. Uncertain or unavailable assessments preserve transcription. Forced transcription bypasses the detector. Exact audio and policy coverage can be reused, but uncertainty or a failed coverage proof can require additional provider submissions. This behavior alone proves neither quality improvement nor request savings.
 
 The bundled model and matching runtime assets need no meeting-time download. After `npm run build`, verify the production service and worker with synthetic controls:
 

@@ -530,7 +530,6 @@
         "Vaelmora",
         "Thornspire Keep",
         "Gloomwarden",
-        "Drakkenhold",
         "Ysolde",
         "Brightmaw",
         "Oathfyre",
@@ -555,32 +554,6 @@
         "Vaelmora",
         "Thornspire Keep",
         "Gloomwarden",
-        "Drakkenhold",
-        "Ysolde",
-        "Brightmaw",
-        "Oathfyre",
-        "DKP"
-      ]
-    },
-    {
-      "id": "tts-syn-04",
-      "file": "tts-syn-04.ogg",
-      "sha256": "8a8cffb5c7f5c8f9bdd5f148177025f8578f7edaecf96c4cd970fdbf7dcb600a",
-      "split": "holdout",
-      "tags": ["speech", "dictionary-terms"],
-      "label": {
-        "kind": "speech",
-        "transcript": "If we clear Drakkenhold before reset, everyone gets double DKP.",
-        "provenance": "synthetic",
-        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice onyx"
-      },
-      "dictionary": [
-        "Kwylt",
-        "Xaerith",
-        "Vaelmora",
-        "Thornspire Keep",
-        "Gloomwarden",
-        "Drakkenhold",
         "Ysolde",
         "Brightmaw",
         "Oathfyre",
@@ -605,7 +578,6 @@
         "Vaelmora",
         "Thornspire Keep",
         "Gloomwarden",
-        "Drakkenhold",
         "Ysolde",
         "Brightmaw",
         "Oathfyre",
@@ -631,58 +603,6 @@
         "Wojciech",
         "Xochitl",
         "Ngozi",
-        "Grimhaven",
-        "Valkyrae Cup",
-        "Nhaelis",
-        "Siobhan"
-      ]
-    },
-    {
-      "id": "tts-syn-32",
-      "file": "tts-syn-32.ogg",
-      "sha256": "b1846003d23eae4532e5973a79b9cf395ff40ab3a832bb458dcfcc1fa236ef96",
-      "split": "holdout",
-      "tags": ["speech", "dictionary-terms", "noisy"],
-      "label": {
-        "kind": "speech",
-        "transcript": "Aoife and Wojciech are swapping roles for the Valkyrae Cup qualifier.",
-        "provenance": "synthetic",
-        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice ash, mixed with generated pink noise"
-      },
-      "dictionary": [
-        "Saoirse",
-        "Tadhg",
-        "Aoife",
-        "Wojciech",
-        "Xochitl",
-        "Ngozi",
-        "Grimhaven",
-        "Valkyrae Cup",
-        "Nhaelis",
-        "Siobhan"
-      ]
-    },
-    {
-      "id": "tts-syn-34",
-      "file": "tts-syn-34.ogg",
-      "sha256": "13ac426c2be7f1466e5227898e1ca178ce19fcc4bbc2faee6de8c583bd8dbd14",
-      "split": "holdout",
-      "tags": ["speech", "dictionary-terms"],
-      "label": {
-        "kind": "speech",
-        "transcript": "Ngozi said the Grimhaven jerseys should arrive before the tournament.",
-        "provenance": "synthetic",
-        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice onyx"
-      },
-      "dictionary": [
-        "Saoirse",
-        "Tadhg",
-        "Aoife",
-        "Wojciech",
-        "Xochitl",
-        "Ngozi",
-        "Grimhaven",
-        "Valkyrae Cup",
         "Nhaelis",
         "Siobhan"
       ]
@@ -706,8 +626,6 @@
         "Wojciech",
         "Xochitl",
         "Ngozi",
-        "Grimhaven",
-        "Valkyrae Cup",
         "Nhaelis",
         "Siobhan"
       ]
