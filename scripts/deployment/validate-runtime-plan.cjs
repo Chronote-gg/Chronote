@@ -23,6 +23,33 @@ const policyDocuments = [
   "aws_iam_role_policy.production_prompt_guard[0]",
 ];
 const createOrUpdate = ["create", "update"];
+const deployEnvironment = "github_repository_environment.production_deploy[0]";
+const deployBranchPolicy =
+  "github_repository_environment_deployment_policy.production_deploy_master[0]";
+// Targeted as one resource; each instance is checked by name below.
+const deployVariables = "github_actions_environment_variable.production_deploy";
+const deployVariableNames = new Set([
+  "AWS_REGION",
+  "AWS_ACCOUNT_ID",
+  "ECR_REPOSITORY",
+  "ECS_CLUSTER",
+  "ECS_SERVICE",
+  "ECS_TASK_FAMILY",
+  "SECRETS_PREFIX",
+  "FRONTEND_BUCKET",
+  "FRONTEND_DISTRIBUTION_ID",
+  "DOCS_BUCKET",
+  "DOCS_DISTRIBUTION_ID",
+  "VITE_API_BASE_URL",
+  "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN",
+  "DOCS_SITE_URL",
+  "DOCS_ALGOLIA_APP_ID",
+  "DOCS_ALGOLIA_API_KEY",
+  "DOCS_ALGOLIA_INDEX_NAME",
+]);
+const deploySubjects = ["production", "production-deploy"].map(
+  (name) => `repo:Chronote-gg/Chronote:environment:${name}`,
+);
 const runtimeTargets = new Map([
   [oidcRoles[0], createOrUpdate],
   [policyDocuments[0], createOrUpdate],
@@ -35,6 +62,9 @@ const runtimeTargets = new Map([
   ...apiTargetGroups.map((address) => [address, ["update"]]),
   [oidcRoles[1], createOrUpdate],
   [policyDocuments[4], createOrUpdate],
+  [deployEnvironment, ["create"]],
+  [deployBranchPolicy, ["create"]],
+  [deployVariables, createOrUpdate],
 ]);
 const renewalIndex = {
   name: "RenewalRecoveryDueIndex",
@@ -125,21 +155,48 @@ function statements(document) {
   return parsed.Statement;
 }
 
-// Only GitHub production on this repository may assume the new roles.
+// Only the two GitHub deploy environments on this repository may assume the roles.
 function checkOidcTrust({ after }, accountId) {
   const provider = `arn:aws:iam::${accountId}:oidc-provider/token.actions.githubusercontent.com`;
   for (const statement of statements(after.assume_role_policy)) {
     assert.equal(statement.Effect, "Allow");
     assert.deepEqual(statement.Principal, { Federated: provider });
     assert.equal(statement.Action, "sts:AssumeRoleWithWebIdentity");
-    assert.equal(
+    assert.deepEqual(
       statement.Condition.StringEquals[
         "token.actions.githubusercontent.com:sub"
       ],
-      "repo:Chronote-gg/Chronote:environment:production",
+      deploySubjects,
     );
   }
 }
+
+// The unattended deploy environment admits master only and nobody can bypass it.
+function checkDeployEnvironment({ after }) {
+  assert.equal(after.environment, "production-deploy");
+  assert.equal(after.can_admins_bypass, false);
+  assert.deepEqual(after.reviewers ?? [], []);
+  assert.deepEqual(after.deployment_branch_policy, [
+    { protected_branches: false, custom_branch_policies: true },
+  ]);
+}
+
+function checkDeployBranchPolicy({ after }) {
+  assert.equal(after.environment, "production-deploy");
+  assert.equal(after.branch_pattern, "master");
+}
+
+function checkDeployVariable({ address, change: { after } }) {
+  assert.equal(address, `${deployVariables}["${after.variable_name}"]`);
+  assert.ok(deployVariableNames.has(after.variable_name));
+  assert.equal(after.environment, "production-deploy");
+}
+
+const isDeployVariable = (address) => address.startsWith(`${deployVariables}[`);
+const deployVariableTargets = (plan) =>
+  (plan?.resource_changes ?? [])
+    .filter(({ address }) => isDeployVariable(String(address)))
+    .map(({ address }) => [address, createOrUpdate]);
 
 function checkMetricStatement(statement, address) {
   assert.equal(address, deployPolicy);
@@ -173,9 +230,13 @@ function checkPolicyDocument({ after }, address) {
 function validateRuntimePlan(plan, { accountId }) {
   assert.match(accountId, /^\d{12}$/);
   return validateScopedPlan(plan, {
-    targets: runtimeTargets,
+    targets: new Map([...runtimeTargets, ...deployVariableTargets(plan)]),
     requiredNoOp: ["aws_kms_key.app_general", "aws_lb_listener.api_https[0]"],
-    check: ({ address, change }) => {
+    check: (resource) => {
+      const { address, change } = resource;
+      if (address === deployEnvironment) checkDeployEnvironment(change);
+      if (address === deployBranchPolicy) checkDeployBranchPolicy(change);
+      if (isDeployVariable(address)) checkDeployVariable(resource);
       if (address === guildTable) checkGuildTable(change);
       if (apiTargetGroups.includes(address)) checkApiTargetGroup(change);
       if (oidcRoles.includes(address)) checkOidcTrust(change, accountId);

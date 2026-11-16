@@ -39,6 +39,9 @@ const scopes: Record<string, { plan?: () => unknown; targets: string[] }> = {
       "-target=aws_lb_target_group.api_spare_tg[0]",
       '-target=aws_iam_role.production_introduction["prompt-guard"]',
       "-target=aws_iam_role_policy.production_prompt_guard[0]",
+      "-target=github_repository_environment.production_deploy[0]",
+      "-target=github_repository_environment_deployment_policy.production_deploy_master[0]",
+      "-target=github_actions_environment_variable.production_deploy",
     ],
   },
   "site-delivery": {

@@ -91,6 +91,10 @@ run "prompt_guard_alone" {
     condition     = jsondecode(aws_iam_role.production_introduction["prompt-guard"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:workflow"] == "Meeting Notes Bot Deploy" && one([for s in jsondecode(aws_iam_role_policy.production_prompt_guard[0].policy).Statement : s.Resource if try(s.Sid, "") == "ServingServiceMetadata"]) == "arn:aws:ecs:us-east-1:123456789012:service/chronote-prod-bot-cluster/chronote-prod-bot-service"
     error_message = "The guard role keeps its deploy workflow trust and the exact serving service."
   }
+  assert {
+    condition     = jsondecode(aws_iam_role.production_introduction["prompt-guard"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == ["repo:Chronote-gg/Chronote:environment:production", "repo:Chronote-gg/Chronote:environment:production-deploy"] && jsondecode(aws_iam_role.production_introduction["prompt-guard"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:environment"] == ["production", "production-deploy"] && jsondecode(aws_iam_role.production_introduction["prompt-guard"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master"
+    error_message = "The guard role trusts exactly the two deploy environments on master."
+  }
 }
 run "prompt_guard_flag_never_reaches_sandbox" {
   command = plan
@@ -143,7 +147,7 @@ run "exact_production_authority" {
     error_message = "Introduction task-definition metadata must use its own region-only wildcard statement; exact reviewed ARNs remain a source validation boundary."
   }
   assert {
-    condition     = jsondecode(aws_iam_role.production_introduction["introduction"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:environment"] == "production" && jsondecode(aws_iam_role.production_introduction["introduction"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master" && jsondecode(aws_iam_role.production_introduction["introduction"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_id"] == "12345"
+    condition     = jsondecode(aws_iam_role.production_introduction["introduction"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:environment"] == "production" && jsondecode(aws_iam_role.production_introduction["introduction"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:Chronote-gg/Chronote:environment:production" && jsondecode(aws_iam_role.production_introduction["introduction"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master" && jsondecode(aws_iam_role.production_introduction["introduction"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_id"] == "12345"
     error_message = "Trust must pin production, master and immutable repository identity."
   }
   assert {

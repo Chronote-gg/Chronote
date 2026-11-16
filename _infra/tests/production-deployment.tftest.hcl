@@ -136,7 +136,7 @@ variables {
 run "production_identity_and_permissions" {
   command = plan
   plan_options {
-    target = [aws_iam_role_policy.production_deploy, aws_iam_role_policy.production_exec_channels, aws_iam_role_policy_attachment.production_deploy_routing, github_actions_environment_variable.production_deploy_role, github_actions_environment_variable.production_deploy_account]
+    target = [aws_iam_role_policy.production_deploy, aws_iam_role_policy.production_exec_channels, aws_iam_role_policy_attachment.production_deploy_routing, github_actions_environment_variable.production_deploy_role, github_actions_environment_variable.production_deploy_account, github_repository_environment_deployment_policy.production_deploy_master, github_actions_environment_variable.production_deploy]
   }
   variables {
     environment        = "prod"
@@ -147,17 +147,28 @@ run "production_identity_and_permissions" {
     error_message = "Trust must bind the provider in the deployment account."
   }
   assert {
-    condition = tomap(jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals) == tomap({
-      "token.actions.githubusercontent.com:aud"                 = "sts.amazonaws.com"
-      "token.actions.githubusercontent.com:sub"                 = "repo:Chronote-gg/Chronote:environment:production"
-      "token.actions.githubusercontent.com:repository_id"       = "12345"
-      "token.actions.githubusercontent.com:repository_owner_id" = "67890"
-      "token.actions.githubusercontent.com:ref"                 = "refs/heads/master"
-    })
-    error_message = "Only the exact production repository, owner, environment and master ref may assume."
+    condition = sort(keys(jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals)) == sort([
+      "token.actions.githubusercontent.com:aud",
+      "token.actions.githubusercontent.com:sub",
+      "token.actions.githubusercontent.com:repository_id",
+      "token.actions.githubusercontent.com:repository_owner_id",
+      "token.actions.githubusercontent.com:ref",
+      ]) && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == [
+      "repo:Chronote-gg/Chronote:environment:production",
+      "repo:Chronote-gg/Chronote:environment:production-deploy",
+    ] && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_id"] == "12345" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_owner_id"] == "67890" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master"
+    error_message = "Only the exact repository, owner, production or production-deploy environment and master ref may assume."
   }
   assert {
-    condition     = alltrue([for claim in ["repo:Chronote-gg/Chronote:environment:sandbox", "repo:foreign/Chronote:environment:production", "repo:Chronote-gg/Chronote:ref:refs/heads/master"] : claim != jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"]]) && alltrue([for ref in ["refs/heads/codex/repair", "refs/tags/master", "refs/heads/main"] : ref != jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"]])
+    condition     = github_repository_environment.production_deploy[0].environment == "production-deploy" && github_repository_environment.production_deploy[0].can_admins_bypass == false && length(github_repository_environment.production_deploy[0].reviewers) == 0 && github_repository_environment.production_deploy[0].deployment_branch_policy[0].custom_branch_policies && !github_repository_environment.production_deploy[0].deployment_branch_policy[0].protected_branches && github_repository_environment_deployment_policy.production_deploy_master[0].branch_pattern == "master"
+    error_message = "production-deploy must have no reviewers, no admin bypass and only master."
+  }
+  assert {
+    condition     = sort(keys(github_actions_environment_variable.production_deploy)) == sort(["AWS_REGION", "AWS_ACCOUNT_ID", "ECR_REPOSITORY", "ECS_CLUSTER", "ECS_SERVICE", "ECS_TASK_FAMILY", "SECRETS_PREFIX", "FRONTEND_BUCKET", "FRONTEND_DISTRIBUTION_ID", "DOCS_BUCKET", "DOCS_DISTRIBUTION_ID", "VITE_API_BASE_URL", "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN"]) && alltrue([for v in values(github_actions_environment_variable.production_deploy) : v.environment == "production-deploy"]) && github_actions_environment_variable.production_deploy["ECS_SERVICE"].value == "meeting-notes-prod-bot-service"
+    error_message = "production-deploy must carry the Terraform-managed deploy variables."
+  }
+  assert {
+    condition     = alltrue([for claim in ["repo:Chronote-gg/Chronote:environment:sandbox", "repo:foreign/Chronote:environment:production", "repo:Chronote-gg/Chronote:ref:refs/heads/master"] : !contains(jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"], claim)]) && alltrue([for ref in ["refs/heads/codex/repair", "refs/tags/master", "refs/heads/main"] : ref != jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"]])
     error_message = "Foreign environments, repositories, topic branches and tags must fail exact trust."
   }
   assert {
@@ -235,7 +246,10 @@ run "runtime_scope_never_reads_serving_service_or_task_definition" {
       aws_iam_role.production_introduction["prompt-guard"],
       aws_iam_role_policy.production_prompt_guard[0],
       aws_lb_target_group.api_tg[0],
-      aws_lb_target_group.api_spare_tg[0]
+      aws_lb_target_group.api_spare_tg[0],
+      github_repository_environment.production_deploy[0],
+      github_repository_environment_deployment_policy.production_deploy_master[0],
+      github_actions_environment_variable.production_deploy
     ]
   }
   variables {
@@ -288,6 +302,10 @@ run "runtime_scope_never_reads_serving_service_or_task_definition" {
   assert {
     condition     = alltrue([for document in [aws_iam_role_policy.production_deploy[0].policy, aws_iam_role_policy.production_prompt_guard[0].policy, aws_iam_role.production_introduction["prompt-guard"].assume_role_policy, aws_iam_role.production_deploy[0].assume_role_policy] : !strcontains(document, "should-not-be-read")])
     error_message = "Runtime targets must not depend on the serving service or task definition."
+  }
+  assert {
+    condition     = alltrue([for v in values(github_actions_environment_variable.production_deploy) : !strcontains(v.value, "should-not-be-read")]) && github_actions_environment_variable.production_deploy["FRONTEND_DISTRIBUTION_ID"].value == "EPRODFRONTEND"
+    error_message = "Deploy variables must not read the serving service, task definition or distributions."
   }
   # A planned distribution would fail its ID postcondition against these overrides.
   assert {

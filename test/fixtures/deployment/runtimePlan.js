@@ -17,8 +17,10 @@ export const githubTrust = () =>
     Condition: {
       StringEquals: {
         "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-        "token.actions.githubusercontent.com:sub":
+        "token.actions.githubusercontent.com:sub": [
           "repo:Chronote-gg/Chronote:environment:production",
+          "repo:Chronote-gg/Chronote:environment:production-deploy",
+        ],
       },
     },
   });
@@ -121,6 +123,34 @@ export function runtimePlan() {
           tags_all: {},
         },
       }),
+      managed(
+        "github_repository_environment.production_deploy[0]",
+        ["create"],
+        {
+          after: {
+            environment: "production-deploy",
+            can_admins_bypass: false,
+            reviewers: [],
+            deployment_branch_policy: [
+              { protected_branches: false, custom_branch_policies: true },
+            ],
+          },
+        },
+      ),
+      managed(
+        "github_repository_environment_deployment_policy.production_deploy_master[0]",
+        ["create"],
+        {
+          after: { environment: "production-deploy", branch_pattern: "master" },
+        },
+      ),
+      ...["ECS_SERVICE", "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN"].map((name) =>
+        managed(
+          `github_actions_environment_variable.production_deploy["${name}"]`,
+          ["create"],
+          { after: { environment: "production-deploy", variable_name: name } },
+        ),
+      ),
       ...["api_tg", "api_spare_tg"].map((name) =>
         managed(`aws_lb_target_group.${name}[0]`, ["update"], {
           before: { ...structuredClone(targetGroupBefore), name },

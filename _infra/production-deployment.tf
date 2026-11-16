@@ -34,7 +34,7 @@ resource "aws_iam_role" "production_deploy" {
         Condition = {
           StringEquals = {
             "token.actions.githubusercontent.com:aud"                 = "sts.amazonaws.com",
-            "token.actions.githubusercontent.com:sub"                 = "repo:${var.github_owner}/${var.github_repository}:environment:production",
+            "token.actions.githubusercontent.com:sub"                 = [for name in local.production_deploy_environments : "repo:${var.github_owner}/${var.github_repository}:environment:${name}"],
             "token.actions.githubusercontent.com:repository_id"       = tostring(data.github_repository.repo.repo_id),
             "token.actions.githubusercontent.com:repository_owner_id" = data.github_organization.production_deployment_owner[0].id,
             "token.actions.githubusercontent.com:ref"                 = "refs/heads/master"
@@ -327,6 +327,63 @@ resource "github_actions_environment_variable" "production_deploy_account" {
   environment   = github_repository_environment.repo_env.environment
   variable_name = "AWS_ACCOUNT_ID"
   value         = data.aws_caller_identity.current.account_id
+}
+
+# Deploy jobs may run under production-deploy, which has no required reviewer,
+# so merges deploy unattended. Terraform Apply keeps the reviewed production
+# environment. Both trust the deploy roles; see docs/deployment.md.
+locals {
+  production_deploy_environments = ["production", "production-deploy"]
+  production_deploy_optional_variables = {
+    DOCS_SITE_URL           = var.DOCS_SITE_URL
+    DOCS_ALGOLIA_APP_ID     = var.DOCS_ALGOLIA_APP_ID
+    DOCS_ALGOLIA_API_KEY    = var.DOCS_ALGOLIA_API_KEY
+    DOCS_ALGOLIA_INDEX_NAME = var.DOCS_ALGOLIA_INDEX_NAME
+  }
+  # Built from stable names and variables, like the runtime scope above, so the
+  # targeted plan never reads the serving service or the distributions.
+  production_deploy_variables = var.environment == "prod" ? merge({
+    AWS_REGION                         = "us-east-1"
+    AWS_ACCOUNT_ID                     = data.aws_caller_identity.current.account_id
+    ECR_REPOSITORY                     = aws_ecr_repository.app_ecr_repo.name
+    ECS_CLUSTER                        = aws_ecs_cluster.main.name
+    ECS_SERVICE                        = "${local.name_prefix}-bot-service"
+    ECS_TASK_FAMILY                    = local.production_task_family
+    SECRETS_PREFIX                     = local.name_prefix
+    FRONTEND_BUCKET                    = aws_s3_bucket.frontend.bucket
+    FRONTEND_DISTRIBUTION_ID           = var.frontend_distribution_id
+    DOCS_BUCKET                        = aws_s3_bucket.docs.bucket
+    DOCS_DISTRIBUTION_ID               = var.docs_distribution_id
+    VITE_API_BASE_URL                  = local.api_base_url
+    PRODUCTION_BACKEND_DEPLOY_ROLE_ARN = aws_iam_role.production_deploy[0].arn
+  }, { for name, value in local.production_deploy_optional_variables : name => value if value != "" }) : {}
+}
+
+resource "github_repository_environment" "production_deploy" {
+  count             = var.environment == "prod" ? 1 : 0
+  repository        = data.github_repository.repo.name
+  environment       = "production-deploy"
+  can_admins_bypass = false
+
+  deployment_branch_policy {
+    protected_branches     = false
+    custom_branch_policies = true
+  }
+}
+
+resource "github_repository_environment_deployment_policy" "production_deploy_master" {
+  count          = var.environment == "prod" ? 1 : 0
+  repository     = data.github_repository.repo.name
+  environment    = github_repository_environment.production_deploy[0].environment
+  branch_pattern = "master"
+}
+
+resource "github_actions_environment_variable" "production_deploy" {
+  for_each      = local.production_deploy_variables
+  repository    = data.github_repository.repo.name
+  environment   = github_repository_environment.production_deploy[0].environment
+  variable_name = each.key
+  value         = each.value
 }
 
 output "production_backend_deploy_role_arn" {

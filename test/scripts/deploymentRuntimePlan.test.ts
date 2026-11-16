@@ -38,8 +38,53 @@ test("accepts the runtime creates, policy update, index addition and drain delay
   expect(result.status).toBe(0);
   const accepted = JSON.parse(result.stdout);
   expect(accepted.result).toBe("accepted");
-  expect(accepted.changes).toHaveLength(12);
+  expect(accepted.changes).toHaveLength(16);
 });
+
+const deployEnvironment = "github_repository_environment.production_deploy[0]";
+const deployVariable =
+  'github_actions_environment_variable.production_deploy["ECS_SERVICE"]';
+test.each([
+  ["a required reviewer", { reviewers: [{ users: [1] }] }],
+  ["admin bypass", { can_admins_bypass: true }],
+  ["another name", { environment: "production" }],
+  [
+    "protected branches instead of master",
+    {
+      deployment_branch_policy: [
+        { protected_branches: true, custom_branch_policies: false },
+      ],
+    },
+  ],
+])("rejects the deploy environment with %s", (_name, override) =>
+  rejected((plan) => {
+    const { change } = find(plan, deployEnvironment) as {
+      change: { after: Record<string, unknown> };
+    };
+    Object.assign(change.after, override);
+  }),
+);
+
+test("rejects a deploy branch policy other than master", () =>
+  rejected((plan) => {
+    const { change } = find(
+      plan,
+      "github_repository_environment_deployment_policy.production_deploy_master[0]",
+    ) as { change: { after: Record<string, unknown> } };
+    change.after.branch_pattern = "*";
+  }));
+
+test.each([
+  ["into the reviewed environment", { environment: "production" }],
+  ["outside the deploy set", { variable_name: "TERRAFORM_AWS_ROLE_ARN" }],
+])("rejects a deploy variable written %s", (_name, override) =>
+  rejected((plan) => {
+    const { change } = find(plan, deployVariable) as {
+      change: { after: Record<string, unknown> };
+    };
+    Object.assign(change.after, override);
+  }),
+);
 
 test("accepts targets that already match as no-ops", () => {
   expect(validate(markAllNoOp(runtimePlan())).status).toBe(0);
@@ -228,6 +273,14 @@ test.each([
       t.Statement[0].Condition.StringEquals[
         "token.actions.githubusercontent.com:sub"
       ] = "repo:Chronote-gg/Chronote:environment:sandbox";
+    },
+  ],
+  [
+    "only the reviewed subject",
+    (t: Trust) => {
+      t.Statement[0].Condition.StringEquals[
+        "token.actions.githubusercontent.com:sub"
+      ] = "repo:Chronote-gg/Chronote:environment:production";
     },
   ],
   [
