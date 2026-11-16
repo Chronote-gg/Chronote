@@ -55,6 +55,36 @@ run "production_has_one_cpu_and_two_gib" {
     condition     = jsondecode(aws_ecs_task_definition.app_task.container_definitions)[0].cpu == 1024 && jsondecode(aws_ecs_task_definition.app_task.container_definitions)[0].memory == 2048
     error_message = "Production container limits must match the task capacity."
   }
+  assert {
+    condition     = one(aws_ecs_task_definition.app_task.ephemeral_storage).size_in_gib == 60
+    error_message = "Production task must reserve 60 GiB of ephemeral storage."
+  }
+}
+
+# The disk alarms follow the reserved size: 75 and 95 percent of it, in the
+# decimal GB that EphemeralStorageUtilized reports.
+run "disk_alarms_follow_the_reserved_storage" {
+  command = plan
+  plan_options { target = [aws_cloudwatch_metric_alarm.ecs_ephemeral_storage_leak, aws_cloudwatch_metric_alarm.ecs_ephemeral_storage_critical] }
+  variables { alert_email = "alerts@example.com" }
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.ecs_ephemeral_storage_leak[0].threshold == 48 && aws_cloudwatch_metric_alarm.ecs_ephemeral_storage_critical[0].threshold == 61.2
+    error_message = "Production disk alarms must sit at 75 and 95 percent of 60 GiB."
+  }
+}
+
+run "sandbox_disk_alarms_keep_the_default_thresholds" {
+  command = plan
+  plan_options { target = [aws_cloudwatch_metric_alarm.ecs_ephemeral_storage_leak, aws_cloudwatch_metric_alarm.ecs_ephemeral_storage_critical] }
+  variables {
+    environment        = "sandbox"
+    github_environment = "sandbox"
+    alert_email        = "alerts@example.com"
+  }
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.ecs_ephemeral_storage_leak[0].threshold == 16 && aws_cloudwatch_metric_alarm.ecs_ephemeral_storage_critical[0].threshold == 20.4
+    error_message = "Sandbox disk alarms must sit at 75 and 95 percent of the 20 GiB default."
+  }
 }
 
 run "sandbox_keeps_existing_capacity" {
@@ -71,5 +101,9 @@ run "sandbox_keeps_existing_capacity" {
   assert {
     condition     = jsondecode(aws_ecs_task_definition.app_task.container_definitions)[0].cpu == 512 && jsondecode(aws_ecs_task_definition.app_task.container_definitions)[0].memory == 1024
     error_message = "Sandbox container limits must retain their existing capacity."
+  }
+  assert {
+    condition     = length(aws_ecs_task_definition.app_task.ephemeral_storage) == 0
+    error_message = "Sandbox keeps the 20 GiB Fargate default, which costs nothing extra."
   }
 }

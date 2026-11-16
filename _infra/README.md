@@ -2,12 +2,17 @@
 
 ## Bot worker capacity
 
-The task definition selects CPU and memory from `environment`:
+The task definition selects CPU, memory and ephemeral storage from `environment`:
 
-| Environment                           | CPU      | Memory |
-| ------------------------------------- | -------- | ------ |
-| `prod`                                | 1 vCPU   | 2 GiB  |
-| Other environments, including Sandbox | 0.5 vCPU | 1 GiB  |
+| Environment                           | CPU      | Memory | Ephemeral storage    |
+| ------------------------------------- | -------- | ------ | -------------------- |
+| `prod`                                | 1 vCPU   | 2 GiB  | 60 GiB               |
+| Other environments, including Sandbox | 0.5 vCPU | 1 GiB  | 20 GiB (the default) |
+
+Per-speaker PCM takes about 0.69 GB per speaker-hour and the image and runtime
+about 8.7 GB at startup, so one two-hour meeting with nine speakers could fill the
+default. A deploy-registered revision copies the whole task definition, so the
+size survives deploys.
 
 Task reservations and container limits use the same values. Recording buffer
 limits remain independent of the task size.
@@ -125,8 +130,8 @@ that address.
 | Alarm                         | Condition                                      | Period    |
 | ----------------------------- | ---------------------------------------------- | --------- |
 | ECS no running tasks          | Bot service running task count < 1 for 10 min  | 5 min x 2 |
-| ECS disk leak                 | Bot task disk minimum above 16 GB for 3 h      | 1 h x 3   |
-| ECS disk critical             | Bot task disk at or above 20.4 of 21.47 GB     | 5 min x 1 |
+| ECS disk leak                 | Bot task disk minimum above 75% for 3 h        | 1 h x 3   |
+| ECS disk critical             | Bot task disk at or above 95% of reserved      | 5 min x 1 |
 | ALB target 5xx errors         | 10+ target HTTP 5xx responses in 10 min        | 5 min x 2 |
 | ALB ELB 5xx errors            | 5+ load-balancer HTTP 5xx responses in 5 min   | 5 min x 1 |
 | ALB ELB 5xx sustained         | 5+ load-balancer HTTP 5xx responses in 1 h     | 1 h x 1   |
@@ -222,13 +227,11 @@ statistic and time base, so the hourly `Minimum` catches a slow leak over three
 hours and the five-minute `Maximum` catches an imminent ceiling at once. Deleting
 either reopens half the gap.
 
-**Both thresholds are fractions (about 75 and 95 percent) of 21.47 GB, which is
-the decimal-GB reading of the 20 GiB Fargate default.**
-`ephemeralStorageSizeInGiB` is not declared on the task definition, so the
-default applies and `EphemeralStorageReserved` sits flat at 21.47. If ephemeral
-storage is ever declared or raised, both thresholds must move with it, or the
-leak alarm becomes a routine-usage alarm and the critical alarm stops meaning
-"nearly full". Raising it is also not a one-step change: it is a Terraform change
+**Both thresholds are computed from the reserved size** (`local.bot_task_storage_gib`
+in `main.tf`), in the decimal GB that `EphemeralStorageUtilized` reports: the leak
+alarm at 75 percent rounded down, the critical alarm at 95 percent to one decimal.
+That is 48 and 61.2 of 64.42 GB in production (60 GiB) and 16 and 20.4 of 21.47 GB
+in Sandbox (the 20 GiB default). Changing the size is not a one-step change: it is a Terraform change
 plus a backend deploy, because `aws_ecs_service` carries
 `ignore_changes = [task_definition]`, so an apply registers a new task definition
 revision while the service keeps running the old one until a deploy repoints it.

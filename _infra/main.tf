@@ -538,9 +538,14 @@ provider "github" {
 }
 
 locals {
-  name_prefix             = "${var.project_name}-${var.environment}"
-  bot_task_cpu            = var.environment == "prod" ? 1024 : 512
-  bot_task_memory         = var.environment == "prod" ? 2048 : 1024
+  name_prefix     = "${var.project_name}-${var.environment}"
+  bot_task_cpu    = var.environment == "prod" ? 1024 : 512
+  bot_task_memory = var.environment == "prod" ? 2048 : 1024
+  # Per-speaker PCM is about 0.69 GB per speaker-hour, so one long meeting with
+  # many speakers can fill the 20 GiB Fargate default. Sandbox keeps the default.
+  bot_task_storage_gib = var.environment == "prod" ? 60 : 20
+  # EphemeralStorageUtilized reports decimal GB: 20 GiB reads as 21.47.
+  bot_task_storage_gb     = local.bot_task_storage_gib * 1.073741824
   app_log_group_name      = "/ecs/${local.name_prefix}-bot"
   transcripts_bucket_name = var.TRANSCRIPTS_BUCKET != "" ? var.TRANSCRIPTS_BUCKET : "${local.name_prefix}-transcripts-${data.aws_caller_identity.current.account_id}"
   frontend_bucket_name    = var.FRONTEND_BUCKET != "" ? var.FRONTEND_BUCKET : "${local.name_prefix}-frontend-${data.aws_caller_identity.current.account_id}"
@@ -1738,6 +1743,14 @@ resource "aws_ecs_task_definition" "app_task" {
   memory                   = tostring(local.bot_task_memory)
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_app_role.arn
+
+  # Fargate accepts 21 to 200 GiB here; 20 is the default and is left implicit.
+  dynamic "ephemeral_storage" {
+    for_each = local.bot_task_storage_gib > 20 ? [local.bot_task_storage_gib] : []
+    content {
+      size_in_gib = ephemeral_storage.value
+    }
+  }
 
   container_definitions = jsonencode([
     {
