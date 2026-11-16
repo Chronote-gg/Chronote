@@ -1,0 +1,634 @@
+{
+  "version": 1,
+  "name": "public-transcription-manifest",
+  "prompt": "<glossary>(do not include in transcript):\nServer Name: Lantern Hollow Guild\nChannel: Story Circle\nServer Description: Lantern Hollow is a reading club for Victorian art criticism and classic children's fantasy. Members meet every week to read chapters aloud and discuss them. Newcomers are welcome to listen before joining in.\nAttendees: Marigold, Thaddeus, Wren\nBot Names: Chronote\nDictionary terms:\n- Quilter\n- Linnell\n- Leighton\n- Ruskin\n- Kaliko\n- Ruggedo\n- Polychrome\n- Shaggy\n- Betsy\n- Brion\n- Irolg\n- Brandd\n- Lantern Hollow\n- Story Circle\n- Bramblewick\n- Fennimore Press\n- Tuppence Reading List\n- Moonquill\n- Gallery Night\n- Inkwell Award\nMeeting Context: Weekly read-aloud session and chapter discussion\nTranscript instruction: Do not include any glossary text in the transcript.\n</glossary>\n",
+  "dictionary": [
+    "Quilter",
+    "Linnell",
+    "Leighton",
+    "Ruskin",
+    "Kaliko",
+    "Ruggedo",
+    "Polychrome",
+    "Shaggy",
+    "Betsy",
+    "Brion",
+    "Irolg",
+    "Brandd",
+    "Lantern Hollow",
+    "Story Circle",
+    "Bramblewick",
+    "Fennimore Press",
+    "Tuppence Reading List",
+    "Moonquill",
+    "Gallery Night",
+    "Inkwell Award"
+  ],
+  "cases": [
+    {
+      "id": "ls-128104-0000",
+      "file": "ls-128104-0000.ogg",
+      "sha256": "56226acb7c1e9361a8ed49cee4430b6f428e765d7d2637b5db85e56a3ddf7d12",
+      "split": "holdout",
+      "tags": ["speech", "normal"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Mr. quilter is the apostle of the middle classes and we are glad to welcome his gospel",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-128104-0000 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "ls-128104-0003",
+      "file": "ls-128104-0003.ogg",
+      "sha256": "dc02ffbc7c91b1f0d90dfc31ac09b073d125d31f22c08fabd13c6f6af7f727ed",
+      "split": "holdout",
+      "tags": ["speech", "normal"],
+      "label": {
+        "kind": "speech",
+        "transcript": "He has grave doubts whether sir frederick leighton's work is really greek after all and can discover in it but little of rocky ithaca",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-128104-0003 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "ls-135031-0001",
+      "file": "ls-135031-0001.ogg",
+      "sha256": "061fe54c427a2c17275cb709c58f0f4c75cf3fccf8f2389817ea297d9e0da3b0",
+      "split": "holdout",
+      "tags": ["speech", "normal"],
+      "label": {
+        "kind": "speech",
+        "transcript": "He has gone and gone for good answered polychrome who had managed to squeeze into the room beside the dragon and had witnessed the occurrences with much interest",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-135031-0001 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "ls-135031-0019",
+      "file": "ls-135031-0019.ogg",
+      "sha256": "6025609619ed96cfbc16e3f3c808043244bb5023e13799ee476aaae7a0ead635",
+      "split": "holdout",
+      "tags": ["speech", "normal"],
+      "label": {
+        "kind": "speech",
+        "transcript": "That's funny remarked betsy thoughtfully",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-135031-0019 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "ls-135031-0023",
+      "file": "ls-135031-0023.ogg",
+      "sha256": "1a9d0af59035b73239bf5e0c5598a0fc54268ac0ebc5624889c4105bf3e3b607",
+      "split": "holdout",
+      "tags": ["speech", "normal"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Kaliko went to the big gong and pounded on it just as ruggedo used to do but no one answered the summons",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-135031-0023 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "ls-141231-0012",
+      "file": "ls-141231-0012.ogg",
+      "sha256": "12732ba3dc6aeefaee29dadfa8b034e867c3194040b75554667bddeedb10a63b",
+      "split": "holdout",
+      "tags": ["speech", "normal"],
+      "label": {
+        "kind": "speech",
+        "transcript": "I'm here because the matter is of utmost importance and brandd is the one i must see now stand aside",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0012 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "ls-141231-0026",
+      "file": "ls-141231-0026.ogg",
+      "sha256": "ec27cc88c302b233d4f1b39804a5cd7a0f2dad7fec509a8f79e57f9666970752",
+      "split": "holdout",
+      "tags": ["speech", "normal"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Breathing deeply brion softly spoke the auto hypnotic phrases that triggered the process",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0026 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "ls-141231-0028",
+      "file": "ls-141231-0028.ogg",
+      "sha256": "abef21e726dd2fd70f16c7e9cc84cade5bc37cfccabb364db20f93d6a9332ac6",
+      "split": "holdout",
+      "tags": ["speech", "normal"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Irolg looked amazed at the sudden fury of the attack then smiled",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0028 (CC BY 4.0), reference is the corpus transcript"
+      }
+    },
+    {
+      "id": "quiet-128104-0006",
+      "file": "quiet-128104-0006.ogg",
+      "sha256": "6d7ad5c124397082c275a283945efee170ba41c2aa2cf1f48f3011ae164dbe5d",
+      "split": "holdout",
+      "tags": ["speech", "quiet"],
+      "label": {
+        "kind": "speech",
+        "transcript": "On the general principles of art mr. quilter writes with equal lucidity",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-128104-0006 (CC BY 4.0), reference is the corpus transcript, attenuated 35 dB"
+      }
+    },
+    {
+      "id": "quiet-141231-0005",
+      "file": "quiet-141231-0005.ogg",
+      "sha256": "11d0dc4eaf8c0799300c44ee620d5851a7448ae73acc189f9c3af79c4ce963bf",
+      "split": "holdout",
+      "tags": ["speech", "quiet"],
+      "label": {
+        "kind": "speech",
+        "transcript": "A minute is not a very large measure of time and his body needed every fraction of it",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0005 (CC BY 4.0), reference is the corpus transcript, attenuated 35 dB"
+      }
+    },
+    {
+      "id": "short-141231-0016",
+      "file": "short-141231-0016.ogg",
+      "sha256": "87efa2ed2945439b770ad001c5ee8faf6593e40bc463b618944d19441f6e60a2",
+      "split": "holdout",
+      "tags": ["speech", "short"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Ten seconds",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0016 (CC BY 4.0), reference is the corpus transcript, whole utterance"
+      }
+    },
+    {
+      "id": "short-141231-0013",
+      "file": "short-141231-0013.ogg",
+      "sha256": "56fefc513d4e2156f6df9818df761016c325dfaea222cb47cf6ef843e017606d",
+      "split": "holdout",
+      "tags": ["speech", "short"],
+      "label": {
+        "kind": "speech",
+        "transcript": "The twenties",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0013 (CC BY 4.0), reference is the corpus transcript, whole utterance"
+      }
+    },
+    {
+      "id": "short-135031-0016",
+      "file": "short-135031-0016.ogg",
+      "sha256": "5b8c0cd8136b4bc6773b21980c02ab4667618f1e467fa09b69a10ef893bcc683",
+      "split": "holdout",
+      "tags": ["speech", "short"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Kaliko hesitated",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-135031-0016 (CC BY 4.0), reference is the corpus transcript, whole utterance"
+      }
+    },
+    {
+      "id": "cut-135031-0022",
+      "file": "cut-135031-0022.ogg",
+      "sha256": "135cb93900a2c1b480433a0bada2d5e95fbdd663508c9286fac5b3782d135019",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "True",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-135031-0022 (CC BY 4.0), reference is the corpus transcript, first 0.72 s, cut point from faster-whisper word timestamps"
+      }
+    },
+    {
+      "id": "cut-128104-0000",
+      "file": "cut-128104-0000.ogg",
+      "sha256": "10134e7a15cd1c41a1c59b5282dcf69a49f447c958c82ab3b77c771338baf1ef",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Mr. Quilter",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-128104-0000 (CC BY 4.0), reference is the corpus transcript, first 1.18 s, cut point from faster-whisper word timestamps"
+      }
+    },
+    {
+      "id": "cut-141231-0004",
+      "file": "cut-141231-0004.ogg",
+      "sha256": "2e171c709932e5ab3b418c6e2e905c5961d301fcf29cb7bc458e484b970a447e",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "One minute",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0004 (CC BY 4.0), reference is the corpus transcript, first 1.02 s, cut point from faster-whisper word timestamps"
+      }
+    },
+    {
+      "id": "cut-128104-0001",
+      "file": "cut-128104-0001.ogg",
+      "sha256": "764f831484f6c78c73ae476d6530c39c113b277e355120e8244a2a93d10ec077",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Nor is mr.",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-128104-0001 (CC BY 4.0), 0.0-1.26 s, words 3 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-128104-0012",
+      "file": "cut-128104-0012.ogg",
+      "sha256": "b4e78f7538b06c6554835c0fe838aecd1eee3071a495373560c067fd539ddf7d",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Only unfortunately",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-128104-0012 (CC BY 4.0), 0.0-1.69 s, words 2 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-135031-0007",
+      "file": "cut-135031-0007.ogg",
+      "sha256": "b829a702df49329b9e996050cfb12717ad39999538b0169ab03821e339fb75d0",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Replied the new king",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-135031-0007 (CC BY 4.0), 2.25-3.47 s, words 4 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-135031-0014",
+      "file": "cut-135031-0014.ogg",
+      "sha256": "0f81f7dfbbc92e164d0af815de60538dbfdfae92a32986caa7298b279288017b",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Where is that",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-135031-0014 (CC BY 4.0), 0.0-1.15 s, words 3 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-135031-0019",
+      "file": "cut-135031-0019.ogg",
+      "sha256": "8c93bc3fe3d8e62af1ed3ee3f6f4a2bb28ba69ff53f05d07d4af33609f4b543d",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "That's funny",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-135031-0019 (CC BY 4.0), 0.0-1.17 s, words 2 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-141231-0000",
+      "file": "cut-141231-0000.ogg",
+      "sha256": "30d542ad93bbb19824cc28fcad9f138ab21985b8e934d25d5b18cc88f8f4216c",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Sir i exist",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0000 (CC BY 4.0), 1.9-3.95 s, words 3 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-141231-0011",
+      "file": "cut-141231-0011.ogg",
+      "sha256": "459757ce28647047d68ed6bf30adaba830d2f6f2989bf676caacc05922baffe0",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Clearly used to command",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0011 (CC BY 4.0), 2.58-4.33 s, words 4 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-141231-0012",
+      "file": "cut-141231-0012.ogg",
+      "sha256": "fa0d36d132946032e5e52b2d62ea9f790ba0626e86b70c9f98f6455e30e0f15f",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Now stand aside",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0012 (CC BY 4.0), 5.62-7.35 s, words 3 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-141231-0014",
+      "file": "cut-141231-0014.ogg",
+      "sha256": "3057af18c201606b30a8ab612b2c2782702a1a88373fb4f9ddc50988028325c1",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Put that away",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0014 (CC BY 4.0), 3.41-4.6 s, words 3 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-141231-0015",
+      "file": "cut-141231-0015.ogg",
+      "sha256": "5d6f2d49a79a313225541c45f6dbc06b69d37574397976a1f1628a21378e179d",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "And still wondering",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0015 (CC BY 4.0), 1.46-3.13 s, words 3 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-141231-0025",
+      "file": "cut-141231-0025.ogg",
+      "sha256": "c3d286e9107b9842918a4027e36fbbdbfbd516e43be33b4bd2ece7ef25571ac7",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Easier than defeat",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0025 (CC BY 4.0), 6.82-7.99 s, words 3 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-141231-0026",
+      "file": "cut-141231-0026.ogg",
+      "sha256": "9ae63f10a5b528cf9881f9328748ab66dcb938048e34c57bb18ac6b69a65697e",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Breathing deeply",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0026 (CC BY 4.0), 0.0-1.28 s, words 2 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "cut-141231-0027",
+      "file": "cut-141231-0027.ogg",
+      "sha256": "8b951aae15640bef96f3b75dfdedaddb2454c94b30423f6c809fed8532eb436a",
+      "split": "holdout",
+      "tags": ["speech", "short", "cut"],
+      "label": {
+        "kind": "speech",
+        "transcript": "When the buzzer sounded",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-141231-0027 (CC BY 4.0), 0.0-1.49 s, words 4 of the corpus transcript, cut points from faster-whisper large-v3 word timestamps, checked by transcribing the cut with large-v3 and large-v3-turbo"
+      }
+    },
+    {
+      "id": "pause-135031-0003-0004",
+      "file": "pause-135031-0003-0004.ogg",
+      "sha256": "98fbb5a3473710fec4ef2b35b074c922e617d6b94366cc89bd21e8acb8ca26f3",
+      "split": "holdout",
+      "tags": ["speech", "long-pause"],
+      "label": {
+        "kind": "speech",
+        "transcript": "The little girl had been asleep but she heard the raps and opened the door The king has fled in disgrace and your friends are asking for you",
+        "provenance": "synthetic",
+        "notes": "LibriSpeech dev-clean 1272-135031-0003 + 4 s digital silence + 1272-135031-0004 (CC BY 4.0)"
+      }
+    },
+    {
+      "id": "ja-fleurs-1607",
+      "file": "ja-fleurs-1607.ogg",
+      "sha256": "7f953a1838a68ec1b2c35af643b329d33e7e6252933fdce1c6050a4f0022c5f4",
+      "split": "holdout",
+      "tags": ["speech", "non-english", "ja"],
+      "label": {
+        "kind": "speech",
+        "transcript": "興味をそそられる村を30分ほど散策するのは価値があります。",
+        "provenance": "synthetic",
+        "notes": "FLEURS ja_jp dev id 1607 (10339149383603832153.wav, CC BY 4.0), reference is the raw corpus transcription"
+      }
+    },
+    {
+      "id": "ns-silence",
+      "file": "ns-silence.ogg",
+      "sha256": "a6d435cdcf91616f7551cdc6658c9339ed4b6d8179f6256cb1f9d1ae6072fc30",
+      "split": "holdout",
+      "tags": ["nonspeech"],
+      "label": {
+        "kind": "nonspeech",
+        "provenance": "synthetic",
+        "notes": "ffmpeg-generated: digital silence 2 s"
+      }
+    },
+    {
+      "id": "ns-noise-60",
+      "file": "ns-noise-60.ogg",
+      "sha256": "195fb25fa6124d66c18428fe8a2bcb36c6127f08cb57f3bff79323a62919849c",
+      "split": "holdout",
+      "tags": ["nonspeech"],
+      "label": {
+        "kind": "nonspeech",
+        "provenance": "synthetic",
+        "notes": "ffmpeg-generated: white noise about -60 dBFS, 3 s"
+      }
+    },
+    {
+      "id": "ns-noise-45",
+      "file": "ns-noise-45.ogg",
+      "sha256": "fd5f1a068ad67dd219470e5f62cca2dd40f1693100739290ba8532cd32c06d56",
+      "split": "holdout",
+      "tags": ["nonspeech"],
+      "label": {
+        "kind": "nonspeech",
+        "provenance": "synthetic",
+        "notes": "ffmpeg-generated: pink noise about -45 dBFS, 2 s"
+      }
+    },
+    {
+      "id": "ns-noise-short",
+      "file": "ns-noise-short.ogg",
+      "sha256": "61744a2f6e8129f8c020cf0553227c75b84eff998ba2535b32c32f2591423ff2",
+      "split": "holdout",
+      "tags": ["nonspeech"],
+      "label": {
+        "kind": "nonspeech",
+        "provenance": "synthetic",
+        "notes": "ffmpeg-generated: pink noise about -54 dBFS, 0.5 s (production echo snippets were 0.5-3 s)"
+      }
+    },
+    {
+      "id": "ns-hum",
+      "file": "ns-hum.ogg",
+      "sha256": "bf3c754174b9f938fd0acb5d6c34e10344af216cf1fe1cadeeae5c07fcf58a59",
+      "split": "holdout",
+      "tags": ["nonspeech"],
+      "label": {
+        "kind": "nonspeech",
+        "provenance": "synthetic",
+        "notes": "ffmpeg-generated: 60/120 Hz mains hum about -34 dBFS, 2 s"
+      }
+    },
+    {
+      "id": "ns-keyboard",
+      "file": "ns-keyboard.ogg",
+      "sha256": "18e0a723054f635e3019e44ba12db27cb7e7bef74fe6cde33ad1b9416b870f31",
+      "split": "holdout",
+      "tags": ["nonspeech"],
+      "label": {
+        "kind": "nonspeech",
+        "provenance": "synthetic",
+        "notes": "ffmpeg-generated: keyboard-like decaying clicks every 173 ms, 3 s"
+      }
+    },
+    {
+      "id": "ns-breath",
+      "file": "ns-breath.ogg",
+      "sha256": "2cfc0a1e67d967d8f57265f3d8cbb442e444fdd01b318cfa80c68f8da28e055e",
+      "split": "holdout",
+      "tags": ["nonspeech"],
+      "label": {
+        "kind": "nonspeech",
+        "provenance": "synthetic",
+        "notes": "ffmpeg-generated: breath-like band-passed noise swell, 1.5 s"
+      }
+    },
+    {
+      "id": "tts-syn-00",
+      "file": "tts-syn-00.ogg",
+      "sha256": "4bf27346ce54ef8618b556ab52eb2ec501d72c9f50428ca89f0e736fe707d18f",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Okay, so tonight the Kwylt raid starts at nine, and Xaerith is leading the first wing.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice coral"
+      },
+      "dictionary": [
+        "Kwylt",
+        "Xaerith",
+        "Vaelmora",
+        "Thornspire Keep",
+        "Gloomwarden",
+        "Ysolde",
+        "Brightmaw",
+        "Oathfyre",
+        "DKP"
+      ]
+    },
+    {
+      "id": "tts-syn-02",
+      "file": "tts-syn-02.ogg",
+      "sha256": "30f39ced2de6810e55d06baef075a9431b28ae7a246d6477ddfd95a8751f9cc6",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms", "noisy"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Thornspire Keep drops the healer trinket, so let's prioritize that run on Sunday.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice ash, mixed with generated pink noise"
+      },
+      "dictionary": [
+        "Kwylt",
+        "Xaerith",
+        "Vaelmora",
+        "Thornspire Keep",
+        "Gloomwarden",
+        "Ysolde",
+        "Brightmaw",
+        "Oathfyre",
+        "DKP"
+      ]
+    },
+    {
+      "id": "tts-syn-05",
+      "file": "tts-syn-05.ogg",
+      "sha256": "3532ec0c63fc59488dd1c98042aa0606fbdf944d6e67b6b316696fd3ae7c6868",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms", "noisy"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Ysolde said she can tank, but Brightmaw needs to swap to healing.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice ash, mixed with generated pink noise"
+      },
+      "dictionary": [
+        "Kwylt",
+        "Xaerith",
+        "Vaelmora",
+        "Thornspire Keep",
+        "Gloomwarden",
+        "Ysolde",
+        "Brightmaw",
+        "Oathfyre",
+        "DKP"
+      ]
+    },
+    {
+      "id": "tts-syn-31",
+      "file": "tts-syn-31.ogg",
+      "sha256": "effbc7139f9feddaaf0b7e12b654d1759edecd4b38bf0fc1eae2a1ccfd8ddffc",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Tadhg, you need to call the flank earlier, we lost two rounds on that.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice onyx"
+      },
+      "dictionary": [
+        "Saoirse",
+        "Tadhg",
+        "Aoife",
+        "Wojciech",
+        "Xochitl",
+        "Ngozi",
+        "Nhaelis",
+        "Siobhan"
+      ]
+    },
+    {
+      "id": "tts-syn-35",
+      "file": "tts-syn-35.ogg",
+      "sha256": "05bf88a7b0d4c21bdef46e8f9d174be8c723a56a7f0660dfe96f9553d5fa943a",
+      "split": "holdout",
+      "tags": ["speech", "dictionary-terms", "noisy"],
+      "label": {
+        "kind": "speech",
+        "transcript": "Nhaelis is the map we keep losing on, so let's drill it twice this week.",
+        "provenance": "synthetic",
+        "notes": "Made-up sentence and terms, OpenAI gpt-4o-mini-tts voice ash, mixed with generated pink noise"
+      },
+      "dictionary": [
+        "Saoirse",
+        "Tadhg",
+        "Aoife",
+        "Wojciech",
+        "Xochitl",
+        "Ngozi",
+        "Nhaelis",
+        "Siobhan"
+      ]
+    }
+  ]
+}
