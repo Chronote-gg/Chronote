@@ -77,7 +77,8 @@ test.each(["login", "dependencies"])(
 test.each([
   {
     mode: "api" as const,
-    startup: ["webServer"],
+    // A new ECS task empties its temp base before anything can write to it.
+    startup: ["clearTemp", "webServer"],
     eligible: [
       "finisher",
       "meetingUpdate",
@@ -88,7 +89,7 @@ test.each([
   },
   {
     mode: "bot" as const,
-    startup: ["login"],
+    startup: ["clearTemp", "login"],
     eligible: ["botWork", "finisher", "meetingUpdate"],
   },
 ])(

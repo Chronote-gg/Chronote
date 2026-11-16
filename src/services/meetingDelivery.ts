@@ -71,7 +71,10 @@ export const DELIVERY_DONE: RecordingRecoveryState = {
 };
 
 const createdMessageSchema = discordEditorMessageSchema.pick({ id: true });
-const channelMessagesSchema = z.array(discordEditorMessageSchema);
+/** Only ids are required of a page, so paging sees every message. */
+const channelPageSchema = z.array(
+  z.object({ id: discordEditorMessageSchema.shape.id }).passthrough(),
+);
 const actionRowsSchema = z.array(
   z.object({
     components: z.array(z.object({ custom_id: z.string().optional() })),
@@ -170,6 +173,17 @@ function snowflakeTime(id: string): number {
 type ChannelReadback = { botId: string; messages: DiscordEditorMessage[] };
 
 /**
+ * A message that does not parse cannot be one this bot posted, so it is
+ * dropped from matching rather than failing the whole read.
+ */
+function readable(page: unknown[]): DiscordEditorMessage[] {
+  return page.flatMap((message) => {
+    const parsed = discordEditorMessageSchema.safeParse(message);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+/**
  * Reads the part of the channel where messages posted without a saved id would
  * be. Recorded chunk ids are a floor, so with any recorded the read goes forward
  * from the last one; otherwise it reads recent history newest first, back to
@@ -186,7 +200,7 @@ async function readChannel(input: {
     await transport.getBotIdentity(signal),
   ).id;
   const list = async (page: { after?: string; before?: string }) =>
-    channelMessagesSchema.parse(
+    channelPageSchema.parse(
       await transport.listMessages({
         channelId,
         ...page,
@@ -196,7 +210,7 @@ async function readChannel(input: {
     );
   const found: DiscordEditorMessage[] = [];
   const last = history.notesMessageIds?.at(-1);
-  if (last) found.push(...(await list({ after: last })));
+  if (last) found.push(...readable(await list({ after: last })));
   else {
     const presentation = presentationFromHistory(history);
     const captureEnd = (
@@ -205,7 +219,7 @@ async function readChannel(input: {
     let before: string | undefined;
     for (let page = 0; page < NOTES_READBACK_MAX_PAGES; page++) {
       const messages = await list({ before });
-      found.push(...messages);
+      found.push(...readable(messages));
       const oldest = messages
         .map((message) => message.id)
         .reduce<string | undefined>(

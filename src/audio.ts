@@ -5,7 +5,6 @@ export {
   closeOutputFile,
   closeFailedInitializationOutput,
   buildMixedAudio,
-  cleanupSpeakerTracks,
 } from "./services/audioPersistenceService";
 import {
   getAudioBytes,
@@ -60,6 +59,7 @@ import { formatParticipantLabel } from "./utils/participants";
 import path from "node:path";
 import { maybeRespondLive } from "./liveVoice";
 import { ensureMeetingTempDirSync } from "./services/tempFileService";
+import { markCaptureIncomplete } from "./utils/captureIncomplete";
 
 function generateNewSnippet(userId: string, timestamp?: number): AudioSnippet {
   return {
@@ -574,7 +574,7 @@ export async function subscribeToUserVoice(
     const onDecoderError = (err: Error) => {
       if (subscriptionState.suppressResubscribe) return;
       if (isCaptureActive(meeting)) {
-        meeting.audioData.captureIncomplete = true;
+        markCaptureIncomplete(meeting, "opus-decoder-error");
       }
       subscriptionState.decoderErrorCount += 1;
       console.warn(
@@ -591,7 +591,7 @@ export async function subscribeToUserVoice(
     const onOpusError = (err: Error) => {
       if (subscriptionState.suppressResubscribe) return;
       if (isCaptureActive(meeting)) {
-        meeting.audioData.captureIncomplete = true;
+        markCaptureIncomplete(meeting, "opus-stream-error");
       }
       console.warn(
         `Opus stream error: meetingId=${meeting.meetingId} message=${err.message}`,
@@ -601,7 +601,7 @@ export async function subscribeToUserVoice(
     opusStream.on("error", onOpusError);
     const onDavePendingInput = () => {
       if (!subscriptionState.suppressResubscribe && isCaptureActive(meeting)) {
-        meeting.audioData.captureIncomplete = true;
+        markCaptureIncomplete(meeting, "dave-pending-input");
       }
     };
     opusStream.on("davePendingInput", onDavePendingInput);
@@ -620,7 +620,7 @@ export async function subscribeToUserVoice(
     const onDecodedError = (err: Error) => {
       if (subscriptionState.suppressResubscribe) return;
       if (isCaptureActive(meeting)) {
-        meeting.audioData.captureIncomplete = true;
+        markCaptureIncomplete(meeting, "decoded-stream-error");
       }
       console.warn(
         `Decoded stream error: meetingId=${meeting.meetingId} message=${err.message}`,
@@ -715,7 +715,7 @@ export async function subscribeToUserVoice(
     const current = getVoiceSubscriptions(meeting).get(userId);
     const ownsAttempt = createdState ? current === createdState : !current;
     if (ownsAttempt && isCaptureActive(meeting)) {
-      meeting.audioData.captureIncomplete = true;
+      markCaptureIncomplete(meeting, "voice-subscribe-failed");
     }
     if (createdState) {
       clearVoiceSubscription(meeting, userId, createdState);

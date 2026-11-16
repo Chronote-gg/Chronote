@@ -400,9 +400,9 @@ test("a failed notes generation is retried rather than saved", async () => {
   expect(world.discord.requests).toHaveLength(0);
 });
 
-test("a recording upload failure does not change the outcome", async () => {
-  const world = setup(processingRow());
-  const { directory, recordingPath } = await recordingDirectory();
+type World = ReturnType<typeof setup>;
+
+function failRecordingUpload(world: World) {
   jest
     .mocked(world.deps.upload)
     .mockImplementation(async (key, body) =>
@@ -410,6 +410,41 @@ test("a recording upload failure does not change the outcome", async () => {
         ? Promise.reject(new Error("Synthetic storage outage"))
         : storedObject(key, body),
     );
+}
+
+/** The closing worker's first attempt, from the normal loader's folder. */
+function finishNormal(
+  world: World,
+  directory: string,
+  recordingPath?: string,
+  signal?: AbortSignal,
+) {
+  return world.finish(
+    loads(
+      finishInput({
+        source: "normal",
+        localDirectory: directory,
+        ...(recordingPath ? { recordingPath } : {}),
+      }),
+    ),
+    signal ? { signal } : undefined,
+  );
+}
+
+/** An attempt stopped while generating notes, as shutdown aborts it. */
+function abortDuringNotes() {
+  const external = new AbortController();
+  jest.mocked(getNotes).mockImplementationOnce(async () => {
+    external.abort();
+    throw new Error("Synthetic abort");
+  });
+  return external;
+}
+
+test("a recording upload failure does not change the outcome", async () => {
+  const world = setup(processingRow());
+  const { directory, recordingPath } = await recordingDirectory();
+  failRecordingUpload(world);
   await world.finish(
     loads(finishInput({ recordingPath, localDirectory: directory })),
   );
@@ -491,16 +526,54 @@ test("a transcript upload failure keeps the chat log", async () => {
   expect(world.current().chatS3Key).toMatch(/chat.json$/);
 });
 
-test("the local directory survives a failed attempt and is removed after completion", async () => {
+// Only the closing worker's first attempt uses the normal loader; every retry
+// loads through the recovery loader from the saved checkpoint.
+test("a failed processing attempt uploads the local recording, frees the directory, and the retry finishes from the recovery input", async () => {
+  const world = setup(processingRow());
+  const { directory, recordingPath } = await recordingDirectory();
+  jest.mocked(getNotes).mockRejectedValueOnce(new Error("Synthetic outage"));
+  await finishNormal(world, directory, recordingPath);
+  expect(world.current().finish).toMatchObject({ attempts: 1 });
+  expect(world.current().audioS3Key).toMatch(/audio_combined\.mp3$/);
+  expect(await exists(directory)).toBe(false);
+  await world.finish(loads(finishInput({ source: "recovery" })));
+  expect(world.current()).toMatchObject({
+    status: "complete",
+    notes: GENERATED_NOTE,
+  });
+  expect(world.current().finish).toBeUndefined();
+});
+
+test("a failed processing attempt whose recording upload fails keeps the local directory", async () => {
+  const world = setup(processingRow());
+  const { directory, recordingPath } = await recordingDirectory();
+  jest.mocked(getNotes).mockRejectedValueOnce(new Error("Synthetic outage"));
+  failRecordingUpload(world);
+  await finishNormal(world, directory, recordingPath);
+  expect(world.current().finish).toMatchObject({ attempts: 1 });
+  expect(world.current().audioS3Key).toBeUndefined();
+  expect(await exists(directory)).toBe(true);
+  expect(console.warn).toHaveBeenCalledWith(
+    "Meeting local folder kept for an unsaved recording",
+    expect.objectContaining({ meetingId: world.current().meetingId }),
+  );
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
+test("an attempt aborted before its recording is uploaded keeps the local directory", async () => {
+  const world = setup(processingRow());
+  const { directory, recordingPath } = await recordingDirectory();
+  const external = abortDuringNotes();
+  await finishNormal(world, directory, recordingPath, external.signal);
+  expect(await exists(directory)).toBe(true);
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
+test("an aborted attempt with no recording to save frees the local directory", async () => {
   const world = setup(processingRow());
   const { directory } = await recordingDirectory();
-  const normal = { source: "normal" as const, localDirectory: directory };
-  jest.mocked(getNotes).mockRejectedValueOnce(new Error("Synthetic outage"));
-  await world.finish(loads(finishInput(normal)));
-  expect(world.current().finish).toMatchObject({ attempts: 1 });
-  expect(await exists(directory)).toBe(true);
-  await world.finish(loads(finishInput(normal)));
-  expect(world.current().finish).toBeUndefined();
+  const external = abortDuringNotes();
+  await finishNormal(world, directory, undefined, external.signal);
   expect(await exists(directory)).toBe(false);
 });
 

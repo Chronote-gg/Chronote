@@ -147,6 +147,27 @@ export function classifyFinisherRow(
 const isStuck = (row: FinisherRow, now: number) =>
   isOpen(row.status) && ageOf(row, now) > LIFECYCLE.stuckAlarmSeconds;
 
+/** When a terminal row's delivery started failing, once that has lasted past the alarm threshold. */
+function deliveryFailingSince(row: FinisherRow, now: number) {
+  const since =
+    row.finish?.phase === "deliver" ? row.finish.deliverSince : undefined;
+  return since !== undefined &&
+    now - since > LIFECYCLE.deliveryStuckAlarmSeconds
+    ? since
+    : undefined;
+}
+
+/** The stuck alarm line, for an unfinished row or a delivery that keeps failing. */
+function logIfStuck(row: FinisherRow, now: number) {
+  const failingSince = deliveryFailingSince(row, now);
+  if (failingSince !== undefined)
+    console.error(MEETING_STUCK_LOG, {
+      ...logContext(row),
+      deliveryFailingSince: isoAt(failingSince),
+    });
+  else if (isStuck(row, now)) console.error(MEETING_STUCK_LOG, logContext(row));
+}
+
 /**
  * Settles with `work`, or rejects once `ms` passes or `signal` aborts even if
  * `work` ignores its signal, so one hung call can hold neither the scan nor stop.
@@ -472,7 +493,7 @@ export function createMeetingFinisherLoop(deps: MeetingFinisherDeps) {
   /** Whether the row was taken for an attempt. */
   async function consider(row: FinisherRow, signal: AbortSignal) {
     const now = nowSeconds();
-    if (isStuck(row, now)) console.error(MEETING_STUCK_LOG, logContext(row));
+    logIfStuck(row, now);
     if (running.has(rowId(row)) || deps.isCapturing(row.meetingId))
       return false;
     const lease = isOpen(row.status)
