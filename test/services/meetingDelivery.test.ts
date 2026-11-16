@@ -63,6 +63,7 @@ import {
   snowflake,
   GUILD_ID,
   START,
+  MEETING_SECONDS,
   START_MESSAGE_ID,
   POSTING_STARTS_AT,
   NOTES,
@@ -578,6 +579,58 @@ describe("meeting delivery", () => {
       kind: "complete",
       path: "recovery",
     });
+  });
+
+  it("a channel with human, system, webhook and unreadable messages delivers the notes once, and a retry after a partial delivery repeats none", async () => {
+    const discord = fakeDiscord();
+    discord.state.chat(3);
+    const at = (second: number) =>
+      snowflake(Date.parse(START) + (MEETING_SECONDS + second) * 1000);
+    discord.state.raw.push(
+      {
+        id: at(10),
+        channel_id: TEXT_CHANNEL_ID,
+        type: 7,
+        author: { id: USER_ID, username: "synthetic-user" },
+        content: "",
+        embeds: [],
+        attachments: [],
+      },
+      {
+        id: at(20),
+        channel_id: TEXT_CHANNEL_ID,
+        webhook_id: "800",
+        author: { id: "800", username: "Synthetic hook", avatar: null },
+        content: "synthetic webhook post",
+        embeds: [],
+        attachments: [],
+      },
+      { id: at(30), channel_id: TEXT_CHANNEL_ID },
+    );
+    const notes = renderMeetingDelivery(history()).notes;
+    discord.state.fail = (request, posts) =>
+      request.method === "POST" && posts === 2
+        ? new Response("{}", { status: 500 })
+        : undefined;
+    const crashed = await deliverMeeting({
+      history: history(),
+      save: async (patch) => (patch.notesMessageIds ? undefined : history()),
+      transport: discord.transport,
+      signal: signal(),
+      path: "live",
+    });
+    expect(crashed).toMatchObject({ kind: "temporary" });
+    discord.state.fail = undefined;
+
+    const { outcome, current } = await run(discord, history());
+    expect(outcome).toEqual({ kind: "delivered" });
+    const posted = discord.messages.filter(
+      (m) => m.author.id === BOT_ID && m.id !== START_MESSAGE_ID,
+    );
+    expect(posted.map((m) => m.embeds[0].title)).toEqual(
+      notes.map((n) => n.embeds[0].title),
+    );
+    expect(current().notesMessageIds).toEqual(posted.map((m) => m.id));
   });
 
   it("ids recorded on the row are never reposted even when the readback cannot see them", async () => {

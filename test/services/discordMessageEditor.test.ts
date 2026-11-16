@@ -108,9 +108,70 @@ describe("Discord message editor", () => {
     });
   });
 
+  // Discord's REST shapes: `bot` is sent only for bot users, system messages
+  // carry a non-zero `type`, and a webhook author is the webhook itself.
+  const restMessage = {
+    id: "300",
+    channel_id: "200",
+    content: "",
+    timestamp: "2026-10-19T00:00:00.000Z",
+    edited_timestamp: null,
+    tts: false,
+    mention_everyone: false,
+    mentions: [],
+    mention_roles: [],
+    attachments: [],
+    embeds: [],
+    pinned: false,
+    type: 0,
+  };
+  it.each([
+    [
+      "human",
+      {
+        ...restMessage,
+        content: "synthetic chatter",
+        author: { id: "600", username: "synthetic-user", global_name: null },
+        flags: 0,
+        components: [],
+      },
+    ],
+    [
+      "bot",
+      {
+        ...restMessage,
+        author: { id: "100", username: "Synthetic bot", bot: true },
+        embeds: [{ title: "Notes" }],
+        components: [{ type: 1, components: [] }],
+        flags: 0,
+      },
+    ],
+    [
+      "system",
+      {
+        ...restMessage,
+        type: 7,
+        author: { id: "600", username: "synthetic-user" },
+      },
+    ],
+    [
+      "webhook",
+      {
+        ...restMessage,
+        content: "synthetic webhook post",
+        author: { id: "800", username: "Synthetic hook", avatar: null },
+        webhook_id: "800",
+      },
+    ],
+  ])("parses a realistic %s message", async (_, body) => {
+    const parsed = await setup(body).editor.getMessage(target);
+    expect(parsed?.author.id).toBe(body.author.id);
+    expect(parsed?.author.bot).toBe(body.author.bot);
+  });
+
   it.each([
     { ...message, channel_id: undefined },
-    { ...message, author: { id: "100" } },
+    { ...message, author: { username: "missing-id" } },
     { ...message, embeds: [null] },
     { ...message, attachments: [{ filename: "missing-id.txt" }] },
     { ...message, content: 42 },

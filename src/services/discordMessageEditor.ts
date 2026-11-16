@@ -17,7 +17,10 @@ export const discordEditorMessageSchema = z
   .object({
     id: discordIdSchema,
     channel_id: discordIdSchema,
-    author: z.object({ id: discordIdSchema, bot: z.boolean() }).passthrough(),
+    // Discord sends `bot` only for bot users; human authors omit it.
+    author: z
+      .object({ id: discordIdSchema, bot: z.boolean().optional() })
+      .passthrough(),
     content: z.string(),
     embeds: z.array(discordObjectSchema),
     components: z.array(discordObjectSchema).default([]),
