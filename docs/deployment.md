@@ -64,11 +64,27 @@ Protection is what makes ECS keep a draining task alive. Because it always expir
 
 The script never changes the load balancer binding, the listener or the desired count. Task definition revisions only ever increase. On success the post-deploy jobs run (frontend publication, and in production prompt promotion and the OpenAI connection sync). The old task drains on its own and the workflow does not wait for it.
 
+### Deploy environment
+
+The five production deploy jobs (`deploy-docs`, `deploybackend`, `deploy-frontend`, `promote-prompts`, `sync-openai-connection`) run in the GitHub environment named by the repository variable `DEPLOY_ENVIRONMENT`, and in `production` while it is unset. `production` has one required reviewer, so each job waits for an approval. `production-deploy` has no reviewer: it admits only `master`, administrators cannot bypass it, and a merge deploys without a click. Terraform Apply always runs in `production` and keeps its approval; nothing here changes that environment. Both deploy roles (`PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` and `PRODUCTION_PROMPT_GUARD_ROLE_ARN`) trust both environments on `refs/heads/master` only.
+
+Without a reviewer, a dispatch of `deploy.yml` from `master` runs unattended too, including one with `retire_older_tasks`, so whoever can dispatch workflows can now deploy and retire without the owner's click.
+
+#### Switching to unattended deploys
+
+1. **Plan and Apply `deployment-runtime`** in production. The scope creates `production-deploy` with its `master` branch policy and the deploy variables Terraform manages, and updates both deploy roles' trust. `scripts/deployment/validate-runtime-plan.cjs` refuses an environment with a reviewer, admin bypass or another branch, and any variable outside the deploy set.
+2. **Copy the hand-set values** from `production` into `production-deploy`: the variables `DEPLOYMENT_LISTENER_ARN`, `DEPLOYMENT_CONTROL_TABLE`, `PRODUCTION_PROMPT_GUARD_ROLE_ARN`, `VITE_POSTHOG_KEY` and `VITE_POSTHOG_HOST`, any `deploy.yml` variable the Apply did not create there (compare the two lists; `DOCS_SITE_URL` and the `DOCS_ALGOLIA_*` variables exist only when their Terraform inputs are set), and the environment secret `TERRAFORM_PRIVATE_STORAGE_JSON`. Do not create a variable by hand that Terraform manages in `production-deploy`, or the next Apply that creates it fails.
+3. **Set the repository variable** `DEPLOY_ENVIRONMENT=production-deploy` (repository settings, not an environment). The next run uses it.
+
+To go back, delete the repository variable `DEPLOY_ENVIRONMENT`. Runs that start afterwards wait for approval in `production` again.
+
 ### One deployment at a time
 
 The backend job holds the concurrency group `backend-rollout-production` (Sandbox: `backend-rollout-sandbox`) with `cancel-in-progress: false`, and the drain wait and the rollout run inside that one job, so no other run can roll out between them. GitHub keeps one pending job per group and cancels the older pending one, so when several runs queue, the newest commit is the one that deploys. The job times out at 240 minutes.
 
-A deployment that arrives while an older worker drains therefore waits for that worker's live meeting, up to the length of a meeting. That is the only wait that depends on a meeting; the others are the five minute protection wait, the 15 minute ready wait and the environment approval.
+A deployment that arrives while an older worker drains therefore waits for that worker's live meeting, up to the length of a meeting. That is the only wait that depends on a meeting; the others are the five minute protection wait, the 15 minute ready wait and, while the jobs run in `production`, the environment approval.
+
+Terraform Apply holds the same group (`backend-rollout-${{ inputs.github_environment }}`) for its whole job, so a backend deploy that arrives during an Apply queues behind it. Because GitHub keeps one pending job per group, a pending Apply and a pending backend deploy displace each other; dispatch an Apply only when no deploy is running or queued.
 
 ### Skipping the drain wait
 
@@ -88,7 +104,7 @@ The deploy role may call `StopTask` only when `TFVAR_ENABLE_DEPLOY_RETIRE=true` 
 
 ### Terraform Apply during a deployment
 
-Production Terraform Apply refuses while any `deploy.yml` run is in progress, queued, waiting or pending (`productionWriters` in `scripts/deployment/terraform-native.cjs`). A deploy can hold its backend job for up to about four hours (160 minutes of drain wait, 5 minutes of protection wait, the build, and up to 15 minutes of ready wait), and Apply stays refused for all of it. The check is a snapshot, not a lock: a deploy that starts after it can still overlap the Apply, so avoid merging while an approved Apply is running.
+Production Terraform Apply refuses while any `deploy.yml` run is in progress, queued, waiting or pending (`productionWriters` in `scripts/deployment/terraform-native.cjs`). A deploy can hold its backend job for up to about four hours (160 minutes of drain wait, 5 minutes of protection wait, the build, and up to 15 minutes of ready wait), and Apply stays refused for all of it. The check is a snapshot, so Apply also holds the backend rollout lock (see [one deployment at a time](#one-deployment-at-a-time)): a merge after the check runs CI and `deploy-docs`, then its backend job, and with it the frontend, prompt and connection jobs, waits until the Apply finishes. `deploy-docs` does not take that lock and can publish docs during an Apply.
 
 ### Changing a Terraform-managed environment variable
 
@@ -105,7 +121,7 @@ It takes three steps, and the third is the one people miss: set the value, apply
 | `AWS_REGION`, `AWS_ACCOUNT_ID`, `ECR_REPOSITORY`                          | Credentials, identity check, image push                                  | The job fails                                    |
 | `PRODUCTION_BACKEND_DEPLOY_ROLE_ARN` or `SANDBOX_BACKEND_DEPLOY_ROLE_ARN` | The deploy role                                                          | The job fails                                    |
 
-Terraform writes every variable above into the GitHub environment except `DEPLOYMENT_LISTENER_ARN` and `DEPLOYMENT_CONTROL_TABLE`. Set `DEPLOYMENT_LISTENER_ARN` by hand to the `listener_arn` of the Terraform output `deployment_routing`. A bot-only service with no load balancer binding does not need it.
+Terraform writes every variable above into the GitHub environment except `DEPLOYMENT_LISTENER_ARN` and `DEPLOYMENT_CONTROL_TABLE` (in production, into both `production` and `production-deploy`). Set `DEPLOYMENT_LISTENER_ARN` by hand to the `listener_arn` of the Terraform output `deployment_routing`. A bot-only service with no load balancer binding does not need it.
 
 ## Alarms
 
@@ -128,6 +144,8 @@ The alarm resources need a Terraform apply, in production after the owner's boot
 No Sandbox Terraform Plan/Apply scope carries the deploy role's `PutMetricData` and `StopTask` statements: `deployment-runtime` covers production only, and Sandbox refuses `full`. Until then, in Sandbox a drain timeout fails on the metric call with an access error, the drain timeout alarm cannot fire, and `retire_older_tasks` fails at its first stop, so a Sandbox rehearsal cannot exercise retire or the drain alarm. The owner still has to decide whether to add a Sandbox scope for those statements or apply them another reviewed way.
 
 ## First deployment of the worker design
+
+The first production deployment happened on 2026-11-16. The approval hold points below describe that run, when the deploy jobs still ran in `production`.
 
 The first deployment replaces a task that still runs the old deployment protocol. The two must never process the same meeting. A new worker reads old state in exactly one place: while any old runtime record (partition `ENV`, sort key `RUNTIME#...` in the deployment control table) has a heartbeat newer than two minutes, or while those records cannot be read, it is ready but **not eligible**. In that standby it takes no meetings, runs no finisher and never asks for protection. That check is removed in the following release.
 
