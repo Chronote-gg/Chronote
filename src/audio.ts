@@ -5,7 +5,6 @@ export {
   closeOutputFile,
   closeFailedInitializationOutput,
   buildMixedAudio,
-  cleanupSpeakerTracks,
 } from "./services/audioPersistenceService";
 import {
   getAudioBytes,
