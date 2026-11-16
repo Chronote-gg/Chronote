@@ -26,11 +26,83 @@ resource "aws_iam_role" "production_terraform" {
   }
 }
 locals {
-  deploy_role_arn     = "arn:aws:iam::${var.production_account_id}:role/meeting-notes-prod-github-deploy"
-  site_policy_arn     = "arn:aws:iam::${var.production_account_id}:policy/meeting-notes-prod-site-publishing"
-  dynamodb_policy_arn = "arn:aws:iam::${var.production_account_id}:policy/meeting-notes-prod-bot-dynamodb-policy"
-  routing_policy_arn  = "arn:aws:iam::${var.production_account_id}:policy/meeting-notes-prod-deployment-routing"
+  region_account = "us-east-1:${var.production_account_id}"
+  iam_arn        = "arn:aws:iam::${var.production_account_id}"
+  # Production and Sandbox share the account, so production writes are bound
+  # by the meeting-notes-prod- name wherever an ARN carries the name.
+  named_resources = [
+    "arn:aws:dynamodb:${local.region_account}:table/meeting-notes-prod-*",
+    "arn:aws:s3:::meeting-notes-prod-*",
+    "arn:aws:logs:${local.region_account}:log-group:/ecs/meeting-notes-prod-*",
+    "arn:aws:logs:${local.region_account}:log-group:/aws/lambda/meeting-notes-prod-*",
+    "arn:aws:logs:${local.region_account}:log-group:/vpc/flow/app-vpc*",
+    "arn:aws:cloudwatch:${local.region_account}:alarm:meeting-notes-prod-*",
+    "arn:aws:sns:${local.region_account}:meeting-notes-prod-*",
+    "arn:aws:lambda:${local.region_account}:function:meeting-notes-prod-*",
+    "arn:aws:events:${local.region_account}:rule/meeting-notes-prod-*",
+    "arn:aws:ecr:${local.region_account}:repository/meeting-notes-prod-*",
+    "arn:aws:ecs:${local.region_account}:*/meeting-notes-prod-*",
+    "arn:aws:elasticloadbalancing:${local.region_account}:*/meeting-notes-prod-*",
+    "arn:aws:secretsmanager:${local.region_account}:secret:meeting-notes-prod/*",
+  ]
+  # The flow log role keeps its legacy unprefixed name in production.
+  iam_roles = ["${local.iam_arn}:role/meeting-notes-prod-*", "${local.iam_arn}:role/vpc_flow_logs_role"]
+  # Application policies plus the only AWS managed policies _infra attaches.
+  attachable_policies = [
+    "${local.iam_arn}:policy/meeting-notes-prod-*",
+    "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+    "arn:aws:iam::aws:policy/service-role/AmazonGrafanaCloudWatchAccess",
+    "arn:aws:iam::aws:policy/AmazonPrometheusQueryAccess",
+  ]
+  generated_id_actions = [
+    "ec2:*Vpc*", "ec2:*Subnet*", "ec2:*InternetGateway*", "ec2:*Route*", "ec2:*SecurityGroup*", "ec2:*FlowLogs", "ec2:CreateTags", "ec2:DeleteTags",
+    "cloudfront:*", "acm:*", "appconfig:*", "aps:*", "grafana:*", "elasticache:*",
+    "ce:*CostCategoryDefinition", "ce:TagResource", "ce:UntagResource",
+    "route53:ChangeResourceRecordSets", "ecs:RegisterTaskDefinition", "ecs:DeregisterTaskDefinition",
+    "kms:CreateKey", "kms:PutKeyPolicy", "kms:EnableKeyRotation", "kms:UpdateKeyDescription", "kms:TagResource", "kms:UntagResource",
+    "kms:CreateGrant", "kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*",
+  ]
+  iam_write_actions = [
+    "iam:CreateRole", "iam:DeleteRole", "iam:UpdateRole", "iam:UpdateRoleDescription", "iam:UpdateAssumeRolePolicy", "iam:TagRole", "iam:UntagRole",
+    "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:PassRole",
+    "iam:CreatePolicy", "iam:DeletePolicy", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:SetDefaultPolicyVersion", "iam:TagPolicy", "iam:UntagPolicy",
+  ]
+  state_lock_keys = ["${local.state_bucket}/${local.state_key}", "${local.state_bucket}/${local.state_key}-md5"]
+  delivery_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      { Sid = "NamedResources", Effect = "Allow", Action = ["dynamodb:*", "s3:*", "logs:*", "cloudwatch:*", "sns:*", "lambda:*", "events:*", "ecr:*", "ecs:*", "elasticloadbalancing:*", "secretsmanager:*"], Resource = local.named_resources },
+      # These ARNs carry generated IDs, not names. Sandbox resources of these
+      # types are protected by the inline SandboxResources deny instead.
+      { Sid = "GeneratedIdResources", Effect = "Allow", Action = local.generated_id_actions, Resource = "*" },
+      { Sid = "IamWrites", Effect = "Allow", Action = local.iam_write_actions, Resource = concat(local.iam_roles, ["${local.iam_arn}:policy/meeting-notes-prod-*"]) },
+      { Sid = "IamAttachments", Effect = "Allow", Action = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"], Resource = local.iam_roles, Condition = { ArnLike = { "iam:PolicyARN" = local.attachable_policies } } },
+      { Sid = "ApplicationState", Effect = "Allow", Action = "s3:PutObject", Resource = "arn:aws:s3:::${local.state_bucket}/${local.state_key}" },
+      { Sid = "ApplicationStateLocks", Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"], Resource = "arn:aws:dynamodb:${local.region_account}:table/meeting-notes-terraform-state-locks", Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = local.state_lock_keys } } }
+    ]
+  })
 }
+# A full plan reads every resource type in _infra, so reads come from AWS's
+# own read-only policy rather than a hand-kept list.
+resource "aws_iam_role_policy_attachment" "production_terraform_read_only" {
+  count      = var.enable_production_terraform_role ? 1 : 0
+  role       = local.terraform_role_name
+  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+  depends_on = [aws_iam_role.production_terraform]
+}
+resource "aws_iam_policy" "production_terraform_delivery" {
+  count  = var.enable_production_terraform_role ? 1 : 0
+  name   = "meeting-notes-prod-terraform-delivery"
+  policy = local.delivery_policy
+}
+resource "aws_iam_role_policy_attachment" "production_terraform_delivery" {
+  count      = var.enable_production_terraform_role ? 1 : 0
+  role       = local.terraform_role_name
+  policy_arn = aws_iam_policy.production_terraform_delivery[0].arn
+  depends_on = [aws_iam_role.production_terraform]
+}
+# The guardrails live in the role's existing inline policy. Every grant above
+# is limited by these denies, and OwnIdentity keeps the role from editing them.
 resource "aws_iam_role_policy" "production_terraform" {
   count      = var.enable_production_terraform_role ? 1 : 0
   name       = "meeting-notes-prod-terraform-prerequisites"
@@ -38,52 +110,13 @@ resource "aws_iam_role_policy" "production_terraform" {
   depends_on = [aws_iam_role.production_terraform]
   policy = jsonencode({
     Version = "2012-10-17"
-    # The two splices below hold the read-only dependency metadata statements.
-    # They move to an attached managed policy when
-    # enable_artifact_preservation_policy is set, and stay here in their
-    # original positions when it is not, so the default rendering is byte for
-    # byte the installed one. See artifact-preservation.tf for why.
-    # Each splice filters with `if` rather than a conditional, because a
-    # conditional between a populated tuple and `[]` is a type error: tuple
-    # lengths are part of the type, so the branches never unify.
-    Statement = concat([
-      { Sid = "ApplicationState", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = "arn:aws:s3:::${local.state_bucket}/${local.state_key}" },
-      # Terraform 1.16 Workspaces lists workspace_key_prefix plus '/', even for default.
-      { Sid = "DefaultWorkspaceDiscovery", Effect = "Allow", Action = "s3:ListBucket", Resource = "arn:aws:s3:::${local.state_bucket}", Condition = { StringEquals = { "s3:prefix" = "meeting-notes-terraform/" } } },
-      { Sid = "StateLockMetadata", Effect = "Allow", Action = "dynamodb:DescribeTable", Resource = "arn:aws:dynamodb:us-east-1:${var.production_account_id}:table/meeting-notes-terraform-state-locks" },
-      { Sid = "ProductionStateLocks", Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"], Resource = "arn:aws:dynamodb:us-east-1:${var.production_account_id}:table/meeting-notes-terraform-state-locks", Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["${local.state_bucket}/${local.state_key}", "${local.state_bucket}/${local.state_key}-md5"] } } },
-      { Sid = "ControlTable", Effect = "Allow", Action = ["dynamodb:CreateTable", "dynamodb:UpdateTable", "dynamodb:UpdateTimeToLive", "dynamodb:UpdateContinuousBackups", "dynamodb:TagResource", "dynamodb:UntagResource"], Resource = local.control_table_arn },
-      { Sid = "ControlGuard", Effect = "Allow", Action = "dynamodb:GetItem", Resource = local.control_table_arn, Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["ENV"] } } },
-      { Sid = "TableMetadata", Effect = "Allow", Action = ["dynamodb:DescribeTable", "dynamodb:DescribeContinuousBackups", "dynamodb:DescribeTimeToLive", "dynamodb:ListTagsOfResource"], Resource = "arn:aws:dynamodb:us-east-1:${var.production_account_id}:table/meeting-notes-prod-*" },
-      { Sid = "RenewalIndex", Effect = "Allow", Action = "dynamodb:UpdateTable", Resource = "arn:aws:dynamodb:us-east-1:${var.production_account_id}:table/meeting-notes-prod-GuildSubscriptionTable" },
-      { Sid = "KeyMetadata", Effect = "Allow", Action = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListResourceTags"], Resource = var.kms_key_arn },
-      { Sid = "ControlEncryption", Effect = "Allow", Action = ["kms:Encrypt", "kms:Decrypt", "kms:ReEncryptFrom", "kms:ReEncryptTo", "kms:GenerateDataKey", "kms:GenerateDataKeyWithoutPlaintext"], Resource = var.kms_key_arn, Condition = { StringEquals = { "kms:ViaService" = "dynamodb.us-east-1.amazonaws.com", "kms:CallerAccount" = var.production_account_id, "kms:EncryptionContext:aws:dynamodb:tableName" = ["meeting-notes-prod-DeploymentControlTable", "meeting-notes-prod-GuildSubscriptionTable"], "kms:EncryptionContext:aws:dynamodb:subscriberId" = var.production_account_id } } },
-      # DynamoDB requests grants on behalf of the creator. Grantee/retiring keys take principal ARNs, not service
-      # principals, so table creation stays bound by the exact CreateTable ARN instead.
-      { Sid = "ControlServiceGrant", Effect = "Allow", Action = "kms:CreateGrant", Resource = var.kms_key_arn, Condition = { Bool = { "kms:GrantIsForAWSResource" = "true" }, StringEquals = { "kms:ViaService" = "dynamodb.us-east-1.amazonaws.com", "kms:CallerAccount" = var.production_account_id, "kms:GrantConstraintType" = "EncryptionContextSubset" }, "ForAllValues:StringEquals" = { "kms:GrantOperations" = ["Decrypt", "Encrypt", "GenerateDataKey", "GenerateDataKeyWithoutPlaintext", "ReEncryptFrom", "ReEncryptTo", "RetireGrant", "DescribeKey"] } } },
-      # ELB offers no VPC condition for CreateTargetGroup; the saved-plan guard binds it.
-      { Sid = "SpareTargetGroup", Effect = "Allow", Action = ["elasticloadbalancing:CreateTargetGroup", "elasticloadbalancing:ModifyTargetGroup", "elasticloadbalancing:ModifyTargetGroupAttributes", "elasticloadbalancing:AddTags", "elasticloadbalancing:RemoveTags"], Resource = "arn:aws:elasticloadbalancing:us-east-1:${var.production_account_id}:targetgroup/meeting-notes-prod-api-spare/*" },
-      # The runtime plan validator lets only the API target groups' drain delay change.
-      { Sid = "ApiDrainDelay", Effect = "Allow", Action = "elasticloadbalancing:ModifyTargetGroupAttributes", Resource = [for name in ["api-tg", "api-spare"] : "arn:aws:elasticloadbalancing:us-east-1:${var.production_account_id}:targetgroup/meeting-notes-prod-${name}/*"] },
-      # IAM cannot constrain PutRolePolicy's submitted name or body. Trusted source must.
-      { Sid = "RuntimeInlinePolicy", Effect = "Allow", Action = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:PutRolePolicy"], Resource = local.app_role_arn },
-      { Sid = "ManagedPolicies", Effect = "Allow", Action = ["iam:CreatePolicy", "iam:CreatePolicyVersion", "iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions", "iam:ListPolicyTags", "iam:TagPolicy", "iam:UntagPolicy"], Resource = [local.routing_policy_arn, local.site_policy_arn, local.dynamodb_policy_arn] },
-      # The provider prunes the oldest non-default version when the task-role policy already has five.
-      { Sid = "TaskPolicyVersionPrune", Effect = "Allow", Action = "iam:DeletePolicyVersion", Resource = local.dynamodb_policy_arn },
-      # IAM cannot constrain trust or inline documents; the runtime plan validator and protected source must.
-      { Sid = "RuntimeRoles", Effect = "Allow", Action = ["iam:CreateRole", "iam:TagRole", "iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:PutRolePolicy"], Resource = [local.deploy_role_arn, "arn:aws:iam::${var.production_account_id}:role/meeting-notes-prod-prompt-guard"] },
-      { Sid = "DeployRoleAttachments", Effect = "Allow", Action = "iam:AttachRolePolicy", Resource = local.deploy_role_arn, Condition = { ArnEquals = { "iam:PolicyARN" = [local.routing_policy_arn, local.site_policy_arn] } } },
-      ], [for statement in local.identity_metadata_statements : statement if local.inline_dependency_metadata], [
-      { Sid = "SiteBucketMetadata", Effect = "Allow", Action = ["s3:ListBucket", "s3:GetBucketPolicy", "s3:GetBucketAcl", "s3:GetBucketCORS", "s3:GetBucketWebsite", "s3:GetBucketVersioning", "s3:GetAccelerateConfiguration", "s3:GetBucketRequestPayment", "s3:GetBucketLogging", "s3:GetLifecycleConfiguration", "s3:GetReplicationConfiguration", "s3:GetEncryptionConfiguration", "s3:GetBucketObjectLockConfiguration", "s3:GetBucketTagging"], Resource = [for site in ["frontend", "docs"] : "arn:aws:s3:::meeting-notes-prod-${site}-${var.production_account_id}"] },
-      # Site certificate, distribution, origin access control and headers policy IDs are generated; function names are not.
-      { Sid = "SiteCertificateMetadata", Effect = "Allow", Action = ["acm:DescribeCertificate", "acm:ListTagsForCertificate"], Resource = "arn:aws:acm:us-east-1:${var.production_account_id}:certificate/*" },
-      { Sid = "SiteCdnMetadata", Effect = "Allow", Action = ["cloudfront:GetDistribution", "cloudfront:GetOriginAccessControl", "cloudfront:GetResponseHeadersPolicy", "cloudfront:DescribeFunction", "cloudfront:GetFunction", "cloudfront:ListTagsForResource"], Resource = concat([for type in ["distribution", "origin-access-control", "response-headers-policy"] : "arn:aws:cloudfront::${var.production_account_id}:${type}/*"], [for name in ["frontend-route-rewrite", "docs-index-rewrite"] : "arn:aws:cloudfront::${var.production_account_id}:function/meeting-notes-prod-${name}"]) },
-      ], [for statement in local.regional_metadata_statements : statement if local.inline_dependency_metadata], [
-      { Sid = "EvidenceControlReadback", Effect = "Allow", Action = local.capture_reads, Resource = local.bucket_arn },
-      { Sid = "EvidenceConditionalCreate", Effect = "Allow", Action = "s3:PutObject", Resource = local.capture_objects, Condition = { StringEquals = { "s3:if-none-match" = "*", "s3:x-amz-server-side-encryption" = "aws:kms", "s3:x-amz-server-side-encryption-aws-kms-key-id" = var.kms_key_arn } } },
-      { Sid = "EvidenceVersionReadback", Effect = "Allow", Action = "s3:GetObjectVersion", Resource = local.capture_objects },
-      { Sid = "EvidenceEncryption", Effect = "Allow", Action = ["kms:GenerateDataKey", "kms:Decrypt"], Resource = var.kms_key_arn, Condition = { StringEquals = { "kms:ViaService" = "s3.us-east-1.amazonaws.com", "kms:CallerAccount" = var.production_account_id }, StringLike = { "kms:EncryptionContext:aws:s3:arn" = local.capture_objects } } }
-    ])
+    Statement = [
+      { Sid = "OwnIdentity", Effect = "Deny", NotAction = ["iam:Get*", "iam:List*"], Resource = [local.terraform_role_arn, "${local.iam_arn}:policy/meeting-notes-prod-terraform*", "${local.iam_arn}:oidc-provider/*"] },
+      { Sid = "BootstrapState", Effect = "Deny", Action = ["s3:PutObject", "s3:DeleteObject*"], Resource = "arn:aws:s3:::${local.state_bucket}/meeting-notes-terraform/*-bootstrap/*" },
+      # ReadOnlyAccess would otherwise read meeting data, which Terraform never needs.
+      { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:Export*", "s3:GetObject*"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-prod-*", "arn:aws:s3:::meeting-notes-prod-*/*"] },
+      { Sid = "SandboxResources", Effect = "Deny", Action = "*", Resource = "*", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "sandbox" } } }
+    ]
   })
   lifecycle { prevent_destroy = true }
 }
