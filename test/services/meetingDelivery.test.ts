@@ -549,15 +549,12 @@ describe("meeting delivery", () => {
     ).toEqual([]);
   });
 
-  it("more than 100 chat messages posted during the meeting do not hide notes from a resume", async () => {
-    const discord = fakeDiscord();
-    discord.state.chat(150);
-    const notes = renderMeetingDelivery(history()).notes;
+  /** Posts the first notes chunk, then fails the second; the crashed attempt's save never landed, so the row records nothing. */
+  async function crashAfterFirstChunk(discord: ReturnType<typeof fakeDiscord>) {
     discord.state.fail = (request, posts) =>
       request.method === "POST" && posts === 2
         ? new Response("{}", { status: 500 })
         : undefined;
-    // The crashed attempt's save never landed, so the row records nothing.
     const crashed = await deliverMeeting({
       history: history(),
       save: async (patch) => (patch.notesMessageIds ? undefined : history()),
@@ -567,6 +564,13 @@ describe("meeting delivery", () => {
     });
     expect(crashed).toMatchObject({ kind: "temporary" });
     discord.state.fail = undefined;
+  }
+
+  it("more than 100 chat messages posted during the meeting do not hide notes from a resume", async () => {
+    const discord = fakeDiscord();
+    discord.state.chat(150);
+    const notes = renderMeetingDelivery(history()).notes;
+    await crashAfterFirstChunk(discord);
     discord.requests.length = 0;
 
     const { outcome, current } = await run(discord, history());
@@ -608,19 +612,7 @@ describe("meeting delivery", () => {
       { id: at(30), channel_id: TEXT_CHANNEL_ID },
     );
     const notes = renderMeetingDelivery(history()).notes;
-    discord.state.fail = (request, posts) =>
-      request.method === "POST" && posts === 2
-        ? new Response("{}", { status: 500 })
-        : undefined;
-    const crashed = await deliverMeeting({
-      history: history(),
-      save: async (patch) => (patch.notesMessageIds ? undefined : history()),
-      transport: discord.transport,
-      signal: signal(),
-      path: "live",
-    });
-    expect(crashed).toMatchObject({ kind: "temporary" });
-    discord.state.fail = undefined;
+    await crashAfterFirstChunk(discord);
 
     const { outcome, current } = await run(discord, history());
     expect(outcome).toEqual({ kind: "delivered" });
