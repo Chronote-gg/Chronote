@@ -493,14 +493,21 @@ test("a transcript upload failure keeps the chat log", async () => {
 
 // Only the closing worker's first attempt uses the normal loader; every retry
 // loads through the recovery loader from the saved checkpoint.
-test("a failed processing attempt frees the local directory and the retry finishes from the recovery input", async () => {
+test("a failed processing attempt uploads the local recording, frees the directory, and the retry finishes from the recovery input", async () => {
   const world = setup(processingRow());
-  const { directory } = await recordingDirectory();
+  const { directory, recordingPath } = await recordingDirectory();
   jest.mocked(getNotes).mockRejectedValueOnce(new Error("Synthetic outage"));
   await world.finish(
-    loads(finishInput({ source: "normal", localDirectory: directory })),
+    loads(
+      finishInput({
+        source: "normal",
+        recordingPath,
+        localDirectory: directory,
+      }),
+    ),
   );
   expect(world.current().finish).toMatchObject({ attempts: 1 });
+  expect(world.current().audioS3Key).toMatch(/audio_combined\.mp3$/);
   expect(await exists(directory)).toBe(false);
   await world.finish(loads(finishInput({ source: "recovery" })));
   expect(world.current()).toMatchObject({
@@ -510,7 +517,59 @@ test("a failed processing attempt frees the local directory and the retry finish
   expect(world.current().finish).toBeUndefined();
 });
 
-test("an aborted attempt frees the local directory", async () => {
+test("a failed processing attempt whose recording upload fails keeps the local directory", async () => {
+  const world = setup(processingRow());
+  const { directory, recordingPath } = await recordingDirectory();
+  jest.mocked(getNotes).mockRejectedValueOnce(new Error("Synthetic outage"));
+  jest
+    .mocked(world.deps.upload)
+    .mockImplementation(async (key, body) =>
+      key.endsWith("audio_combined.mp3")
+        ? Promise.reject(new Error("Synthetic storage outage"))
+        : storedObject(key, body),
+    );
+  await world.finish(
+    loads(
+      finishInput({
+        source: "normal",
+        recordingPath,
+        localDirectory: directory,
+      }),
+    ),
+  );
+  expect(world.current().finish).toMatchObject({ attempts: 1 });
+  expect(world.current().audioS3Key).toBeUndefined();
+  expect(await exists(directory)).toBe(true);
+  expect(console.warn).toHaveBeenCalledWith(
+    "Meeting local folder kept for an unsaved recording",
+    expect.objectContaining({ meetingId: world.current().meetingId }),
+  );
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
+test("an attempt aborted before its recording is uploaded keeps the local directory", async () => {
+  const world = setup(processingRow());
+  const { directory, recordingPath } = await recordingDirectory();
+  const external = new AbortController();
+  jest.mocked(getNotes).mockImplementationOnce(async () => {
+    external.abort();
+    throw new Error("Synthetic abort");
+  });
+  await world.finish(
+    loads(
+      finishInput({
+        source: "normal",
+        recordingPath,
+        localDirectory: directory,
+      }),
+    ),
+    { signal: external.signal },
+  );
+  expect(await exists(directory)).toBe(true);
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
+test("an aborted attempt with no recording to save frees the local directory", async () => {
   const world = setup(processingRow());
   const { directory } = await recordingDirectory();
   const external = new AbortController();

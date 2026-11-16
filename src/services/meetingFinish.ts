@@ -242,9 +242,14 @@ type Attempt = {
    * Local directories every exit removes: a recovery mix, or the normal
    * loader's capture folder, which only the closing worker's first attempt
    * reads. Every later attempt loads through the recovery loader from the
-   * saved checkpoint, and a delivery retry uploads the recording first.
+   * saved checkpoint, so a retry uploads the recording first and a folder
+   * whose recording is still unsaved is kept (`keepLocal`).
    */
   localDirectories: string[];
+  /** The normal loader's input, whose mix may hold a tail the checkpoint never saved. */
+  normalInput?: FinishInput;
+  /** Set once that mix is known to be the only copy, so its folder is left for the sweep. */
+  keepLocal: boolean;
   /** The content revision the input reflects; acknowledged edits past it are kept. */
   contentBaseline: number;
 };
@@ -256,6 +261,7 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     a.signal.throwIfAborted();
     const input = await a.load(a.signal);
     if (input.localDirectory) a.localDirectories.push(input.localDirectory);
+    if (input.source === "normal") a.normalInput = input;
     return input;
   }
 
@@ -428,6 +434,21 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     meetingFinishes.inc({ outcome: MEETING_STATUS.FAILED });
   }
 
+  /**
+   * Keeps the normal folder when its mix never reached storage: a close whose
+   * final flush failed leaves a tail only that mix holds, and every later
+   * attempt loads from the checkpoint.
+   */
+  function keepUnsavedRecording(a: Attempt) {
+    if (!a.normalInput?.recordingPath || a.row.audioS3Key || a.keepLocal)
+      return;
+    a.keepLocal = true;
+    console.warn(
+      "Meeting local folder kept for an unsaved recording",
+      logContext(a.row),
+    );
+  }
+
   async function releaseDone(a: Attempt) {
     await deps.repository.releaseDone(a.claim);
   }
@@ -445,6 +466,10 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
       attempts: attempts + 1,
       error,
     });
+    if (a.normalInput) {
+      await uploadRecording(followOnAttempt(a, a.normalInput), a.normalInput);
+      keepUnsavedRecording(a);
+    }
     if (next !== undefined) {
       await deps.repository.releaseForRetry(a.claim, {
         attempts: attempts + 1,
@@ -710,6 +735,7 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     if (retry) {
       // The local recording may not survive to the next attempt.
       await uploadRecording(followOnAttempt(a, input), input);
+      keepUnsavedRecording(a);
       await deps.repository.releaseForRetry(a.claim, retry);
       meetingFinishRetries.inc({ phase: "deliver" });
       return;
@@ -822,6 +848,7 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
       source: "recovery",
       load: loadInput,
       localDirectories: [],
+      keepLocal: false,
       contentBaseline: 0,
     };
     const stop = () => controller.abort(options.signal?.reason);
@@ -863,7 +890,9 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
       ended = true;
       options.signal?.removeEventListener("abort", stop);
       cancelRenewal();
-      for (const directory of a.localDirectories)
+      if (controller.signal.aborted) keepUnsavedRecording(a);
+      const kept = a.keepLocal ? a.normalInput?.localDirectory : undefined;
+      for (const directory of a.localDirectories.filter((d) => d !== kept))
         await fs
           .rm(directory, { recursive: true, force: true })
           .catch((error: unknown) =>
