@@ -47,6 +47,8 @@ export const LIFECYCLE = {
   finisherScanLogMs: 60_000,
   abandonedGraceSeconds: 120,
   stuckAlarmSeconds: 4 * 3_600,
+  // Past the quick delivery retries (about 21 minutes in all), so only a lasting failure alarms.
+  deliveryStuckAlarmSeconds: 3_600,
   abandonSeconds: 86_400,
   maxConcurrentFinishes: 2,
   // How long shutdown waits for aborted finish attempts before releasing their claims anyway.

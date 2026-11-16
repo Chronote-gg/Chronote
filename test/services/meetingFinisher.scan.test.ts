@@ -101,6 +101,31 @@ test("stuck and abandoned rows log the alarm lines", async () => {
   expect(world.deps.finish).not.toHaveBeenCalled();
 });
 
+test("a complete row whose delivery has failed for over an hour logs the stuck line, a shorter retry does not", async () => {
+  const deliveringFor = (id: string, seconds: number) =>
+    row(id, {
+      status: "complete",
+      finish: {
+        attempts: 3,
+        nextAttemptAt: NOW + 1,
+        phase: "deliver",
+        deliverSince: NOW - seconds,
+      },
+    });
+  const failing = deliveringFor(
+    "failing",
+    LIFECYCLE.deliveryStuckAlarmSeconds + 1,
+  );
+  const world = setup([failing, deliveringFor("retrying", 20 * 60)]);
+  await world.scan();
+  expect(logged(MEETING_STUCK_LOG)).toBe(1);
+  expect(jest.mocked(console.error)).toHaveBeenCalledWith(MEETING_STUCK_LOG, {
+    guildId: failing.guildId,
+    meetingId: failing.meetingId,
+    deliveryFailingSince: isoAt(NOW - LIFECYCLE.deliveryStuckAlarmSeconds - 1),
+  });
+});
+
 test("a row another worker claims between this worker's read and its abandon write is left alone", async () => {
   const raced = row("raced", {
     status: "processing",
