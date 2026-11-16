@@ -1,3 +1,4 @@
+import { emitMetric, LIFECYCLE_METRICS } from "../lifecycleMetrics";
 import { promises as fs } from "node:fs";
 import type {
   FinishClaim,
@@ -459,6 +460,7 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     }
     await saveFailed(a, failedProcessing(input));
     console.error(MEETING_FINISH_FAILED_LOG, { ...logContext(a.row), error });
+    emitMetric(LIFECYCLE_METRICS.meetingFailed, { Phase: "finish" });
     if (a.options.deliver !== false && a.row.textChannelId)
       await deliverNotice(
         a.row,
@@ -678,11 +680,13 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     }
     await recordDeliveryFailed(a, outcome.error);
     meetingDeliveries.inc({ outcome: "failed" });
-    if (outcome.kind === "temporary")
+    if (outcome.kind === "temporary") {
       console.error(MEETING_DELIVERY_FAILED_LOG, {
         ...logContext(a.row),
         error: outcome.error,
       });
+      emitMetric(LIFECYCLE_METRICS.meetingFailed, { Phase: "delivery" });
+    }
     return undefined;
   }
 

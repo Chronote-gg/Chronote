@@ -1,17 +1,8 @@
 /** @jest-environment node */
 import { expect, test } from "@jest/globals";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import {
-  MEETING_ABANDONED_LOG,
-  MEETING_DELIVERY_FAILED_LOG,
-  MEETING_FINISH_FAILED_LOG,
-  MEETING_FINISHER_SCAN_LOG,
-  MEETING_STUCK_LOG,
-  RENEWAL_RECOVERY_STALLED_LOG,
-  TASK_PROTECTION_FAILED_LOG,
-  WORKER_ELIGIBLE_LOG,
-} from "../../src/metrics";
+import { LIFECYCLE_METRICS } from "../../src/lifecycleMetrics";
 
 const root = join(__dirname, "..", "..");
 // A Windows checkout may carry CRLF; the line-anchored patterns below expect LF.
@@ -20,45 +11,57 @@ const read = (path: string) =>
 const terraform = read("_infra/alerts-lifecycle.tf");
 const deployScript = read("scripts/deployment/deploy.cjs");
 
-const unescapeHcl = (value: string) => value.replaceAll('\\"', '"');
 const capture = (text: string, pattern: RegExp) =>
   [...text.matchAll(pattern)].map((match) => match[1]);
-
-// The `key = { ... }` entries of local.lifecycle_log_alarms, as attribute maps.
-const terraformAlarms = new Map(
-  [...terraform.matchAll(/^ {4}(\w+) = \{\n([\s\S]*?)\n {4}\}$/gm)].map(
-    ([, key, body]) => [
-      key,
-      Object.fromEntries(
-        [...body.matchAll(/^ {6}(\w+)\s*= (.*)$/gm)].map(([, name, value]) => [
-          name,
-          value.startsWith('"') ? unescapeHcl(value.slice(1, -1)) : value,
-        ]),
-      ),
-    ],
-  ),
-);
-const terraformPatterns = new Map(
-  [...terraformAlarms].map(([key, alarm]) => [key, alarm.pattern]),
-);
-const quotedTerms = (pattern: string) => capture(pattern, /"([^"]+)"/g);
 const alarmBlocks = terraform
   .split(/^resource "/m)
   .filter((block) => block.startsWith("aws_cloudwatch_metric_alarm"));
 
-test("every alarm log constant has a filter with the identical string", () => {
-  const terms = [...terraformPatterns.values()].flatMap(quotedTerms);
-  for (const constant of [
-    MEETING_STUCK_LOG,
-    MEETING_ABANDONED_LOG,
-    MEETING_FINISH_FAILED_LOG,
-    MEETING_DELIVERY_FAILED_LOG,
-    TASK_PROTECTION_FAILED_LOG,
-    WORKER_ELIGIBLE_LOG,
-    MEETING_FINISHER_SCAN_LOG,
-    RENEWAL_RECOVERY_STALLED_LOG,
-  ])
-    expect(terms).toContain(constant);
+const sourceFiles = (directory: string): string[] =>
+  readdirSync(join(root, directory)).flatMap((name) => {
+    const path = `${directory}/${name}`;
+    if (statSync(join(root, path)).isDirectory()) return sourceFiles(path);
+    return /\.tsx?$/.test(name) ? [path] : [];
+  });
+// Keys of LIFECYCLE_METRICS that some src file passes to emitMetric.
+const emitted = new Set(
+  sourceFiles("src").flatMap((path) =>
+    capture(read(path), /emitMetric\(\s*LIFECYCLE_METRICS\.(\w+)/g),
+  ),
+);
+const alarmMetrics = capture(terraform, /^\s+metric\s+= "(\w+)"$/gm);
+
+test("every alarm reads a metric the code emits, and every emitted metric has an alarm", () => {
+  const names = Object.values(LIFECYCLE_METRICS);
+  expect([...alarmMetrics].sort()).toEqual([...names].sort());
+  expect([...emitted].sort()).toEqual(Object.keys(LIFECYCLE_METRICS).sort());
+});
+
+test("no lifecycle alarm depends on log wording", () => {
+  expect(terraform).not.toContain("aws_cloudwatch_log_metric_filter");
+  expect(terraform).not.toMatch(/pattern\s*=/);
+});
+
+test("the runtime publishes into the namespace the alarms read", () => {
+  expect(terraform).toMatch(
+    /lifecycle_metrics_namespace = "\$\{local\.name_prefix\}\/Lifecycle"/,
+  );
+  expect(read("_infra/main.tf")).toMatch(
+    /name\s+= "METRICS_NAMESPACE"\s+value\s+= local\.lifecycle_metrics_namespace/,
+  );
+});
+
+test("the two heartbeats alarm on silence", () => {
+  for (const metric of [
+    LIFECYCLE_METRICS.workerEligible,
+    LIFECYCLE_METRICS.finisherScanCompleted,
+  ]) {
+    const entry = terraform.match(
+      new RegExp(`\\{\\n([^}]*metric\\s+= "${metric}"[^}]*)\\}`),
+    )?.[1];
+    expect(entry).toMatch(/comparison\s+= "LessThanThreshold"/);
+    expect(entry).toMatch(/treat_missing_data = "breaching"/);
+  }
 });
 
 test("every alarm notifies the critical alerts topic", () => {

@@ -1885,6 +1885,10 @@ resource "aws_ecs_task_definition" "app_task" {
           value = "${local.name_prefix}-"
         },
         {
+          name  = "METRICS_NAMESPACE"
+          value = local.lifecycle_metrics_namespace
+        },
+        {
           name  = "MCP_PUBLIC_BASE_URL"
           value = local.api_base_url
         },

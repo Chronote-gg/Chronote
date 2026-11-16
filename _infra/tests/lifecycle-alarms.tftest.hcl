@@ -14,13 +14,12 @@ variables {
   DISCORD_CLIENT_ID = "mock"
 }
 
-# Exact patterns are checked against src/metrics.ts by
+# Metric names are checked against src/lifecycleMetrics.ts by
 # test/scripts/lifecycleAlarms.test.ts; this checks routing and conditions.
 run "lifecycle_alarms_route_by_name_and_notify" {
   command = plan
   plan_options {
     target = [
-      aws_cloudwatch_log_metric_filter.lifecycle,
       aws_cloudwatch_metric_alarm.lifecycle,
       aws_cloudwatch_metric_alarm.deploy_drain_timeout,
     ]
@@ -28,8 +27,8 @@ run "lifecycle_alarms_route_by_name_and_notify" {
   variables { alert_email = "alerts@example.com" }
 
   assert {
-    condition     = length(aws_cloudwatch_metric_alarm.lifecycle) == 6 && alltrue([for f in aws_cloudwatch_log_metric_filter.lifecycle : f.log_group_name == "/ecs/meeting-notes-prod-bot"])
-    error_message = "Every lifecycle filter must read the app log group by its name."
+    condition     = length(aws_cloudwatch_metric_alarm.lifecycle) == 6 && alltrue([for a in values(aws_cloudwatch_metric_alarm.lifecycle) : a.namespace == "meeting-notes-prod/Lifecycle" && length(coalesce(a.dimensions, {})) == 0 && a.statistic == "Sum"])
+    error_message = "Every lifecycle alarm must sum the dimensionless metric in the environment's Lifecycle namespace."
   }
 
   assert {
@@ -72,7 +71,7 @@ run "lifecycle_alarms_follow_alerting" {
 run "parked_environment_has_no_worker_silence_alarms" {
   command = plan
   plan_options {
-    target = [aws_cloudwatch_log_metric_filter.lifecycle, aws_cloudwatch_metric_alarm.lifecycle]
+    target = [aws_cloudwatch_metric_alarm.lifecycle]
   }
   variables {
     alert_email       = "alerts@example.com"
@@ -80,7 +79,7 @@ run "parked_environment_has_no_worker_silence_alarms" {
     ECS_DESIRED_COUNT = 0
   }
   assert {
-    condition     = length(aws_cloudwatch_metric_alarm.lifecycle) == 4 && length(setintersection(concat(keys(aws_cloudwatch_metric_alarm.lifecycle), keys(aws_cloudwatch_log_metric_filter.lifecycle)), ["no_eligible_worker", "finisher_scan_missing"])) == 0
+    condition     = length(aws_cloudwatch_metric_alarm.lifecycle) == 4 && length(setintersection(keys(aws_cloudwatch_metric_alarm.lifecycle), ["no_eligible_worker", "finisher_scan_missing"])) == 0
     error_message = "A parked environment must keep every lifecycle alarm except the two that alarm on worker silence."
   }
 }

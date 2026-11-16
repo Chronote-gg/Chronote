@@ -1,3 +1,4 @@
+import { emitMetric, LIFECYCLE_METRICS } from "../lifecycleMetrics";
 import { closeFailedInitializationOutput } from "./audioPersistenceService";
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -472,7 +473,10 @@ export function createMeetingFinisherLoop(deps: MeetingFinisherDeps) {
   /** Whether the row was taken for an attempt. */
   async function consider(row: FinisherRow, signal: AbortSignal) {
     const now = nowSeconds();
-    if (isStuck(row, now)) console.error(MEETING_STUCK_LOG, logContext(row));
+    if (isStuck(row, now)) {
+      console.error(MEETING_STUCK_LOG, logContext(row));
+      emitMetric(LIFECYCLE_METRICS.meetingStuck, { Phase: "open" });
+    }
     if (running.has(rowId(row)) || deps.isCapturing(row.meetingId))
       return false;
     const lease = isOpen(row.status)
@@ -484,8 +488,10 @@ export function createMeetingFinisherLoop(deps: MeetingFinisherDeps) {
     const action = classifyFinisherRow(row, lease, now);
     if (action === "skip") return false;
     if (action === "abandon") {
-      if (await deps.repository.abandon(row, now))
+      if (await deps.repository.abandon(row, now)) {
         console.error(MEETING_ABANDONED_LOG, logContext(row));
+        emitMetric(LIFECYCLE_METRICS.meetingStuck, { Phase: "abandoned" });
+      }
       return false;
     }
     return take(row, action);
@@ -529,6 +535,7 @@ export function createMeetingFinisherLoop(deps: MeetingFinisherDeps) {
       return;
     lastScanLogMs = nowMs;
     console.log(MEETING_FINISHER_SCAN_LOG, counts);
+    emitMetric(LIFECYCLE_METRICS.finisherScanCompleted);
   }
 
   /** One pass over open meetings. Returns at once when a pass is running, shutdown began, or this worker is not eligible. */
