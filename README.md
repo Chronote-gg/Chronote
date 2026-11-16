@@ -215,7 +215,7 @@ Portal sign-in reconnects expired sessions and returns to the requested page. It
 - Bot + API: Node 24.22.2, Express 5. API routes are modularized under `src/api/` (billing, guilds). New typed API surface is tRPC at `/trpc` (routers in `src/trpc/`).
 - Voice capture: discord.js v14, @discordjs/voice/opus, prism-media.
 - Transcription flow and tuning: `docs/audio-transcription.md`.
-- Snippet ASR sends no prompt and no language hint; deterministic guards suppress hallucinated text on quiet or non-speech audio.
+- Snippet ASR sends no prompt, and a language hint only when a server pins one; deterministic guards suppress hallucinated text on quiet or non-speech audio.
 - Feature toggle evaluation checklist: `docs/feature-toggles.md`.
 - OpenAI: gpt-transcribe for ASR (`models.transcription`), gpt-6.1-sol for notes, gpt-5.2 for summaries, cleanup, corrections and image prompts, gpt-5-mini for live gate, DALL-E 3 for images. `NOTES_MODEL` overrides notes generation only; other roles use their existing per-role settings.
 - Text generation uses OpenAI's Responses API through one shared service for notes, corrections, Ask, live-voice text decisions, captions and dictionary suggestions. See the [Responses and model evaluation design](docs/superpowers/specs/2026-10-21-responses-meeting-evaluation-design.md) for request contracts and model comparisons.

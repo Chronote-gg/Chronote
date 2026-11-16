@@ -28,6 +28,10 @@ import {
 import { summarizeTranscriptionScores } from "./transcriptionMetrics";
 import { buildTranscriptionRequest } from "../services/transcriptionRequest";
 import {
+  transcriptionLanguageSchema,
+  type TranscriptionLanguage,
+} from "../config/transcriptionLanguage";
+import {
   transcriptionVadReportSchema,
   validateVadCase,
 } from "./transcriptionVadReport";
@@ -495,12 +499,9 @@ async function readComparisonPrompt(args: string[]) {
   return promptFile ? await fs.readFile(path.resolve(promptFile), "utf8") : "";
 }
 
-// Production omits the language so the provider detects it; a code forces one for comparison.
+// Auto matches the default server setting; a code reproduces a server that pins one.
 function readComparisonLanguage(args: string[]) {
-  const language = flag(args, "--language");
-  if (language !== undefined && !/^[a-z]{2}$/.test(language))
-    throw new Error("--language must be an ISO-639-1 code; omit it for auto");
-  return language;
+  return transcriptionLanguageSchema.parse(flag(args, "--language") ?? "auto");
 }
 
 function summarizeQualityGroups(results: CorpusRun[]) {
@@ -536,7 +537,7 @@ function createQualityTranscriber(
   client: OpenAI | undefined,
   model: string | undefined,
   maxRequests: number,
-  language: string | undefined,
+  language: TranscriptionLanguage,
 ) {
   let requests = 0;
   return (wavFile: string) => async (requestPrompt?: string) => {

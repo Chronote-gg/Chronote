@@ -7,8 +7,6 @@ export type TranscriptionContentInput = {
   guild: { id: string };
   voiceChannel: { id: string };
   signal: AbortSignal;
-  /** Only recovery of a recording frozen with a fixed language sets this. */
-  languageHint?: string;
   runtimeConfig?: Pick<
     NonNullable<MeetingData["runtimeConfig"]>,
     "transcription" | "modelChoices"

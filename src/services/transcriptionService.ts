@@ -7,6 +7,7 @@ import {
   runTranscriptionRequest,
 } from "./transcriptionRequest";
 import { createTranscriptionAttemptLedger } from "../observability/transcriptionAttempts";
+import { meetingTranscriptionLanguage } from "../config/transcriptionLanguage";
 import path from "node:path";
 import {
   bulkhead,
@@ -315,7 +316,7 @@ async function transcribeInternal(
         }),
       request: buildTranscriptionRequest(
         modelChoice.model,
-        meeting.languageHint,
+        meetingTranscriptionLanguage(meeting.runtimeConfig),
       ),
     });
     if (transcription.text.trim() && !transcription.logprobs?.length) {

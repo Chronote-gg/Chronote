@@ -1,5 +1,6 @@
 import { CONFIG_KEYS } from "../config/keys";
 import { resolveSpeechDetectionMode } from "../config/speechDetection";
+import { resolveTranscriptionLanguage } from "../config/transcriptionLanguage";
 import { CONFIG_REGISTRY, getConfigEntry } from "../config/registry";
 import type { ConfigTier, MeetingRuntimeConfig } from "../config/types";
 import { resolveConfigSnapshot } from "./unifiedConfigService";
@@ -48,6 +49,9 @@ export async function resolveMeetingRuntimeConfig(input: {
     transcription: {
       speechDetectionMode: resolveSpeechDetectionMode(
         requireValue(snapshot, CONFIG_KEYS.transcription.speechDetectionMode),
+      ),
+      language: resolveTranscriptionLanguage(
+        requireValue(snapshot, CONFIG_KEYS.transcription.language),
       ),
       suppressionEnabled: Boolean(
         requireValue(snapshot, CONFIG_KEYS.transcription.suppressionEnabled),

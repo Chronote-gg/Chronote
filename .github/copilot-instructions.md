@@ -47,7 +47,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Transcription, notes, and image generation: `src/services/transcriptionService.ts`, `src/services/notesService.ts`, `src/services/imageService.ts`.
   - Prompt builders live in `src/services/*PromptService.ts`.
   - Builds context from server/channel/meeting and recent history (`services/contextService.ts`).
-- Live snippet ASR sends `models.transcription` (default `gpt-transcribe`) one request with no prompt and no language hint, so the provider detects the language. Guardrails are the pre-ASR noise gate, speech admission, and post-ASR quiet-audio logprob, hard silence, syllable rate and punctuation-only suppression. A settled slow result, including a suppressed empty one, is authoritative. See `docs/adr-20261116-transcription-simplification.md`.
+- Live snippet ASR sends `models.transcription` (default `gpt-transcribe`) one request with no prompt. It sends a language hint only when the server pins one in `transcription.language` (default `auto`, which detects the language). Guardrails are the pre-ASR noise gate, speech admission, and post-ASR quiet-audio logprob, hard silence, syllable rate and punctuation-only suppression. A settled slow result, including a suppressed empty one, is authoritative. See `docs/adr-20261116-transcription-simplification.md`.
   - GPT prompts tuned for cleanup, notes, and optional image generation.
 - Dictionary management: `commands/dictionary.ts`, `services/dictionaryService.ts`
   - Terms and definitions feed notes, cleanup, Ask and other text prompts. The dictionary does not steer ASR.
@@ -118,7 +118,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Auto-record will end meeting if channel empties.
 - Server meeting transcript and audio access controls are enforced at read-time delivery boundaries. They apply retroactively to guild meetings, do not alter storage or internal notes processing, and do not apply to personal meetings.
 - Prompt fragments live in `prompts/_fragments` and are composed via `extends` in front matter. `prompts:pull` skips prompts that use `extends` unless `--force` is passed.
-- Transcription guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs) and punctuation-only suppression. ASR receives no prompt and no language hint.
+- Transcription guardrails include a loudness gate (noise gate metrics, hard silence threshold, syllable rate, and logprobs) and punctuation-only suppression. ASR receives no prompt, and a language hint only when a server pins `transcription.language`.
 - **Current outbound network rules (ECS service SG)**: temporarily allowing all egress (UDP/TCP any port) for Discord voice debugging. Previously it was limited to TCP 443 and DNS (53) only. Remember to tighten this once voice is stable and update this note.
 - Avoid `in`/`instanceof`/`typeof` hedging for core platform APIs; we target a known Node/SDK set. Prefer simple, direct calls with minimal branching.
 - Config UX: treat overrides as implicit (setting a value creates an override), show a clear inherited vs overridden indicator, keep a reset-to-default action, and avoid disabling inputs just to signal default values.

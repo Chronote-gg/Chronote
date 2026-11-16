@@ -30,7 +30,7 @@ See [Meeting Lifecycle](/core-concepts/meeting-lifecycle/) for the complete reco
 
 ## Transcription language
 
-Chronote detects the spoken language of each audio snippet, so meetings held in a language other than English are transcribed in that language. There is no language setting to configure.
+By default Chronote detects the spoken language of each audio snippet, so meetings held in a language other than English are transcribed in that language. Server admins can pin a language in **Server Settings** under **Advanced** -> **Transcription** -> **Transcription language**. Pinning is recommended for servers that mostly speak one language other than English, because very short utterances are otherwise occasionally detected as the wrong language. Each meeting keeps the language it had when it started, so a change applies to new meetings.
 
 ## Experimental speech detection
 

@@ -32,13 +32,15 @@ hurting transcripts:
 ## Decision
 
 1. Live snippet ASR sends one request per snippet to `models.transcription`
-   with no prompt and no language hint. The default model is `gpt-transcribe`
+   with no prompt. The default model is `gpt-transcribe`
    (options `gpt-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`).
    Requests keep `temperature: 0`, JSON output and logprobs for the guards.
+   The per-server `transcription.language` setting stays, with its default
+   changed from `en` to `auto`: auto sends no language hint, and a pinned
+   language is sent as an ISO-639-1 code. Stored overrides keep working.
 2. Delete the prompt echo gate, the vote and its second call, the ASR prompt
    and its Langfuse prompt, coalesce, the finalized-audio pass and its repeat
-   filter, the `transcription.language` setting and the dictionary
-   transcription budget. Delete, not flag off.
+   filter and the dictionary transcription budget. Delete, not flag off.
 3. Keep the noise gate, speech admission, the quiet-audio logprob, hard
    silence, syllable rate and punctuation-only guards, retries and the
    breaker, fast and slow passes, cleanup and notes.
@@ -49,8 +51,8 @@ hurting transcripts:
    bytes.
 5. Saved recordings keep parsing: removed settings, prompts and processing
    fields are accepted and ignored. Recovery re-transcribes uncovered audio
-   with the frozen model and no prompt. Stored config values for removed keys
-   are ignored.
+   with the frozen model and language and no prompt. Stored config values
+   for removed keys are ignored.
 
 ## Consequences
 
@@ -72,14 +74,23 @@ Positive:
 
 - Lower error on every measured set, zero nonspeech hallucination with the
   surviving guards, and non-English meetings are no longer forced into
-  English. Short English clips (1 to 3 s) with auto language produced 0 of 90
-  non-English outputs for `gpt-transcribe` and `gpt-4o-mini-transcribe`.
+  English by default. Short English clips (1 to 3 s) with auto language
+  produced 0 of 90 non-English outputs for `gpt-transcribe` and
+  `gpt-4o-mini-transcribe`.
 - Cost per request drops from $0.006 to $0.0045 per audio minute at list
   price, with no second vote call, no coalesce call and no re-transcription of
   the whole recording at meeting end. Notes are generated sooner.
 - Several thousand lines of production code and tests are gone.
 
 Negative:
+
+- Auto detection misreads very short non-English speech. On short Japanese
+  clips, `gpt-transcribe` with auto language returned another language on 7
+  of 387 natural-speech runs (1.8%; 3 of 129 clips, all 0.89 s or shorter)
+  and had higher CER (0.15 against 0.11 on public FLEURS cuts, 0.19 against
+  0.13 on private clips) than with `language: "ja"`, which had no
+  wrong-language runs. Servers that mostly speak one language other than
+  English should pin it.
 
 - Term recall on the public corpus drops from 1.00 to about 0.55 because the
   glossary is no longer sent. The dictionary now reaches notes and cleanup
@@ -98,7 +109,11 @@ Negative:
   hallucinations.
 - Send dictionary terms only as the prompt: replaced real one or two word
   utterances with a glossary term in 4 of 12 short runs.
-- Keep a language setting: not needed given the 0 of 90 result.
+- Remove the language setting: the 0 of 90 English result supported it, but
+  the short Japanese result above showed auto detection is worse for servers
+  that speak one non-English language.
+- Keep the `en` default: forces non-English meetings into English on servers
+  that never set the language.
 - Flag the stages off instead of deleting them: leaves untested code paths
   and settings that can be turned back on without measurement.
 

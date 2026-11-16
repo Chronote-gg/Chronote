@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
   createPcmBudget,
   PCM_RESERVED_COPIES,
@@ -162,10 +161,6 @@ export function recoveryCaptureNotice(
       : "Do not infer conversation outside the saved intervals.",
   ].join(" ");
 }
-// The frozen language is authoritative: a recording saved with a fixed language
-// is re-transcribed with that hint, since its model can misdetect short clips.
-// Snapshots older than the language setting were transcribed as English.
-const frozenTranscriptionLanguage = z.string().min(1).default("en");
 export function transcriptionInput(
   context: GenerationContextCheckpoint,
   signal: AbortSignal,
@@ -177,9 +172,6 @@ export function transcriptionInput(
       "Original transcription inputs unavailable",
     );
   const settings = context.settings.value;
-  const language = frozenTranscriptionLanguage.parse(
-    settings.transcription.language,
-  );
   return {
     tempDirectory: artifacts?.directory,
     meetingId: context.capture.meetingId,
@@ -188,7 +180,6 @@ export function transcriptionInput(
     voiceChannel: { id: context.capture.channelId },
     signal,
     effect,
-    languageHint: language === "auto" ? undefined : language,
     runtimeConfig: {
       transcription: settings.transcription,
       modelChoices: { transcription: settings.models.transcription.model },

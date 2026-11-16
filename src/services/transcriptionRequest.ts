@@ -23,6 +23,7 @@ import {
   withTranscriptionInput,
 } from "./transcriptionInput";
 
+import type { TranscriptionLanguage } from "../config/transcriptionLanguage";
 const nativeFetch = globalThis.fetch;
 const failureScopes = new AsyncLocalStorage<WeakSet<Error>>();
 
@@ -182,16 +183,19 @@ export async function runTranscriptionRequest(
 }
 
 /**
- * The production ASR request. Live audio sends no prompt and no language hint,
- * so the provider detects the language and has nothing to echo back. Only a
- * recording frozen with a fixed language passes `language`.
+ * The production ASR request. It sends no prompt, so the provider has nothing
+ * to echo back, and a language hint only when the server pins one; auto lets
+ * the provider detect the language.
  */
-export function buildTranscriptionRequest(model: string, language?: string) {
+export function buildTranscriptionRequest(
+  model: string,
+  language: TranscriptionLanguage,
+) {
   return {
     model,
     temperature: 0,
     response_format: "json" as const,
     include: ["logprobs" as const],
-    ...(language ? { language } : {}),
+    ...(language === "auto" ? {} : { language }),
   };
 }

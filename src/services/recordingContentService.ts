@@ -95,11 +95,10 @@ function provenance(meeting: MeetingData): RecordingCaptureProvenance {
 // Workers from before the transcription simplification strictly require these
 // fields, and a rollback or a rolling deploy can hand one this recording to
 // finish or recover. The values make that code run the simplified pipeline: no
-// prompt, auto language, no echo gate, vote, coalesce or final pass. Delete once
+// prompt, no echo gate, vote, coalesce or final pass. Delete once
 // no pre-simplification worker can run.
 const PRE_SIMPLIFICATION_WORKER_FIELDS = {
   transcription: {
-    language: "auto",
     promptEchoEnabled: false,
     voteEnabled: false,
     finalPassEnabled: false,

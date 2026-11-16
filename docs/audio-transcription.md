@@ -2,7 +2,7 @@
 
 ## Overview
 
-Chronote records voice audio, builds per speaker snippets, and runs transcription in two passes. A fast pass gives early results during short pauses, while the slow pass finalizes a snippet after longer silence or a max snippet wall. The system keeps longer contiguous snippets to preserve accuracy. Each snippet is one ASR request with no prompt and no language hint, followed by deterministic guards. The slow pass text is the transcript text; no language model rewrites individual snippets. See [ADR-20261116](adr-20261116-transcription-simplification.md).
+Chronote records voice audio, builds per speaker snippets, and runs transcription in two passes. A fast pass gives early results during short pauses, while the slow pass finalizes a snippet after longer silence or a max snippet wall. The system keeps longer contiguous snippets to preserve accuracy. Each snippet is one ASR request with no prompt, and a language hint only when the server pins one, followed by deterministic guards. The slow pass text is the transcript text; no language model rewrites individual snippets. See [ADR-20261116](adr-20261116-transcription-simplification.md).
 
 ## Product decisions
 
@@ -20,7 +20,7 @@ Chronote records voice audio, builds per speaker snippets, and runs transcriptio
 - A settled slow result is authoritative, including an empty one a guard suppressed. An earlier fast result never resurfaces for that snippet, so the compiled notes input, `transcript.json` segments and the live timeline agree.
 - Interjection splitting checks for a validated interjection snippet before finalizing other paused snippets.
 - Noise gate checks peak levels in short windows and skips snippets that are very quiet and lack speech-like peaks.
-- The ASR model is `models.transcription` (default `gpt-transcribe`; options `gpt-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`). Personal uploads use the same key. Requests send `temperature: 0`, `response_format: "json"` and `include: ["logprobs"]`, with no `prompt` and no `language`, so the provider detects the spoken language and has no glossary text to echo back.
+- The ASR model is `models.transcription` (default `gpt-transcribe`; options `gpt-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`). Personal uploads use the same key. Requests send `temperature: 0`, `response_format: "json"` and `include: ["logprobs"]`, with no `prompt`, so the provider has no glossary text to echo back.
 - The dictionary does not steer ASR. It feeds notes, cleanup, ask and other text prompts only.
 - Guardrails include a loudness gate (noise gate metrics plus token logprobs), hard silence suppression, a syllable rate gate for short snippets, and suppression of punctuation-only output.
 
@@ -48,9 +48,20 @@ retry policies are separate.
 
 ## Personal upload transcription
 
-Personal uploads and desktop recordings, like live snippets, send no
-`language` hint, so the provider detects the spoken language. A forced English
-hint badly truncated non-English recordings.
+Personal uploads and desktop recordings send no `language` hint, so the
+provider detects the spoken language. A forced English hint badly truncated
+non-English recordings.
+
+Live meeting snippets take their hint from the `transcription.language`
+setting (global superadmin and server admin scopes, default `auto`). `auto`
+omits the `language` field so the provider detects the language; any other
+value is sent as an ISO-639-1 code. Pinning is recommended for servers that
+mostly speak one language other than English: on short Japanese clips, auto
+detection returned another language on 1.8% of runs, all on clips under one
+second, while a pinned `ja` returned none. The value is captured in the
+meeting runtime config when the meeting starts, frozen into the saved
+recording settings, and reused by recovery. Records saved before the setting
+existed parse as `en`, which is what they were transcribed with.
 
 Normalized audio is always split into
 `PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS` (300 s) chunks before
@@ -125,6 +136,7 @@ Pricing checklist:
 
 All values are set via the config system. For the noise gate, only `enabled`, `applyToFast`, and `applyToSlow` support server overrides. The numeric thresholds remain global-only.
 
+- `transcription.language`
 - `transcription.fastSilenceMs`
 - `transcription.slowSilenceMs`
 - `transcription.minSnippetSeconds`
@@ -147,12 +159,11 @@ All values are set via the config system. For the noise gate, only `enabled`, `a
 - `transcription.noiseGate.applyToSlow`
 - `models.transcription`
 
-Stored values for removed keys (`transcription.language`,
-`transcription.promptEcho.enabled`, `transcription.vote.enabled`,
+Stored values for removed keys (`transcription.promptEcho.enabled`, `transcription.vote.enabled`,
 `transcription.finalPass.enabled`, `models.transcriptionCoalesce` and
 `dictionary.maxChars.transcription` with its `.pro` and `.cap` variants) are
 ignored. Saved recordings that carry them still parse and recover; recovery
-re-transcribes uncovered audio with the frozen model and no prompt.
+re-transcribes uncovered audio with the frozen model and language and no prompt.
 
 ## Interjection behavior
 

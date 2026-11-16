@@ -4,7 +4,7 @@ This CLI runs repeated transcription passes against labeled audio and measures u
 
 ## Production pipeline corpus runs
 
-Use `--manifest` to compare the raw provider with the same audio gate, conversion, speech admission and transcript guards used by the bot. Pipeline mode sends one unprompted request per run with no language hint, as production does, and grades it through the exported production `guardTranscription`. No Langfuse dataset is required. Corpus tracing stays disabled and results stay in an ignored artifact directory.
+Use `--manifest` to compare the raw provider with the same audio gate, conversion, speech admission and transcript guards used by the bot. Pipeline mode sends one unprompted request per run with no language hint, as production does on the default `auto` setting, and grades it through the exported production `guardTranscription`. No Langfuse dataset is required. Corpus tracing stays disabled and results stay in an ignored artifact directory.
 
 ```powershell
 npm run eval:transcription:corpus -- --speech

@@ -240,8 +240,10 @@ test.each(["off", "shadow", "enforce"] as const)(
     await expectOutcome(mode, "transcribed");
   },
 );
-test("live request sends no prompt and no language hint", async () => {
-  await transcribeSnippet(buildMeeting("off"), snippet);
+test("live request on the default auto language sends no prompt and no language hint", async () => {
+  const meeting = buildMeeting("off");
+  meeting.runtimeConfig!.transcription.language = "auto";
+  await transcribeSnippet(meeting, snippet);
   const request = mockCreate.mock.calls[0][0];
   expect(request).not.toHaveProperty("prompt");
   expect(request).not.toHaveProperty("language");
@@ -250,6 +252,12 @@ test("live request sends no prompt and no language hint", async () => {
     include: ["logprobs"],
     temperature: 0,
   });
+});
+test("live request sends the language a server pins", async () => {
+  const meeting = buildMeeting("off");
+  meeting.runtimeConfig!.transcription.language = "ja";
+  await transcribeSnippet(meeting, snippet);
+  expect(mockCreate.mock.calls[0][0]).toMatchObject({ language: "ja" });
 });
 test("off supplies the baseline without acquiring a detector", async () => {
   expect(await transcribeSnippet(buildMeeting("off"), snippet)).toMatchObject({

@@ -38,7 +38,7 @@ TTS-only sessions skip capture entirely. Chronote does not subscribe to user voi
 
 Processing begins when the meeting ends. The embed updates to show "processing" status. This stage involves several steps:
 
-1. **Transcription**: Each audio snippet is sent to OpenAI's transcription model, which detects the spoken language. Quality checks filter out noise, silence, and low-confidence text from quiet audio.
+1. **Transcription**: Each audio snippet is sent to OpenAI's transcription model, which detects the spoken language unless the server pins one. Quality checks filter out noise, silence, and low-confidence text from quiet audio.
 2. **Transcript cleanup**: A language model pass cleans up the raw transcription for readability.
 3. **Notes generation**: The full transcript, chat log, participant roster, server/channel/meeting context, dictionary entries (with definitions), and recent meeting history are sent to a language model that produces structured meeting notes.
 4. **Artifact upload**: The audio recording, transcript, and chat log are uploaded to cloud storage.

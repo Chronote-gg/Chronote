@@ -21,6 +21,7 @@ import {
 import { recoverTranscript } from "../../src/services/meetingRecoveryContent";
 import { recoveryFixture } from "./meetingRecoveryFixtures";
 import { PassThrough } from "node:stream";
+import { transcriptionLanguageSchema } from "../../src/config/transcriptionLanguage";
 import {
   startRecordingContentCheckpoint,
   checkpointCompletedTranscription,
@@ -144,7 +145,7 @@ const preSimplificationSettings = z.object({
   }),
   models: z.object({ transcriptionCoalesce: preSimplificationModel }),
   transcription: z.object({
-    language: z.literal("auto"),
+    language: transcriptionLanguageSchema,
     promptEchoEnabled: z.literal(false),
     voteEnabled: z.literal(false),
     finalPassEnabled: z.literal(false),

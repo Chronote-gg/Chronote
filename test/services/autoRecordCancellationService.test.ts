@@ -79,6 +79,7 @@ const buildRuntimeConfig = (
   const base: MeetingRuntimeConfig = {
     transcription: {
       speechDetectionMode: "off",
+      language: "auto",
       suppressionEnabled: true,
       suppressionHardSilenceDbfs: -60,
       suppressionRateMaxSeconds: 3,
