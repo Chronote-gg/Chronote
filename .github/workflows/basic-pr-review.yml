@@ -1,0 +1,32 @@
+# .github/workflows/basic-pr-review.yml in each repository. Must stay pull_request_target: the
+# shared role only trusts tokens whose ref is the default branch (see the README).
+name: Basic PR Review
+on:
+  pull_request_target:
+    # No branches filter: closed/retarget events must still cancel an in-flight review.
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - converted_to_draft
+      - closed
+      - edited
+      - labeled
+      - unlabeled
+permissions: {}
+jobs:
+  review:
+    # One live review per PR. A review request label joins the live group and replaces an
+    # in-flight review; other label changes, title edits and manual re-runs get their own group.
+    concurrency:
+      group: basic-pr-review-${{ github.event.pull_request.number }}-${{ (github.run_attempt != '1' || github.event.action == 'unlabeled' || (github.event.action == 'labeled' && github.event.label.name != 'request-pr-review') || (github.event.action == 'edited' && !github.event.changes.base)) && github.run_id || 'live' }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
+      statuses: write
+    # Pinned to the major version tag, so v1 releases reach this repository without a change here.
+    uses: BITRATE-Labs/basic-pr-review/.github/workflows/review.yml@v1
