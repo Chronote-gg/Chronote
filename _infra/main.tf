@@ -605,8 +605,8 @@ data "github_repository" "repo" {
   full_name = "${var.github_owner}/${var.github_repository}"
 }
 
-# The reviewer, branch policy and bypass settings are the Terraform Apply
-# approval gate. They are set by hand and never by a plan: this resource
+# The reviewer, branch policy and bypass settings gate production deploys and
+# Terraform Plan runs. They are set by hand and never by a plan: this resource
 # declares none of them, and the provider would otherwise reset each to its
 # default (no reviewer, any branch, admin bypass on).
 resource "github_repository_environment" "repo_env" {

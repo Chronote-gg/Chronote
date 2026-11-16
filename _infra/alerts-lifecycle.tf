@@ -16,7 +16,7 @@ locals {
       comparison         = "GreaterThanOrEqualToThreshold"
       evaluation_periods = 1
       treat_missing_data = "notBreaching"
-      description        = "A meeting has been unfinished for more than four hours, or was abandoned after 24 hours. Check the bot logs for \"Meeting lifecycle stuck\" or \"Meeting lifecycle abandoned\"."
+      description        = "A meeting has been unfinished for more than four hours, its Discord delivery has been pending and failing for more than an hour, or it was abandoned after 24 hours. Check the bot logs for \"Meeting lifecycle stuck\" or \"Meeting lifecycle abandoned\"."
     }
     meeting_finish_failed = {
       metric             = "MeetingFailed"
