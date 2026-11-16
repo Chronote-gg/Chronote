@@ -104,7 +104,9 @@ async function verifyApplySource(get, repository, planSha, applySha) {
 // Workflows that move production traffic or roles that the Apply may change.
 const productionWriters = ["deploy.yml"];
 const activeStatuses = ["in_progress", "queued", "waiting", "pending"];
-// Apply has its own concurrency group, so it checks for running writers itself.
+// Apply has its own concurrency group, so it checks for running writers
+// itself, and each backend deploy waits for a running Apply (waitForApplyIdle).
+// Both are snapshots: two starts within one poll of each other can overlap.
 async function assertProductionIdle(get, repository) {
   for (const workflow of productionWriters)
     for (const status of activeStatuses) {
@@ -213,7 +215,50 @@ async function verifyEnvironmentApproval(get, invocation, run) {
     createdAt: run.created_at,
   };
 }
+const applyPollMs = 30 * 1000;
+const applyWaitMs = 60 * 60 * 1000;
+// The runs API omits dispatch inputs; the Apply run name starts with them.
+async function applyInProgress(get, repository, environment) {
+  const runs = await get(
+    `/repos/${repository}/actions/workflows/terraform-apply.yml/runs?status=in_progress&per_page=100`,
+    { paginated: true },
+  );
+  assert.equal(runs.workflow_runs.length, runs.total_count);
+  return runs.workflow_runs.some((run) =>
+    run.display_title.startsWith(`Terraform Apply ${environment}/`),
+  );
+}
+// Approved and running only: a queued or approval-waiting Apply has not
+// started and refuses on its own while this deploy is open.
+async function waitForApplyIdle(
+  get,
+  repository,
+  environment,
+  {
+    now = Date.now,
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    log = console.log,
+  } = {},
+) {
+  const start = now();
+  for (;;) {
+    let busy = true;
+    try {
+      busy = await applyInProgress(get, repository, environment);
+    } catch {
+      log("Terraform Apply runs could not be read; counting as in progress");
+    }
+    if (!busy) return "idle";
+    if (now() - start >= applyWaitMs)
+      throw new Error(
+        `Terraform Apply for ${environment} is still in progress after 60 minutes; deploy again once it finishes`,
+      );
+    log(`Terraform Apply for ${environment} is in progress; waiting`);
+    await sleep(applyPollMs);
+  }
+}
 module.exports = {
+  waitForApplyIdle,
   nativeGitHub,
   verifyRun,
   verifyApplySource,
@@ -222,3 +267,16 @@ module.exports = {
   runTitle,
   verifyEnvironmentApproval,
 };
+if (require.main === module) {
+  const [command, environment] = process.argv.slice(2);
+  assert.equal(command, "wait-apply-idle");
+  assert.ok(["production", "sandbox"].includes(environment));
+  waitForApplyIdle(
+    nativeGitHub(process.env.GH_TOKEN),
+    process.env.GITHUB_REPOSITORY,
+    environment,
+  ).catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}

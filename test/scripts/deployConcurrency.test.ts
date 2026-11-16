@@ -92,27 +92,36 @@ test("every deploy job depends on CI, directly or transitively", () => {
 // Deploy jobs run under the repository variable DEPLOY_ENVIRONMENT (set to the
 // unreviewed production-deploy environment once it is provisioned) and fall
 // back to the reviewed production environment while the variable is unset.
-test("every deploy job uses the switchable production environment", () => {
-  expect(deployJobs.length).toBeGreaterThan(0);
-  for (const [id, job] of deployJobs)
-    expect(`${id}: ${job.environment}`).toBe(
-      `${id}: \${{ vars.DEPLOY_ENVIRONMENT || 'production' }}`,
-    );
+const SWITCHABLE = "${{ vars.DEPLOY_ENVIRONMENT || 'production' }}";
+test("every deploy job except the backend uses the switchable environment", () => {
+  const others = deployJobs.filter(([id]) => id !== "deploybackend");
+  expect(others.length).toBe(4);
+  for (const [id, job] of others)
+    expect(`${id}: ${job.environment}`).toBe(`${id}: ${SWITCHABLE}`);
 });
 
-// A merge that lands during an Apply must queue its rollout behind the Apply
-// rather than start it, so Apply holds the same lock as each backend deploy.
-test("Terraform Apply holds the backend rollout lock of its environment", () => {
-  const apply = readWorkflow("terraform-apply.yml").jobs.apply.concurrency;
-  expect(apply).toEqual({
-    group: "backend-rollout-${{ inputs.github_environment }}",
-    "cancel-in-progress": false,
-  });
-  for (const [name, environment] of [
-    ["deploy.yml", "production"],
-    ["deploy-staging.yml", "sandbox"],
-  ])
-    expect(readWorkflow(name).jobs.deploybackend.concurrency?.group).toBe(
-      apply?.group.replace("${{ inputs.github_environment }}", environment),
-    );
+// retire_older_tasks is a boolean input (absent on push), so the gate is true
+// only for a dispatch that asked to retire, which keeps the human approval.
+test("a dispatch that retires older tasks always deploys in production", () => {
+  expect(deployment.jobs.deploybackend.environment).toBe(
+    "${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}",
+  );
+  const input = (
+    deployment as unknown as {
+      on: {
+        workflow_dispatch: {
+          inputs: { retire_older_tasks: { type: string; default: boolean } };
+        };
+      };
+    }
+  ).on.workflow_dispatch.inputs.retire_older_tasks;
+  expect(input).toMatchObject({ type: "boolean", default: false });
+});
+
+// A pending Apply and a pending deploy in one group would displace each other,
+// so Apply keeps only its own group and the deploy waits for it instead.
+test("Terraform Apply does not take the backend rollout lock", () => {
+  expect(
+    readWorkflow("terraform-apply.yml").jobs.apply.concurrency,
+  ).toBeUndefined();
 });

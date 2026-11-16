@@ -49,14 +49,17 @@ jobs:
     concurrency:
       group: backend-rollout-production
       cancel-in-progress: false
-    timeout-minutes: 240
+    timeout-minutes: 300
     # Publish privacy/What's New notices before expanded capture goes live.
     needs: [ci, deploy-docs]
     runs-on: ubuntu-latest
-    environment: ${{ vars.DEPLOY_ENVIRONMENT || 'production' }}
+    # A dispatch that retires older tasks ends live recordings, so it always
+    # waits for the reviewed production approval.
+    environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}
     permissions:
       contents: read
       id-token: write
+      actions: read
     env:
       DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
@@ -75,6 +78,11 @@ jobs:
           node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
+
+      - name: Wait for a running Terraform Apply
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/deployment/terraform-native.cjs wait-apply-idle production
 
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
