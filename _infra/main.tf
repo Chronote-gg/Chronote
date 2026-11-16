@@ -88,9 +88,6 @@ variable "github_repository" {
 variable "GITHUB_TOKEN" {
   sensitive = true
 }
-variable "AWS_TOKEN_KEY" {
-  sensitive = true
-}
 variable "DISCORD_CLIENT_ID" {
   sensitive = true
 }
@@ -629,13 +626,6 @@ resource "github_actions_environment_variable" "envvar_ecr_repository" {
   environment   = github_repository_environment.repo_env.environment
   variable_name = "ECR_REPOSITORY"
   value         = aws_ecr_repository.app_ecr_repo.name
-}
-
-resource "github_actions_environment_variable" "envvar_aws_access_key_id" {
-  repository    = data.github_repository.repo.name
-  environment   = github_repository_environment.repo_env.environment
-  variable_name = "AWS_ACCESS_KEY_ID"
-  value         = var.AWS_TOKEN_KEY
 }
 
 resource "github_actions_environment_variable" "envvar_frontend_bucket" {

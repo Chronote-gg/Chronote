@@ -125,7 +125,6 @@ mock_provider "archive" {}
 
 variables {
   GITHUB_TOKEN       = "mock"
-  AWS_TOKEN_KEY      = "mock"
   DISCORD_CLIENT_ID  = "mock"
   ENABLE_ELASTICACHE = false
   ENABLE_API_ALB     = true
@@ -440,7 +439,6 @@ run "production_deploy_mirrors_production_variables" {
       github_actions_environment_variable.production_deploy,
       github_actions_environment_variable.envvar_aws_region,
       github_actions_environment_variable.envvar_ecr_repository,
-      github_actions_environment_variable.envvar_aws_access_key_id,
       github_actions_environment_variable.envvar_frontend_bucket,
       github_actions_environment_variable.envvar_frontend_distribution_id,
       github_actions_environment_variable.envvar_docs_bucket,
@@ -479,7 +477,6 @@ run "production_deploy_mirrors_production_variables" {
     override_during = plan
     values          = { id = "EPRODDOCS" }
   }
-  # AWS_ACCESS_KEY_ID is the one production variable left out on purpose.
   assert {
     condition = {
       for v in values(github_actions_environment_variable.production_deploy) : v.variable_name => v.value
@@ -508,9 +505,5 @@ run "production_deploy_mirrors_production_variables" {
       ) : v.variable_name => v.value
     }
     error_message = "production-deploy must carry exactly the production Terraform variables and values."
-  }
-  assert {
-    condition     = github_actions_environment_variable.envvar_aws_access_key_id.variable_name == "AWS_ACCESS_KEY_ID" && !contains(keys(github_actions_environment_variable.production_deploy), "AWS_ACCESS_KEY_ID")
-    error_message = "The static access key id stays out of the unreviewed environment."
   }
 }

@@ -70,7 +70,6 @@ test("moved tfvars normalizes one string and preserves approved credential overl
     },
   );
   expect(values).toMatchObject({
-    AWS_TOKEN_KEY: "new",
     DISCORD_CLIENT_ID: "123",
     SUPER_ADMIN_USER_IDS: "456",
     ENABLE_ONBOARDING: "true",
@@ -78,6 +77,12 @@ test("moved tfvars normalizes one string and preserves approved credential overl
     REDIS_URL: "rediss://synthetic.invalid",
   });
   expect(values).not.toHaveProperty("OTHER");
+});
+// A session key ID written into a GitHub variable would drift on every Apply.
+test("the AWS session key and the retired AWS_TOKEN_KEY never reach Terraform", () => {
+  const values = run(valid, {}, { AWS_ACCESS_KEY_ID: "session-key" });
+  expect(values).not.toHaveProperty("AWS_TOKEN_KEY");
+  expect(JSON.stringify(values)).not.toContain("session-key");
 });
 test.each([
   ["false", false],
@@ -134,7 +139,6 @@ test.each([
 
 test.each([
   "GITHUB_TOKEN",
-  "AWS_TOKEN_KEY",
   "LANGFUSE_SECRET_KEY",
   "DOCS_ALGOLIA_API_KEY",
   "REDIS_AUTH_TOKEN",

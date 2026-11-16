@@ -10,13 +10,12 @@
 #
 # These keys are credentials and are refused via TFVAR_, deliberately, because
 # Actions variables are writable by people who cannot write secrets:
-# GITHUB_TOKEN, AWS_TOKEN_KEY, LANGFUSE_SECRET_KEY, DOCS_ALGOLIA_API_KEY,
+# GITHUB_TOKEN, LANGFUSE_SECRET_KEY, DOCS_ALGOLIA_API_KEY,
 # REDIS_AUTH_TOKEN, grafana_api_key.
 
 # Required
 DISCORD_CLIENT_ID="your-discord-client-id-here"
 GITHUB_TOKEN="your-github-token-here"
-AWS_TOKEN_KEY="your-aws-token-key-here"
 environment="prod"                           # prod | sandbox | staging
 project_name="meeting-notes"
 github_environment="production"              # GitHub Actions environment name

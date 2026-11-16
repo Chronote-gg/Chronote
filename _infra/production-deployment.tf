@@ -341,11 +341,8 @@ locals {
     DOCS_ALGOLIA_API_KEY    = var.DOCS_ALGOLIA_API_KEY
     DOCS_ALGOLIA_INDEX_NAME = var.DOCS_ALGOLIA_INDEX_NAME
   }
-  # The variables Terraform writes to production, with the same values, except
-  # the static AWS_ACCESS_KEY_ID, which no deploy job reads. Built from stable
-  # names and variables, like the runtime scope above, so the targeted plan
-  # reads no serving service, task definition, log group, repository or
-  # distribution. A tftest pins the match with the production resources.
+  # The variables Terraform writes to production, with the same values. A
+  # tftest pins the match with the production resources.
   production_deploy_variables = var.environment == "prod" ? merge({
     AWS_REGION                         = "us-east-1"
     AWS_ACCOUNT_ID                     = data.aws_caller_identity.current.account_id

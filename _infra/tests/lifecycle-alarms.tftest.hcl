@@ -11,7 +11,6 @@ mock_provider "archive" {}
 
 variables {
   GITHUB_TOKEN      = "mock"
-  AWS_TOKEN_KEY     = "mock"
   DISCORD_CLIENT_ID = "mock"
 }
 

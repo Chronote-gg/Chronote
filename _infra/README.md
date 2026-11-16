@@ -466,8 +466,7 @@ workspace; Sandbox uses `sandbox` with the `sandbox` workspace.
 JSON. `scripts/deployment/terraform-tfvars.py` renders it, rejects a non-empty
 `grafana_api_key` after Grafana token rotation is active, and normalizes string
 arrays only when they contain exactly one non-empty value. Any variable
-`TFVAR_<KEY>` overrides `<KEY>`; credentials are refused through that path. When
-the AWS session exports `AWS_ACCESS_KEY_ID`, it overwrites `AWS_TOKEN_KEY`. When
+`TFVAR_<KEY>` overrides `<KEY>`; credentials are refused through that path. A leftover `AWS_TOKEN_KEY` in the secret is dropped. When
 `REDIS_AUTH_TOKEN` or `REDIS_URL` is set as an environment secret, it overlays the
 tfvars, which is how to rotate Redis credentials without editing the large blob.
 
