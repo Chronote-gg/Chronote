@@ -466,7 +466,7 @@ run "production_deploy_mirrors_production_variables" {
     docs_distribution_id     = "EPRODDOCS"
     DOCS_SITE_URL            = "https://docs.example.test"
     DOCS_ALGOLIA_APP_ID      = "APPID"
-    DOCS_ALGOLIA_API_KEY     = "search-only"
+    DOCS_ALGOLIA_API_KEY     = "x"
     DOCS_ALGOLIA_INDEX_NAME  = "docs"
   }
   override_resource {
