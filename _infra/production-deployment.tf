@@ -37,7 +37,8 @@ resource "aws_iam_role" "production_deploy" {
             "token.actions.githubusercontent.com:sub"                 = [for name in local.production_deploy_environments : "repo:${var.github_owner}/${var.github_repository}:environment:${name}"],
             "token.actions.githubusercontent.com:repository_id"       = tostring(data.github_repository.repo.repo_id),
             "token.actions.githubusercontent.com:repository_owner_id" = data.github_organization.production_deployment_owner[0].id,
-            "token.actions.githubusercontent.com:ref"                 = "refs/heads/master"
+            "token.actions.githubusercontent.com:ref"                 = "refs/heads/master",
+            "token.actions.githubusercontent.com:workflow"            = "Meeting Notes Bot Deploy"
           }
         }
       }
@@ -340,19 +341,23 @@ locals {
     DOCS_ALGOLIA_API_KEY    = var.DOCS_ALGOLIA_API_KEY
     DOCS_ALGOLIA_INDEX_NAME = var.DOCS_ALGOLIA_INDEX_NAME
   }
-  # Built from stable names and variables, like the runtime scope above, so the
-  # targeted plan never reads the serving service or the distributions.
+  # The variables Terraform writes to production, with the same values, except
+  # the static AWS_ACCESS_KEY_ID, which no deploy job reads. Built from stable
+  # names and variables, like the runtime scope above, so the targeted plan
+  # reads no serving service, task definition, log group, repository or
+  # distribution. A tftest pins the match with the production resources.
   production_deploy_variables = var.environment == "prod" ? merge({
     AWS_REGION                         = "us-east-1"
     AWS_ACCOUNT_ID                     = data.aws_caller_identity.current.account_id
-    ECR_REPOSITORY                     = aws_ecr_repository.app_ecr_repo.name
+    ECR_REPOSITORY                     = "${local.name_prefix}-bot-repo"
     ECS_CLUSTER                        = aws_ecs_cluster.main.name
     ECS_SERVICE                        = "${local.name_prefix}-bot-service"
     ECS_TASK_FAMILY                    = local.production_task_family
+    ECS_LOG_GROUP                      = local.app_log_group_name
     SECRETS_PREFIX                     = local.name_prefix
-    FRONTEND_BUCKET                    = aws_s3_bucket.frontend.bucket
+    FRONTEND_BUCKET                    = local.frontend_bucket_name
     FRONTEND_DISTRIBUTION_ID           = var.frontend_distribution_id
-    DOCS_BUCKET                        = aws_s3_bucket.docs.bucket
+    DOCS_BUCKET                        = local.docs_bucket_name
     DOCS_DISTRIBUTION_ID               = var.docs_distribution_id
     VITE_API_BASE_URL                  = local.api_base_url
     PRODUCTION_BACKEND_DEPLOY_ROLE_ARN = aws_iam_role.production_deploy[0].arn

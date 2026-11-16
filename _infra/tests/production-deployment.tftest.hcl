@@ -153,18 +153,19 @@ run "production_identity_and_permissions" {
       "token.actions.githubusercontent.com:repository_id",
       "token.actions.githubusercontent.com:repository_owner_id",
       "token.actions.githubusercontent.com:ref",
+      "token.actions.githubusercontent.com:workflow",
       ]) && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == [
       "repo:Chronote-gg/Chronote:environment:production",
       "repo:Chronote-gg/Chronote:environment:production-deploy",
-    ] && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_id"] == "12345" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_owner_id"] == "67890" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master"
-    error_message = "Only the exact repository, owner, production or production-deploy environment and master ref may assume."
+    ] && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_id"] == "12345" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_owner_id"] == "67890" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:workflow"] == "Meeting Notes Bot Deploy"
+    error_message = "Only the exact repository, owner, deploy workflow, production or production-deploy environment and master ref may assume."
   }
   assert {
     condition     = github_repository_environment.production_deploy[0].environment == "production-deploy" && github_repository_environment.production_deploy[0].can_admins_bypass == false && length(github_repository_environment.production_deploy[0].reviewers) == 0 && github_repository_environment.production_deploy[0].deployment_branch_policy[0].custom_branch_policies && !github_repository_environment.production_deploy[0].deployment_branch_policy[0].protected_branches && github_repository_environment_deployment_policy.production_deploy_master[0].branch_pattern == "master"
     error_message = "production-deploy must have no reviewers, no admin bypass and only master."
   }
   assert {
-    condition     = sort(keys(github_actions_environment_variable.production_deploy)) == sort(["AWS_REGION", "AWS_ACCOUNT_ID", "ECR_REPOSITORY", "ECS_CLUSTER", "ECS_SERVICE", "ECS_TASK_FAMILY", "SECRETS_PREFIX", "FRONTEND_BUCKET", "FRONTEND_DISTRIBUTION_ID", "DOCS_BUCKET", "DOCS_DISTRIBUTION_ID", "VITE_API_BASE_URL", "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN"]) && alltrue([for v in values(github_actions_environment_variable.production_deploy) : v.environment == "production-deploy"]) && github_actions_environment_variable.production_deploy["ECS_SERVICE"].value == "meeting-notes-prod-bot-service"
+    condition     = sort(keys(github_actions_environment_variable.production_deploy)) == sort(["AWS_REGION", "AWS_ACCOUNT_ID", "ECR_REPOSITORY", "ECS_CLUSTER", "ECS_SERVICE", "ECS_TASK_FAMILY", "SECRETS_PREFIX", "FRONTEND_BUCKET", "FRONTEND_DISTRIBUTION_ID", "DOCS_BUCKET", "DOCS_DISTRIBUTION_ID", "VITE_API_BASE_URL", "ECS_LOG_GROUP", "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN"]) && alltrue([for v in values(github_actions_environment_variable.production_deploy) : v.environment == "production-deploy"]) && github_actions_environment_variable.production_deploy["ECS_SERVICE"].value == "meeting-notes-prod-bot-service"
     error_message = "production-deploy must carry the Terraform-managed deploy variables."
   }
   assert {
@@ -430,5 +431,86 @@ run "sandbox_deploy_retire_grants_stop_task_on_cluster_tasks_only" {
   assert {
     condition     = one([for s in jsondecode(aws_iam_role_policy.sandbox_deploy[0].policy).Statement : s.Resource if s.Sid == "RetireOlderTasks"]) == "arn:aws:ecs:us-east-1:123456789012:task/${aws_ecs_cluster.main.name}/*"
     error_message = "StopTask must bind only this cluster's tasks."
+  }
+}
+run "production_deploy_mirrors_production_variables" {
+  command = plan
+  plan_options {
+    target = [
+      github_actions_environment_variable.production_deploy,
+      github_actions_environment_variable.envvar_aws_region,
+      github_actions_environment_variable.envvar_ecr_repository,
+      github_actions_environment_variable.envvar_aws_access_key_id,
+      github_actions_environment_variable.envvar_frontend_bucket,
+      github_actions_environment_variable.envvar_frontend_distribution_id,
+      github_actions_environment_variable.envvar_docs_bucket,
+      github_actions_environment_variable.envvar_docs_distribution_id,
+      github_actions_environment_variable.envvar_docs_site_url,
+      github_actions_environment_variable.envvar_docs_algolia_app_id,
+      github_actions_environment_variable.envvar_docs_algolia_api_key,
+      github_actions_environment_variable.envvar_docs_algolia_index_name,
+      github_actions_environment_variable.envvar_vite_api_base_url,
+      github_actions_environment_variable.envvar_ecs_cluster,
+      github_actions_environment_variable.envvar_ecs_service,
+      github_actions_environment_variable.envvar_ecs_task_family,
+      github_actions_environment_variable.envvar_ecs_log_group,
+      github_actions_environment_variable.envvar_secrets_prefix,
+      github_actions_environment_variable.production_deploy_role,
+      github_actions_environment_variable.production_deploy_account,
+    ]
+  }
+  variables {
+    environment              = "prod"
+    github_environment       = "production"
+    frontend_distribution_id = "EPRODFRONTEND"
+    docs_distribution_id     = "EPRODDOCS"
+    DOCS_SITE_URL            = "https://docs.example.test"
+    DOCS_ALGOLIA_APP_ID      = "APPID"
+    DOCS_ALGOLIA_API_KEY     = "search-only"
+    DOCS_ALGOLIA_INDEX_NAME  = "docs"
+  }
+  override_resource {
+    target          = aws_cloudfront_distribution.frontend
+    override_during = plan
+    values          = { id = "EPRODFRONTEND" }
+  }
+  override_resource {
+    target          = aws_cloudfront_distribution.docs
+    override_during = plan
+    values          = { id = "EPRODDOCS" }
+  }
+  # AWS_ACCESS_KEY_ID is the one production variable left out on purpose.
+  assert {
+    condition = {
+      for v in values(github_actions_environment_variable.production_deploy) : v.variable_name => v.value
+      } == {
+      for v in concat(
+        [
+          github_actions_environment_variable.envvar_aws_region,
+          github_actions_environment_variable.envvar_ecr_repository,
+          github_actions_environment_variable.envvar_frontend_bucket,
+          github_actions_environment_variable.envvar_frontend_distribution_id,
+          github_actions_environment_variable.envvar_docs_bucket,
+          github_actions_environment_variable.envvar_docs_distribution_id,
+          github_actions_environment_variable.envvar_vite_api_base_url,
+          github_actions_environment_variable.envvar_ecs_cluster,
+          github_actions_environment_variable.envvar_ecs_service,
+          github_actions_environment_variable.envvar_ecs_task_family,
+          github_actions_environment_variable.envvar_ecs_log_group,
+          github_actions_environment_variable.envvar_secrets_prefix,
+        ],
+        github_actions_environment_variable.envvar_docs_site_url,
+        github_actions_environment_variable.envvar_docs_algolia_app_id,
+        github_actions_environment_variable.envvar_docs_algolia_api_key,
+        github_actions_environment_variable.envvar_docs_algolia_index_name,
+        github_actions_environment_variable.production_deploy_role,
+        github_actions_environment_variable.production_deploy_account,
+      ) : v.variable_name => v.value
+    }
+    error_message = "production-deploy must carry exactly the production Terraform variables and values."
+  }
+  assert {
+    condition     = github_actions_environment_variable.envvar_aws_access_key_id.variable_name == "AWS_ACCESS_KEY_ID" && !contains(keys(github_actions_environment_variable.production_deploy), "AWS_ACCESS_KEY_ID")
+    error_message = "The static access key id stays out of the unreviewed environment."
   }
 }

@@ -155,18 +155,26 @@ function statements(document) {
   return parsed.Statement;
 }
 
-// Only the two GitHub deploy environments on this repository may assume the roles.
+// Only deploy.yml on master in the two GitHub deploy environments of this
+// repository may assume the roles.
 function checkOidcTrust({ after }, accountId) {
   const provider = `arn:aws:iam::${accountId}:oidc-provider/token.actions.githubusercontent.com`;
   for (const statement of statements(after.assume_role_policy)) {
     assert.equal(statement.Effect, "Allow");
     assert.deepEqual(statement.Principal, { Federated: provider });
     assert.equal(statement.Action, "sts:AssumeRoleWithWebIdentity");
+    const claims = statement.Condition.StringEquals;
     assert.deepEqual(
-      statement.Condition.StringEquals[
-        "token.actions.githubusercontent.com:sub"
-      ],
+      claims["token.actions.githubusercontent.com:sub"],
       deploySubjects,
+    );
+    assert.equal(
+      claims["token.actions.githubusercontent.com:ref"],
+      "refs/heads/master",
+    );
+    assert.equal(
+      claims["token.actions.githubusercontent.com:workflow"],
+      "Meeting Notes Bot Deploy",
     );
   }
 }

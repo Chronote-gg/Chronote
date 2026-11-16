@@ -21,6 +21,9 @@ export const githubTrust = () =>
           "repo:Chronote-gg/Chronote:environment:production",
           "repo:Chronote-gg/Chronote:environment:production-deploy",
         ],
+        "token.actions.githubusercontent.com:ref": "refs/heads/master",
+        "token.actions.githubusercontent.com:workflow":
+          "Meeting Notes Bot Deploy",
       },
     },
   });

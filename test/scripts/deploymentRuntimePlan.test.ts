@@ -276,6 +276,38 @@ test.each([
     },
   ],
   [
+    "a topic branch ref",
+    (t: Trust) => {
+      t.Statement[0].Condition.StringEquals[
+        "token.actions.githubusercontent.com:ref"
+      ] = "refs/heads/codex/repair";
+    },
+  ],
+  [
+    "no ref condition",
+    (t: Trust) => {
+      delete t.Statement[0].Condition.StringEquals[
+        "token.actions.githubusercontent.com:ref"
+      ];
+    },
+  ],
+  [
+    "no workflow pin",
+    (t: Trust) => {
+      delete t.Statement[0].Condition.StringEquals[
+        "token.actions.githubusercontent.com:workflow"
+      ];
+    },
+  ],
+  [
+    "another workflow",
+    (t: Trust) => {
+      t.Statement[0].Condition.StringEquals[
+        "token.actions.githubusercontent.com:workflow"
+      ] = "Production introduction";
+    },
+  ],
+  [
     "only the reviewed subject",
     (t: Trust) => {
       t.Statement[0].Condition.StringEquals[
