@@ -1,5 +1,6 @@
 import type { PcmSpan } from "./types/transcriptCorrespondence";
 import { appendPcmSpan } from "./utils/transcriptCorrespondence";
+import { markCaptureIncomplete } from "./utils/captureIncomplete";
 import {
   getMeetingProcessingSignal,
   runMeetingProcessingEffect,
@@ -247,7 +248,8 @@ async function playTtsItem(
                 return false;
               if (chunk.length && !receivedSpan) mappedPlayback = false;
               meeting.audioData.audioPassThrough?.write(chunk, (error) => {
-                if (error) meeting.audioData.captureIncomplete = true;
+                if (error)
+                  markCaptureIncomplete(meeting, "bot-audio-write-failed");
               });
               return true;
             },
