@@ -14,7 +14,9 @@ function prepareSiteIdentity(text) {
   );
   assert.match(
     binding.kmsKeyArn,
-    new RegExp(`^arn:aws:kms:us-east-1:${binding.accountId}:key/[a-f0-9-]{36}$`),
+    new RegExp(
+      `^arn:aws:kms:us-east-1:${binding.accountId}:key/[a-f0-9-]{36}$`,
+    ),
   );
   const outputs = {
     account_id: binding.accountId,
