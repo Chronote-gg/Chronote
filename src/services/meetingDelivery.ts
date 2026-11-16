@@ -162,20 +162,21 @@ function snowflakeTime(id: string): number {
   return Number((BigInt(id) >> SNOWFLAKE_TIMESTAMP_SHIFT) + DISCORD_EPOCH_MS);
 }
 
+type ChannelReadback = { botId: string; messages: DiscordEditorMessage[] };
+
 /**
- * Finds chunks that were posted but whose ids were never saved. Recorded ids are
- * a floor, so with any recorded the search reads forward from the last one;
- * otherwise it reads recent history newest first, back to the capture end.
+ * Reads the part of the channel where messages posted without a saved id would
+ * be. Recorded chunk ids are a floor, so with any recorded the read goes forward
+ * from the last one; otherwise it reads recent history newest first, back to
+ * the capture end.
  */
-async function readUnrecordedNotes(input: {
+async function readChannel(input: {
   transport: DeliveryTransport;
   channelId: string;
   history: MeetingHistory;
-  summaryMessageId: string;
-  recorded: string[];
   signal: AbortSignal;
-}): Promise<string[]> {
-  const { transport, channelId, history, recorded, signal } = input;
+}): Promise<ChannelReadback> {
+  const { transport, channelId, history, signal } = input;
   const botId = discordBotIdentitySchema.parse(
     await transport.getBotIdentity(signal),
   ).id;
@@ -189,7 +190,7 @@ async function readUnrecordedNotes(input: {
       }),
     );
   const found: DiscordEditorMessage[] = [];
-  const last = recorded.at(-1);
+  const last = history.notesMessageIds?.at(-1);
   if (last) found.push(...(await list({ after: last })));
   else {
     const presentation = presentationFromHistory(history);
@@ -216,13 +217,40 @@ async function readUnrecordedNotes(input: {
       before = oldest;
     }
   }
+  return { botId, messages: found };
+}
+
+/** Finds chunks that were posted but whose ids were never saved. */
+function unrecordedNotes(
+  readback: ChannelReadback,
+  history: MeetingHistory,
+  summaryMessageId: string,
+): string[] {
   // The summary carries the same marker, so it must not be read as a chunk.
-  const candidates = found.filter(
-    (message) => message.id !== input.summaryMessageId,
+  const candidates = readback.messages.filter(
+    (message) => message.id !== summaryMessageId,
   );
-  return postedNotes(candidates, history, botId, recorded.length).map(
-    (message) => message.id,
-  );
+  return postedNotes(
+    candidates,
+    history,
+    readback.botId,
+    history.notesMessageIds?.length ?? 0,
+  ).map((message) => message.id);
+}
+
+/** A fallback summary posted by an attempt that never saved its id: same marker as the chunks, and the summary title. */
+function unrecordedSummary(
+  readback: ChannelReadback,
+  history: MeetingHistory,
+  summary: RestMessage,
+): string | undefined {
+  const start = Date.parse(history.timestamp);
+  return readback.messages.find(
+    (message) =>
+      message.author.id === readback.botId &&
+      Date.parse(String(firstEmbed(message).timestamp)) === start &&
+      firstEmbed(message).title === firstEmbed(summary).title,
+  )?.id;
 }
 
 function defaultTransport(): DeliveryTransport {
@@ -235,27 +263,31 @@ async function placeSummary(
   history: MeetingHistory,
   summary: RestMessage,
   signal: AbortSignal,
+  readback: () => Promise<ChannelReadback>,
 ): Promise<{ id: string; result: DeliveryResult }> {
+  const edit = (messageId: string) =>
+    transport.updateMessage({ channelId, messageId, payload: summary, signal });
   // A recorded summary wins over the start message: after a re-post the start message is gone.
   const existing = history.summaryMessageId ?? history.startMessageId;
-  if (
-    existing &&
-    (await transport.updateMessage({
-      channelId,
-      messageId: existing,
-      payload: summary,
-      signal,
-    }))
-  )
+  if (existing && (await edit(existing)))
     return {
       id: existing,
       result: { outcome: "edited_existing", intended: 1, sent: 1, errors: [] },
     };
-  const created = createdMessageSchema.parse(
-    await transport.createMessage({ channelId, payload: summary, signal }),
-  );
+  // An earlier attempt's fallback may have posted without its id being saved.
+  const unrecorded = unrecordedSummary(await readback(), history, summary);
+  const id =
+    unrecorded && (await edit(unrecorded))
+      ? unrecorded
+      : createdMessageSchema.parse(
+          await transport.createMessage({
+            channelId,
+            payload: summary,
+            signal,
+          }),
+        ).id;
   return {
-    id: created.id,
+    id,
     result: {
       outcome: "sent_fallback",
       intended: 1,
@@ -291,6 +323,10 @@ export async function deliverMeeting(input: {
     if (!(await input.save(patch))) throw new DeliveryClaimLost();
   };
   const { summary, notes } = renderMeetingDelivery(history, input.extras);
+  // One channel read serves both the summary fallback and the notes resume.
+  let channelRead: Promise<ChannelReadback> | undefined;
+  const readback = () =>
+    (channelRead ??= readChannel({ transport, channelId, history, signal }));
   try {
     const placed = await placeSummary(
       transport,
@@ -298,6 +334,7 @@ export async function deliverMeeting(input: {
       history,
       summary,
       signal,
+      readback,
     );
     let delivery: MeetingDelivery = {
       ...history.delivery,
@@ -316,14 +353,7 @@ export async function deliverMeeting(input: {
         });
     };
     if (notesMessageIds.length < notes.length) {
-      const adopted = await readUnrecordedNotes({
-        transport,
-        channelId,
-        history,
-        summaryMessageId: placed.id,
-        recorded: notesMessageIds,
-        signal,
-      });
+      const adopted = unrecordedNotes(await readback(), history, placed.id);
       if (adopted.length) {
         notesMessageIds.push(...adopted);
         await save({

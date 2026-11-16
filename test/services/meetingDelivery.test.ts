@@ -118,6 +118,14 @@ const withoutTimestamps = (message: {
   components: message.components,
 });
 
+const missingStart = () => history({ startMessageId: "999" });
+const summaryPosts = (discord: ReturnType<typeof fakeDiscord>) =>
+  discord.requests.filter(
+    (r) =>
+      r.method === "POST" &&
+      r.body?.embeds[0].description === "Synthetic summary.",
+  );
+
 /** Delivers a row on the live path through a fresh fake Discord that keeps every save. */
 async function deliverLiveRow(
   initial: MeetingHistory,
@@ -312,6 +320,7 @@ describe("meeting delivery", () => {
     expect(outcome).toEqual({ kind: "delivered" });
     const [summaryPost] = discord.requests.filter((r) => r.method === "POST");
     expect(summaryPost.body?.embeds[0].description).toBe("Synthetic summary.");
+    expect(summaryPosts(discord)).toHaveLength(1);
     expect(current().summaryMessageId).toBe(
       discord.messages.find((m) => m.embeds[0]?.description)?.id,
     );
@@ -450,6 +459,41 @@ describe("meeting delivery", () => {
   }
   const notesPosts = (discord: ReturnType<typeof fakeDiscord>) =>
     discord.requests.filter((r) => r.method === "POST");
+
+  it("a fallback summary whose id was never saved is adopted on retry, not posted again", async () => {
+    const discord = fakeDiscord();
+    const failed = await deliverMeeting({
+      history: missingStart(),
+      save: async (patch) => {
+        if (patch.summaryMessageId) throw new Error("storage unavailable");
+        return missingStart();
+      },
+      transport: discord.transport,
+      signal: signal(),
+      path: "live",
+    });
+    expect(failed).toMatchObject({ kind: "temporary" });
+    const posted = discord.messages.at(-1)?.id;
+
+    const { outcome, current } = await run(discord, missingStart());
+    expect(outcome).toEqual({ kind: "delivered" });
+    expect(summaryPosts(discord)).toHaveLength(1);
+    expect(current().summaryMessageId).toBe(posted);
+    expect(current().notesMessageIds).not.toContain(posted);
+  });
+
+  it("another meeting's summary in the channel is not adopted", async () => {
+    const discord = fakeDiscord();
+    const foreign = snowflake(POSTING_STARTS_AT - 1000);
+    const { summary } = renderMeetingDelivery(
+      history({ timestamp: "2025-12-31T00:00:00.000Z" }),
+    );
+    discord.messages.push(discordMessage(foreign, summary));
+    const { current } = await run(discord, missingStart());
+    expect(summaryPosts(discord)).toHaveLength(1);
+    expect(current().summaryMessageId).not.toBe(foreign);
+    expect(current().notesMessageIds).not.toContain(foreign);
+  });
 
   it("more than 100 chat messages posted during the meeting do not hide notes from a resume", async () => {
     const discord = fakeDiscord();
