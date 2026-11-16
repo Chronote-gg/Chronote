@@ -778,12 +778,11 @@ below. They stay in Terraform until the unused deployment
 infrastructure is removed; the prompt-guard role is still assumed by the OpenAI
 connection sync.
 
-An environment name is not an approval gate. Before any mutating production job,
-verify that production has the reviewed human approval protections, permitted
-branch policy and bypass controls. The workflow
-must fail closed when required environment protection is absent.
-This source does not configure reviewers or change repository security settings.
-Approval configuration needs its own reviewed owner decision before use.
+An environment name is not an approval gate, and no workflow checks the
+`production` environment's protection. Its required reviewer, `master`-only
+branch policy and bypass setting are set by hand in GitHub. Terraform manages
+the environment but ignores those settings, so no plan changes them; check them
+in the repository settings whenever access changes.
 
 Service writes bind the existing service; PassRole binds the existing task and
 execution roles for ECS tasks. Routing reuses the existing HTTPS listener policy,
