@@ -101,6 +101,48 @@ test("stuck and abandoned rows log the alarm lines", async () => {
   expect(world.deps.finish).not.toHaveBeenCalled();
 });
 
+test("a complete row whose delivery has failed for over an hour logs the stuck line and metric, a shorter retry does not", async () => {
+  const deliveringFor = (id: string, seconds: number) =>
+    row(id, {
+      status: "complete",
+      finish: {
+        attempts: 3,
+        nextAttemptAt: NOW + 1,
+        phase: "deliver",
+        deliverSince: NOW - seconds,
+      },
+    });
+  const failing = deliveringFor(
+    "failing",
+    LIFECYCLE.deliveryStuckAlarmSeconds + 1,
+  );
+  const world = setup([failing, deliveringFor("retrying", 20 * 60)]);
+  const metrics: string[] = [];
+  process.env.METRICS_NAMESPACE = "meeting-notes-test/Lifecycle";
+  const write = jest
+    .spyOn(process.stdout, "write")
+    .mockImplementation((chunk) => {
+      if (String(chunk).includes('"_aws"')) metrics.push(String(chunk));
+      return true;
+    });
+  try {
+    await world.scan();
+  } finally {
+    write.mockRestore();
+    delete process.env.METRICS_NAMESPACE;
+  }
+  const stuck = metrics
+    .map((line) => JSON.parse(line))
+    .filter((line) => line.MeetingStuck === 1);
+  expect(stuck.map((line) => line.Phase)).toEqual(["delivery"]);
+  expect(logged(MEETING_STUCK_LOG)).toBe(1);
+  expect(jest.mocked(console.error)).toHaveBeenCalledWith(MEETING_STUCK_LOG, {
+    guildId: failing.guildId,
+    meetingId: failing.meetingId,
+    deliveryFailingSince: isoAt(NOW - LIFECYCLE.deliveryStuckAlarmSeconds - 1),
+  });
+});
+
 test("a row another worker claims between this worker's read and its abandon write is left alone", async () => {
   const raced = row("raced", {
     status: "processing",

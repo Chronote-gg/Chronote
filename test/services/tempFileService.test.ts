@@ -96,6 +96,34 @@ describe("tempFileService", () => {
     }
   });
 
+  it("clearing the temp base removes everything under it regardless of age and keeps the base", async () => {
+    const f = await sweepFixture("chronote-clear-");
+    try {
+      const dirs = [
+        await f.make("m/synthetic-recent"),
+        await f.make("r/0123456789abcdef-abc123"),
+        await f.make("personal-upload/synthetic-upload/attempt-0"),
+        await f.make("recovery-mix-synthetic-abc123"),
+      ];
+      await fs.promises.writeFile(
+        path.join(f.service.getTempBaseDir(), "stray.txt"),
+        "x",
+      );
+      await f.service.clearTempBase();
+      for (const dir of dirs) expect(fs.existsSync(dir)).toBe(false);
+      expect(fs.readdirSync(f.service.getTempBaseDir())).toEqual([]);
+    } finally {
+      await removeTestDirectory(f.baseDir, "chronote-clear-");
+    }
+  });
+
+  it("clearing a missing temp base does nothing", async () => {
+    const service = await loadService(
+      path.join(os.tmpdir(), "chronote-missing-base-never-created"),
+    );
+    await expect(service.clearTempBase()).resolves.toBeUndefined();
+  });
+
   it("a sweep root that is not a real directory is skipped and the others are still swept", async () => {
     const f = await sweepFixture("chronote-sweep-root-");
     const nowMs = Date.now();

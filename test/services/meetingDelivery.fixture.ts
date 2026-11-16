@@ -76,7 +76,9 @@ export function discordMessage(
   return {
     id,
     channel_id: TEXT_CHANNEL_ID,
-    author: { id: authorId, bot: authorId === BOT_ID },
+    // Discord omits `bot` for human authors.
+    author:
+      authorId === BOT_ID ? { id: authorId, bot: true } : { id: authorId },
     content: body.content ?? "",
     embeds: body.embeds ?? [],
     components: body.components ?? [],
@@ -99,7 +101,7 @@ export function fakeDiscord() {
   const requests: RecordedRequest[] = [];
   let clock = POSTING_STARTS_AT;
   const nextId = () => snowflake((clock += 1000));
-  const byAge = (a: DiscordEditorMessage, b: DiscordEditorMessage) =>
+  const byAge = (a: { id: string }, b: { id: string }) =>
     BigInt(a.id) < BigInt(b.id) ? -1 : 1;
   const state = {
     messages,
@@ -115,6 +117,8 @@ export function fakeDiscord() {
           ),
         );
     },
+    /** Channel messages served as given, for shapes the schema may not accept. */
+    raw: [] as Array<{ id: string }>,
     fail: undefined as
       | ((request: RecordedRequest, posts: number) => Response | undefined)
       | undefined,
@@ -126,7 +130,7 @@ export function fakeDiscord() {
     const limit = Number(query.get("limit"));
     const after = query.get("after");
     const before = query.get("before");
-    const sorted = [...messages].sort(byAge);
+    const sorted = [...messages, ...state.raw].sort(byAge);
     const page = after
       ? sorted.filter((m) => BigInt(m.id) > BigInt(after)).slice(0, limit)
       : sorted

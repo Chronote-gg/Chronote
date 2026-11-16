@@ -9,7 +9,7 @@
 // both sides identical.
 export const LIFECYCLE_METRICS = {
   // Phase: open (unfinished past the alarm age), abandoned, or delivery (a
-  // finished meeting whose Discord delivery keeps failing past its alarm age).
+  // finished meeting whose Discord delivery has kept failing for over an hour).
   meetingStuck: "MeetingStuck",
   // Phase: finish or delivery, after their retries ran out.
   meetingFailed: "MeetingFailed",
