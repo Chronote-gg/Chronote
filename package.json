@@ -250,12 +250,12 @@
     "**/@jest/reporters/glob": "^14.0.2",
     "**/jest-runtime/glob": "^14.0.2",
     "**/@joshwooding/vite-plugin-react-docgen-typescript/glob": "^14.0.2",
-    "**/babel-plugin-istanbul/test-exclude/minimatch": "^11.0.1",
-    "**/eslint/minimatch": "^11.0.1",
-    "**/@typescript-eslint/typescript-estree/minimatch": "^11.0.1",
+    "**/babel-plugin-istanbul/test-exclude/minimatch": "^11.0.8",
+    "**/eslint/minimatch": "^11.0.8",
+    "**/@typescript-eslint/typescript-estree/minimatch": "^11.0.8",
     "**/jest-config/glob": "^14.0.2",
-    "**/@eslint/config-array/minimatch": "^11.0.1",
-    "**/nodemon/minimatch": "^11.0.1"
+    "**/@eslint/config-array/minimatch": "^11.0.8",
+    "**/nodemon/minimatch": "^11.0.8"
   },
   "devDependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1169.0",

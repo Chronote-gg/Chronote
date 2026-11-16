@@ -20,6 +20,7 @@ test("renewal payment processing stays quiet and refreshes after actual settleme
   await expect(notice.getByRole("link", { name: "Retry payment" })).toHaveCount(
     0,
   );
+  // Pause only the click boundary so a poll cannot remove the refresh button.
   await page.clock.pauseAt(Date.now() + 1000);
   options.view = { status: "none" };
   await notice.getByRole("button", { name: "Refresh status" }).click();

@@ -101,6 +101,8 @@ resource reads either local, the log group or the topic.
 
 ## Provider dependency audit (2026-11-11)
 
+Historical assessment, superseded by the 2026-11-16 entry below.
+
 AWS advances from 6.71.0 to 6.72.0 in the application, state-management and
 production-bootstrap locks. The application Terraform configuration is unchanged.
 The source manifest is recomputed for the new lock, and installed-provider

@@ -87,6 +87,8 @@ Cargo audit also reports `proc-macro-error` 1.0.4 as unmaintained ([RUSTSEC-2024
 
 ## Maintenance assessment on 2026-11-11
 
+Historical assessment, superseded by the 2026-11-16 entry below.
+
 This refresh starts from current `master` and incorporates the compatible changes
 from [#585](https://github.com/Chronote-gg/Chronote/pull/585). Keep that PR open:
 its ONNX, Stripe, proxy middleware, Webpack Dev Server and protobufjs proposals
@@ -247,3 +249,14 @@ message. Cancellation tests therefore assert that stable error name while
 retaining the actual transport-settlement, watchdog and exact request-count
 checks that establish provenance. Requiring the removed message would reject
 the SDK's supported behavior.
+
+### Minimatch fixed-version floor
+
+Raise all five scoped modern Minimatch resolution floors to 11.0.8. The former
+11.0.1 floor could admit the published vulnerable range on a future lock refresh;
+the previous lock also forced 11.0.4 onto a caller requesting 11.0.5. The 11.0.7
+release fixes quadratic wildcard compilation ([GHSA-cf2h-pxjq-68xw](https://github.com/isaacs/minimatch/security/advisories/GHSA-cf2h-pxjq-68xw));
+11.0.8 also bounds compiled-pattern cache weight ([GHSA-hqmv-qgp3-jx75](https://github.com/isaacs/minimatch/security/advisories/GHSA-hqmv-qgp3-jx75))
+and fixes literal escaping ([GHSA-c859-jr93-m5j4](https://github.com/isaacs/minimatch/security/advisories/GHSA-c859-jr93-m5j4))
+within the same supported API family. Preserve legacy
+3.1.5 consumers rather than forcing a new API across all callers.
