@@ -35,6 +35,7 @@ const deployVariableNames = new Set([
   "ECS_CLUSTER",
   "ECS_SERVICE",
   "ECS_TASK_FAMILY",
+  "ECS_LOG_GROUP",
   "SECRETS_PREFIX",
   "FRONTEND_BUCKET",
   "FRONTEND_DISTRIBUTION_ID",
@@ -253,7 +254,7 @@ function validateRuntimePlan(plan, { accountId }) {
     },
   });
 }
-module.exports = { validateRuntimePlan, runtimeTargets };
+module.exports = { validateRuntimePlan, runtimeTargets, deployVariableNames };
 if (require.main === module)
   runCli(
     (plan) => validateRuntimePlan(plan, { accountId: process.argv[2] }),

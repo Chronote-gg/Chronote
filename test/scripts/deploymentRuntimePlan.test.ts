@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { expect, test } from "@jest/globals";
+import { deployVariableNames } from "../../scripts/deployment/validate-runtime-plan.cjs";
 import {
   githubTrust,
   runtimeAccountId,
@@ -38,7 +39,8 @@ test("accepts the runtime creates, policy update, index addition and drain delay
   expect(result.status).toBe(0);
   const accepted = JSON.parse(result.stdout);
   expect(accepted.result).toBe("accepted");
-  expect(accepted.changes).toHaveLength(16);
+  // 12 AWS changes, the environment, its branch policy and every variable.
+  expect(accepted.changes).toHaveLength(14 + deployVariableNames.size);
 });
 
 const deployEnvironment = "github_repository_environment.production_deploy[0]";

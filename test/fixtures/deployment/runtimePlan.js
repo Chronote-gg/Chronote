@@ -1,4 +1,5 @@
 // Synthetic `terraform show -json` shape for the deployment-runtime scope.
+import { deployVariableNames } from "../../../scripts/deployment/validate-runtime-plan.cjs";
 export const runtimeAccountId = "123456789012";
 const managed = (address, actions, change = {}) => ({
   address,
@@ -147,7 +148,7 @@ export function runtimePlan() {
           after: { environment: "production-deploy", branch_pattern: "master" },
         },
       ),
-      ...["ECS_SERVICE", "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN"].map((name) =>
+      ...[...deployVariableNames].map((name) =>
         managed(
           `github_actions_environment_variable.production_deploy["${name}"]`,
           ["create"],
