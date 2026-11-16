@@ -495,6 +495,59 @@ describe("meeting delivery", () => {
     expect(current().notesMessageIds).not.toContain(foreign);
   });
 
+  const denyChannelRead = (discord: ReturnType<typeof fakeDiscord>) => {
+    discord.state.fail = (request) =>
+      request.method === "GET" && request.path.includes("/messages?")
+        ? new Response("{}", { status: 403 })
+        : undefined;
+  };
+  const channelReads = (discord: ReturnType<typeof fakeDiscord>) =>
+    discord.requests.filter(
+      (r) => r.method === "GET" && r.path.includes("/messages?"),
+    );
+
+  it("a failed channel read still posts the fallback summary when notes are recorded", async () => {
+    const discord = fakeDiscord();
+    denyChannelRead(discord);
+    const { outcome, current } = await run(
+      discord,
+      history({
+        startMessageId: "999",
+        notesMessageIds: ["901", "902", "903"],
+        notesChannelId: TEXT_CHANNEL_ID,
+      }),
+    );
+    expect(outcome).toEqual({ kind: "delivered" });
+    expect(summaryPosts(discord)).toHaveLength(1);
+    expect(current().summaryMessageId).toBe(discord.messages.at(-1)?.id);
+  });
+
+  it("a failed channel read posts the summary once and surfaces the read error to the notes resume", async () => {
+    const discord = fakeDiscord();
+    denyChannelRead(discord);
+    const { outcome } = await run(discord, missingStart());
+    expect(outcome).toMatchObject({ kind: "permanent" });
+    expect(summaryPosts(discord)).toHaveLength(1);
+    expect(channelReads(discord)).toHaveLength(1);
+  });
+
+  it("a notes chunk titled like the summary is not adopted as the summary", async () => {
+    const discord = fakeDiscord();
+    const [chunk] = renderMeetingDelivery(history()).notes;
+    const row = () =>
+      history({ startMessageId: "999", meetingName: chunk.embeds[0].title });
+    const chunkId = snowflake(POSTING_STARTS_AT - 1000);
+    const posted = renderMeetingDelivery(row()).notes[0];
+    expect(posted.embeds[0].title).toBe(chunk.embeds[0].title);
+    discord.messages.push(discordMessage(chunkId, posted));
+    const { current } = await run(discord, row());
+    expect(summaryPosts(discord)).toHaveLength(1);
+    expect(current().summaryMessageId).not.toBe(chunkId);
+    expect(
+      discord.requests.filter((r) => r.path.endsWith(`/messages/${chunkId}`)),
+    ).toEqual([]);
+  });
+
   it("more than 100 chat messages posted during the meeting do not hide notes from a resume", async () => {
     const discord = fakeDiscord();
     discord.state.chat(150);

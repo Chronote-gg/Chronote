@@ -72,6 +72,11 @@ export const DELIVERY_DONE: RecordingRecoveryState = {
 
 const createdMessageSchema = discordEditorMessageSchema.pick({ id: true });
 const channelMessagesSchema = z.array(discordEditorMessageSchema);
+const actionRowsSchema = z.array(
+  z.object({
+    components: z.array(z.object({ custom_id: z.string().optional() })),
+  }),
+);
 
 class DeliveryClaimLost extends Error {
   constructor() {
@@ -238,18 +243,33 @@ function unrecordedNotes(
   ).map((message) => message.id);
 }
 
-/** A fallback summary posted by an attempt that never saved its id: same marker as the chunks, and the summary title. */
+/** The button custom ids on a message; only the summary carries any, and they name the meeting. */
+function customIds(message: { components?: Record<string, unknown>[] }) {
+  const rows = actionRowsSchema.safeParse(message.components ?? []);
+  return rows.success
+    ? rows.data.flatMap((row) =>
+        row.components.flatMap((button) => button.custom_id ?? []),
+      )
+    : [];
+}
+
+/**
+ * A fallback summary posted by an attempt that never saved its id: the chunks'
+ * timestamp marker plus one of the summary's own button ids, which notes chunks
+ * (link buttons only) never carry.
+ */
 function unrecordedSummary(
   readback: ChannelReadback,
   history: MeetingHistory,
   summary: RestMessage,
 ): string | undefined {
   const start = Date.parse(history.timestamp);
+  const summaryIds = new Set(customIds(summary));
   return readback.messages.find(
     (message) =>
       message.author.id === readback.botId &&
       Date.parse(String(firstEmbed(message).timestamp)) === start &&
-      firstEmbed(message).title === firstEmbed(summary).title,
+      customIds(message).some((id) => summaryIds.has(id)),
   )?.id;
 }
 
@@ -275,7 +295,11 @@ async function placeSummary(
       result: { outcome: "edited_existing", intended: 1, sent: 1, errors: [] },
     };
   // An earlier attempt's fallback may have posted without its id being saved.
-  const unrecorded = unrecordedSummary(await readback(), history, summary);
+  // A failed read finds nothing here; the notes resume still surfaces it.
+  const unrecorded = await readback().then(
+    (channel) => unrecordedSummary(channel, history, summary),
+    () => undefined,
+  );
   const id =
     unrecorded && (await edit(unrecorded))
       ? unrecorded
