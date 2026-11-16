@@ -303,6 +303,35 @@ describe("planSummary", () => {
     expect(flagged).not.toContain("aws_s3_bucket.a`");
   });
 
+  // The plan validator that used to prove production-deploy's shape is gone;
+  // the owner reading these flagged lines replaces it.
+  test("flags any change to the unreviewed deploy environment and its branch policy", () => {
+    const text = planSummary(
+      {
+        resource_changes: [
+          change(
+            "github_repository_environment.production_deploy[0]",
+            "github_repository_environment",
+            ["update"],
+          ),
+          change(
+            "github_repository_environment_deployment_policy.production_deploy_master[0]",
+            "github_repository_environment_deployment_policy",
+            ["create"],
+          ),
+        ],
+      },
+      meta,
+    );
+    const flagged = text.slice(0, text.indexOf("### All changes"));
+    expect(flagged).toContain(
+      "- **`github_repository_environment.production_deploy[0]` change**",
+    );
+    expect(flagged).toContain(
+      "- **`github_repository_environment_deployment_policy.production_deploy_master[0]` add**",
+    );
+  });
+
   test("records the commit, attempt and encrypted plan digest", () => {
     expect(summary).toContain(`Commit: \`${sha}\``);
     expect(summary).toContain("Plan run attempt: 1");
