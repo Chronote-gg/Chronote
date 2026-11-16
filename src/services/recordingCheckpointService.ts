@@ -1,12 +1,8 @@
-import { fixtureInputSnapshot } from "./fixtureInputService";
-import { validateFixtureCapture } from "./fixtureEvidenceValidation";
 import { createHash } from "node:crypto";
-import { summarizeCaptureCoverage } from "../utils/meetingCaptureNotice";
 import { isDeepStrictEqual } from "node:util";
-import { getDeploymentControlRepository } from "../db";
-import type { DeploymentControlRepository } from "../repositories/deploymentControlRepository";
+import { getMeetingHistoryTransitionRepository } from "../repositories/meetingHistoryTransitions";
+import type { MeetingHistoryTransitionRepository } from "../repositories/meetingHistoryTransitions";
 import type {
-  TerminalCheckpointPreservation,
   HistoryTransition,
   CheckpointPublication,
 } from "../types/deploymentControl";
@@ -28,14 +24,13 @@ import {
   type RecordingCaptureProvenance,
   type RecordingCaptureState,
   type RecordingCheckpoint,
-  type RecoveryDisposition,
   type RecordingCoverage,
   type RecordingManifest,
 } from "../types/recordingCheckpoint";
 import { fetchObjectBytesFromS3, uploadObjectToS3 } from "./storageService";
 import { getRecordingArtifactFolder } from "./uploadService";
 
-const CHECKPOINT_VERIFICATION_CONCURRENCY = 16;
+export const CHECKPOINT_VERIFICATION_CONCURRENCY = 16;
 
 export type RecordingCheckpointMeeting = Pick<
   MeetingData,
@@ -49,16 +44,12 @@ export type RecordingCheckpointMeeting = Pick<
   | "recordingCaptureState"
   | "recordingCheckpoint"
 > & { voiceChannel: Pick<MeetingData["voiceChannel"], "id"> };
-type Repository = Pick<
-  DeploymentControlRepository,
-  "transitionMeetingHistory" | "getMeetingHistory"
->;
+type Repository = MeetingHistoryTransitionRepository;
 type Objects = {
   upload: typeof uploadObjectToS3;
   read: typeof fetchObjectBytesFromS3;
 };
 export type CheckpointFlushInput = {
-  fixtureInput?: import("../types/fixtureEvidence").FixtureInputEvidence;
   ownership?: CheckpointPublication["ownership"];
   capture: RecordingCaptureProvenance;
   captureState?: RecordingCaptureState;
@@ -67,44 +58,6 @@ export type CheckpointFlushInput = {
   artifacts: readonly CheckpointArtifactInput[];
   signal?: AbortSignal;
 };
-export type TerminalRecordingCheckpointInput = Omit<
-  CheckpointFlushInput,
-  "expectedStatus" | "signal"
-> & {
-  expectedStatus: "failed" | "interrupted";
-  captureState: RecordingCaptureState;
-  recovery: RecoveryDisposition;
-  preservation: {
-    ownership: TerminalCheckpointPreservation["ownership"];
-    deadlineEpochMs: number;
-    signal: AbortSignal;
-    assertOwnership(signal: AbortSignal): Promise<void>;
-  };
-};
-export type InitialTerminalRecordingCheckpointInput = Omit<
-  TerminalRecordingCheckpointInput,
-  "expectedStatus"
-> & {
-  expectedStatus: "starting" | "in_progress" | "processing";
-  status: "failed" | "interrupted";
-};
-type Preservation = Pick<
-  TerminalRecordingCheckpointInput,
-  "preservation" | "recovery"
-> & { status?: "failed" | "interrupted" };
-async function assertPreservation(
-  proof: Preservation | undefined,
-  signal: AbortSignal | undefined,
-) {
-  if (!proof) return;
-  if (!signal || Date.now() >= proof.preservation.deadlineEpochMs)
-    throw new Error("Preservation deadline elapsed");
-  signal.throwIfAborted();
-  await proof.preservation.assertOwnership(signal);
-  signal.throwIfAborted();
-  if (Date.now() >= proof.preservation.deadlineEpochMs)
-    throw new Error("Preservation deadline elapsed");
-}
 export type CheckpointFlushResult = CheckpointAppendResult;
 const checksum = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -210,6 +163,19 @@ function savedDuration(
   }
   return { duration, end };
 }
+/**
+ * The coverage a manifest claims, read without downloading any piece. Pieces
+ * are not verified, so it fits timing decisions, not what can be recovered.
+ */
+export function manifestCaptureCoverage(
+  manifest: RecordingManifest,
+): CaptureCoverage {
+  return confirmedCoverage(
+    manifest.capture,
+    manifest.artifacts,
+    manifest.captureState,
+  );
+}
 function confirmedCoverage(
   capture: RecordingCaptureProvenance,
   artifacts: CheckpointArtifact[],
@@ -310,52 +276,11 @@ function captureState(
     throw new Error("Capture stop precedes capture start");
   return state;
 }
-function matchesAcknowledgedTransition(
-  row: MeetingHistory | undefined,
-  transition: HistoryTransition,
-): boolean {
-  return !(
-    row?.meetingId !== transition.expectedMeetingId ||
-    row.ownerInstanceId !== transition.expectedOwnerInstanceId ||
-    row.executionVersion !== transition.expectedExecutionVersion ||
-    row.status !== (transition.patch.status ?? transition.expectedStatus) ||
-    (row.checkpoint?.revision ?? 0) !==
-      (transition.patch.checkpoint?.revision ??
-        transition.expectedCheckpointRevision) ||
-    !Object.entries(transition.patch).every(
-      ([field, value]) =>
-        value === undefined ||
-        isDeepStrictEqual(
-          JSON.parse(
-            JSON.stringify(row[field as keyof MeetingHistory] ?? null),
-          ),
-          JSON.parse(JSON.stringify(value)),
-        ),
-    )
-  );
-}
-function fixtureEvidenceFields(
-  fixtureInput: RecordingManifest["fixtureInput"],
-) {
-  return fixtureInput ? { fixtureInput } : {};
-}
-function selectedFixtureEvidence(
-  input: CheckpointFlushInput,
-  previous: RecordingManifest | undefined,
-) {
-  const fixtureInput = input.fixtureInput ?? previous?.fixtureInput;
-  validateFixtureCapture(input.capture, fixtureInput, previous?.fixtureInput);
-  return fixtureInput;
-}
 function checkpointMetadataChanged(
   state: RecordingCaptureState,
-  fixtureInput: RecordingManifest["fixtureInput"],
   previous: RecordingManifest | undefined,
 ) {
-  return (
-    !isDeepStrictEqual(state, previous?.captureState) ||
-    !isDeepStrictEqual(fixtureInput, previous?.fixtureInput)
-  );
+  return !isDeepStrictEqual(state, previous?.captureState);
 }
 function producerManifest(
   checkpoint: RecordingCheckpoint,
@@ -368,7 +293,7 @@ function producerManifest(
 }
 export function createRecordingCheckpointService(
   dependencies: { repository: Repository; objects: Objects } = {
-    repository: getDeploymentControlRepository(),
+    repository: getMeetingHistoryTransitionRepository(),
     objects: { upload: uploadObjectToS3, read: fetchObjectBytesFromS3 },
   },
   producerSession = false,
@@ -435,7 +360,6 @@ export function createRecordingCheckpointService(
       manifest.artifactFolder !== pointer.artifactFolder
     )
       throw new Error("Checkpoint capture binding mismatch");
-    validateFixtureCapture(manifest.capture, manifest.fixtureInput);
     const identities = new Set<string>();
     for (const item of manifest.artifacts) {
       const expected = `${prefix}${item.kind}/${encodeURIComponent(item.sourceId)}/${item.sequence}-${item.object.checksumSha256}`;
@@ -488,34 +412,13 @@ export function createRecordingCheckpointService(
       ),
     };
   }
-  async function commitTransition(transition: HistoryTransition) {
-    try {
-      return await repository.transitionMeetingHistory(transition);
-    } catch (error) {
-      if (
-        !transition.initialTerminalDisposition &&
-        !transition.terminalPreservation
-      )
-        throw error;
-      transition.signal?.throwIfAborted();
-      const row = await repository.getMeetingHistory(
-        transition.key,
-        transition.signal,
-      );
-      transition.signal?.throwIfAborted();
-      if (!matchesAcknowledgedTransition(row, transition)) throw error;
-      return "applied" as const;
-    }
-  }
   async function publish(
     input: CheckpointFlushInput,
     artifacts: CheckpointArtifact[],
     previous: RecordingManifest | undefined,
-    proof?: Preservation,
   ): Promise<CheckpointAppendResult> {
     const capture = input.capture;
     const state = captureState(input, previous);
-    const fixtureInput = selectedFixtureEvidence(input, previous);
     assertCompleteCapturePreserved(state, previous?.captureState);
     const key = {
       guildId: capture.guildId,
@@ -549,12 +452,11 @@ export function createRecordingCheckpointService(
     if (
       !checkpoint ||
       artifacts.length !== previous?.artifacts.length ||
-      checkpointMetadataChanged(state, fixtureInput, previous)
+      checkpointMetadataChanged(state, previous)
     ) {
       const folder =
         previous?.artifactFolder ?? getRecordingArtifactFolder(capture);
       const manifest: RecordingManifest = {
-        ...fixtureEvidenceFields(fixtureInput),
         artifactFolder: folder,
         schemaVersion: 1,
         revision: (checkpoint?.revision ?? 0) + 1,
@@ -578,18 +480,11 @@ export function createRecordingCheckpointService(
       };
     }
     input.signal?.throwIfAborted();
-    const patch = proof
-      ? {
-          ...(checkpoint === input.previous ? {} : { checkpoint }),
-          capture: state,
-          captureCoverage: summarizeCaptureCoverage(coverage),
-          recovery: proof.recovery,
-          ...(proof.status ? { status: proof.status } : {}),
-        }
-      : checkpoint === input.previous
+    const patch =
+      checkpoint === input.previous
         ? { updatedAt: new Date().toISOString() }
-        : { checkpoint };
-    await assertPreservation(proof, input.signal);
+        : // The finisher reads updatedAt as the time of the last checkpoint.
+          { checkpoint, updatedAt: new Date().toISOString() };
     const transition: HistoryTransition = {
       key,
       expectedMeetingId: capture.meetingId,
@@ -599,7 +494,7 @@ export function createRecordingCheckpointService(
       expectedCheckpointRevision: input.previous?.revision ?? 0,
       patch,
       signal: input.signal,
-      ...(input.ownership && !proof
+      ...(input.ownership
         ? {
             checkpointPublication: {
               kind: "checkpoint_publication" as const,
@@ -608,36 +503,15 @@ export function createRecordingCheckpointService(
             },
           }
         : {}),
-      ...(proof && !proof.status
-        ? {
-            terminalPreservation: {
-              kind: "terminal_preservation" as const,
-              ownership: proof.preservation.ownership,
-              now: Math.floor(Date.now() / 1000),
-            },
-          }
-        : {}),
-      ...(proof?.status
-        ? {
-            initialTerminalDisposition: {
-              kind: "initial_terminal_disposition",
-              ownership: proof.preservation.ownership,
-              now: Math.floor(Date.now() / 1000),
-            },
-          }
-        : {}),
     };
-    const result = await commitTransition(transition);
+    const result = await repository.transitionMeetingHistory(transition);
     input.signal?.throwIfAborted();
-    if (proof && Date.now() >= proof.preservation.deadlineEpochMs)
-      throw new Error("Preservation deadline elapsed");
     if (result === "applied" && producerSession) {
       acknowledged = {
         checkpoint,
         manifest: producerManifest(
           checkpoint,
           {
-            ...fixtureEvidenceFields(fixtureInput),
             artifactFolder: checkpoint.artifactFolder,
             schemaVersion: 1,
             revision: checkpoint.revision,
@@ -671,9 +545,8 @@ export function createRecordingCheckpointService(
   }
   async function flushInternal(
     input: CheckpointFlushInput,
-    proof?: Preservation,
   ): Promise<CheckpointAppendResult> {
-    if (!proof && !isCaptureStatus(input.expectedStatus))
+    if (!isCaptureStatus(input.expectedStatus))
       return {
         kind: "stale_owner",
         coverage: unknownCoverage("verification_failed"),
@@ -724,7 +597,6 @@ export function createRecordingCheckpointService(
     }
     validateCaptureHistory(row, input.capture);
     try {
-      await assertPreservation(proof, input.signal);
       for (const { item, reference } of additions)
         await preserve(
           reference.object,
@@ -732,7 +604,7 @@ export function createRecordingCheckpointService(
           item.contentType,
           input.signal,
         );
-      return await publish(input, artifacts, previous, proof);
+      return await publish(input, artifacts, previous);
     } catch {
       return { kind: "preservation_failed", coverage };
     }
@@ -761,23 +633,6 @@ export function createRecordingCheckpointService(
     } finally {
       publishing = false;
     }
-  }
-  async function preserveTerminalRecordingCheckpoint(
-    input:
-      | TerminalRecordingCheckpointInput
-      | InitialTerminalRecordingCheckpointInput,
-  ): Promise<CheckpointAppendResult> {
-    const remaining = input.preservation.deadlineEpochMs - Date.now();
-    if (remaining <= 0 || input.preservation.signal.aborted)
-      return {
-        kind: "preservation_failed",
-        coverage: unknownCoverage("verification_failed"),
-      };
-    const signal = AbortSignal.any([
-      input.preservation.signal,
-      AbortSignal.timeout(Math.ceil(remaining)),
-    ]);
-    return flushInternal({ ...input, signal }, input);
   }
   async function forMeeting(
     meeting: RecordingCheckpointMeeting,
@@ -854,7 +709,6 @@ export function createRecordingCheckpointService(
           generateNotes: meeting.generateNotes,
         },
       },
-      fixtureInput: fixtureInputSnapshot(meeting),
       captureState: meeting.recordingCaptureState,
       previous: meeting.recordingCheckpoint,
       expectedStatus: row.status,
@@ -906,12 +760,6 @@ export function createRecordingCheckpointService(
     appendArtifactsRecordingCheckpoint: forMeeting,
     createProducerSession: () =>
       createRecordingCheckpointService(dependencies, true),
-    preserveTerminalRecordingCheckpoint: (
-      input: TerminalRecordingCheckpointInput,
-    ) => preserveTerminalRecordingCheckpoint(input),
-    preserveInitialTerminalRecordingCheckpoint: (
-      input: InitialTerminalRecordingCheckpointInput,
-    ) => preserveTerminalRecordingCheckpoint(input),
     append: (
       input: Omit<CheckpointFlushInput, "artifacts"> & {
         artifact: CheckpointArtifactInput;
@@ -940,14 +788,6 @@ export function flushRecordingCheckpoint(
   return createRecordingCheckpointService().flushRecordingCheckpoint(
     meeting,
     options,
-  );
-}
-
-export function preserveTerminalRecordingCheckpoint(
-  input: TerminalRecordingCheckpointInput,
-): Promise<CheckpointAppendResult> {
-  return createRecordingCheckpointService().preserveTerminalRecordingCheckpoint(
-    input,
   );
 }
 

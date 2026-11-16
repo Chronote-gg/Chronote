@@ -1,9 +1,16 @@
 /** @jest-environment node */
-import { expect, test } from "@jest/globals";
-import { validateProcessingRetryPlan } from "../../scripts/deployment/validate-processing-retry-plan.cjs";
+import { describe, expect, test } from "@jest/globals";
+import {
+  lifecycleAlarms,
+  validateProcessingRetryPlan,
+} from "../../scripts/deployment/validate-processing-retry-plan.cjs";
 import {
   alarmAddress,
+  drainAlarmAddress,
   filterAddress,
+  lifecycleAlarmAddress,
+  lifecycleFilterAddress,
+  lifecyclePlan,
   processingRetryPlan,
   quietSandboxPlan,
   retryAccountId,
@@ -297,3 +304,98 @@ test.each([
     Object.assign(findChange(plan, address).change.after_unknown, mask);
   }),
 );
+
+describe("lifecycle and deploy drain alarms", () => {
+  const keys = Object.keys(lifecycleAlarms);
+  const lifecycleAddresses = [
+    ...keys.flatMap((key) => [
+      lifecycleFilterAddress(key),
+      lifecycleAlarmAddress(key),
+    ]),
+    drainAlarmAddress,
+  ];
+  function refused(mutate: (plan: Plan) => void, environment?: Environment) {
+    const plan = lifecyclePlan(environment);
+    mutate(plan);
+    expect(() => validate(plan, environment)).toThrow();
+  }
+
+  test.each(["production", "sandbox"] as const)(
+    "accepts every lifecycle filter and alarm in %s",
+    (environment) => {
+      const changes = validate(lifecyclePlan(environment), environment).changes;
+      expect(changes).toHaveLength(3 + lifecycleAddresses.length);
+      for (const address of lifecycleAddresses)
+        expect(changes).toContainEqual({ address, action: "create" });
+    },
+  );
+
+  test("accepts the lifecycle alarms as no-ops once applied", () => {
+    expect(validate(markAllNoOp(lifecyclePlan())).changes).toEqual([]);
+  });
+
+  test.each(lifecycleAddresses)("refuses a plan missing only %s", (address) =>
+    refused((plan) => dropResource(plan, address)),
+  );
+
+  // The likely production shape: the retry index and pair are already applied.
+  test("accepts lifecycle creates beside an applied retry scope", () => {
+    const plan = lifecyclePlan();
+    for (const address of [tableAddress, filterAddress, alarmAddress])
+      findChange(plan, address).change.actions = ["no-op"];
+    expect(validate(plan).changes).toEqual(
+      lifecycleAddresses.map((address) => ({ address, action: "create" })),
+    );
+  });
+
+  const parked = ["no_eligible_worker", "finisher_scan_missing"].flatMap(
+    (key) => [lifecycleFilterAddress(key), lifecycleAlarmAddress(key)],
+  );
+  test("accepts a parked Sandbox without the worker-silence pairs", () => {
+    const plan = lifecyclePlan("sandbox");
+    for (const address of parked) dropResource(plan, address);
+    expect(validate(plan, "sandbox").changes).toHaveLength(
+      3 + lifecycleAddresses.length - parked.length,
+    );
+  });
+
+  test("refuses production without the worker-silence pairs", () =>
+    refused((plan) => {
+      for (const address of parked) dropResource(plan, address);
+    }));
+
+  test.each(parked)("refuses a parked Sandbox missing only %s", (address) =>
+    refused((plan) => dropResource(plan, address), "sandbox"),
+  );
+
+  test("refuses lifecycle alarms without the retry pair", () =>
+    refused((plan) => {
+      dropResource(plan, filterAddress);
+      dropResource(plan, alarmAddress);
+    }, "sandbox"));
+
+  test.each(keys)("refuses a changed pattern on %s", (key) =>
+    refused((plan) => {
+      after(plan, lifecycleFilterAddress(key)).pattern = '"other"';
+    }),
+  );
+
+  test.each([
+    ["threshold", (v: Values) => (v.threshold = 9)],
+    ["periods", (v: Values) => (v.evaluation_periods = 4)],
+    ["datapoints", (v: Values) => (v.datapoints_to_alarm = 4)],
+    ["missing data", (v: Values) => (v.treat_missing_data = "ignore")],
+    ["alarm action", (v: Values) => (v.alarm_actions = [otherTopic])],
+  ])("refuses a lifecycle alarm with a changed %s", (_name, mutate) => {
+    for (const key of keys)
+      refused((plan) => mutate(after(plan, lifecycleAlarmAddress(key))));
+  });
+
+  test.each([
+    ["namespace", (v: Values) => (v.namespace = "meeting-notes-prod/Logs")],
+    ["metric", (v: Values) => (v.metric_name = "Other")],
+    ["dimensions", (v: Values) => (v.dimensions = { ServiceName: "x" })],
+  ])("refuses a drain alarm with a changed %s", (_name, mutate) =>
+    refused((plan) => mutate(after(plan, drainAlarmAddress))),
+  );
+});

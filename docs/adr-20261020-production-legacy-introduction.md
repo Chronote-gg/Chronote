@@ -1,6 +1,6 @@
 # ADR-20261020: Separate production legacy introduction from compatible handoff
 
-Status: Accepted for source implementation; operational activation blocked
+Status: Superseded by adr-20261111-lifecycle-simplification
 
 Date: 2026-10-20
 
@@ -32,4 +32,4 @@ Implementation approval does not authorize infrastructure, IAM, production shutd
 
 ## Notes
 
-The [production introduction procedure](production-introduction.md) records the staged execution refusal, remaining acceptance and operator decisions as of October 22, 2026. [Normal handoff](deployment-handoff.md) and [Sandbox bootstrap](sandbox-bootstrap.md) retain separate contracts. Exact execution evidence belongs in private operations.
+The production introduction procedure records the staged execution refusal, remaining acceptance and operator decisions as of October 22, 2026. Normal handoff and Sandbox bootstrap retain separate contracts. Exact execution evidence belongs in private operations.

@@ -1,17 +1,14 @@
 import { Buffer } from "node:buffer";
-import { manifestFixture } from "./productionIntroduction.js";
 import { digest } from "../../../scripts/deployment/collector-payload.cjs";
-import { manifestHash } from "../../../scripts/deployment/sandbox-manifest.cjs";
 export function privateCaptureFixture() {
-  const m = manifestFixture(),
-    calls = [],
+  const calls = [],
     objects = new Map();
   const binding = {
     kind: "versioned-private-s3-v1",
-    storeId: m.evidenceStoreId,
+    storeId: "approved-private-fixture",
     bucket: "private-synthetic",
-    accountId: m.binding.accountId,
-    region: m.binding.region,
+    accountId: "123456789012",
+    region: "us-east-1",
     kmsKeyArn:
       "arn:aws:kms:us-east-1:123456789012:key/11111111-1111-4111-8111-111111111111",
     policySha256: digest("{}"),
@@ -78,18 +75,5 @@ export function privateCaptureFixture() {
       return native[key];
     },
   };
-  return {
-    m,
-    binding,
-    client,
-    calls,
-    objects,
-    options: {
-      m,
-      manifestSha256: manifestHash(m),
-      binding,
-      client,
-      now: () => 1000,
-    },
-  };
+  return { binding, client, calls, objects };
 }

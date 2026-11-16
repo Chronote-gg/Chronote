@@ -181,43 +181,36 @@ describe("Discord message editor", () => {
   });
 });
 
-test("first-publication transport creates exact approved components without PATCH/delete/retries", async () => {
-  const { createFirstPublicationTransport } =
+test("message transport creates and lists channel messages", async () => {
+  const { createDiscordMessageTransport, DiscordMessageHttpError } =
     await import("../../src/services/discordMessageEditor");
-  const requests: RequestInit[] = [];
-  const fetchImpl = async (
-    _url: string | URL | Request,
-    init?: RequestInit,
-  ) => {
-    requests.push(init ?? {});
-    return new Response(
-      JSON.stringify({
-        id: "1",
-        channel_id: "2",
-        author: { id: "3", bot: true },
-        content: "",
-        embeds: [],
-        components: [],
-        attachments: [],
-        flags: 0,
-      }),
-      { status: 200 },
-    );
-  };
-  const t = createFirstPublicationTransport({ token: "dummy", fetchImpl });
-  expect(Object.keys(t)).not.toContain("editEmbeds");
-  expect(Object.keys(t)).not.toContain("deleteNotesMessage");
-  await t.createNotesMessage({
-    channelId: "2",
-    payload: {
-      embeds: [{ description: "body" }],
-      components: [],
-      allowed_mentions: { parse: [] },
-    },
+  const fetchImpl = jest
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify(message)))
+    .mockResolvedValueOnce(new Response(JSON.stringify([message])))
+    .mockResolvedValueOnce(new Response("{}", { status: 403 }));
+  const transport = createDiscordMessageTransport({
+    token: "selected-token",
+    fetchImpl,
   });
-  expect(requests).toHaveLength(1);
-  expect(requests[0]).toMatchObject({ method: "POST", redirect: "error" });
-  expect(JSON.parse(String(requests[0].body)).allowed_mentions).toEqual({
-    parse: [],
-  });
+  const payload = { content: "body", allowed_mentions: { parse: [] } };
+  await expect(
+    transport.createMessage({ channelId: "200", payload }),
+  ).resolves.toEqual(message);
+  await expect(
+    transport.listMessages({ channelId: "200", after: "300", limit: 100 }),
+  ).resolves.toEqual([message]);
+  expect(
+    fetchImpl.mock.calls.map(([url, init]) => [url, init?.method]),
+  ).toEqual([
+    ["https://discord.com/api/channels/200/messages", "POST"],
+    [
+      "https://discord.com/api/channels/200/messages?after=300&limit=100",
+      undefined,
+    ],
+  ]);
+  expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).toEqual(payload);
+  await expect(
+    transport.createMessage({ channelId: "200", payload }),
+  ).rejects.toEqual(expect.any(DiscordMessageHttpError));
 });

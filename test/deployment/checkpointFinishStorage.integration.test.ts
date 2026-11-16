@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { control, history, runtime } from "./controlFixtures";
+import { history } from "../fixtures/meetingHistory";
 import { requireDeploymentTestImage } from "./containerFixture";
 
 const docker = (...args: string[]) =>
@@ -54,9 +54,7 @@ test("compiled finish persists real storage retries and retains exhausted audio"
         "/data",
       ),
     );
-    const fixture = Buffer.from(
-      JSON.stringify({ history, control, runtime: runtime("old") }),
-    ).toString("base64");
+    const fixture = Buffer.from(JSON.stringify({ history })).toString("base64");
     const env = {
       FINISH_FIXTURE: fixture,
       MOCK_MODE: "false",

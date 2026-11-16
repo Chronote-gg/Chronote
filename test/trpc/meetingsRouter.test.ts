@@ -1,11 +1,5 @@
 /** @jest-environment node */
 import { beforeEach, describe, expect, test, jest } from "@jest/globals";
-jest.mock("../../src/db", () => ({
-  ...jest.requireActual("../../src/db"),
-  getDeploymentControlRepository: () => ({
-    checkAdmission: async () => ({ kind: "admitted" }),
-  }),
-}));
 import { registerMeetingUpdateDeliveryDetailTests } from "./meetingUpdateDeliveryDetail.tests";
 jest.mock("../../src/services/meetingUpdateService", () => ({
   updateMeeting: jest.fn(),
@@ -30,19 +24,6 @@ jest.mock("../../src/services/discordMessageService", () => ({
   deleteDiscordMessage: jest.fn(),
   fetchDiscordMessage: jest.fn(),
   updateDiscordMessageEmbeds: jest.fn(),
-}));
-import {
-  fenceRuntimeWorkAdmissions,
-  getRuntimeWorkAdmissionCheckpoints,
-} from "../../src/services/runtimeWorkAdmissionService";
-let mockApiEligible = true;
-const mockApiSettled = jest.fn();
-jest.mock("../../src/services/runtimeLifecycleService", () => ({
-  beginRuntimeWork: () => {
-    if (!mockApiEligible) throw new Error("Runtime warming");
-    return { transition: () => {}, settle: mockApiSettled };
-  },
-  getRuntimeAdmissionContext: async () => ({ instanceId: "synthetic-api" }),
 }));
 import type { MeetingHistory } from "../../src/types/db";
 import type { FeedbackRecord } from "../../src/types/db";
@@ -489,7 +470,7 @@ describe("meetings notes correction mutations", () => {
     });
   });
 
-  test("actual HTTP correction remains owned after disconnect and cannot publish after shutdown", async () => {
+  test("actual HTTP correction keeps running after the client disconnects", async () => {
     let release!: (value: unknown) => void;
     let entered!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -516,28 +497,11 @@ describe("meetings notes correction mutations", () => {
     await verifyCorrectionDisconnect({
       router: appRouter,
       started,
-      settled: mockApiSettled,
       release,
     });
   });
-  test("warm correction router rejects before history/provider dispatch", async () => {
-    mockApiEligible = false;
-    try {
-      await expect(
-        buildCaller().meetings.suggestNotesCorrection({
-          serverId: "guild-1",
-          meetingId: "channel-1#2025-01-01",
-          suggestion: "Fix",
-        }),
-      ).rejects.toThrow();
-      expect(mockedGetMeetingHistory).not.toHaveBeenCalled();
-      expect(mockedCreateOpenAIClient).not.toHaveBeenCalled();
-    } finally {
-      mockApiEligible = true;
-    }
-  });
   test.each([true, false])(
-    "actual canonical action ACK=%s retains request ownership without caller Discord mutations",
+    "actual canonical action ACK=%s settles without caller Discord mutations",
     async (acknowledged) => {
       const meetingId = "channel-1#2025-01-01";
       mockedGetMeetingHistory.mockResolvedValue({
@@ -574,9 +538,6 @@ describe("meetings notes correction mutations", () => {
           );
         });
       });
-      const previous = new Set(
-        getRuntimeWorkAdmissionCheckpoints().map((entry) => entry.id),
-      );
       const task = buildCaller()
         .meetings.applyNotesCorrection({
           serverId: "guild-1",
@@ -586,19 +547,9 @@ describe("meetings notes correction mutations", () => {
         .catch((error: unknown) => error);
       try {
         await started;
-        const claim = getRuntimeWorkAdmissionCheckpoints().find(
-          (entry) => !previous.has(entry.id),
-        );
-        expect(claim?.effects.length).toBeGreaterThan(0);
-        fenceRuntimeWorkAdmissions();
         if (acknowledged) release();
         else reject(new Error("Synthetic lost canonical ACK"));
         await task;
-        expect(
-          getRuntimeWorkAdmissionCheckpoints().some(
-            (entry) => entry.id === claim?.id,
-          ),
-        ).toBe(!acknowledged);
         expect(updateDiscordMessage).not.toHaveBeenCalled();
         expect(createDiscordMessage).not.toHaveBeenCalled();
         expect(deleteDiscordMessage).not.toHaveBeenCalled();

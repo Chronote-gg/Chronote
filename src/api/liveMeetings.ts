@@ -3,7 +3,10 @@ import {
   resolveCaptureStatus,
   projectMeetingCapture,
 } from "../utils/meetingCaptureNotice";
-import { persistExplicitMeetingStop } from "../commands/endMeeting";
+import {
+  persistExplicitMeetingStop,
+  runEndMeetingFlow,
+} from "../commands/endMeeting";
 import { rateLimit } from "express-rate-limit";
 import { passThrough } from "../middleware/passThrough";
 import { getMeeting } from "../meetings";
@@ -12,7 +15,7 @@ import {
   getActiveMeetingLeaseForGuild,
   isLeaseActive,
   requestMeetingEndViaLease,
-} from "../services/activeMeetingLeaseService";
+} from "../services/meetingLease";
 import {
   ensureManageGuildWithUserToken,
   ensureUserInGuild,
@@ -204,12 +207,7 @@ export function registerLiveMeetingRoutes(app: express.Express) {
       }
       meeting.endReason = MEETING_END_REASONS.WEB_UI;
       meeting.endTriggeredByUserId = user.id;
-      if (meeting.onEndMeeting) {
-        await meeting.onEndMeeting(meeting);
-      } else {
-        res.status(500).json({ error: "End meeting handler unavailable" });
-        return;
-      }
+      await runEndMeetingFlow({ meeting, suppressionPersisted: true });
       res.json({ status: "ok" });
     },
   );

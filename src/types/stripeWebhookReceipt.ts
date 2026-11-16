@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { runtimeIdentitySchema } from "./deploymentControl";
-import { maintenanceHoldSchema } from "./productionIntroduction";
 export const STRIPE_RECEIPT_BOUNDARY = "stripe-receipt-admission-v1";
+/* A hold older receipts carry from the retired production introduction; kept so they still parse. */
+const maintenanceHoldSchema = z
+  .object({
+    holdId: z.string().min(1),
+    introductionId: z.string().min(1),
+    revision: z.number().int().positive(),
+  })
+  .strict();
 export const stripeReceiptBirthSchema = z
   .object({
     version: z.literal(STRIPE_RECEIPT_BOUNDARY),

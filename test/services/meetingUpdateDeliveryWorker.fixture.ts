@@ -1,8 +1,4 @@
 import "./meetingUpdateDeliveryRuntime";
-import {
-  beginRuntimeWorkClaim,
-  getRuntimeWorkAdmissionCheckpoints,
-} from "../../src/services/runtimeWorkAdmissionService";
 import { createMeetingUpdateDeliveryWorker } from "../../src/services/meetingUpdateDeliveryWorkerService";
 import type {
   MeetingDeliveryRunInput,
@@ -24,7 +20,6 @@ export function workerFixture(count = 1) {
     guildId,
     channelId_timestamp,
   }));
-  const works: ReturnType<typeof beginRuntimeWorkClaim>[] = [];
   const repository = {
     getStrong: jest.fn(async (key: (typeof keys)[number]) =>
       rows.find((r) => r.channelId_timestamp === key.channelId_timestamp),
@@ -42,67 +37,28 @@ export function workerFixture(count = 1) {
     async (
       _input: MeetingDeliveryRunInput,
     ): Promise<MeetingDeliveryRunResult> => {
-      _input.work.signal.throwIfAborted();
+      _input.signal?.throwIfAborted();
       return {
         kind: "settled",
         capturedRevision: null,
-        noClaim: { kind: "never_admitted" },
       };
     },
   );
   const reconcile = jest.fn(deliver);
-  const begin = jest.fn((...args: Parameters<typeof beginRuntimeWorkClaim>) => {
-    const work = beginRuntimeWorkClaim(...args);
-    works.push(work);
-    return work;
-  });
   const worker = createMeetingUpdateDeliveryWorker({
     repository,
-    begin,
     deliver,
     reconcile,
     now: () => Date.now() / 1000,
+    isEligible: () => true,
   });
-  function checkpoint(work: ReturnType<typeof beginRuntimeWorkClaim>) {
-    return getRuntimeWorkAdmissionCheckpoints().find(
-      (c) => c.signal === work.signal,
-    );
-  }
-  function claimed(input: MeetingDeliveryRunInput) {
-    const claim = {
-      claimId: input.key.channelId_timestamp,
-      instanceId: "owner",
-      expiresAt: now + 60,
-    };
-    input.work.recordClaim(claim);
-    input.work.claimed();
-    return claim;
-  }
-  async function clean() {
-    await worker.stop();
-    for (const work of works) {
-      const current = checkpoint(work);
-      if (!current) continue;
-      await work.settle();
-      work.acknowledgeMeetingUpdateDelivery({
-        durable: {
-          deliveryRevision: "synthetic-cleanup",
-          claim: current.claim ?? null,
-        },
-      });
-    }
-  }
   return {
     worker,
     repository,
     deliver,
     reconcile,
-    begin,
     keys,
     rows,
-    works,
-    claimed,
-    checkpoint,
-    clean,
+    clean: () => worker.stop(),
   };
 }

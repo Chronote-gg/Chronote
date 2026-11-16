@@ -1,5 +1,4 @@
 import { recordingPromptLabels } from "./recordingMetadataService";
-import { isFixture, fixtureParticipants } from "./fixtureInputService";
 import type { ChatAttachment, ChatEntry } from "../types/chat";
 import type { MeetingData, MeetingNotesInput } from "../types/meeting-data";
 import type { Participant } from "../types/participants";
@@ -349,7 +348,6 @@ export async function prepareLiveNotesPrompt(meeting: MeetingData) {
   const contextData = await buildMeetingContext(meeting, isMemoryEnabled());
   const formattedContext = formatContextForPrompt(contextData, "notes");
 
-  const fixture = isFixture(meeting);
   const {
     serverName,
     serverDescription,
@@ -369,10 +367,9 @@ export async function prepareLiveNotesPrompt(meeting: MeetingData) {
 
   return fetchNotesChatPrompt({
     promptName,
-    mentionableRoles: fixture ? [] : resolveMentionableRoles(meeting),
-    participants:
-      fixtureParticipants(meeting) ?? Array.from(meeting.participants.values()),
-    chatContext: fixture ? "" : formatChatLogForPrompt(meeting),
+    mentionableRoles: resolveMentionableRoles(meeting),
+    participants: Array.from(meeting.participants.values()),
+    chatContext: formatChatLogForPrompt(meeting),
     labels: {
       formattedContext,
       botDisplayName,

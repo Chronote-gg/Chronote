@@ -64,7 +64,6 @@ import {
 
 const iso = "2026-10-28T12:00:00.000Z";
 const signal = new AbortController().signal;
-const effect = <T>(run: () => Promise<T>) => run();
 const reader = { read: jest.fn(), readVerifiedObject: jest.fn() };
 const retryKey = "p/g/c_m_t/transcript-retry-job-1.json";
 const checkpoint: NonNullable<MeetingHistory["checkpoint"]> = {
@@ -151,7 +150,7 @@ const notesInput = (): MeetingNotesInput => ({
   processing: { transcription: "ready" },
 });
 const run = (history: MeetingHistory, retry = notesRetry) =>
-  runProcessingRetryStages({ history, job: retry, signal, effect, reader });
+  runProcessingRetryStages({ history, job: retry, signal, reader });
 const mixedAudioKey = "p/g/c_m_t/audio.mp3";
 function unverifiableCheckpointWithNothingRetranscribed(
   captureIncomplete = false,
@@ -593,7 +592,6 @@ test("an aborted run rethrows instead of reporting a failure", async () => {
       history: base,
       job: notesRetry,
       signal: controller.signal,
-      effect,
       reader,
     }),
   ).rejects.toBeDefined();

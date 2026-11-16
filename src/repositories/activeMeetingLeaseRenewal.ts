@@ -7,11 +7,14 @@ import {
 import { setTimeout as delay } from "node:timers/promises";
 import { classifyDeploymentTransactionError } from "./deploymentControlErrors";
 
+const MS_PER_SECOND = 1000;
+
 /** Checkpoint transactions can briefly reject the heartbeat's conditional update. */
 export async function renewActiveMeetingLeaseWrite(
   client: DynamoDBClient,
   input: UpdateItemCommandInput,
   signal?: AbortSignal,
+  nowSeconds: () => number = () => Math.floor(Date.now() / MS_PER_SECOND),
 ): Promise<boolean> {
   for (let attempt = 0; ; attempt++) {
     signal?.throwIfAborted();
@@ -21,7 +24,7 @@ export async function renewActiveMeetingLeaseWrite(
           ...input,
           ExpressionAttributeValues: {
             ...input.ExpressionAttributeValues,
-            ":now": { N: String(Math.floor(Date.now() / 1000)) },
+            ":now": { N: String(nowSeconds()) },
           },
         }),
         { abortSignal: signal },

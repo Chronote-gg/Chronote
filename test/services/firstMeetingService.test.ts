@@ -190,12 +190,6 @@ test("lease_and_delivery_evidence", async () => {
   ).toBe("recording");
   jest
     .mocked(getActiveMeetingLease)
-    .mockResolvedValue({ ...liveLease(), status: "processing" });
-  expect(
-    (await getFirstMeetingState({ guildId, userId, historyId })).kind,
-  ).toBe("processing");
-  jest
-    .mocked(getActiveMeetingLease)
     .mockResolvedValue({ ...liveLease(), leaseExpiresAt: 1 });
   const expiredLeaseResult = await getFirstMeetingState({
     guildId,
@@ -278,6 +272,67 @@ test.each([
   ).toMatchObject({ kind: "attention", reason: "status_unknown" });
 });
 
+const finishClaim = () => ({
+  owner: "synthetic-finisher",
+  expiresAt: Math.floor(Date.now() / 1000) + 60,
+  attempts: 0,
+  phase: "process" as const,
+});
+
+/** Close frees the server's lease before processing, so a healthy row of this design has none. */
+test.each([
+  ["with a finish claim", { finish: finishClaim() }],
+  ["awaiting a finisher", {}],
+])("lifecycle_v2_processing_needs_no_lease: %s", async (_label, overrides) => {
+  jest.mocked(getMeetingHistoryService).mockResolvedValue(
+    history({
+      lifecycleVersion: 2,
+      status: "processing",
+      ownerInstanceId: "worker",
+      executionVersion: 2,
+      ...overrides,
+    }),
+  );
+  jest.mocked(getActiveMeetingLease).mockResolvedValue(undefined);
+  expect(
+    (await getFirstMeetingState({ guildId, userId, historyId })).kind,
+  ).toBe("processing");
+});
+
+test("legacy_processing_reads_processing_from_its_lease", async () => {
+  jest.mocked(getMeetingHistoryService).mockResolvedValue(
+    history({
+      status: "processing",
+      ownerInstanceId: "worker",
+      executionVersion: 2,
+    }),
+  );
+  jest
+    .mocked(getActiveMeetingLease)
+    .mockResolvedValue({ ...liveLease(), status: "processing" });
+  expect(
+    (await getFirstMeetingState({ guildId, userId, historyId })).kind,
+  ).toBe("processing");
+});
+
+test.each([
+  ["legacy processing", { status: "processing" as const }],
+  [
+    "lifecycle v2 recording",
+    { lifecycleVersion: 2 as const, status: "in_progress" as const },
+  ],
+])("unleased_row_is_unknown: %s", async (_label, overrides) => {
+  jest
+    .mocked(getMeetingHistoryService)
+    .mockResolvedValue(
+      history({ ownerInstanceId: "worker", executionVersion: 2, ...overrides }),
+    );
+  jest.mocked(getActiveMeetingLease).mockResolvedValue(undefined);
+  expect(
+    await getFirstMeetingState({ guildId, userId, historyId }),
+  ).toMatchObject({ kind: "attention", reason: "status_unknown" });
+});
+
 test.each([
   ["whitespace", { notes: " \n\t" }, "no_notes"],
   ["skipped notes", { processing: { notes: "skipped" as const } }, "no_notes"],
@@ -299,6 +354,26 @@ test.each([
   ["cancelled", { status: "cancelled" as const }, "no_notes"],
   ["failed", { status: "failed" as const }, "processing_failed"],
   ["interrupted", { status: "interrupted" as const }, "interrupted"],
+  [
+    "lifecycle v2 failed",
+    { lifecycleVersion: 2 as const, status: "failed" as const },
+    "processing_failed",
+  ],
+  [
+    "lifecycle v2 interrupted",
+    { lifecycleVersion: 2 as const, status: "interrupted" as const },
+    "interrupted",
+  ],
+  [
+    "lifecycle v2 cancelled",
+    { lifecycleVersion: 2 as const, status: "cancelled" as const },
+    "no_notes",
+  ],
+  [
+    "lifecycle v2 complete without notes",
+    { lifecycleVersion: 2 as const, status: "complete" as const },
+    "no_notes",
+  ],
 ])("preserves_incomplete_outcomes: %s", async (_label, overrides, reason) => {
   jest.mocked(getMeetingHistoryService).mockResolvedValue(history(overrides));
   expect(
@@ -411,30 +486,6 @@ test.each([
   expect(
     (await getFirstMeetingState({ guildId, userId, historyId })).kind,
   ).toBe("saved");
-});
-
-test("matching_recovery_lease_verifies_offline_processing", async () => {
-  jest.mocked(getMeetingHistoryService).mockResolvedValue(
-    history({
-      status: "interrupted",
-      ownerInstanceId: "worker",
-      executionVersion: 2,
-    }),
-  );
-  jest.mocked(getActiveMeetingLease).mockResolvedValue({
-    ...liveLease(),
-    status: "processing",
-    sessionMode: "recovery",
-    recoveryAttemptId: "recovery-attempt",
-  });
-  expect(
-    await getFirstMeetingState({ guildId, userId, historyId }),
-  ).toMatchObject({
-    kind: "processing",
-    meeting: {
-      captureNotice: expect.stringContaining("recording was interrupted"),
-    },
-  });
 });
 
 test("saved_notes_take_priority_over_active_or_failed_processing", async () => {

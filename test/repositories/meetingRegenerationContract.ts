@@ -133,9 +133,8 @@ export function regenerationWrite(
 export function regenerationContract(make: () => Harness) {
   let h: Harness;
   const row = regenerationRow();
-  beforeEach(async () => {
+  beforeEach(() => {
     h = make();
-    await h.admit(true);
   });
   const save = (input: MeetingContentWrite) =>
     h.repository.updateContentAndDelivery(input, undefined);
@@ -268,6 +267,78 @@ export function regenerationContract(make: () => Harness) {
     await save(input);
     expect(await save(input)).toMatchObject({ kind: "committed" });
     expect((await h.read())?.notesVersion).toBe(2);
+  });
+  describe("a pipeline-failed meeting the retry fixed", () => {
+    const failed = (
+      overrides: Partial<MeetingHistory> = {},
+    ): MeetingHistory => ({
+      ...row,
+      lifecycleVersion: 2,
+      status: "failed",
+      capture: {
+        kind: "complete",
+        startedAt: "2026-10-22T11:00:00.000Z",
+        endedAt: "2026-10-22T11:30:00.000Z",
+      },
+      ...overrides,
+    });
+    it.each([
+      ["complete", "complete"],
+      ["interrupted", "interrupted"],
+    ] as const)(
+      "a capture that ended %s is saved as %s in the same write",
+      async (kind, status) => {
+        const before = failed(
+          kind === "interrupted"
+            ? {
+                capture: {
+                  kind: "interrupted",
+                  startedAt: "2026-10-22T11:00:00.000Z",
+                  endedAt: null,
+                  detectedAt: "2026-10-22T11:30:00.000Z",
+                },
+              }
+            : {},
+        );
+        await h.seed(before);
+        expect(await save(regenerationWrite(before))).toMatchObject({
+          kind: "committed",
+        });
+        expect(await h.read()).toMatchObject({
+          status,
+          notes: "Regenerated notes",
+          processingRetry: { status: "succeeded" },
+        });
+      },
+    );
+    it.each([
+      [
+        "a row from before the lifecycle redesign",
+        { lifecycleVersion: undefined },
+        "failed",
+      ],
+      ["a row in another status", { status: "interrupted" }, "interrupted"],
+    ] satisfies [string, Partial<MeetingHistory>, string][])(
+      "%s keeps its status",
+      async (_, overrides, status) => {
+        const before = failed(overrides);
+        await h.seed(before);
+        await save(regenerationWrite(before));
+        expect(await h.read()).toMatchObject({
+          status,
+          notes: "Regenerated notes",
+        });
+      },
+    );
+    it("a summary-only retry that leaves the meeting without notes keeps it failed", async () => {
+      const before = failed({ notes: undefined });
+      await h.seed(before);
+      await save(regenerationWrite(before, { notes: undefined }));
+      expect(await h.read()).toMatchObject({
+        status: "failed",
+        summaryLabel: "L",
+      });
+    });
   });
   it.each([
     [

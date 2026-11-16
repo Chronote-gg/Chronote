@@ -1,27 +1,20 @@
 /** @jest-environment node */
 import { AutoRecordJoinSuppressionService } from "../../src/services/autoRecordJoinSuppressionService";
 import { getMockStore } from "../../src/repositories/mockStore";
-import { control, context, runtime } from "../deployment/controlFixtures";
+import { getDeploymentControlRepository } from "../../src/db";
+import type { SuppressionRecord } from "../../src/types/deploymentControl";
+import { expectSuppressionWriteOutcomes } from "../fixtures/suppressionWrites";
 
 test("lateExplicitStopSuppressesNewRuntimeAutoJoin", async () => {
-  const store = getMockStore();
-  for (const row of [control, runtime("old")])
-    store.deploymentControlRecords.set(JSON.stringify([row.pk, row.sk]), row);
-  const oldOwner = new AutoRecordJoinSuppressionService({
-    kind: "serving",
-    context,
-  });
-  const newOwner = new AutoRecordJoinSuppressionService({
-    kind: "serving",
-    context,
-  });
+  getMockStore().deploymentControlRecords.clear();
+  const oldOwner = new AutoRecordJoinSuppressionService();
+  const newOwner = new AutoRecordJoinSuppressionService();
   await oldOwner.suppressUntilEmpty({
     guildId: "handoff-guild",
     channelId: "handoff-channel",
     meetingId: "meeting",
     nonBotMemberIds: ["person"],
     reason: "explicit_end",
-    authority: { kind: "serving", context },
   });
   expect(
     await newOwner.shouldSuppressAutoJoin("handoff-guild", "handoff-channel"),
@@ -30,20 +23,43 @@ test("lateExplicitStopSuppressesNewRuntimeAutoJoin", async () => {
 
 describe("AutoRecordJoinSuppressionService", () => {
   beforeEach(() => {
-    const records = getMockStore().deploymentControlRecords;
-    records.clear();
-    for (const row of [control, runtime("old")])
-      records.set(JSON.stringify([row.pk, row.sk]), structuredClone(row));
+    getMockStore().deploymentControlRecords.clear();
+  });
+  test("writeSuppression refuses a stale version", async () => {
+    const record: SuppressionRecord = {
+      pk: "SUPPRESS#synthetic-guild",
+      sk: "CHANNEL#synthetic-channel",
+      recordType: "suppression",
+      protocolVersion: 1,
+      guildId: "synthetic-guild",
+      channelId: "synthetic-channel",
+      meetingId: "synthetic-meeting",
+      createdAt: 100,
+      reason: "explicit_end",
+      suppressed: true,
+      version: 1,
+    };
+    const repository = getDeploymentControlRepository();
+    await expectSuppressionWriteOutcomes(repository, [
+      [{ record }, "applied"],
+      [{ record }, "stale"],
+      [
+        {
+          record: { ...record, version: 2, suppressed: false },
+          expectedVersion: 1,
+        },
+        "applied",
+      ],
+      [{ record: { ...record, version: 2 }, expectedVersion: 1 }, "stale"],
+    ]);
+    expect(await repository.getRecord(record.pk, record.sk)).toMatchObject({
+      version: 2,
+      suppressed: false,
+    });
   });
   test("a delayed clear on another runtime cannot erase a newer explicit stop", async () => {
-    const old = new AutoRecordJoinSuppressionService({
-      kind: "serving",
-      context,
-    });
-    const next = new AutoRecordJoinSuppressionService({
-      kind: "serving",
-      context,
-    });
+    const old = new AutoRecordJoinSuppressionService();
+    const next = new AutoRecordJoinSuppressionService();
     const input = {
       guildId: "g1",
       channelId: "c1",
@@ -90,10 +106,7 @@ describe("AutoRecordJoinSuppressionService", () => {
     });
   });
   test("suppresses auto-join until channel empties", async () => {
-    const svc = new AutoRecordJoinSuppressionService({
-      kind: "serving",
-      context,
-    });
+    const svc = new AutoRecordJoinSuppressionService();
     expect(
       await svc.suppressUntilEmpty({
         guildId: "g1",
@@ -126,10 +139,7 @@ describe("AutoRecordJoinSuppressionService", () => {
   });
 
   test("does not suppress when no non-bot members are present", async () => {
-    const svc = new AutoRecordJoinSuppressionService({
-      kind: "serving",
-      context,
-    });
+    const svc = new AutoRecordJoinSuppressionService();
     expect(
       await svc.suppressUntilEmpty({
         guildId: "g1",
@@ -143,10 +153,7 @@ describe("AutoRecordJoinSuppressionService", () => {
   });
 
   test("ignores bot voice state changes", async () => {
-    const svc = new AutoRecordJoinSuppressionService({
-      kind: "serving",
-      context,
-    });
+    const svc = new AutoRecordJoinSuppressionService();
     await svc.suppressUntilEmpty({
       guildId: "g1",
       channelId: "c1",
@@ -167,10 +174,7 @@ describe("AutoRecordJoinSuppressionService", () => {
   });
 
   test("tracks member moves between channels for suppressed channels", async () => {
-    const svc = new AutoRecordJoinSuppressionService({
-      kind: "serving",
-      context,
-    });
+    const svc = new AutoRecordJoinSuppressionService();
     await svc.suppressUntilEmpty({
       guildId: "g1",
       channelId: "c1",
@@ -217,10 +221,7 @@ describe("AutoRecordJoinSuppressionService", () => {
   });
 
   test("tracks members who join after suppression begins", async () => {
-    const svc = new AutoRecordJoinSuppressionService({
-      kind: "serving",
-      context,
-    });
+    const svc = new AutoRecordJoinSuppressionService();
     await svc.suppressUntilEmpty({
       guildId: "g1",
       channelId: "c1",
@@ -253,6 +254,49 @@ describe("AutoRecordJoinSuppressionService", () => {
       oldChannelId: "c1",
       newChannelId: null,
     });
+    expect(await svc.shouldSuppressAutoJoin("g1", "c1")).toBe(false);
+  });
+
+  /** Starts a suppression whose first read waits until `settle` resolves or rejects it. */
+  function pendingSuppression(svc: AutoRecordJoinSuppressionService) {
+    let settle!: (fail: boolean) => void;
+    const gate = new Promise<void>((resolve, reject) => {
+      settle = (fail) =>
+        fail ? reject(new Error("synthetic outage")) : resolve();
+    });
+    const read = svc.read.bind(svc);
+    jest.spyOn(svc, "read").mockImplementationOnce(async (...args) => {
+      await gate;
+      return read(...args);
+    });
+    const write = svc.suppressUntilEmpty({
+      guildId: "g1",
+      channelId: "c1",
+      nonBotMemberIds: ["u1"],
+      reason: "explicit_end",
+      meetingId: "synthetic-meeting",
+    });
+    return { write, settle };
+  }
+
+  test("a join while the suppression write is pending is suppressed on this worker", async () => {
+    const svc = new AutoRecordJoinSuppressionService();
+    const { write, settle } = pendingSuppression(svc);
+
+    expect(await svc.shouldSuppressAutoJoin("g1", "c1")).toBe(true);
+    expect(await svc.shouldSuppressAutoJoin("g1", "c2")).toBe(false);
+
+    settle(false);
+    await write;
+    expect(await svc.shouldSuppressAutoJoin("g1", "c1")).toBe(true);
+  });
+
+  test("a suppression write that fails lifts the pending fence", async () => {
+    const svc = new AutoRecordJoinSuppressionService();
+    const { write, settle } = pendingSuppression(svc);
+
+    settle(true);
+    await expect(write).rejects.toThrow("synthetic outage");
     expect(await svc.shouldSuppressAutoJoin("g1", "c1")).toBe(false);
   });
 });

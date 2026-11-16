@@ -74,7 +74,6 @@ jobs:
       DEPLOYMENT_ENVIRONMENT: ${{ inputs.github_environment }}
       DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
-      DEPLOYMENT_GUARD_ROLE_ARN: ${{ vars.PRODUCTION_APPLY_ROLE_ARN }}
       PLAN_RUN_ID: ${{ inputs.plan_run_id }}
       ARTIFACT_NAME: ${{ inputs.artifact_name }}
       EXPECTED_SHA256: ${{ inputs.plan_sha256 }}
@@ -128,10 +127,6 @@ jobs:
           role-to-assume: ${{ vars.PRODUCTION_APPLY_ROLE_ARN }}
           role-session-name: apply-${{ github.run_id }}-${{ github.run_attempt }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Inspect production hold before plan preparation
-        if: inputs.github_environment == 'production'
-        run: node scripts/deployment/production-writer-guard.cjs --inspect
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4

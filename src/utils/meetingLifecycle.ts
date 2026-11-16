@@ -1,11 +1,14 @@
 import {
   MEETING_END_REASONS,
-  MEETING_START_REASONS,
   type AutoRecordRule,
   type MeetingEndReason,
-  type MeetingStartReason,
 } from "../types/meetingLifecycle";
 import type { MeetingData } from "../types/meeting-data";
+import type { MeetingHistory } from "../types/db";
+
+/** Written when a member dismisses an auto-recording, wherever the dismissal is applied. */
+export const dismissalCancellationReason = (userId: string): string =>
+  `Stopped by <@${userId}>`;
 
 /** Auto-record's creator is the bot; attribute only to a known triggering member. */
 export function resolveMeetingActorId(
@@ -15,12 +18,16 @@ export function resolveMeetingActorId(
   return meeting.isAutoRecording ? undefined : meeting.creator.id;
 }
 
-export const MEETING_START_REASON_LABELS: Record<MeetingStartReason, string> = {
-  [MEETING_START_REASONS.MANUAL_COMMAND]: "Started via /startmeeting",
-  [MEETING_START_REASONS.MCP]: "Started via MCP",
-  [MEETING_START_REASONS.AUTO_RECORD_CHANNEL]: "Auto-recorded (channel rule)",
-  [MEETING_START_REASONS.AUTO_RECORD_ALL]: "Auto-recorded (all channels rule)",
-};
+/** The same attribution read from a saved history row. */
+export function resolveHistoryActorId(
+  history: Pick<
+    MeetingHistory,
+    "startTriggeredByUserId" | "isAutoRecording" | "meetingCreatorId"
+  >,
+): string | undefined {
+  if (history.startTriggeredByUserId) return history.startTriggeredByUserId;
+  return history.isAutoRecording ? undefined : history.meetingCreatorId;
+}
 
 export const MEETING_END_REASON_LABELS: Record<MeetingEndReason, string> = {
   [MEETING_END_REASONS.BUTTON]: "Ended via End Meeting button",

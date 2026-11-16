@@ -1,26 +1,6 @@
 import process from "node:process";
 import { Buffer } from "node:buffer";
-import { expect, jest } from "@jest/globals";
-const mockGuardState = { failure: "", reads: 0 };
-jest.mock("../../../scripts/deployment/coordinator-aws.cjs", () => ({
-  awsCli: async () => ({
-    Account: "123456789012",
-    Arn: "arn:aws:sts::123456789012:assumed-role/guard/run",
-  }),
-}));
-jest.mock("@aws-sdk/client-dynamodb", () => {
-  const actual = jest.requireActual("@aws-sdk/client-dynamodb");
-  return {
-    ...actual,
-    DynamoDBClient: class {
-      async send() {
-        mockGuardState.reads++;
-        if (mockGuardState.failure) throw { name: mockGuardState.failure };
-        return {};
-      }
-    },
-  };
-});
+import { expect } from "@jest/globals";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,8 +18,6 @@ export const invocation = {
   scope: "full",
 };
 export function fixture() {
-  mockGuardState.failure = "";
-  mockGuardState.reads = 0;
   const directory = mkdtempSync(join(tmpdir(), "terraform-workflow-"));
   mkdirSync(join(directory, "_infra"));
   writeFileSync(join(directory, "_infra/.terraform.lock.hcl"), "reviewed-lock");
@@ -119,7 +97,6 @@ export function fixture() {
     DEPLOYMENT_ENVIRONMENT: "production",
     DEPLOYMENT_ACCOUNT_ID: "123456789012",
     DEPLOYMENT_CONTROL_TABLE: "app-DeploymentControlTable",
-    DEPLOYMENT_GUARD_ROLE_ARN: "arn:aws:iam::123456789012:role/guard",
     AWS_REGION: "us-east-1",
     PATH: process.env.PATH,
     SystemRoot: process.env.SystemRoot,
@@ -153,7 +130,6 @@ export function fixture() {
     commands,
     controls,
     options,
-    guard: mockGuardState,
   };
 }
 

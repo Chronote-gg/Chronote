@@ -4,7 +4,6 @@ import {
   runDelivery as run,
   initializeDeliveryClock,
   settleDeliveryWorks,
-  getRuntimeWorkAdmissionCheckpoints,
 } from "./meetingUpdateDelivery.harness";
 import {
   deliveryFixture,
@@ -14,7 +13,6 @@ import {
 } from "./meetingUpdateDelivery.fixture";
 import { planMeetingUpdate } from "../../src/services/meetingUpdatePlan";
 import { now } from "../types/meetingUpdateDelivery.fixture";
-import { context } from "../deployment/controlFixtures";
 beforeEach(initializeDeliveryClock);
 afterEach(settleDeliveryWorks);
 async function heldDelivery() {
@@ -26,23 +24,14 @@ async function heldDelivery() {
   if (plan.kind !== "ready") throw new Error("Expected plan");
   return { f, tail, invocation, after: plan.targets[0].after };
 }
-test("an existing delivery owner renews and completes when ordinary admission enters maintenance", async () => {
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+test("an existing delivery owner renews and completes", async () => {
   const h = await heldDelivery();
   const renewed = deferred<void>();
-  const lifecycle = jest.requireMock<
-    typeof import("../../src/services/runtimeLifecycleService")
-  >("../../src/services/runtimeLifecycleService");
-  jest
-    .spyOn(lifecycle, "getRuntimeAdmissionContext")
-    .mockImplementation(async () => ({
-      ...context,
-      now: Math.floor(Date.now() / 1000),
-      maintenance: { holdId: "hold", introductionId: "intro", revision: 1 },
-    }));
-  const record = h.invocation.work.recordClaim.bind(h.invocation.work);
-  jest.spyOn(h.invocation.work, "recordClaim").mockImplementation((claim) => {
-    record(claim);
-    if (claim.expiresAt > now + 60) renewed.resolve();
+  interceptRenewal(h.f.repository, async (proceed) => {
+    const result = await proceed();
+    renewed.resolve();
+    return result;
   });
   jest.spyOn(Date, "now").mockReturnValue((now + 20) * 1000);
   try {
@@ -59,12 +48,6 @@ test.each([true, false])(
   async (committed) => {
     const h = await heldDelivery();
     const seen = deferred<void>();
-    const confirmed = deferred<void>();
-    const record = h.invocation.work.recordClaim.bind(h.invocation.work);
-    jest.spyOn(h.invocation.work, "recordClaim").mockImplementation((claim) => {
-      record(claim);
-      if (claim.expiresAt > now + 60) confirmed.resolve();
-    });
     interceptRenewal(h.f.repository, async (proceed) => {
       if (committed) await proceed();
       seen.resolve();
@@ -72,17 +55,52 @@ test.each([true, false])(
     });
     jest.spyOn(Date, "now").mockReturnValue((now + 20) * 1000);
     await seen.promise;
-    if (committed) await confirmed.promise;
-    else await new Promise((resolve) => setImmediate(resolve));
+    await flush();
     h.f.remote.set(h.after.id, h.after);
     h.tail.resolve(Response.json(h.after));
     const result = await h.invocation.promise;
     expect(result.kind).toBe(committed ? "settled" : "uncertain");
-    if (committed) expect(result.durable?.claim?.expiresAt).toBe(now + 80);
-    else expect(result.durable).toBeUndefined();
   },
 );
-test("a fenced pending renewal and held provider response remain owned until both actual tails settle", async () => {
+test("a lost lease renewal lets the in-flight request finish and starts nothing later", async () => {
+  const f = deliveryFixture();
+  const entered = deferred<void>();
+  const tail = deferred<Response>();
+  // Unlike holdPatch, this request fails the moment its signal aborts.
+  f.intercept(async (method) => {
+    if (method !== "PATCH") return undefined;
+    const signal = f.signals.at(-1);
+    entered.resolve();
+    return new Promise<Response>((resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(signal.reason));
+      void tail.promise.then(resolve);
+    });
+  });
+  const invocation = run(f, false, 10000, { renewalIntervalMs: 5 });
+  await entered.promise;
+  const plan = planMeetingUpdate(f.input);
+  if (plan.kind !== "ready") throw new Error("Expected plan");
+  const after = plan.targets[0].after;
+  const lost = deferred<void>();
+  interceptRenewal(f.repository, async () => {
+    lost.resolve();
+    return "stale";
+  });
+  jest.spyOn(Date, "now").mockReturnValue((now + 20) * 1000);
+  await lost.promise;
+  await flush();
+  expect(f.signals.at(-1)?.aborted).toBe(false);
+  const calls = f.calls.length;
+  f.remote.set(after.id, after);
+  tail.resolve(Response.json(after));
+  expect((await invocation.promise).kind).toBe("uncertain");
+  expect(f.calls.slice(calls).filter((call) => call.method !== "GET")).toEqual(
+    [],
+  );
+  // The claim itself was never lost, so the claim-conditioned completion lands; nothing is left uncertain.
+  expect((await f.read()).updateDelivery.progress.kind).toBe("synced");
+});
+test("a stopped pending renewal and held provider response both settle before the run ends", async () => {
   const h = await heldDelivery();
   const entered = deferred<void>();
   const renewalTail = deferred<void>();
@@ -93,20 +111,16 @@ test("a fenced pending renewal and held provider response remain owned until bot
   });
   jest.spyOn(Date, "now").mockReturnValue((now + 20) * 1000);
   await entered.promise;
-  h.invocation.work.fence();
-  const checkpoint = getRuntimeWorkAdmissionCheckpoints().find(
-    (item) => item.signal === h.invocation.work.signal,
-  )!;
-  const effects = checkpoint.effects.length;
+  h.invocation.controller.abort();
+  let settled = false;
+  void h.invocation.promise.then(() => {
+    settled = true;
+  });
   h.f.remote.set(h.after.id, h.after);
   h.tail.resolve(Response.json(h.after));
-  await new Promise((resolve) => setImmediate(resolve));
-  expect(
-    getRuntimeWorkAdmissionCheckpoints().find(
-      (item) => item.id === checkpoint.id,
-    )?.effects.length,
-  ).toBeGreaterThan(0);
+  await flush();
+  expect(settled).toBe(false);
   renewalTail.resolve();
   await h.invocation.promise;
-  expect(effects).toBeGreaterThanOrEqual(2);
+  expect(settled).toBe(true);
 });

@@ -1,6 +1,6 @@
 # ADR-20261028: Cold cutover for the first production introduction
 
-Status: Accepted; supersedes the staged fence-and-drain path for the first introduction
+Status: Superseded by adr-20261111-lifecycle-simplification
 
 Date: 2026-10-28
 
@@ -25,4 +25,4 @@ A meeting that starts after the pre-stop check is cut off when the legacy task s
 
 ## Notes
 
-Operator steps, the race window and resume rules are in the [production introduction procedure](production-introduction.md#cold-cutover).
+Operator steps, the race window and resume rules are in the production introduction procedure.

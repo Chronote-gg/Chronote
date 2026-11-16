@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { RuntimeIdentity } from "../types/deploymentControl";
-import { RUNTIME_AGENT_TIMEOUT_MS } from "./runtimeProtectionService";
+import { config } from "./configService";
+import { RUNTIME_AGENT_TIMEOUT_MS } from "./lifecycleTiming";
 
-const runtimeInstanceId = process.env.BOT_INSTANCE_ID?.trim() || randomUUID();
+// On ECS every task gets its own id: a BOT_INSTANCE_ID set in the task definition would be shared by all of them.
+const runtimeInstanceId = config.runtime.metadataUri
+  ? randomUUID()
+  : process.env.BOT_INSTANCE_ID?.trim() || randomUUID();
 
 export function getRuntimeInstanceId(): string {
   return runtimeInstanceId;
@@ -17,46 +20,47 @@ const taskMetadata = z.object({
   TaskARN: z.string().regex(/^arn:[^:]+:ecs:[^:]+:\d{12}:task\//),
   Containers: z.array(containerMetadata),
 });
+// The task definition revision orders releases, so the registry refuses a task without a numeric one.
+const workerTaskMetadata = taskMetadata.extend({
+  Revision: z.string().regex(/^\d+$/),
+});
 
-export async function resolveRuntimeIdentity(
-  options: (
-    | { kind: "local"; localId: string }
-    | { kind: "ecs"; metadataUri: string; candidateId: string }
-  ) & { request?: typeof fetch },
-): Promise<RuntimeIdentity> {
-  if (options.kind === "local") {
-    if (!options.localId.trim()) throw new Error("Local identity is required");
-    return {
-      kind: "local",
-      localId: options.localId,
-      instanceId: runtimeInstanceId,
-      protocolVersion: 1,
-    };
-  }
-  if (!options.metadataUri || !options.candidateId.trim())
-    throw new Error("ECS metadata URI and candidate identity are required");
-  const request = options.request ?? fetch;
-  async function read(url: string): Promise<unknown> {
-    const response = await request(url, {
-      signal: AbortSignal.timeout(RUNTIME_AGENT_TIMEOUT_MS),
-    });
-    if (!response.ok) throw new Error("ECS metadata request failed");
-    return response.json();
-  }
-  const uri = options.metadataUri.replace(/\/$/, "");
-  const container = containerMetadata.parse(await read(uri));
-  const task = taskMetadata.parse(await read(`${uri}/task`));
-  const current = task.Containers.find(
-    (item) => item.DockerId === container.DockerId,
+async function readMetadata(
+  url: string,
+  request: typeof fetch,
+): Promise<unknown> {
+  const response = await request(url, {
+    signal: AbortSignal.timeout(RUNTIME_AGENT_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error("ECS metadata request failed");
+  return response.json();
+}
+
+export type WorkerIdentity = {
+  instanceId: string;
+  release: number;
+  taskArn?: string;
+};
+
+export async function resolveWorkerIdentity(
+  request: typeof fetch = fetch,
+): Promise<WorkerIdentity> {
+  const metadataUri = config.runtime.metadataUri.replace(/\/$/, "");
+  if (!metadataUri)
+    return { instanceId: runtimeInstanceId, release: config.runtime.release };
+  const task = workerTaskMetadata.parse(
+    await readMetadata(`${metadataUri}/task`, request),
   );
-  if (!current || current.ImageID !== container.ImageID)
-    throw new Error("ECS container identity mismatch");
   return {
-    kind: "ecs",
     instanceId: runtimeInstanceId,
+    release: Number(task.Revision),
     taskArn: task.TaskARN,
-    imageDigest: container.ImageID,
-    candidateId: options.candidateId,
-    protocolVersion: 1,
   };
+}
+
+let processIdentity: Promise<WorkerIdentity> | undefined;
+/** Resolved once per process, so the registry and every receipt name the same worker and release. */
+export function getWorkerIdentity(): Promise<WorkerIdentity> {
+  processIdentity ??= resolveWorkerIdentity();
+  return processIdentity;
 }

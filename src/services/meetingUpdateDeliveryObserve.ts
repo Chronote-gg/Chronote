@@ -253,7 +253,7 @@ export async function observeUncertainDelivery(
   if (!("attempt" in progress)) return [];
   const observations: MeetingDeliveryObservation[] = [];
   for (const [index, operation] of progress.attempt.operations.entries()) {
-    if (ctx.input.work.signal.aborted || ctx.input.signal?.aborted) break;
+    if (ctx.signal.aborted) break;
     const submission = progress.operations[index].submission;
     if (submission.kind === "prepared" || operation.kind === "register")
       continue;

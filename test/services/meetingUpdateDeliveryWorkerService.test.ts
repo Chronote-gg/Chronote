@@ -77,18 +77,13 @@ test("only two meetings progress while a provider outlives the ten second admiss
     tail = deferred<void>();
   let active = 0,
     maximum = 0;
-  f.deliver.mockImplementation(async (input) => {
-    const claim = f.claimed(input);
+  f.deliver.mockImplementation(async () => {
     active++;
     maximum = Math.max(maximum, active);
     if (active === 2) entered.resolve();
-    await input.work.trackEffect(() => tail.promise);
+    await tail.promise;
     active--;
-    return {
-      kind: "settled",
-      capturedRevision: 1,
-      durable: { deliveryRevision: "verified", claim },
-    };
+    return { kind: "settled", capturedRevision: 1 };
   });
   const poll = f.worker.poll();
   await entered.promise;
@@ -98,9 +93,7 @@ test("only two meetings progress while a provider outlives the ten second admiss
   expect(maximum).toBe(2);
   expect(f.deliver).toHaveBeenCalledTimes(2);
   expect(
-    f.works
-      .filter((w) => f.checkpoint(w)?.claim)
-      .every((w) => !w.signal.aborted),
+    f.deliver.mock.calls.every(([input]) => input.signal?.aborted === false),
   ).toBe(true);
   let stopped = false;
   const stop = f.worker.stop().then(() => {
@@ -108,10 +101,9 @@ test("only two meetings progress while a provider outlives the ten second admiss
   });
   await Promise.resolve();
   expect(stopped).toBe(false);
-  expect(f.works.filter((w) => f.checkpoint(w)?.claim)).toHaveLength(2);
   tail.resolve();
   await stop;
-  expect(f.works.every((w) => !f.checkpoint(w))).toBe(true);
+  expect(active).toBe(0);
   await f.clean();
 });
 test("partial pages survive capacity exhaustion and admission clock exhaustion", async () => {
@@ -124,7 +116,6 @@ test("partial pages survive capacity exhaustion and admission clock exhaustion",
     return {
       kind: "settled",
       capturedRevision: null,
-      noClaim: { kind: "never_admitted" },
     };
   });
   const read = f.repository.getStrong.getMockImplementation()!;
@@ -175,23 +166,6 @@ test("retained attempts dispatch reconciliation without adding a second local ow
   tail.resolve();
   await f.clean();
 });
-test("serving denial and unknown acknowledgment cannot release or replay unresolved work", async () => {
-  const f = workerFixture();
-  f.begin.mockImplementationOnce(() => {
-    throw Error("not serving");
-  });
-  await f.worker.poll();
-  expect(f.deliver).not.toHaveBeenCalled();
-  f.deliver.mockResolvedValue({ kind: "uncertain", capturedRevision: 1 });
-  await f.worker.poll();
-  const current = f.works.find(
-    (w) => f.checkpoint(w)?.claim === undefined && f.checkpoint(w),
-  );
-  expect(current?.signal.aborted).toBe(true);
-  await f.worker.poll();
-  expect(f.deliver).toHaveBeenCalledTimes(1);
-  await f.clean();
-});
 test.each([undefined, "CREATING", "DELETING"])(
   "readiness rejects unavailable index status %s",
   async (status) => {
@@ -204,39 +178,6 @@ test("readiness accepts only an explicitly ACTIVE configured index", async () =>
   await expect(
     verifyMeetingUpdateDeliveryReadiness(async () => "ACTIVE"),
   ).resolves.toBeUndefined();
-});
-
-test("authority refresh exhausting the poll budget admits no later discovery", async () => {
-  const f = workerFixture();
-  const begin = f.begin.getMockImplementation()!;
-  f.begin.mockImplementation((...args) => {
-    const work = begin(...args);
-    work.authority = async () => {
-      jest.setSystemTime((now + 11) * 1000);
-      return {
-        kind: "serving",
-        context: {
-          instanceId: "old",
-          now,
-          identity: {
-            kind: "ecs",
-            instanceId: "old",
-            taskArn: "synthetic",
-            imageDigest: "synthetic",
-            candidateId: "synthetic",
-            protocolVersion: 1,
-          },
-          authorizedGeneration: 7,
-          observedEpoch: 3,
-          protocolVersion: 1,
-        },
-      };
-    };
-    return work;
-  });
-  await f.worker.poll();
-  expect(f.repository.listDue).not.toHaveBeenCalled();
-  await f.clean();
 });
 
 test("a Query finishing after the deadline retains its first key and cursor for the next poll", async () => {

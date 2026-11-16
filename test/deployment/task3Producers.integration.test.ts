@@ -4,22 +4,15 @@ import {
   DescribeTableCommand,
   CreateTableCommand,
   DeleteTableCommand,
-  PutItemCommand,
   GetItemCommand,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
-import { context, control, runtime } from "./controlFixtures";
 import * as db from "../../src/db";
 import { createDynamoDeploymentControlRepository } from "../../src/repositories/deploymentControlRepository";
-import { runRuntimeApiOperation } from "../../src/services/runtimeApiOperationService";
 import type {
   PersonalMediaUploadJobRecord,
   PersonalRecordingSegmentRecord,
 } from "../../src/types/db";
-jest.mock("../../src/services/runtimeLifecycleService", () => ({
-  beginRuntimeWork: () => ({ settle: jest.fn(), transition: jest.fn() }),
-  getRuntimeAdmissionContext: async () => context,
-}));
 const prefix = `task3-producer-${randomUUID()}-`;
 const names = [
   "DeploymentControlTable",
@@ -34,18 +27,11 @@ const tables = {
   activeMeeting: prefix + names[2],
 };
 const client = new DynamoDBClient({
-  endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
+  endpoint: process.env.TEST_DYNAMODB_ENDPOINT,
   region: "local",
   credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
 });
 const repository = createDynamoDeploymentControlRepository(client, tables);
-const put = (name: string, item: object) =>
-  client.send(
-    new PutItemCommand({
-      TableName: prefix + name,
-      Item: marshall(item, { removeUndefinedValues: true }),
-    }),
-  );
 const read = async (name: string, key: object) => {
   const result = await client.send(
     new GetItemCommand({
@@ -56,7 +42,6 @@ const read = async (name: string, key: object) => {
   );
   return result.Item ? unmarshall(result.Item) : undefined;
 };
-const hold = { holdId: "held", introductionId: "intro", revision: 1 };
 beforeAll(async () => {
   const keys = [
     ["pk", "sk"],
@@ -85,10 +70,6 @@ afterAll(async () => {
   for (const name of names)
     await client.send(new DeleteTableCommand({ TableName: prefix + name }));
   client.destroy();
-});
-beforeEach(async () => {
-  await put(names[0], control);
-  await put(names[0], runtime("old"));
 });
 afterEach(() => jest.restoreAllMocks());
 function routeDbToNativeTables() {
@@ -146,155 +127,49 @@ function segment(
     updatedAt: upload.updatedAt,
   };
 }
-test("real personal producer transactions preserve late bytes and partial submission across closure", async () => {
+test("real personal producer transactions keep their own conditions without a deployment admission check", async () => {
   routeDbToNativeTables();
   const upload = job(),
     part = segment(upload);
-  await db.writePersonalMediaUploadJob(upload, context);
-  expect(
-    await db.preparePersonalRecordingSegment(part, undefined, context),
-  ).toBe(true);
-  await put(names[0], { ...control, maintenance: hold });
-  await expect(
-    db.writePersonalMediaUploadJob(job(), context),
-  ).rejects.toThrow();
-  await expect(
-    db.preparePersonalRecordingSegment(part, "pending_upload", context),
-  ).rejects.toThrow();
-  await expect(
-    db.transitionPersonalRecordingSegment(
-      { ...part, status: "uploaded" },
-      "pending_upload",
-      context,
-    ),
-  ).rejects.toThrow();
-  await expect(
-    db.submitPersonalMediaUploadJob({ ...upload, status: "queued" }, context),
-  ).rejects.toThrow();
-  expect(
-    await read(names[4], {
-      uploadId: upload.uploadId,
-      segmentKey: part.segmentKey,
-    }),
-  ).toEqual(part);
-  expect(await read(names[3], { uploadId: upload.uploadId })).toEqual(upload);
-  await put(names[0], control);
+  await db.writePersonalMediaUploadJob(upload);
+  await expect(db.writePersonalMediaUploadJob(upload)).rejects.toThrow(
+    "Personal upload already exists",
+  );
+  expect(await db.preparePersonalRecordingSegment(part, undefined)).toBe(true);
+  expect(await db.preparePersonalRecordingSegment(part, undefined)).toBe(false);
   expect(
     await db.transitionPersonalRecordingSegment(
       { ...part, status: "uploaded" },
       "pending_upload",
-      context,
     ),
   ).toBe(true);
   expect(
     await db.transitionPersonalRecordingSegment(
       { ...part, status: "submitted" },
+      "pending_upload",
+    ),
+  ).toBe(false);
+  expect(
+    await db.transitionPersonalRecordingSegment(
+      { ...part, status: "submitted" },
       "uploaded",
-      context,
-    ),
-  ).toBe(true);
-  await put(names[0], { ...control, maintenance: hold });
-  await expect(
-    db.submitPersonalMediaUploadJob({ ...upload, status: "queued" }, context),
-  ).rejects.toThrow();
-  expect(
-    (
-      await read(names[4], {
-        uploadId: upload.uploadId,
-        segmentKey: part.segmentKey,
-      })
-    )?.status,
-  ).toBe("submitted");
-  await put(names[0], control);
-  expect(
-    await db.submitPersonalMediaUploadJob(
-      { ...upload, status: "queued" },
-      context,
     ),
   ).toBe(true);
   expect(
-    (
-      await read(names[4], {
-        uploadId: upload.uploadId,
-        segmentKey: part.segmentKey,
-      })
-    )?.sourceS3Key,
-  ).toBe(part.sourceS3Key);
-});
-test.each(["create", "complete", "submit"])(
-  "native hold races personal %s at the durable transaction",
-  async (stage) => {
-    routeDbToNativeTables();
-    const upload = job(),
-      part = segment(upload);
-    if (stage !== "create")
-      await db.writePersonalMediaUploadJob(upload, context);
-    if (stage === "complete")
-      await db.preparePersonalRecordingSegment(part, undefined, context);
-    const effects = {
-      create: () => db.writePersonalMediaUploadJob(upload, context),
-      complete: () =>
-        db.transitionPersonalRecordingSegment(
-          { ...part, status: "uploaded" },
-          "pending_upload",
-          context,
-        ),
-      submit: () =>
-        db.submitPersonalMediaUploadJob(
-          { ...upload, status: "queued" },
-          context,
-        ),
-    };
-    const effect = effects[stage as keyof typeof effects];
-    const [result] = await Promise.allSettled([
-      effect(),
-      put(names[0], { ...control, maintenance: hold }),
-    ]);
-    const row =
-      stage === "complete"
-        ? await read(names[4], {
-            uploadId: upload.uploadId,
-            segmentKey: part.segmentKey,
-          })
-        : await read(names[3], { uploadId: upload.uploadId });
-    const successes = {
-      create: "pending_upload",
-      complete: "uploaded",
-      submit: "queued",
-    };
-    const expected =
-      result.status === "fulfilled"
-        ? successes[stage as keyof typeof successes]
-        : stage === "create"
-          ? undefined
-          : "pending_upload";
-    expect(row?.status).toBe(expected);
-    await expect(effect()).rejects.toThrow();
-  },
-);
-test("native API admission orders provider ownership before hold and keeps its acknowledgement receipt", async () => {
-  routeDbToNativeTables();
-  let entered!: () => void, release!: () => void;
-  const started = new Promise<void>((r) => (entered = r)),
-    finish = new Promise<void>((r) => (release = r));
-  const receipt = jest.fn();
-  const task = runRuntimeApiOperation(randomUUID(), async (operation) =>
-    operation.mutate(async () => {
-      entered();
-      await finish;
-      receipt();
+    await db.submitPersonalMediaUploadJob({ ...upload, status: "queued" }),
+  ).toBe(true);
+  expect(
+    await db.submitPersonalMediaUploadJob({ ...upload, status: "queued" }),
+  ).toBe(false);
+  expect(
+    await read(names[4], {
+      uploadId: upload.uploadId,
+      segmentKey: part.segmentKey,
     }),
-  );
-  await started;
-  await put(names[0], { ...control, maintenance: hold });
-  const provider = jest.fn();
-  await expect(
-    runRuntimeApiOperation(randomUUID(), provider),
-  ).rejects.toThrow();
-  expect(provider).not.toHaveBeenCalled();
-  release();
-  await task;
-  expect(receipt).toHaveBeenCalledTimes(1);
+  ).toMatchObject({ status: "submitted", sourceS3Key: part.sourceS3Key });
+  expect(await read(names[3], { uploadId: upload.uploadId })).toMatchObject({
+    status: "queued",
+  });
 });
 
 test("an incidental DynamoDB client without explicit endpoint uses the validated loopback harness", async () => {
@@ -305,7 +180,7 @@ test("an incidental DynamoDB client without explicit endpoint uses the validated
     );
     expect(result.Table?.TableName).toBe(tables.deploymentControl);
     expect(process.env.AWS_ENDPOINT_URL_DYNAMODB).toBe(
-      process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
+      process.env.TEST_DYNAMODB_ENDPOINT,
     );
   } finally {
     incidental.destroy();

@@ -4,6 +4,10 @@
 // originally captured with AWS 6.69.1 and unchanged in 6.71.0, then renamed per
 // environment with the AWS 6.70 mask recomputing every index's derived fields.
 import providerPlan from "./terraformMeetingUpdate-provider.json";
+import {
+  drainMetric,
+  lifecycleAlarms,
+} from "../../../scripts/deployment/validate-processing-retry-plan.cjs";
 
 export const retryAccountId = "123456789012";
 export const tableAddress = "aws_dynamodb_table.meeting_history_table";
@@ -157,6 +161,62 @@ export function quietSandboxPlan() {
   const dropped = new Set([filterAddress, alarmAddress]);
   plan.resource_changes = plan.resource_changes.filter(
     (r) => !dropped.has(r.address),
+  );
+  return plan;
+}
+
+// The same plan from source carrying the lifecycle and deploy drain alarms,
+// built from the validator's own table; lifecycleAlarms.test.ts ties that
+// table to _infra/alerts-lifecycle.tf and src/metrics.ts.
+export const drainAlarmAddress =
+  "aws_cloudwatch_metric_alarm.deploy_drain_timeout[0]";
+export const lifecycleFilterAddress = (key) =>
+  `aws_cloudwatch_log_metric_filter.lifecycle["${key}"]`;
+export const lifecycleAlarmAddress = (key) =>
+  `aws_cloudwatch_metric_alarm.lifecycle["${key}"]`;
+
+function retarget(change, address, after) {
+  return { ...change, address, change: { ...change.change, after } };
+}
+
+export function lifecyclePlan(environment = "production") {
+  const prefix = prefixes[environment];
+  const plan = processingRetryPlan(environment);
+  const filter = filterChange(prefix);
+  const alarm = alarmChange(prefix);
+  for (const [key, spec] of Object.entries(lifecycleAlarms)) {
+    const name = `${prefix}-${key.replaceAll("_", "-")}`;
+    plan.resource_changes.push(
+      retarget(filter, lifecycleFilterAddress(key), {
+        ...filter.change.after,
+        name,
+        pattern: spec.pattern,
+        metric_transformation: [
+          {
+            ...filter.change.after.metric_transformation[0],
+            name: spec.metric,
+          },
+        ],
+      }),
+      retarget(alarm, lifecycleAlarmAddress(key), {
+        ...alarm.change.after,
+        alarm_name: name,
+        metric_name: spec.metric,
+        threshold: spec.threshold,
+        comparison_operator: spec.comparison,
+        evaluation_periods: spec.periods,
+        datapoints_to_alarm: spec.periods,
+        treat_missing_data: spec.missing,
+      }),
+    );
+  }
+  plan.resource_changes.push(
+    retarget(alarm, drainAlarmAddress, {
+      ...alarm.change.after,
+      alarm_name: `${prefix}-deploy-drain-timeout`,
+      namespace: `${prefix}/Deploy`,
+      metric_name: drainMetric,
+    }),
   );
   return plan;
 }

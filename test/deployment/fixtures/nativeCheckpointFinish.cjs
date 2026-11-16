@@ -15,8 +15,8 @@ const {
   ListBucketsCommand,
 } = require("@aws-sdk/client-s3");
 const {
-  createDynamoDeploymentControlRepository,
-} = require("./dist/repositories/deploymentControlRepository");
+  createDynamoMeetingHistoryTransitionRepository,
+} = require("./dist/repositories/meetingHistoryTransitions");
 const {
   createRecordingCheckpointService,
 } = require("./dist/services/recordingCheckpointService");
@@ -29,7 +29,7 @@ const {
 } = require("./dist/services/storageService");
 
 async function main() {
-  const { history, control, runtime } = JSON.parse(
+  const { history } = JSON.parse(
     Buffer.from(process.env.FINISH_FIXTURE, "base64").toString(),
   );
   const dynamo = new DynamoDBClient({
@@ -59,13 +59,13 @@ async function main() {
     ready(dynamo, new ListTablesCommand({})),
     ready(s3, new ListBucketsCommand({})),
   ]);
+  // The checkpoint path reads only the lease and the history row; no control table is created.
   const tables = {
-    deploymentControl: "finish-Control",
+    deploymentControl: "finish-Control-unused",
     meetingHistory: "finish-History",
     activeMeeting: "finish-Lease",
   };
   for (const [TableName, keys] of [
-    [tables.deploymentControl, ["pk", "sk"]],
     [tables.meetingHistory, ["guildId", "channelId_timestamp"]],
     [tables.activeMeeting, ["guildId"]],
   ]) {
@@ -92,12 +92,10 @@ async function main() {
       }),
     );
   const now = Math.floor(Date.now() / 1000);
-  control.coordinatorExpiresAt = now + 600;
-  runtime.readiness.expiresAt = now + 600;
-  runtime.protection.expiresAt = now + 600;
-  await put(tables.deploymentControl, control);
-  await put(tables.deploymentControl, runtime);
-  const repository = createDynamoDeploymentControlRepository(dynamo, tables);
+  const repository = createDynamoMeetingHistoryTransitionRepository(
+    dynamo,
+    tables,
+  );
   const checkpoint = createRecordingCheckpointService({
     repository,
     objects: { upload: uploadObjectToS3, read: fetchObjectBytesFromS3 },

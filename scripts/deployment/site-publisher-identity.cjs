@@ -27,7 +27,6 @@ function prepareSiteSession(text, variablesText, site, template) {
     variables = JSON.parse(variablesText);
   assert.equal(variables.AWS_ACCOUNT_ID, outputs.account_id);
   assert.equal(variables.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN, outputs.role_arn);
-  assert.equal(variables.DEPLOYMENT_CONTROL_TABLE, outputs.control_table);
   assert.equal(variables.AWS_REGION, "us-east-1");
   const bucketName = site.toUpperCase() + "_BUCKET",
     distributionName = site.toUpperCase() + "_DISTRIBUTION_ID";
@@ -40,7 +39,6 @@ function prepareSiteSession(text, variablesText, site, template) {
   const allowed = new Set([
     "AWS_ACCOUNT_ID",
     "AWS_REGION",
-    "DEPLOYMENT_CONTROL_TABLE",
     bucketName,
     distributionName,
   ]);
@@ -79,7 +77,6 @@ if (require.main === module) {
       const names = [
         "AWS_ACCOUNT_ID",
         "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN",
-        "DEPLOYMENT_CONTROL_TABLE",
         "AWS_REGION",
         site.toUpperCase() + "_BUCKET",
         site.toUpperCase() + "_DISTRIBUTION_ID",

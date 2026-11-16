@@ -29,7 +29,7 @@ import {
   updateMeeting,
   type MeetingUpdateActionInput,
 } from "./meetingUpdateService";
-import { registerRuntimeNotionOwner } from "./notionOperationLifetime";
+import { registerNotionMutationTracker } from "./notionOperationLifetime";
 import { isProcessingRetryAvailable } from "./processingRetryAvailability";
 import {
   runProcessingRetryStages,
@@ -38,10 +38,8 @@ import {
 } from "./processingRetryStages";
 import { createRecordingCheckpointService } from "./recordingCheckpointService";
 import { getRuntimeInstanceId } from "./runtimeInstanceService";
-import {
-  beginRuntimeWorkClaim,
-  type RuntimeWorkClaim,
-} from "./runtimeWorkAdmissionService";
+import { operationSignal } from "./shutdownSignal";
+import { isEligible } from "./workerRegistry";
 
 /** Task 8's CloudWatch alarm matches this exact line. */
 export const PROCESSING_RETRY_WORKER_FAILED_LOG =
@@ -49,34 +47,24 @@ export const PROCESSING_RETRY_WORKER_FAILED_LOG =
 const IDLE_LOG =
   "Processing retry worker idle: flag off or ProcessingRetryDueIndex not ACTIVE";
 
-type RetryWork = Pick<
-  RuntimeWorkClaim,
-  | "signal"
-  | "trackPromise"
-  | "trackEffect"
-  | "authority"
-  | "recordClaim"
-  | "claimed"
-  | "acknowledgeTerminal"
-  | "acknowledgeReadOnlyRecoveryPoll"
-  | "fence"
-  | "settle"
->;
 export type ProcessingRetryWorkerDependencies = {
   repository: ProcessingRetryRepository;
   rows: Pick<MeetingUpdateDeliveryRepository, "getStrong">;
-  begin(domain: "recovery", id: string): RetryWork;
   run: typeof runProcessingRetryStages;
   save: typeof updateMeeting;
   available(): Promise<boolean>;
   reader(): RecoveryReader;
   now(): number;
   instanceId(): string;
+  isEligible(): boolean;
 };
+/** Aborted on shutdown, or by the job itself once its lease or a write's outcome is unknown. */
+type JobStop = { controller: AbortController; signal: AbortSignal };
+type Effect = <T>(run: () => Promise<T>) => Promise<T>;
 type Claim = NonNullable<ProcessingRetryJob["claim"]>;
 type ClaimedJob = {
   key: MeetingUpdateKey;
-  work: RetryWork;
+  stop: JobStop;
   history: MeetingHistory;
   job: ProcessingRetryJob;
   claim: Claim;
@@ -89,8 +77,14 @@ type ContentChanges = Extract<
 >["changes"];
 type ConflictVerdict = "saved" | "lost" | "notes_changed" | "retry";
 
-// A fenced work handle refuses trackEffect, yet its claim-conditioned terminal write must still run.
-const untracked: RetryWork["trackEffect"] = (run) => run();
+// A stopped job issues no new effects, yet its claim-conditioned terminal write must still run.
+const untracked: Effect = (run) => run();
+const guarded =
+  (signal: AbortSignal): Effect =>
+  async (run) => {
+    signal.throwIfAborted();
+    return run();
+  };
 const notesVersionOf = (row: Pick<MeetingHistory, "notesVersion">) =>
   readMeetingUpdateRevisions(row).notesVersion;
 
@@ -136,8 +130,8 @@ function saveInput(
     key: claimed.key,
     mutation: { kind: "regeneration", changes: regenerationChanges(changes) },
     actor: { editedBy: requestedBy },
-    // The Notion auto-sync after the save runs as a mutation owned by this work.
-    signal: claimed.work.signal,
+    // The Notion auto-sync after the save runs as a mutation owned by this job.
+    signal: claimed.stop.signal,
     ...(changes.notes !== undefined
       ? {
           notesEdit: {
@@ -168,50 +162,32 @@ export function createProcessingRetryWorker(
   let timer: ReturnType<typeof setInterval> | undefined;
   let stopped = false;
   let idle = false;
-  let refused = false;
 
   async function claimJob(
     key: MeetingUpdateKey,
-    work: RetryWork,
-    claimId: string,
-    submitted: () => void,
+    stop: JobStop,
   ): Promise<ClaimedJob | undefined> {
-    // Admission closes before shutdown fences the work, and a refresh can fail transiently: both skip the key.
-    const authority = await work.authority().catch(() => undefined);
-    if (authority?.kind !== "serving") return undefined;
-    const history = await deps.rows.getStrong(key, work.signal);
+    const history = await deps.rows.getStrong(key, stop.signal);
     const queued = history?.processingRetry;
     if (!history || !queued) return undefined;
     const now = deps.now();
     const claim: Claim = {
       ownerInstanceId: deps.instanceId(),
-      claimId,
+      claimId: randomUUID(),
       leaseExpiresAt: now + PROCESSING_RETRY_CLAIM_SECONDS,
     };
-    // Recorded before the write, so a claim whose outcome is unknown stays reconcilable.
-    work.recordClaim({
-      claimId: claim.claimId,
-      instanceId: claim.ownerInstanceId,
-      expiresAt: claim.leaseExpiresAt,
-    });
-    submitted();
+    // The claim's own condition is the only gate: of two workers polling one job, one claim lands.
     const job = await deps.repository.claim({
       key,
       jobId: queued.jobId,
       ...claim,
       now,
-      authority,
-      signal: work.signal,
+      signal: stop.signal,
     });
-    if (!job?.claim) {
-      // The write was refused, so the recorded claim never existed.
-      work.acknowledgeTerminal();
-      return undefined;
-    }
-    work.claimed();
+    if (!job?.claim) return undefined;
     return {
       key,
-      work,
+      stop,
       history: { ...history, processingRetry: job },
       job,
       claim: job.claim,
@@ -230,22 +206,17 @@ export function createProcessingRetryWorker(
       leaseExpiresAt,
     });
     if (!renewed) throw new Error("Processing retry lease lost");
-    claimed.work.recordClaim({
-      claimId,
-      instanceId: ownerInstanceId,
-      expiresAt: leaseExpiresAt,
-    });
   }
 
   /** Returns the stop, which waits out an in-flight renewal so terminal writes see a settled claim. */
   function renewLease(claimed: ClaimedJob): () => Promise<void> {
-    const { work } = claimed;
+    const { stop } = claimed;
     let renewing: Promise<void> | undefined;
     const renewal = setInterval(() => {
       if (renewing) return;
-      renewing = work
-        .trackEffect(() => renewOnce(claimed))
-        .catch(() => work.fence())
+      // Another worker may claim a job whose lease is unproven, so this one issues nothing further.
+      renewing = guarded(stop.signal)(() => renewOnce(claimed))
+        .catch(() => stop.controller.abort())
         .finally(() => {
           renewing = undefined;
         });
@@ -261,7 +232,7 @@ export function createProcessingRetryWorker(
     claimed: ClaimedJob,
     sources: Sources,
     reason: ProcessingRetryFailureReason,
-    write: RetryWork["trackEffect"] = claimed.work.trackEffect,
+    write: Effect = guarded(claimed.stop.signal),
   ): Promise<ProcessingRetryJob | undefined> {
     const failed = terminalJob(claimed.job, sources, reason);
     const result = await write(() =>
@@ -274,17 +245,14 @@ export function createProcessingRetryWorker(
     return result === "applied" ? failed : undefined;
   }
 
-  async function readOwnJob(
-    claimed: ClaimedJob,
-    read: RetryWork["trackEffect"],
-  ) {
+  async function readOwnJob(claimed: ClaimedJob, read: Effect) {
     const row = await read(() => deps.rows.getStrong(claimed.key));
     const job = row?.processingRetry;
     return row && job?.jobId === claimed.job.jobId ? { row, job } : undefined;
   }
 
   async function afterConflict(claimed: ClaimedJob): Promise<ConflictVerdict> {
-    const own = await readOwnJob(claimed, claimed.work.trackEffect);
+    const own = await readOwnJob(claimed, guarded(claimed.stop.signal));
     if (!own) return "lost";
     const { row, job } = own;
     if (job.status === "succeeded") return "saved";
@@ -306,7 +274,7 @@ export function createProcessingRetryWorker(
     const succeeded = terminalJob(claimed.job, run);
     const input = saveInput(claimed, run.changes, succeeded);
     for (let attempt = 0; attempt < PROCESSING_RETRY_SAVE_ATTEMPTS; attempt++) {
-      const result = await claimed.work.trackEffect(() => deps.save(input));
+      const result = await guarded(claimed.stop.signal)(() => deps.save(input));
       if (result.kind === "saved") return succeeded;
       const verdict = await afterConflict(claimed);
       if (verdict === "saved") return succeeded;
@@ -323,7 +291,7 @@ export function createProcessingRetryWorker(
   }
 
   function runJob(claimed: ClaimedJob): Promise<ProcessingRetryRun> {
-    const { history, job, work } = claimed;
+    const { history, job, stop } = claimed;
     if (notesVersionOf(history) !== job.expectedNotesVersion)
       return Promise.resolve({
         kind: "failed",
@@ -334,14 +302,12 @@ export function createProcessingRetryWorker(
     return deps.run({
       history,
       job,
-      signal: work.signal,
-      effect: work.trackEffect,
+      signal: stop.signal,
       reader: deps.reader(),
     });
   }
 
   function completed(claimed: ClaimedJob, job: ProcessingRetryJob) {
-    claimed.work.acknowledgeTerminal();
     processingRetryJobs.inc({
       outcome: job.status,
       reason: job.failureReason ?? "none",
@@ -362,7 +328,7 @@ export function createProcessingRetryWorker(
   }
 
   async function failUnexpected(claimed: ClaimedJob, error: unknown) {
-    claimed.work.fence();
+    claimed.stop.controller.abort();
     console.error(PROCESSING_RETRY_WORKER_FAILED_LOG, {
       meetingId: claimed.history.meetingId,
       jobId: claimed.job.jobId,
@@ -380,9 +346,19 @@ export function createProcessingRetryWorker(
     }
   }
 
+  /** A Notion mutation whose outcome is unknown stops the job like any other unknown write. */
+  function registerNotion({ stop }: ClaimedJob) {
+    return registerNotionMutationTracker(stop.signal, (run) =>
+      guarded(stop.signal)(run).catch((error) => {
+        stop.controller.abort();
+        throw error;
+      }),
+    );
+  }
+
   async function execute(claimed: ClaimedJob) {
     const stopRenewal = renewLease(claimed);
-    const unregisterNotion = registerRuntimeNotionOwner(claimed.work);
+    const unregisterNotion = registerNotion(claimed);
     try {
       const run = await runJob(claimed);
       await stopRenewal();
@@ -394,7 +370,7 @@ export function createProcessingRetryWorker(
     } catch (error) {
       await stopRenewal();
       // A lost lease or shutdown is not an outcome: the lease lapses and the job is claimed again.
-      if (claimed.work.signal.aborted) return;
+      if (claimed.stop.signal.aborted) return;
       await failUnexpected(claimed, error);
     } finally {
       unregisterNotion();
@@ -403,55 +379,34 @@ export function createProcessingRetryWorker(
 
   async function processKey(
     key: MeetingUpdateKey,
-    work: RetryWork,
-    claimId: string,
-    admitted: () => void,
+    stop: JobStop,
+    started: () => void,
   ) {
-    let submitted = false;
     try {
-      const claimed = await claimJob(key, work, claimId, () => {
-        submitted = true;
-      });
-      admitted();
+      const claimed = await claimJob(key, stop);
+      started();
       if (claimed) await execute(claimed);
     } catch (error) {
       // Shutdown or a lost lease is expected on every deploy and must not page.
-      const cancelled = work.signal.aborted;
-      // A claim that may have committed stays unresolved instead of being released.
-      if (submitted) work.fence();
-      if (!cancelled) console.error(PROCESSING_RETRY_WORKER_FAILED_LOG, error);
+      if (!stop.signal.aborted)
+        console.error(PROCESSING_RETRY_WORKER_FAILED_LOG, error);
     } finally {
-      admitted();
-      // Without a claim, a fenced recovery handle is released only by this acknowledgment.
-      if (!submitted) work.acknowledgeReadOnlyRecoveryPoll();
-      await work.settle();
+      started();
     }
   }
 
   /** Resolves once the job is running or was skipped, so poll counts it before the next key. */
   function startJob(key: MeetingUpdateKey): Promise<void> {
-    const claimId = randomUUID();
-    let work: RetryWork;
-    try {
-      // Per attempt, because a fenced attempt stays registered after its lease lapses and the job must be claimable again.
-      work = deps.begin(
-        "recovery",
-        `processing-retry:${key.guildId}:${key.channelId_timestamp}:${claimId}`,
-      );
-    } catch (error) {
-      // Admission refuses work outside serving, so this repeats every poll until it serves again.
-      if (!refused) console.warn("Processing retry job not started", error);
-      refused = true;
-      return Promise.resolve();
-    }
-    refused = false;
-    let admitted!: () => void;
+    const controller = new AbortController();
+    const stop: JobStop = {
+      controller,
+      signal: operationSignal(controller.signal),
+    };
+    let started!: () => void;
     const ready = new Promise<void>((resolve) => {
-      admitted = resolve;
+      started = resolve;
     });
-    const job = work.trackPromise(() =>
-      processKey(key, work, claimId, admitted),
-    );
+    const job = processKey(key, stop, started);
     jobs.add(job);
     void job.finally(() => jobs.delete(job));
     return ready;
@@ -483,7 +438,7 @@ export function createProcessingRetryWorker(
   }
 
   function poll(): Promise<void> {
-    if (stopped) return Promise.resolve();
+    if (stopped || !deps.isEligible()) return Promise.resolve();
     if (pending) return pending;
     const actual = pollDue()
       .catch((error) =>
@@ -527,13 +482,13 @@ export function startProcessingRetryWorker() {
   worker = createProcessingRetryWorker({
     repository: getProcessingRetryRepository(),
     rows: getMeetingUpdateDeliveryRepository(),
-    begin: beginRuntimeWorkClaim,
     run: runProcessingRetryStages,
     save: updateMeeting,
     available: isProcessingRetryAvailable,
     reader: () => createRecordingCheckpointService(),
     now: () => Math.floor(Date.now() / 1000),
     instanceId: getRuntimeInstanceId,
+    isEligible,
   });
   worker.start();
 }

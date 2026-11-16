@@ -21,7 +21,9 @@
   heading; never concatenate the prefix directly with a heading like
   `[AGENT]## Summary`.
 - PR descriptions should stay concise. Do not publish long "Tests" or "Verification" checklists for checks already enforced by CI; mention validation only when it adds non-obvious signal, such as manual/provider checks, visual-review rationale, skipped checks, or rollout risk.
-- **Break-glass deploys are dispatched by BASIC (`BASIC-BIT`) only; agents may prepare the `gh workflow run deploy.yml -f break_glass=true ...` command and the attestation but never run the dispatch.** Terraform Plan/Apply is manual and needs GitHub environment approval. Read `docs/engineering/infrastructure.md` before any deploy or Terraform work.
+- Dispatching `deploy.yml` or `deploy-staging.yml` with `retire_older_tasks: true` ends live recordings. Only BASIC dispatches it, and agents never approve the environment for a run that carries it; agents may prepare the command.
+- Terraform Plan/Apply is manual and needs GitHub environment approval. Read `docs/deployment.md` and `docs/engineering/infrastructure.md` before any deploy or Terraform work.
+- Nothing a meeting does may block another meeting, a worker or a deployment, and every wait has a deadline. Changes to the meeting lifecycle or the deploy path keep the rules in `docs/engineering/invariants.md`; do not add durable state that only a person or a one-off tool can clear.
 - Token leaks: don’t reintroduce secret re-exports in `constants.ts`; use `configService`.
 - Avoid hedging and speculative fallbacks. Follow YAGNI and KISS, do not add code for hypothetical cases unless explicitly required.
 - Avoid `in`/`instanceof`/`typeof` hedging for core platform APIs; we target a known Node/SDK set. Prefer simple, direct calls with minimal branching.
@@ -56,7 +58,8 @@ Product and architecture facts live in `docs/engineering/`, not in this file. Re
 - `docs/engineering/architecture.md`: tech stack, key flows and entry points, data model.
 - `docs/engineering/configuration.md`: environment variables and config rules.
 - `docs/engineering/frontend.md`: portal, docs site, and the public-route rule (`scripts/public-routes.json`).
-- `docs/engineering/infrastructure.md`: Terraform, deploy workflows and deployment handoff. Read before any Terraform or deploy work; it holds the Plan/Apply and break-glass authority rules.
+- `docs/engineering/infrastructure.md`: Terraform and deploy workflows. Read before any Terraform or deploy work; it holds the Plan/Apply authority rules.
+- `docs/deployment.md`: workers, the deploy job, task protection, lifecycle alarms, the first deployment of the worker design, and stranded meetings.
 - `docs/engineering/product-analytics.md`: PostHog capture rules, including what an event may carry.
 - `docs/engineering/invariants.md`: per-area rules that must keep holding (mentions, artifact access, MCP service accounts, desktop auth and recording limits, billing, transcript prompts).
 - `docs/engineering/checks.md`: why each check exists, prompt promotion and LLM connection sync.

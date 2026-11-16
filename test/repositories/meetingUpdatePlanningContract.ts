@@ -5,7 +5,7 @@ import {
 } from "../types/meetingUpdateCleanup.fixture";
 import { meetingUpdateDeliveryTransitionSchema } from "../../src/types/meetingUpdateDelivery";
 import type { Harness } from "./meetingUpdateDeliveryContract";
-import type { authority, write } from "./meetingUpdateDeliveryContract";
+import type { claimOwner, write } from "./meetingUpdateDeliveryContract";
 import { deliveryRow } from "./meetingUpdateDeliveryFixtures";
 import {
   attempt,
@@ -26,9 +26,9 @@ import {
 
 export function planningContract(
   current: () => Harness,
-  config: { authority: typeof authority; write: typeof write },
+  config: { claimOwner: typeof claimOwner; write: typeof write },
 ) {
-  const { authority, write } = config;
+  const { claimOwner, write } = config;
   it("claims observation-only work and persists only captured acknowledgments behind a newer save", async () => {
     const h = current();
     await h.seed(deliveryRow(pending()));
@@ -41,7 +41,7 @@ export function planningContract(
         expectedContentRevision: 1,
         expectedDeliveryRevision: "delivery-1",
         attempt: observed,
-        authority,
+        ...claimOwner,
       }),
     ).toBe("claimed");
     const claimed = await h.read();
@@ -208,7 +208,7 @@ export function planningContract(
         expectedContentRevision: 1,
         expectedDeliveryRevision: before.revision,
         attempt: plan,
-        authority,
+        ...claimOwner,
       }),
     ).rejects.toThrow(/capacity/);
     expect(await h.read()).toEqual(row);

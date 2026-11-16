@@ -16,32 +16,6 @@ import type {
 export const metricsRegistry = new Registry();
 collectDefaultMetrics({ register: metricsRegistry });
 
-let oldestArtifactCleanup: { age: number; recordedAt: number } | undefined;
-const localArtifactCleanup = new Gauge({
-  name: "local_artifact_cleanup",
-  help: "Pending local cleanup obligations and age, without meeting identifiers",
-  labelNames: ["measure"],
-  registers: [metricsRegistry],
-  collect() {
-    this.set(
-      { measure: "oldestAgeSeconds" },
-      oldestArtifactCleanup
-        ? oldestArtifactCleanup.age +
-            Math.max(0, (Date.now() - oldestArtifactCleanup.recordedAt) / 1000)
-        : 0,
-    );
-  },
-});
-export function recordLocalArtifactCleanup(
-  stats: import("./services/artifactCleanupScheduler").ArtifactCleanupStats,
-) {
-  oldestArtifactCleanup = stats.pendingDirectories
-    ? { age: stats.oldestAgeSeconds, recordedAt: Date.now() }
-    : undefined;
-  for (const [measure, value] of Object.entries(stats))
-    localArtifactCleanup.set({ measure }, value);
-}
-
 // HTTP request duration histogram
 const httpRequestDuration = new Histogram({
   name: "http_request_duration_seconds",
@@ -251,6 +225,73 @@ export const processingRetryJobs = new Counter({
   name: "meeting_processing_retry_jobs_total",
   help: "Meeting processing retry jobs by outcome and failure reason",
   labelNames: ["outcome", "reason"] as const,
+  registers: [metricsRegistry],
+});
+
+// Meeting lifecycle. CloudWatch metric filters match the log lines below,
+// because nothing scrapes these Prometheus metrics in production.
+export const MEETING_STUCK_LOG = "Meeting lifecycle stuck";
+export const MEETING_ABANDONED_LOG = "Meeting lifecycle abandoned";
+export const MEETING_FINISH_FAILED_LOG = "Meeting finish failed after retries";
+export const MEETING_DELIVERY_FAILED_LOG =
+  "Meeting delivery failed after retries";
+export const TASK_PROTECTION_FAILED_LOG =
+  "Task protection failed during capture";
+export const WORKER_ELIGIBLE_LOG = "Worker eligible heartbeat";
+// Logged when a finisher scan reads the table through, so its absence alarms.
+export const MEETING_FINISHER_SCAN_LOG = "Meeting finisher scan completed";
+// Standby that only a failing legacy read keeps in place: no worker takes meetings.
+export const LEGACY_STANDBY_UNREADABLE_LOG =
+  "Worker held in legacy standby by an unreadable legacy heartbeat";
+// Renewal recovery. A lease check that keeps failing skips every poll.
+export const RENEWAL_RECOVERY_STALLED_LOG =
+  "Renewal recovery poll skipped after a lease error";
+
+export const meetingFinishes = new Counter({
+  name: "meeting_finish_total",
+  help: "Meeting finish attempts by outcome",
+  labelNames: ["outcome"] as const,
+  registers: [metricsRegistry],
+});
+
+export const meetingFinishRetries = new Counter({
+  name: "meeting_finish_retry_total",
+  help: "Meeting finish retries scheduled, by phase",
+  labelNames: ["phase"] as const,
+  registers: [metricsRegistry],
+});
+
+export const meetingDeliveries = new Counter({
+  name: "meeting_delivery_total",
+  help: "Meeting delivery attempts by outcome",
+  labelNames: ["outcome"] as const,
+  registers: [metricsRegistry],
+});
+
+export const MEETING_LEASE_EVENTS = [
+  "renew_error",
+  "retaken",
+  "lost",
+  "cap",
+] as const;
+export type MeetingLeaseEvent = (typeof MEETING_LEASE_EVENTS)[number];
+export const meetingLeaseEvents = new Counter({
+  name: "meeting_lease_event_total",
+  help: "Meeting lease events by kind",
+  labelNames: ["event"] as const,
+  registers: [metricsRegistry],
+});
+
+export const workerTaskProtections = new Counter({
+  name: "worker_task_protection_total",
+  help: "Worker ECS task protection calls by outcome",
+  labelNames: ["outcome"] as const,
+  registers: [metricsRegistry],
+});
+
+export const workerEligible = new Gauge({
+  name: "worker_eligible",
+  help: "1 while this worker accepts new meetings, otherwise 0",
   registers: [metricsRegistry],
 });
 

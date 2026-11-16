@@ -22,7 +22,6 @@ import { checkBotPermissions } from "../../src/utils/permissions";
 import type { MeetingData } from "../../src/types/meeting-data";
 
 jest.mock("../../src/meetings", () => ({
-  getPendingMeetingInitializations: () => [],
   hasMeeting: jest.fn(() => false),
   getMeeting: jest.fn(),
   deleteMeeting: jest.fn(),
@@ -31,6 +30,7 @@ jest.mock("../../src/meetings", () => ({
 jest.mock("../../src/commands/endMeeting", () => ({
   handleEndMeetingOther: jest.fn(),
   persistExplicitMeetingStop: jest.fn(),
+  runEndMeetingFlow: jest.fn(async () => undefined),
 }));
 jest.mock("../../src/services/meetingVoiceSettingsService", () => ({
   resolveMeetingVoiceSettings: jest.fn(async () => ({})),
@@ -40,9 +40,10 @@ jest.mock("../../src/services/meetingArtifactAccessService", () => ({
     transcriptAccessEnabled: false,
   })),
 }));
-jest.mock("../../src/services/activeMeetingLeaseService", () => ({
-  ...jest.requireActual("../../src/services/activeMeetingLeaseService"),
+jest.mock("../../src/services/meetingLease", () => ({
+  ...jest.requireActual("../../src/services/meetingLease"),
   getActiveMeetingLeaseForGuild: jest.fn(async () => undefined),
+  requestMeetingEndViaLease: jest.fn(async () => true),
   isLeaseActive: (lease: { leaseExpiresAt: number }) =>
     lease.leaseExpiresAt > Date.now() / 1000,
 }));
@@ -54,10 +55,20 @@ jest.mock("../../src/utils/permissions", () => ({
   checkBotPermissions: jest.fn(() => ({ success: true })),
   canBotSendMessages: jest.fn(() => true),
 }));
-jest.mock("../../src/services/ownedMeetingInterruption", () => ({
-  ...jest.requireActual("../../src/services/ownedMeetingInterruption"),
-  interruptOwnedMeeting: jest.fn(async () => ({ kind: "unresolved" })),
+jest.mock("../../src/services/meetingClose", () => ({
+  closeMeeting: jest.fn(async () => undefined),
 }));
+jest.mock("../../src/repositories/meetingHistoryTransitions", () => {
+  // One repository for the whole suite, so a test can read the writes a start made.
+  const repository = {
+    transitionMeetingHistory: jest.fn(async () => "applied"),
+    getMeetingHistory: jest.fn(async () => undefined),
+  };
+  return {
+    ...jest.requireActual("../../src/repositories/meetingHistoryTransitions"),
+    getMeetingHistoryTransitionRepository: () => repository,
+  };
+});
 
 export function mockFreeGuildLimits(
   maxMeetingMinutesRolling = getLimitsForTier("free").maxMeetingMinutesRolling,

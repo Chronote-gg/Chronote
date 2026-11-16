@@ -1,3 +1,5 @@
+import type { RecordingCaptureState } from "./recordingCheckpoint";
+
 export const MEETING_START_REASONS = {
   MANUAL_COMMAND: "manual_command",
   MCP: "mcp",
@@ -48,6 +50,15 @@ export const resolveMeetingStatus = (options: {
   if (options.finishing) return MEETING_STATUS.PROCESSING;
   return MEETING_STATUS.IN_PROGRESS;
 };
+
+/** A meeting that finished with notes: an interrupted capture stays interrupted. */
+export function finishedMeetingStatus(
+  capture: RecordingCaptureState | undefined,
+): MeetingStatus {
+  return capture?.kind === "interrupted"
+    ? MEETING_STATUS.INTERRUPTED
+    : MEETING_STATUS.COMPLETE;
+}
 
 export type AutoRecordRule = {
   mode: "channel" | "all";

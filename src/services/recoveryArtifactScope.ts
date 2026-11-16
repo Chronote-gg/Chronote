@@ -1,37 +1,16 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import {
-  recoveryArtifactBindingSchema,
-  type RecoveryArtifactBinding,
-  type ArtifactCleanupReceipt,
-} from "../types/artifactCleanup";
-import {
-  checkpointObjectSchema,
-  type CheckpointObject,
-} from "../types/recordingCheckpoint";
 import { ensureTempBaseDir } from "./tempFileService";
-import { meetingArtifactProducers } from "./meetingArtifactProducer";
-import { inventoryLocalArtifacts } from "./localArtifactInventory";
-import {
-  createCleanupReceipt,
-  type CleanupReceiptResult,
-} from "./artifactCleanupReceipt";
-import {
-  localArtifactCleanup,
-  removeEmptyArtifactDirectories,
-} from "./meetingArtifactCleanupService";
 
-export async function createRecoveryArtifactScope(
-  input: RecoveryArtifactBinding,
-  sources: CheckpointObject[],
-) {
-  const binding = recoveryArtifactBindingSchema.parse(input);
-  const inputs = checkpointObjectSchema
-    .array()
-    .min(1)
-    .max(10_000)
-    .parse(sources);
+const SCOPE_PREFIX_LENGTH = 16;
+
+/**
+ * A private scratch directory for one recovery transcription. Everything in it
+ * is derived from stored checkpoint objects, so it is removed when the work
+ * ends; the local sweep catches a directory a crash leaves behind.
+ */
+export async function createRecoveryArtifactScope(meetingId: string) {
   const base = await ensureTempBaseDir();
   const root = path.join(base, "r");
   await fs.mkdir(root, { recursive: true });
@@ -41,43 +20,19 @@ export async function createRecoveryArtifactScope(
       throw new Error("Recovery scratch root is not ordinary");
   }
   const prefix = createHash("sha256")
-    .update(binding.owner.meetingId)
+    .update(meetingId)
     .digest("hex")
-    .slice(0, 16);
+    .slice(0, SCOPE_PREFIX_LENGTH);
   const directory = await fs.mkdtemp(path.join(root, `${prefix}-`));
-  const producer = meetingArtifactProducers.claim({
-    directory,
-    owner: binding.owner,
-  });
   return {
     directory,
-    beginWrite: (filename: string) =>
-      producer.beginWrite(filename, { kind: "stored_derivative", inputs }),
-    async close(): Promise<CleanupReceiptResult> {
+    async close(): Promise<void> {
       try {
-        const snapshot = producer.freeze();
-        const inventory = await inventoryLocalArtifacts(directory);
-        if (!inventory.files.length) {
-          await removeEmptyArtifactDirectories(directory);
-          meetingArtifactProducers.release(directory);
-          return { kind: "cleaned", removed: 0, byteLength: 0 };
-        }
-        const receipt: ArtifactCleanupReceipt = {
-          version: 1,
-          ...binding,
-          createdAt: new Date().toISOString(),
-          files: inventory.files,
-          producers: snapshot.files,
-          storedArtifacts: inputs.map((object) => ({
-            ...object,
-            versionId: null,
-          })),
-          decision: "scratch",
-        };
-        await createCleanupReceipt(directory, receipt);
-        return await localArtifactCleanup.enqueue(directory);
+        await fs.rm(directory, { recursive: true, force: true });
       } catch (error) {
-        return { kind: "blocked", error };
+        console.warn("Recovery scratch removal failed; the sweep retries", {
+          error,
+        });
       }
     },
   };

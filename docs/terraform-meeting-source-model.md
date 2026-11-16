@@ -11,7 +11,7 @@ The deploy role must be a fully known, byte-equal no-op. Completed target no-ops
 are refused. The separate `meeting-update-delivery` scope retains the runtime
 readiness grant. Production retains its existing single-policy update contract.
 
-The guard verifies the current 26-file source pin and complete source-declared
+The guard verifies the current 27-file source pin and complete source-declared
 check catalog, including a passing deploy-role instance. Unknown excluded checks
 need that source proof. A created attachment's unknown policy ARN additionally
 needs the exact direct configuration reference to the newly created known policy.
@@ -356,6 +356,42 @@ plus the DynamoDB KMS encryption context for its name. Sandbox also needs the
 table in the bootstrap `table_suffixes`, so its `TableMetadata` read grant
 covers it; production's `TableMetadata` already covers every
 `meeting-notes-prod-*` table. This audit permits no plan, Apply or deployment.
+
+### Lifecycle alarm and deploy role audit (2026-11-11)
+
+The lifecycle change adds `alerts-lifecycle.tf`, taking the hashed inventory from
+26 files to 27, and edits `main.tf`, `production-deployment.tf` and
+`sandbox-deployment.tf`. The new file holds five log metric filters, their alarms
+and one alarm on the deploy script's `DrainWaitTimedOut` metric. Like the
+processing-retry pair they address the app log group and critical-alerts topic by
+name through `local.app_log_group_name` and `local.critical_alerts_topic_arn`, so
+they take no edge on the KMS key policy. `main.tf` adds the boolean
+`ENABLE_DEPLOY_RETIRE`, default `false`, with no validation block, and sets
+`health_check_grace_period_seconds` on the ECS service from `ENABLE_API_ALB`. The
+service is outside the closure, so that new read of an excluded-check variable adds
+no edge into a table, the DynamoDB access policy or the KMS key. Both deploy role
+policies gain a namespaced `cloudwatch:PutMetricData` statement and a
+`ecs:StopTask` statement gated by `ENABLE_DEPLOY_RETIRE`; they consume table and
+KMS outputs downstream, as before. No added resource or variable declares a
+`validation` block or a `lifecycle` pre- or postcondition, so the excluded-check
+identities, the 32-address closure, the site graph, the typed retry-index gate and
+the installed-provider requirements are unchanged. The outgoing pin was
+reproduced from the parent commit before the new one was recorded.
+
+A follow-up gates the eligible-worker filter, and through it its alarm, on
+`ECS_DESIRED_COUNT > 0` as well as alerting. That adds a read of an
+excluded-check variable by a CloudWatch filter outside the closure, with no
+reverse edge, and changes no check identity. The pin was recomputed again by
+the same method, reproducing the outgoing value first.
+
+A later change adds a sixth lifecycle filter and alarm, `finisher_scan_missing`,
+gated like the eligible-worker pair through a new `worker_silence_alarms` local,
+and rewords a comment in `api.tf`. The new entry addresses the app log group
+and the critical-alerts topic by name like the others, declares no
+`validation` block or `lifecycle` condition, and adds no edge into the closure;
+the comment changes no configuration. The hashed inventory stays at 27 files.
+The outgoing pin was reproduced from the parent commit before the new one was
+recorded.
 
 ### Recomputing the pin
 

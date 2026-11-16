@@ -40,3 +40,20 @@
 - Playwright mock mode: ensure only the mock API (port 3001) and frontend dev server (port 5173) are running. If ports are occupied, stop them first (`Get-NetTCPConnection -LocalPort 3001,5173 | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ }`). Clear `VITE_API_BASE_URL` (for example via `.env.local`) so the frontend uses the mock server.
 - Stripe webhook parsing: keep a single `express.raw({ type: "application/json" })` at app-level in `webserver.ts`; do not add per-route raw parsers elsewhere.
 - React tests: when a test triggers state updates (e.g., data-fetching effects), wrap renders/updates in `act` (from `react`/RTL helpers) to avoid act warnings instead of silencing console errors.
+
+## Meeting lifecycle and deployment
+
+These rules come from `docs/adr-20261111-lifecycle-simplification.md`. A change that breaks one reintroduces the failure mode that ADR removed: one imperfect meeting blocking its server, a worker or every deployment.
+
+- **Nothing a meeting does may block another meeting, a worker or a deployment.** No per-meeting state may feed a worker-wide or deployment-wide gate. A deployment step can be refused only by a previous deployment's worker still recording, and that wait is bounded.
+- **Every wait has a deadline.** Starts, close steps, finish attempts, claims, delivery retries, protection, drains and readiness all end on their own (`src/services/lifecycleTiming.ts`, `scripts/deployment/deploy.cjs`). A failure that needs a person raises an alarm that emails the owner.
+- **No new durable state that only a person or a one-off tool can clear.** Ambiguous outcomes resolve automatically, by retry or by a bounded final state.
+- **Close always frees the server.** Releasing the lease runs in a `finally`; a failure anywhere in close still frees the server, and the meeting is finished from whatever reached S3.
+- **The per-server lease is the only lock on recording, and it covers capture only.** Voice and nickname changes happen while it is held. A worker that no longer holds the lease does nothing visible in that server. Nothing after close identifies a meeting by its server alone.
+- **One pipeline finishes meetings.** `finish` is the only code that saves and delivers a result, for normal ends and recovery alike. Do not add a second implementation of notes generation or delivery.
+- **The MeetingHistory row is the truth for the meeting, and S3 is the truth for audio.** The terminal status is written before anything is posted. Local disk is a cache; no decision depends on it.
+- **A repair path never depends on the state it repairs.** A deployment ships fixes, so a meeting, a lease, a counter or a local file must never be able to refuse it.
+- **Task protection covers captures only, is never extended without an unexpired lease, and always expires on its own.** So ECS bounds every drain without help from the worker, and a failed protection call is never a reason to stop.
+- **Every step is idempotent and skips itself when its durable output exists.** A worker's death is a normal event, and shutdown is a tidy version of the same path.
+- **Nothing assumes exactly one worker.** Eligibility, claims, receipts and the lease decide who acts, never the worker count.
+- **The finisher touches only rows written by this design (`lifecycleVersion: 2`).** Older unfinished meetings are finished only by an operator command, never automatically.

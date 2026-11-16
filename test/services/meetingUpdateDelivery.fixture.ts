@@ -1,7 +1,6 @@
 import type { MeetingUpdateDeliveryRepository } from "../../src/repositories/meetingUpdateDeliveryRepository";
 import { createMockMeetingUpdateDeliveryRepository } from "../../src/repositories/mockMeetingUpdateDeliveryRepository";
 import { fixture, message } from "./meetingUpdatePlan.fixture";
-import { context } from "../deployment/controlFixtures";
 import { now, key } from "../types/meetingUpdateDelivery.fixture";
 import { requestMeetingUpdateDelivery } from "../../src/types/meetingUpdateDelivery";
 import { discordEditorMessageSchema } from "../../src/services/discordMessageEditor";
@@ -21,14 +20,12 @@ export function deliveryFixture(before = "Old notes", after = "Edited notes") {
   const histories = new Map<string, MeetingHistory[]>([
     [key.guildId, [input.history]],
   ]);
-  const repository = createMockMeetingUpdateDeliveryRepository(
-    histories,
-    () => true,
-  );
+  const repository = createMockMeetingUpdateDeliveryRepository(histories);
   const remote = new Map(
     input.messages.map((item) => [item.id, structuredClone(item)]),
   );
   const calls: { method: string; id: string }[] = [];
+  const signals: (AbortSignal | null | undefined)[] = [];
   const requests: { method: string; id: string; payload: unknown }[] = [];
   let intercept:
     ((method: string, id: string) => Promise<Response | undefined>) | undefined;
@@ -39,6 +36,7 @@ export function deliveryFixture(before = "Old notes", after = "Edited notes") {
     if (id === "@me") return Response.json({ id: input.botId, bot: true });
     if (path.at(-2) === "channels") return Response.json(input.channels[0]);
     calls.push({ method, id });
+    signals.push(init?.signal);
     const response = await intercept?.(method, id);
     if (response) return response;
     if (method === "GET")
@@ -107,6 +105,7 @@ export function deliveryFixture(before = "Old notes", after = "Edited notes") {
     remote,
     requests,
     calls,
+    signals,
     fetchImpl,
     read,
     save,
@@ -114,7 +113,6 @@ export function deliveryFixture(before = "Old notes", after = "Edited notes") {
       intercept = run;
     },
     setRow: (row: MeetingHistory) => histories.set(key.guildId, [row]),
-    authority: { kind: "serving", context: { ...context, now } } as const,
   };
 }
 export function loseAcknowledgement(

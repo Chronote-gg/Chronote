@@ -1,4 +1,3 @@
-import { getRuntimeAdmissionContext } from "./runtimeLifecycleService";
 import {
   PersonalMediaUploadError,
   getUnpausedPersonalMediaUploadJobForUser,
@@ -246,21 +245,18 @@ export async function createPersonalMediaUploadIntent(options: {
     expiresAt,
   });
   const now = new Date().toISOString();
-  await getPersonalMediaUploadRepository().write(
-    {
-      uploadId,
-      ownerUserId: options.userId,
-      status: "pending_upload",
-      mediaKind,
-      sourceS3Key: key,
-      contentType: options.contentType,
-      fileSize: options.fileSize,
-      createdAt: now,
-      updatedAt: now,
-      expiresAt: Math.floor(expiresAt / 1000),
-    },
-    await getRuntimeAdmissionContext(),
-  );
+  await getPersonalMediaUploadRepository().write({
+    uploadId,
+    ownerUserId: options.userId,
+    status: "pending_upload",
+    mediaKind,
+    sourceS3Key: key,
+    contentType: options.contentType,
+    fileSize: options.fileSize,
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: Math.floor(expiresAt / 1000),
+  });
 
   return {
     uploadId,
@@ -364,25 +360,22 @@ export async function createPersonalRecordingUploadSession(options: {
   );
 
   const now = new Date().toISOString();
-  await getPersonalMediaUploadRepository().write(
-    {
+  await getPersonalMediaUploadRepository().write({
+    uploadId,
+    ownerUserId: options.userId,
+    status: "pending_upload",
+    mediaKind: "audio",
+    uploadOrigin: "desktop_recording",
+    sourceS3Key: buildPersonalRecordingSessionPrefix({
+      userId: options.userId,
       uploadId,
-      ownerUserId: options.userId,
-      status: "pending_upload",
-      mediaKind: "audio",
-      uploadOrigin: "desktop_recording",
-      sourceS3Key: buildPersonalRecordingSessionPrefix({
-        userId: options.userId,
-        uploadId,
-      }),
-      sourceManifest: sources,
-      contentType: "audio/wav",
-      fileSize: 0,
-      createdAt: now,
-      updatedAt: now,
-    },
-    await getRuntimeAdmissionContext(),
-  );
+    }),
+    sourceManifest: sources,
+    contentType: "audio/wav",
+    fileSize: 0,
+    createdAt: now,
+    updatedAt: now,
+  });
 
   return { uploadId, mediaKind: "audio", sources };
 }
@@ -430,14 +423,7 @@ async function prepareRecordingSegment(
       expectedStatus !== "failed"
     )
       return current;
-    if (
-      await repository.prepare(
-        segment,
-        expectedStatus,
-        await getRuntimeAdmissionContext(),
-      )
-    )
-      return undefined;
+    if (await repository.prepare(segment, expectedStatus)) return undefined;
     await requireUnpausedPersonalMediaUpload({
       uploadId: input.uploadId,
       ownerUserId: input.userId,
@@ -565,8 +551,7 @@ async function submitUploadJob(
   next: PersonalMediaUploadJobRecord,
 ): Promise<PersonalMediaUploadJobRecord> {
   const repository = getPersonalMediaUploadRepository();
-  if (await repository.submit(next, await getRuntimeAdmissionContext()))
-    return next;
+  if (await repository.submit(next)) return next;
   const current = await repository.get(next.uploadId);
   await requireUnpausedPersonalMediaUpload(next);
   if (
@@ -740,14 +725,7 @@ export async function markPersonalRecordingSegmentUploadComplete(options: {
     uploadedAt: now,
     updatedAt: now,
   };
-  if (
-    await repository.transition(
-      next,
-      "pending_upload",
-      await getRuntimeAdmissionContext(),
-    )
-  )
-    return next;
+  if (await repository.transition(next, "pending_upload")) return next;
   const current = await repository.get(segment.uploadId, segment.segmentKey);
   await requireUnpausedPersonalMediaUpload(job);
   if (
@@ -803,7 +781,6 @@ export async function submitPersonalRecordingUpload(options: {
         updatedAt: now,
       },
       "uploaded",
-      await getRuntimeAdmissionContext(),
     );
     if (!submitted) {
       await requireUnpausedPersonalMediaUpload(job);

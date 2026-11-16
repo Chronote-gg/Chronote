@@ -3,10 +3,6 @@ import express from "express";
 import { once } from "node:events";
 import type { Server } from "node:http";
 import * as db from "../../src/db";
-import {
-  seedServingRuntime,
-  stopServingRuntime,
-} from "../fixtures/servingRuntime";
 import { TRPCError } from "@trpc/server";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { router } from "../../src/trpc/trpc";
@@ -98,7 +94,6 @@ beforeAll(async () => {
   origin = `http://127.0.0.1:${address.port}/trpc/`;
 });
 afterAll(async () => {
-  await stopServingRuntime();
   Object.assign(config.stripe, previous);
   config.mock.enabled = previousMock;
   await new Promise<void>((resolve, reject) =>
@@ -108,7 +103,6 @@ afterAll(async () => {
 afterEach(() => jest.restoreAllMocks());
 beforeEach(async () => {
   config.mock.enabled = true;
-  await seedServingRuntime();
   const deployment = db.getDeploymentControlRepository();
   jest.spyOn(db, "getDeploymentControlRepository").mockReturnValue(deployment);
   config.mock.enabled = false;
