@@ -56,7 +56,7 @@ import {
   type FinishFollowOns,
   type FollowOnAttempt,
 } from "./meetingFinishFollowOns";
-import type { FinishInput } from "./meetingFinishInput";
+import { type FinishInput, withoutSavedAudio } from "./meetingFinishInput";
 import {
   MS_PER_SECOND,
   failedProcessing,
@@ -258,6 +258,25 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
         : a.transientDirectories
       ).push(input.localDirectory);
     return input;
+  }
+
+  /**
+   * A cancellation close recorded needs nothing the saved artifacts hold, so
+   * an unreadable checkpoint must not turn it into a failed meeting: the row
+   * alone finishes it. Any other decision retries the failed load as before.
+   */
+  async function loadToProcess(a: Attempt) {
+    try {
+      return await load(a);
+    } catch (error) {
+      if (a.signal.aborted || a.row.completionPolicy?.decision !== "cancel")
+        throw error;
+      console.warn("Meeting input unavailable, finishing the cancellation", {
+        ...logContext(a.row),
+        error,
+      });
+      return withoutSavedAudio(a.row, a.signal);
+    }
   }
 
   function lost(a: Attempt): never {
@@ -463,7 +482,7 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     let input: FinishInput | undefined;
     try {
       const loadedRevision = a.row.contentRevision ?? 0;
-      input = withRowDecision(a.row, await load(a));
+      input = withRowDecision(a.row, await loadToProcess(a));
       a.source = input.source;
       // The normal input comes from the in-memory meeting, which never takes
       // in an acknowledged edit, so every edit since this start created the

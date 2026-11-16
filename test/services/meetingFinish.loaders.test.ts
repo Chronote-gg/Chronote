@@ -64,7 +64,11 @@ import {
   recoveryFixture,
   withoutFinalPass,
 } from "./meetingRecoveryFixtures";
-import { INTERRUPTED_CAPTURE_NOTICE } from "../../src/services/meetingRecoveryContent";
+import {
+  INTERRUPTED_CAPTURE_NOTICE,
+  type RecoveryReader,
+} from "../../src/services/meetingRecoveryContent";
+import type { CompletionPolicy } from "../../src/types/meetingCompletionPolicy";
 import type { RecordingCaptureState } from "../../src/types/recordingCheckpoint";
 import {
   DONE_MARKER,
@@ -522,5 +526,97 @@ describe("a recovered meeting whose transcript was saved but whose audio was not
     expect(getProcessingRetryEligibility(world.current())).toMatchObject({
       eligible: true,
     });
+  });
+});
+
+describe("a recovery whose checkpoint cannot be read", () => {
+  const unreadable = {
+    read: jest.fn(),
+    readVerifiedObject: jest.fn(async () => undefined),
+  };
+  const dismissedRow = (decision?: CompletionPolicy["decision"]) =>
+    autoRecordingRow({
+      checkpoint: CHECKPOINT,
+      endReason: "dismissed",
+      cancellationReason: "Stopped by synthetic user",
+      ...(decision
+        ? {
+            completionPolicy: autoRecordCompletionPolicy({
+              elapsedMilliseconds: 1_000,
+              dismissed: true,
+              decision,
+            }),
+          }
+        : {}),
+    });
+  const recover = (
+    world: FinishWorld,
+    reader: RecoveryReader,
+    saved: Partial<MeetingHistory> = {},
+  ) =>
+    world.finish((signal) =>
+      loadRecoveryFinishInput({ ...world.current(), ...saved }, signal, reader),
+    );
+  function expectCancelledCard(world: FinishWorld) {
+    expect(world.current()).toMatchObject({
+      status: "cancelled",
+      endReason: "dismissed",
+      cancellationReason: "Stopped by synthetic user",
+      completionPolicy: { decision: "cancel" },
+      recovery: DONE_MARKER,
+    });
+    expect(world.current().finish).toBeUndefined();
+    expect(startMessage(world).embeds[0]).toMatchObject({
+      title: "Auto-Recording Stopped",
+    });
+    expect(getNotes).not.toHaveBeenCalled();
+    expect(errorsLogged(MEETING_FINISH_FAILED_LOG)).toBe(0);
+  }
+
+  test("still ends cancelled on the first attempt when close recorded a cancellation", async () => {
+    const world = setup(dismissedRow("cancel"));
+    await recover(world, unreadable);
+    expect(unreadable.readVerifiedObject).toHaveBeenCalled();
+    expectCancelledCard(world);
+    expect(world.current().processing).toEqual({});
+    expect(startMessage(world).content).not.toBe(PROCESSING_FAILED_NOTICE);
+    expect(getProcessingRetryEligibility(world.current())).toMatchObject({
+      eligible: false,
+    });
+  });
+
+  test.each([undefined, "proceed", "undecided"] as const)(
+    "with decision %s is retried, then given up with the notice",
+    async (decision) => {
+      const world = setup(dismissedRow(decision));
+      for (const attempts of [1, 2, 3]) {
+        await recover(world, unreadable);
+        expect(world.current()).toMatchObject({
+          status: "processing",
+          finish: { attempts, phase: "process" },
+        });
+      }
+      await recover(world, unreadable);
+      expect(world.current()).toMatchObject({
+        status: "failed",
+        processing: { transcription: "failed" },
+      });
+      expect(startMessage(world).content).toBe(PROCESSING_FAILED_NOTICE);
+      expect(errorsLogged(MEETING_FINISH_FAILED_LOG)).toBe(1);
+    },
+  );
+
+  test("ends cancelled as before once the checkpoint can be read", async () => {
+    const row = dismissedRow("cancel");
+    const saved = await transcribedPiece(SPOKEN, { captureState: row.capture });
+    const read = jest.spyOn(saved.reader, "read");
+    const world = setup(row);
+    await recover(world, saved.reader, {
+      ...saved.claim.history,
+      completionPolicy: row.completionPolicy,
+      capture: row.capture,
+    });
+    expect(read).toHaveBeenCalled();
+    expectCancelledCard(world);
   });
 });

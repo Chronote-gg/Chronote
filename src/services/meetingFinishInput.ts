@@ -260,7 +260,8 @@ function savedRowNotesInput(
   };
 }
 
-function withoutSavedAudio(
+/** The input the row alone provides, with no saved artifact read. */
+export function withoutSavedAudio(
   history: MeetingHistory,
   signal: AbortSignal,
 ): FinishInput {
