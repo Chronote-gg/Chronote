@@ -23,13 +23,16 @@ the runner sends dictionary terms as recognition keywords, which arrives with
 the transcription simplification (#633), together with per-run language
 selection. Until then the runner forces `language: "en"`, so `ja-fleurs-1607`
 is scored through an English hint and counts in the pooled `wer`; read it from
-`byTag["non-english"]` and the per-case results rather than the headline.
+`byTag["non-english"]` and the per-case results rather than the headline. The
+five `tts-*` (`dictionary-terms`) cases therefore run as a no-dictionary
+baseline under the Lantern Hollow glossary prompt, which names none of their
+terms; `byTag["dictionary-terms"]` is not a measure of dictionary support here.
 
 ## Contents
 
 - `manifest.json` (43 cases): eight normal LibriSpeech utterances, two attenuated
   by 35 dB (`quiet`), three naturally short utterances, sixteen 1-4 word cuts of
-  1-3 s (`cut`, three from the start of an utterance and thirteen added to
+  0.7-2.1 s (`cut`, three from the start of an utterance and thirteen added to
   measure language detection on short English speech), two utterances joined
   by 4 s of silence (`long-pause`), one Japanese FLEURS utterance and seven
   generated non-speech clips (silence, low and moderate noise, a 0.5 s noise burst, mains hum,
@@ -43,8 +46,8 @@ is scored through an English hint and counts in the pooled `wer`; read it from
   case carries its own made-up server's terms (eight or nine) as a case
   `dictionary`.
 - `glossary-prompt.txt`: a made-up server glossary in the production prompt
-  template, also stored as the manifest `prompt`. Twelve of its dictionary terms
-  occur in the speech references.
+  template, also stored as the manifest `prompt`. Nine of its dictionary terms
+  occur in the speech references (twelve occurrences).
 - `terms-prompt.txt`: the dictionary terms alone. `no-prompt.txt`: empty. Pass
   either with `--prompt-file`.
 

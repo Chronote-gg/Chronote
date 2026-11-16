@@ -51,4 +51,7 @@ test("the public corpus manifest parses and pins every audio file", () => {
         .update(readFileSync(path.join(dir, item.file)))
         .digest("hex"),
     ]).toEqual([item.id, item.sha256]);
+  // glossary-prompt.txt is committed with CRLF line endings; the manifest stores LF.
+  const glossary = readFileSync(path.join(dir, "glossary-prompt.txt"), "utf8");
+  expect(corpus.prompt).toBe(glossary.replace(/\r\n/g, "\n"));
 });
