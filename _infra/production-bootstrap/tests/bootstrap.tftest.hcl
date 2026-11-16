@@ -147,7 +147,7 @@ run "policy_limits" {
   }
   assert {
     condition = alltrue([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : alltrue([
-      for r in flatten([s.Resource]) : startswith(r, "arn:aws:iam::123456789012:role/meeting-notes-prod-") || startswith(r, "arn:aws:iam::123456789012:policy/meeting-notes-prod-") || r == "arn:aws:iam::123456789012:role/vpc_flow_logs_role"
+      for r in flatten([s.Resource]) : startswith(r, "arn:aws:iam::123456789012:role/meeting-notes-prod-") || startswith(r, "arn:aws:iam::123456789012:policy/meeting-notes-prod-") || r == "arn:aws:iam::123456789012:role/vpc_flow_logs_role" || r == "arn:aws:iam::123456789012:role/aws-service-role/*"
     ]) if anytrue([for a in flatten([s.Action]) : startswith(a, "iam:")])])
     error_message = "IAM writes, PassRole included, reach only meeting-notes-prod- roles and policies and the legacy flow log role, never a wildcard resource."
   }
@@ -174,6 +174,10 @@ run "policy_limits" {
   assert {
     condition     = alltrue([for s in jsondecode(aws_iam_role_policy.production_terraform[0].policy).Statement : s.Effect == "Deny"])
     error_message = "The inline policy holds only the guardrails."
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : s if s.Sid == "ServiceLinkedRoles"]) == { Sid = "ServiceLinkedRoles", Effect = "Allow", Action = "iam:CreateServiceLinkedRole", Resource = "arn:aws:iam::123456789012:role/aws-service-role/*", Condition = { StringEquals = { "iam:AWSServiceName" = ["ecs.amazonaws.com", "elasticloadbalancing.amazonaws.com", "elasticache.amazonaws.com", "grafana.amazonaws.com"] } } }
+    error_message = "Only the service-linked roles of services _infra uses may be created."
   }
   assert {
     condition     = jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:Chronote-gg/Chronote:environment:production-terraform" && jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:workflow"] == "Terraform Apply" && jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master"

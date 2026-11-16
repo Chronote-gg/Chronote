@@ -1,9 +1,12 @@
 // Lifecycle alarm metrics, published as CloudWatch Embedded Metric Format.
 // The awslogs driver ships each stdout line to the app log group through
-// PutLogEvents, and CloudWatch Logs extracts the metric from any line in this
-// format, so no agent and no PutMetricData permission is involved. Terraform
-// alarms on these names in METRICS_NAMESPACE (_infra/alerts-lifecycle.tf);
-// test/scripts/lifecycleAlarms.test.ts keeps both sides identical.
+// PutLogEvents. AWS documents the json/emf header on that call as optional,
+// and extraction needs a Standard-class log group, so no agent and no
+// PutMetricData permission is involved. Extraction from the awslogs driver is
+// confirmed only by the post-deploy check in docs/terraform-delivery.md.
+// Terraform alarms on these names in METRICS_NAMESPACE
+// (_infra/alerts-lifecycle.tf); test/scripts/lifecycleAlarms.test.ts keeps
+// both sides identical.
 export const LIFECYCLE_METRICS = {
   // Phase: open (unfinished past the alarm age), abandoned, or delivery (a
   // finished meeting whose Discord delivery keeps failing past its alarm age).

@@ -88,6 +88,9 @@ locals {
       { Sid = "ProductionKeyCreation", Effect = "Allow", Action = ["kms:CreateKey", "kms:TagResource"], Resource = "*", Condition = { StringEquals = { "aws:RequestTag/Environment" = "prod" } } },
       { Sid = "ProductionKeys", Effect = "Allow", Action = local.key_actions, Resource = "arn:aws:kms:${local.region_account}:key/*", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "prod" } } },
       { Sid = "IamWrites", Effect = "Allow", Action = local.iam_write_actions, Resource = concat(local.iam_roles, ["${local.iam_arn}:policy/meeting-notes-prod-*"]) },
+      # Creating a resource of these services for the first time creates its
+      # service-linked role.
+      { Sid = "ServiceLinkedRoles", Effect = "Allow", Action = "iam:CreateServiceLinkedRole", Resource = "${local.iam_arn}:role/aws-service-role/*", Condition = { StringEquals = { "iam:AWSServiceName" = ["ecs.amazonaws.com", "elasticloadbalancing.amazonaws.com", "elasticache.amazonaws.com", "grafana.amazonaws.com"] } } },
       { Sid = "IamAttachments", Effect = "Allow", Action = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"], Resource = local.iam_roles, Condition = { ArnLike = { "iam:PolicyARN" = local.attachable_policies } } },
       { Sid = "ApplicationState", Effect = "Allow", Action = "s3:PutObject", Resource = "arn:aws:s3:::${local.state_bucket}/${local.state_key}" },
       { Sid = "ApplicationStateLocks", Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"], Resource = "arn:aws:dynamodb:${local.region_account}:table/meeting-notes-terraform-state-locks", Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = local.state_lock_keys } } }

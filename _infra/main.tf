@@ -867,6 +867,8 @@ resource "aws_cloudwatch_log_group" "app_log_group" {
   name              = local.app_log_group_name
   retention_in_days = 365
   kms_key_id        = aws_kms_key.app_general.arn
+  # The lifecycle alarms read embedded metrics, which only Standard extracts.
+  log_group_class = "STANDARD"
 
   tags = {
     Name = "app-log-group"

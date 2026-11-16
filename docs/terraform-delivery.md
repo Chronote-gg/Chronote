@@ -48,7 +48,7 @@ The plan holds every variable value, credentials included, so delete it afterwar
 
 `_infra/production-bootstrap` owns both roles.
 
-The **Plan role** `meeting-notes-prod-github-terraform-plan` has the AWS managed `ReadOnlyAccess` policy plus exactly the state lock writes and the secret reads a refresh needs, and is denied reading table items or bucket objects of `meeting-notes-prod-*`. Nothing else.
+The **Plan role** `meeting-notes-prod-github-terraform-plan` has the AWS managed `ReadOnlyAccess` policy plus exactly the state lock writes and the secret reads a refresh needs, and is denied reading table items or bucket objects of `meeting-notes-prod-*`. Nothing else. A refresh reads Terraform state, which holds secrets, so approving a Plan run grants read access to those secrets for that run.
 
 The **Apply role** `meeting-notes-prod-github-terraform` is close to account administrator. Its controls are its OIDC trust (the `Terraform Apply` workflow, `master`, `production-terraform`) and the owner's approval. Its IAM denies limit accidents, not a determined Apply: it may write inline policies on any `meeting-notes-prod-*` role, and IAM cannot constrain what those policies say.
 
@@ -64,7 +64,7 @@ The trusts pin the workflow by name (`token.actions.githubusercontent.com:workfl
 
 ## One-time migration
 
-In this order. Steps 9 and 10 run back to back, because until the deploy finishes the two heartbeat alarms are in ALARM.
+In this order. Steps 9 to 11 run back to back, because until the deploy finishes the two heartbeat alarms are in ALARM.
 
 1. **Merge** this change after the deploy-on-merge change it stacks on.
 2. **Generate the passphrase** (for example `openssl rand -base64 48`) and save it in the password manager.
@@ -120,6 +120,14 @@ In this order. Steps 9 and 10 run back to back, because until the deploy finishe
 8. **Run the first full production plan**: `gh workflow run terraform-plan.yml --ref master -f environment=production`, then approve its job (an agent may). Production has only ever received scoped plans, so expect pending changes that never shipped through them: CloudFront routing, the history table's retry index (and its delivery index if still missing), the lifecycle alarms, alarms and ALB access logs, the deploy and prompt guard roles, `METRICS_NAMESPACE` in the task definition, `production-deploy` variables and similar. Destroys to expect: the `AWS_ACCESS_KEY_ID` GitHub variable (`github_actions_environment_variable.envvar_aws_access_key_id`), which nothing reads. Lifecycle `aws_cloudwatch_log_metric_filter` destroys: none expected, since they never reached production state as far as is known; if any appear, they are the six lifecycle filters and are fine. Read every flagged line; a replace of a table, bucket, distribution, the load balancer, the KMS key or a GitHub environment, or any change to the `production` environment's protection, is a stop.
 9. **Apply**: `gh workflow run terraform-apply.yml --ref master -f environment=production -f plan_run_id=<run id> -f plan_sha256=<digest>`, and approve it in `production-terraform`.
 10. **Deploy the backend straight after**: once the Apply job is running (past its idle check), dispatch `deploy.yml`. The deploy waits for the Apply to finish, then rolls out a task that has `METRICS_NAMESPACE`. The Apply creates the lifecycle alarms, and the running task publishes no lifecycle metric until it is replaced, so `no_eligible_worker` and `finisher_scan_missing` go to ALARM within five and ten minutes of the Apply and back to OK once the new task's heartbeats arrive. Expect those two ALARM and two OK emails.
+11. **Confirm the metrics arrive.** AWS documents extraction from any Embedded Metric Format line in a Standard log group, but not this exact path (ECS awslogs driver), so check it within ten minutes of the deploy:
+
+    ```sh
+    aws cloudwatch list-metrics --namespace meeting-notes-prod/Lifecycle --query 'Metrics[].MetricName'
+    aws cloudwatch get-metric-statistics --namespace AWS/Logs --metric-name EMFValidationErrors --dimensions Name=LogGroupName,Value=/ecs/meeting-notes-prod-bot --statistics Sum --start-time "$(date -u -d '-30 min' +%FT%TZ)" --end-time "$(date -u +%FT%TZ)" --period 300
+    ```
+
+    Expect `WorkerEligibleHeartbeat` and `FinisherScanCompleted` in the first list and no validation errors. If the metrics do not appear, the two heartbeat alarms stay in ALARM and the other lifecycle alarms cannot fire: search the log group for `"_aws"` to confirm the lines arrive whole, check the `AWS/Logs` `EMFParsingErrors` and `EMFValidationErrors` metrics, and take it to the owner. The fallback is metric filters on the readable lines, which the workers still log.
 
 ## Sandbox
 

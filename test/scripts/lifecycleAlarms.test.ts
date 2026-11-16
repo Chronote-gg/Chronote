@@ -51,6 +51,14 @@ test("the runtime publishes into the namespace the alarms read", () => {
   );
 });
 
+// Essentials (Infrequent Access) log groups do not extract embedded metrics.
+test("the app log group stays in the Standard class", () => {
+  const group = read("_infra/main.tf").match(
+    /resource "aws_cloudwatch_log_group" "app_log_group" \{([\s\S]*?)\n\}/,
+  )?.[1];
+  expect(group).toMatch(/log_group_class\s*= "STANDARD"/);
+});
+
 test("the two heartbeats alarm on silence", () => {
   for (const metric of [
     LIFECYCLE_METRICS.workerEligible,
