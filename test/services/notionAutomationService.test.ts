@@ -124,13 +124,23 @@ const personalAutomationConfig: NotionAutomationConfig = {
   ownerUserId: "owner-1",
 };
 
+function resetAutomationMocks() {
+  jest.clearAllMocks();
+  jest.replaceProperty(config.notion, "enabled", true);
+  mockRepository.getAutomationConfig.mockResolvedValue(automationConfig);
+  mockRepository.getAutomationMeetingExport.mockResolvedValue(undefined);
+  mockRepository.reserveAutomationMeetingExport.mockResolvedValue(true);
+}
+
+function mockExportSucceeds() {
+  jest
+    .mocked(exportMeetingToNotionAutomation)
+    .mockResolvedValue({ ...existingExport, status: "exported" });
+}
+
 describe("notionAutomationService", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    jest.replaceProperty(config.notion, "enabled", true);
-    mockRepository.getAutomationConfig.mockResolvedValue(automationConfig);
-    mockRepository.getAutomationMeetingExport.mockResolvedValue(undefined);
-    mockRepository.reserveAutomationMeetingExport.mockResolvedValue(true);
+    resetAutomationMocks();
   });
 
   it("syncs the existing Notion page when retrying an automation export", async () => {
@@ -321,14 +331,8 @@ describe("notionAutomationService", () => {
 
 describe("ordinary Notion callers during recovery", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    jest.replaceProperty(config.notion, "enabled", true);
-    mockRepository.getAutomationConfig.mockResolvedValue(automationConfig);
-    mockRepository.getAutomationMeetingExport.mockResolvedValue(undefined);
-    mockRepository.reserveAutomationMeetingExport.mockResolvedValue(true);
-    jest
-      .mocked(exportMeetingToNotionAutomation)
-      .mockResolvedValue({ ...existingExport, status: "exported" });
+    resetAutomationMocks();
+    mockExportSucceeds();
     jest
       .mocked(syncMeetingToNotionAutomation)
       .mockResolvedValue({ ...existingExport, status: "exported" });
@@ -431,14 +435,8 @@ describe("ordinary Notion callers during recovery", () => {
 
 describe("Notion export from the finish pipeline's follow-ons", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    jest.replaceProperty(config.notion, "enabled", true);
-    mockRepository.getAutomationConfig.mockResolvedValue(automationConfig);
-    mockRepository.getAutomationMeetingExport.mockResolvedValue(undefined);
-    mockRepository.reserveAutomationMeetingExport.mockResolvedValue(true);
-    jest
-      .mocked(exportMeetingToNotionAutomation)
-      .mockResolvedValue({ ...existingExport, status: "exported" });
+    resetAutomationMocks();
+    mockExportSucceeds();
   });
 
   /** An old-runtime interrupted row with notes whose recovery never finished, under a finish claim. */

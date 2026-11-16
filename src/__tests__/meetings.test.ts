@@ -267,6 +267,39 @@ const buildMeetingOptions = (botMember: unknown = null) => {
   return { guild, voiceChannel, textChannel, creator };
 };
 
+type MeetingOptions = ReturnType<typeof buildMeetingOptions>;
+
+/** Starts a voice-only TTS session: no capture, bot audio recording or chat log. */
+const startTtsOnlyMeeting = async (botMember: unknown = null) => {
+  const options = buildMeetingOptions(botMember);
+  const meeting = await initializeMeeting({
+    ...options,
+    sessionMode: "tts_only",
+    captureAudio: false,
+    recordBotAudio: false,
+    storeChatLog: false,
+    transcribeMeeting: false,
+    generateNotes: false,
+    chatTtsEnabled: true,
+  });
+  return { ...options, meeting };
+};
+
+/** Starts a session configured to suffix the bot nickname with "(Recording)". */
+const startWithRecordingNickname = (
+  options: MeetingOptions,
+  startSignal?: AbortSignal,
+) => {
+  jest.mocked(getSnapshotBoolean).mockReturnValue(true);
+  jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
+  return initializeMeeting({
+    ...options,
+    startSignal,
+    transcribeMeeting: false,
+    generateNotes: false,
+  });
+};
+
 describe("voice connection errors", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -525,21 +558,7 @@ describe("initializeMeeting", () => {
   });
 
   it("does not create capture or recording plumbing for TTS-only sessions", async () => {
-    const { guild, voiceChannel, textChannel, creator } = buildMeetingOptions();
-
-    const meeting = await initializeMeeting({
-      sessionMode: "tts_only",
-      captureAudio: false,
-      recordBotAudio: false,
-      storeChatLog: false,
-      guild,
-      voiceChannel,
-      textChannel,
-      creator,
-      transcribeMeeting: false,
-      generateNotes: false,
-      chatTtsEnabled: true,
-    });
+    const { meeting } = await startTtsOnlyMeeting();
 
     expect(meeting.sessionMode).toBe("tts_only");
     expect(meeting.captureAudio).toBe(false);
@@ -567,24 +586,10 @@ describe("initializeMeeting", () => {
 
   it("appends the session status suffix to the current bot display name", async () => {
     const botMember = buildBotMember("Meeting Notes Bot");
-    const { guild, voiceChannel, textChannel, creator } =
-      buildMeetingOptions(botMember);
     jest.mocked(getSnapshotBoolean).mockReturnValue(true);
     jest.mocked(getSnapshotString).mockReturnValue("(TTS Only)");
 
-    const meeting = await initializeMeeting({
-      sessionMode: "tts_only",
-      captureAudio: false,
-      recordBotAudio: false,
-      storeChatLog: false,
-      guild,
-      voiceChannel,
-      textChannel,
-      creator,
-      transcribeMeeting: false,
-      generateNotes: false,
-      chatTtsEnabled: true,
-    });
+    const { meeting, guild } = await startTtsOnlyMeeting(botMember);
 
     expect(guild.client.rest.patch).toHaveBeenCalledWith(
       Routes.guildMember("guild-1", "@me"),
@@ -610,13 +615,7 @@ describe("initializeMeeting", () => {
   it("a restore the caller gave up on before it ran sends no request", async () => {
     const botMember = buildBotMember("Meeting Notes Bot");
     const options = buildMeetingOptions(botMember);
-    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
-    jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
-    const meeting = await initializeMeeting({
-      ...options,
-      transcribeMeeting: false,
-      generateNotes: false,
-    });
+    const meeting = await startWithRecordingNickname(options);
     const giveUp = new AbortController();
     giveUp.abort();
 
@@ -631,13 +630,7 @@ describe("initializeMeeting", () => {
     const options = buildMeetingOptions(buildBotMember("Meeting Notes Bot"));
     const patch = jest.mocked(options.guild.client.rest.patch);
     const issued = queueUntilAborted(patch);
-    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
-    jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
-    const starting = initializeMeeting({
-      ...options,
-      transcribeMeeting: false,
-      generateNotes: false,
-    });
+    const starting = startWithRecordingNickname(options);
     const setSignal = await issued;
     getMeeting("guild-1")?.botNicknameChange?.abort();
 
@@ -660,14 +653,7 @@ describe("initializeMeeting", () => {
       getMeeting("guild-1")?.botNicknameChange?.abort();
       return EMPTY_SNAPSHOT;
     });
-    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
-    jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
-
-    const meeting = await initializeMeeting({
-      ...options,
-      transcribeMeeting: false,
-      generateNotes: false,
-    });
+    const meeting = await startWithRecordingNickname(options);
     jest
       .mocked(resolveConfigSnapshot)
       .mockImplementation(async () => EMPTY_SNAPSHOT);
@@ -684,15 +670,8 @@ describe("initializeMeeting", () => {
     const issued = queueUntilAborted(
       jest.mocked(options.guild.client.rest.patch),
     );
-    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
-    jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
     const controller = new AbortController();
-    const starting = initializeMeeting({
-      ...options,
-      startSignal: controller.signal,
-      transcribeMeeting: false,
-      generateNotes: false,
-    });
+    const starting = startWithRecordingNickname(options, controller.signal);
     // The change may already have been sent, so its outcome is unknown and fails the start.
     const rejected = expect(starting).rejects.toThrow();
     const setSignal = await issued;
@@ -706,13 +685,7 @@ describe("initializeMeeting", () => {
     const botMember = buildBotMember("Meeting Notes Bot");
     botMember.permissions = new PermissionsBitField();
     const options = buildMeetingOptions(botMember);
-    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
-    jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
-    const meeting = await initializeMeeting({
-      ...options,
-      transcribeMeeting: false,
-      generateNotes: false,
-    });
+    const meeting = await startWithRecordingNickname(options);
     expect(options.guild.client.rest.patch).not.toHaveBeenCalled();
     deleteMeeting(meeting);
   });
@@ -724,15 +697,7 @@ describe("initializeMeeting", () => {
         status: 403,
       }),
     );
-    jest.mocked(getSnapshotBoolean).mockReturnValue(true);
-    jest.mocked(getSnapshotString).mockReturnValue("(Recording)");
-    await expect(
-      initializeMeeting({
-        ...options,
-        transcribeMeeting: false,
-        generateNotes: false,
-      }),
-    ).rejects.toThrow();
+    await expect(startWithRecordingNickname(options)).rejects.toThrow();
     expect(options.guild.client.rest.patch).toHaveBeenCalledTimes(1);
   });
 
@@ -741,24 +706,10 @@ describe("initializeMeeting", () => {
       "Meeting Notes Bot (TTS Only)",
       "Meeting Notes Bot (TTS Only)",
     );
-    const { guild, voiceChannel, textChannel, creator } =
-      buildMeetingOptions(botMember);
     jest.mocked(getSnapshotBoolean).mockReturnValue(true);
     jest.mocked(getSnapshotString).mockReturnValue("(TTS Only)");
 
-    const meeting = await initializeMeeting({
-      sessionMode: "tts_only",
-      captureAudio: false,
-      recordBotAudio: false,
-      storeChatLog: false,
-      guild,
-      voiceChannel,
-      textChannel,
-      creator,
-      transcribeMeeting: false,
-      generateNotes: false,
-      chatTtsEnabled: true,
-    });
+    const { meeting, guild } = await startTtsOnlyMeeting(botMember);
 
     expect(guild.client.rest.patch).not.toHaveBeenCalled();
 
@@ -768,21 +719,7 @@ describe("initializeMeeting", () => {
   it("ends a TTS-only session after inactivity", async () => {
     jest.useFakeTimers();
     mockConfig.chatTts.ttsOnlyIdleTimeoutMs = 1000;
-    const { guild, voiceChannel, textChannel, creator } = buildMeetingOptions();
-
-    const meeting = await initializeMeeting({
-      sessionMode: "tts_only",
-      captureAudio: false,
-      recordBotAudio: false,
-      storeChatLog: false,
-      guild,
-      voiceChannel,
-      textChannel,
-      creator,
-      transcribeMeeting: false,
-      generateNotes: false,
-      chatTtsEnabled: true,
-    });
+    const { meeting, textChannel } = await startTtsOnlyMeeting();
 
     await jest.advanceTimersByTimeAsync(1000);
     await Promise.resolve();
@@ -794,21 +731,7 @@ describe("initializeMeeting", () => {
   it("resets the TTS-only inactivity timer when speech activity occurs", async () => {
     jest.useFakeTimers();
     mockConfig.chatTts.ttsOnlyIdleTimeoutMs = 1000;
-    const { guild, voiceChannel, textChannel, creator } = buildMeetingOptions();
-
-    const meeting = await initializeMeeting({
-      sessionMode: "tts_only",
-      captureAudio: false,
-      recordBotAudio: false,
-      storeChatLog: false,
-      guild,
-      voiceChannel,
-      textChannel,
-      creator,
-      transcribeMeeting: false,
-      generateNotes: false,
-      chatTtsEnabled: true,
-    });
+    const { meeting, textChannel } = await startTtsOnlyMeeting();
     const connection = jest.mocked(joinVoiceChannel).mock.results[0].value;
 
     jest.advanceTimersByTime(999);
