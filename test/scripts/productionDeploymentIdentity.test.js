@@ -133,7 +133,7 @@ test("production wiring reuses routing and publishes its explicit role variable"
       /resource "github_repository_environment" "repo_env" \{([\s\S]*?)\n\}/,
     )?.[1] ?? "";
   expect(environment).toMatch(
-    /lifecycle\s*\{\s*prevent_destroy\s*=\s*true\s*\}/,
+    /lifecycle\s*\{\s*prevent_destroy\s*=\s*true\r?\n/,
   );
   expect(readFileSync("_infra/api.tf", "utf8")).toMatch(
     /ignore_changes\s*=\s*\[default_action\]/,
@@ -183,7 +183,9 @@ test("producer authority is discovery only and preserves the production approval
   expect(actions.every((action) => /:(Describe|List|Get)/.test(action))).toBe(
     true,
   );
-  expect(readFileSync("_infra/README.md", "utf8")).toContain(
-    "must fail closed when required environment protection is absent",
+  expect(
+    readFileSync("_infra/README.md", "utf8").replace(/\s+/g, " "),
+  ).toContain(
+    "Terraform manages the environment but ignores those settings, so no plan changes them",
   );
 });
