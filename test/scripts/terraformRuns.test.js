@@ -452,7 +452,7 @@ describe("Terraform roles and environments", () => {
 
   test("Terraform never manages the Apply environment", () => {
     for (const name of readdirSync("_infra").filter((n) => n.endsWith(".tf")))
-      expect(read(`_infra/${name}`)).not.toContain("production-terraform");
+      expect(read(`_infra/${name}`)).not.toMatch(/"production-terraform"/);
   });
 
   test("neither workflow narrows its role with a session policy", () => {

@@ -331,8 +331,8 @@ resource "github_actions_environment_variable" "production_deploy_account" {
 }
 
 # Deploy jobs may run under production-deploy, which has no required reviewer,
-# so merges deploy unattended. Terraform Apply keeps the reviewed production
-# environment. Both trust the deploy roles; see docs/deployment.md.
+# so merges deploy unattended. Terraform Apply runs in the hand-made
+# production-terraform environment. Both trust the deploy roles; see docs/deployment.md.
 locals {
   production_deploy_environments = ["production", "production-deploy"]
   production_deploy_optional_variables = {

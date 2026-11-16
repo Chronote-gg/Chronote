@@ -138,12 +138,12 @@ that address.
 | Processing retry worker       | `Processing retry worker failed` log line      | 5 min x 1 |
 | Voice settlement unresolved   | Unreleased voice session or lease log line     | 5 min x 1 |
 | Voice admission blocked       | Recording refused for uncertain voice state    | 5 min x 1 |
-| Meeting lifecycle stuck       | `Meeting lifecycle stuck` or `abandoned` line  | 5 min x 1 |
-| Meeting finish failed         | Finish or delivery failed after retries        | 5 min x 1 |
-| Task protection failing       | 3+ `Task protection failed` lines in 5 min     | 5 min x 1 |
-| No eligible worker            | No `Worker eligible heartbeat` line in 5 min   | 5 min x 1 |
-| Finisher scan missing         | No `Meeting finisher scan completed` in 10 min | 5 min x 2 |
-| Renewal recovery stalled      | Lease-error skip line in each of 3 periods     | 5 min x 3 |
+| Meeting lifecycle stuck       | `MeetingStuck` metric, any phase               | 5 min x 1 |
+| Meeting finish failed         | `MeetingFailed` metric, finish or delivery     | 5 min x 1 |
+| Task protection failing       | 3+ `TaskProtectionFailed` in 5 min             | 5 min x 1 |
+| No eligible worker            | No `WorkerEligibleHeartbeat` in 5 min          | 5 min x 1 |
+| Finisher scan missing         | No `FinisherScanCompleted` in 10 min           | 5 min x 2 |
+| Renewal recovery stalled      | `RenewalRecoveryStalled` in each of 3 periods  | 5 min x 3 |
 | Deploy drain timeout          | Deploy `DrainWaitTimedOut` metric published    | 5 min x 1 |
 
 All alarms also send an OK notification when the condition clears.
@@ -176,10 +176,14 @@ throughout: the 14 crosses the hourly threshold, so that incident would have
 paged. A burst big enough to trip the fast alarm will usually trip the slow one
 too, so expect one real outage to notify twice.
 
-The lifecycle alarms in `alerts-lifecycle.tf` match the fixed `*_LOG` lines in
-`src/metrics.ts` as quoted substrings (what each one means and what to do is in
-[the deployment document](../docs/deployment.md#alarms)); `test/scripts/lifecycleAlarms.test.ts`
-fails if a filter and its constant drift apart. **No eligible worker alarms on
+The lifecycle alarms in `alerts-lifecycle.tf` read metrics in
+`<name_prefix>/Lifecycle` that the workers publish as Embedded Metric Format
+lines (`src/lifecycleMetrics.ts`); no alarm depends on log wording. What each one
+means and what to do is in [the deployment document](../docs/deployment.md#alarms).
+`test/scripts/lifecycleAlarms.test.ts` fails if an alarm's metric is not emitted
+by the code or an emitted metric has no alarm. The task gets the namespace as
+`METRICS_NAMESPACE`, so a running task publishes nothing until a deploy after
+the Apply that adds it. **No eligible worker alarms on
 silence** (missing data is breaching), so it fires wherever alerting is enabled
 and no worker is eligible, including the window before the first deployment of
 the worker registry finishes its cutover. **Finisher scan missing alarms on
@@ -452,15 +456,11 @@ are manual and run on `master` only. Plan makes one full encrypted saved plan an
 summarizes its resource changes; Apply applies that exact plan after the
 environment reviewer approves it. See [Terraform delivery](../docs/terraform-delivery.md).
 
-Each GitHub environment used by the workflows needs:
-
-- Variables `TERRAFORM_AWS_ROLE_ARN` and `AWS_ACCOUNT_ID`
-- Secret `TERRAFORM_TFVARS_JSON`
-- Secret `TERRAFORM_PLAN_PASSPHRASE`
-- Optional secrets `REDIS_AUTH_TOKEN` and `REDIS_URL`
-
-Production uses the `production` GitHub environment with the `default` Terraform
-workspace; Sandbox uses `sandbox` with the `sandbox` workspace.
+Production plans in the `production` GitHub environment and applies in
+`production-terraform`, which the owner creates by hand and Terraform never
+manages; both use the `default` workspace. Sandbox uses `sandbox` and the
+`sandbox` workspace for both. The settings each environment needs are listed in
+[Terraform delivery](../docs/terraform-delivery.md#plan-review-apply).
 
 `TERRAFORM_TFVARS_JSON` is the environment-specific Terraform variable file as
 JSON. `scripts/deployment/terraform-tfvars.py` renders it, rejects a non-empty
