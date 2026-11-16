@@ -181,6 +181,36 @@ describe("waitForApplyIdle", () => {
     expect(h.calls).toHaveLength(2);
   });
 
+  // Proceeding could overlap an Apply, so an unreadable API fails the deploy,
+  // but after 5 minutes and with its own message, not after the Apply hour.
+  test("fails after 5 minutes of unreadable polls, naming the cause", async () => {
+    const h = harness([new Error("unavailable")]);
+    await expect(h.wait("production")).rejects.toThrow(
+      "Terraform Apply state could not be read for 5 minutes; deploy again once the GitHub Actions API answers",
+    );
+    expect(h.elapsed()).toBe(5 * 60 * 1000);
+  });
+
+  test("a readable poll restarts the unreadable window", async () => {
+    const unreadable = Array.from({ length: 9 }, () => new Error("down"));
+    const h = harness([
+      ...unreadable,
+      page("production"),
+      ...unreadable,
+      page(),
+    ]);
+    await expect(h.wait("production")).resolves.toBe("idle");
+    expect(h.elapsed()).toBe(19 * 30 * 1000);
+  });
+
+  test("a page that does not hold every run counts as unreadable", async () => {
+    const partial = { total_count: 2, workflow_runs: [applyRun("sandbox")] };
+    const h = harness([partial]);
+    await expect(h.wait("production")).rejects.toThrow(
+      "Terraform Apply state could not be read",
+    );
+  });
+
   test("a page that does not hold every run counts as busy", async () => {
     const partial = { total_count: 2, workflow_runs: [applyRun("sandbox")] };
     const h = harness([partial, page()]);

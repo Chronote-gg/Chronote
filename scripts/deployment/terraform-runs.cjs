@@ -88,6 +88,7 @@ async function assertProductionIdle(get, repository) {
 
 const applyPollMs = 30 * 1000;
 const applyWaitMs = 60 * 60 * 1000;
+const applyUnreadableMs = 5 * 60 * 1000;
 // The runs API omits dispatch inputs; the Apply run name starts with them.
 async function applyInProgress(get, repository, environment) {
   const runs = await get(
@@ -111,12 +112,23 @@ async function waitForApplyIdle(
   } = {},
 ) {
   const start = now();
+  let unreadableSince;
   for (;;) {
-    let busy = true;
+    let busy;
     try {
       busy = await applyInProgress(get, repository, environment);
+      unreadableSince = undefined;
     } catch {
+      // Proceeding could overlap an Apply, so an unreadable API counts as busy,
+      // but only for a short window: then it fails under its own name.
+      unreadableSince ??= now();
+      if (now() - unreadableSince >= applyUnreadableMs)
+        throw new Error(
+          "Terraform Apply state could not be read for 5 minutes; deploy again once the GitHub Actions API answers",
+        );
       log("Terraform Apply runs could not be read; counting as in progress");
+      await sleep(applyPollMs);
+      continue;
     }
     if (!busy) return "idle";
     if (now() - start >= applyWaitMs)
