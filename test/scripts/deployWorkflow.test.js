@@ -46,11 +46,11 @@ describe.each(FILES)("%s", (name) => {
     const environment = name === "deploy.yml" ? "production" : "sandbox";
     const wait = runs(backend).findIndex((run) =>
       run.includes(
-        "node scripts/deployment/terraform-native.cjs wait-apply-idle",
+        "node scripts/deployment/terraform-runs.cjs wait-apply-idle",
       ),
     );
     expect(backend.steps[wait].run).toBe(
-      `node scripts/deployment/terraform-native.cjs wait-apply-idle ${environment}`,
+      `node scripts/deployment/terraform-runs.cjs wait-apply-idle ${environment}`,
     );
     expect(backend.steps[wait].env).toEqual({
       GH_TOKEN: "${{ github.token }}",

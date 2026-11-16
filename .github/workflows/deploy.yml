@@ -82,7 +82,7 @@ jobs:
       - name: Wait for a running Terraform Apply
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/deployment/terraform-native.cjs wait-apply-idle production
+        run: node scripts/deployment/terraform-runs.cjs wait-apply-idle production
 
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
