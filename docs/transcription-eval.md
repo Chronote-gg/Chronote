@@ -30,9 +30,11 @@ Keep real recordings, references, and results in the private ops workspace. Use 
 npm run eval:transcription -- --manifest test/fixtures/transcription-public/manifest.json --mode pipeline --pass-mode slow --speech-detector production --speech-mode enforce --runs 2 --max-requests 200
 ```
 
+The corpus has 43 cases, so run `--batch-index 0` and `--batch-index 1`; each report's `complete` covers its own batch. It is a public `tune` set, never holdout evidence.
+
 Vary one thing at a time to compare variants: `--prompt-file test/fixtures/transcription-public/glossary-prompt.txt` (the former production prompt) or `terms-prompt.txt` (dictionary terms only), `--language en` (force a language hint; the default omits it), `--mode provider` (raw ASR with every gate off) and `--model`. Logprobs are requested from every `gpt-*` model; `whisper-1` runs without them. `--max-clip-seconds` allows up to 180 s.
 
-The summary adds `cer` for CJK references (kept out of `wer`), `speechMostlyDroppedRate` (under half the reference words), `unwantedWordsPerSilenceRun`, and dictionary term scores: `termMentions`, `termHits`, `termRecall` (exact spelling, case and punctuation ignored), `termInsertions` (a term in the output more often than in the reference) and `keywordRequests`. The corpus has more than 25 cases, so run `--batch-index 0` and `--batch-index 1`.
+The summary adds `cer` for CJK references (kept out of `wer`), `speechMostlyDroppedRate` (under half the reference words), `unwantedWordsPerSilenceRun`, and dictionary term scores: `termMentions`, `termHits`, `termRecall` (exact spelling, case and punctuation ignored), `termInsertions` (a term in the output more often than in the reference) and `keywordRequests`.
 
 ### New pipeline results, 2026-11-16
 
