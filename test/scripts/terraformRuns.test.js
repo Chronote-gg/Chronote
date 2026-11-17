@@ -459,14 +459,60 @@ describe("workflow shape", () => {
     expect(at("set -o pipefail")).toBe(0);
     expect(at("head-object")).toBeGreaterThan(0);
     expect(at("head-object")).toBeLessThan(at("sha256sum --check"));
-    expect(at("sha256sum --check")).toBeLessThan(at("tar -xzf"));
-    expect(lines[at("head-object")]).toContain(
-      "the plan had no changes or did not finish; there is nothing to apply",
-    );
+    expect(at("sha256sum --check")).toBeLessThan(at("tar -tzf"));
+    expect(at("tar -tzf")).toBeLessThan(at("tar -xzf"));
     expect(applyJob.env.PLAN_SHA256).toBe("${{ inputs.plan_sha256 }}");
     expect(step(applyJob, "Locate the plan").run).toBe(
       'node scripts/deployment/terraform-runs.cjs plan-store "$ENVIRONMENT" "$PLAN_RUN_ID" 1 >> "$GITHUB_OUTPUT"',
     );
+  });
+
+  // The bundle is unpacked into _infra, so it may only ever supply the saved
+  // plan and the Lambda archives the plan step put in it, never Terraform
+  // configuration, the lock file or the provider cache.
+  test("apply unpacks only the saved plan and top-level Lambda archives", () => {
+    const store = step(planJob, "Store plan").run;
+    expect(store).toContain(
+      'tar -czf "$RUNNER_TEMP/plan.tar.gz" tfplan $(ls *.zip 2>/dev/null)',
+    );
+    const download = step(applyJob, "Download and verify plan").run;
+    const allowed = download.match(/grep -qvE '([^']+)'/)?.[1];
+    expect(allowed).toBe("^(tfplan|[A-Za-z0-9_-]+\\.zip)$");
+    const pattern = new RegExp(allowed);
+    for (const name of [
+      "tfplan",
+      "discord_alert.zip",
+      "grafana_token_rotation.zip",
+    ])
+      expect(pattern.test(name)).toBe(true);
+    for (const name of [
+      ".terraform.lock.hcl",
+      ".terraform/providers/x.zip",
+      "main.tf",
+      "../x.zip",
+      "/tmp/x.zip",
+    ])
+      expect(pattern.test(name)).toBe(false);
+    // Every archive the plan can produce passes the same pattern.
+    for (const name of readdirSync("_infra").filter((n) => n.endsWith(".tf")))
+      for (const [, output] of readFileSync(`_infra/${name}`, "utf8").matchAll(
+        /output_path\s*=\s*"\$\{path\.module\}\/([^"]+)"/g,
+      ))
+        expect(pattern.test(output)).toBe(true);
+    expect(download).toContain(
+      'tar -xzf "$RUNNER_TEMP/plan.tar.gz" -C _infra --no-same-owner $members',
+    );
+  });
+
+  test("apply tells a missing plan apart from a failed read", () => {
+    const download = step(applyJob, "Download and verify plan").run;
+    expect(download).toContain('if [ "$code" = 404 ]; then');
+    expect(download).toContain(
+      "the plan had no changes or did not finish; there is nothing to apply",
+    );
+    expect(download).toContain("Reading the stored plan failed (");
+    // The raw CLI message is never printed, only the code taken from it.
+    expect(download).not.toMatch(/echo[^\n]*\$err/);
   });
 
   test("apply applies the saved plan and takes the three reviewed inputs", () => {

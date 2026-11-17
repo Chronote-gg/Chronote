@@ -83,7 +83,13 @@ jobs:
         run: node scripts/deployment/terraform-runs.cjs plan-store "$ENVIRONMENT" "$PLAN_RUN_ID" 1 >> "$GITHUB_OUTPUT"
 
       # The approval binds this digest; nothing is unpacked unless the stored
-      # bundle is exactly the one the reviewed summary named.
+      # bundle is exactly the one the reviewed summary named. HeadObject
+      # reports a missing key as 404; only the code is printed, though the CLI
+      # message names nothing but the operation and the error.
+      # The bundle may only supply the saved plan and top-level Lambda
+      # archives: names with a slash, `..` or anything else are refused before
+      # extraction, so it can never write Terraform configuration, the lock
+      # file or the provider cache.
       - name: Download and verify plan
         env:
           BUCKET: ${{ steps.store.outputs.bucket }}
@@ -91,10 +97,24 @@ jobs:
         run: |
           set -o pipefail
           [[ "$PLAN_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          aws s3api head-object --bucket "$BUCKET" --key "$PREFIX/plan.tar.gz" > /dev/null 2>&1 || { echo "::error::No stored plan for run $PLAN_RUN_ID: the plan had no changes or did not finish; there is nothing to apply"; exit 1; }
+          if ! err=$(aws s3api head-object --bucket "$BUCKET" --key "$PREFIX/plan.tar.gz" 2>&1 > /dev/null); then
+            code=$(grep -oE '\([A-Za-z0-9]+\)' <<< "$err" | head -n 1 | tr -d '()')
+            if [ "$code" = 404 ]; then
+              echo "::error::No stored plan for run $PLAN_RUN_ID: the plan had no changes or did not finish; there is nothing to apply"
+            else
+              echo "::error::Reading the stored plan failed (${code:-no error code}); check the Apply role's credentials and access"
+            fi
+            exit 1
+          fi
           aws s3api get-object --bucket "$BUCKET" --key "$PREFIX/plan.tar.gz" "$RUNNER_TEMP/plan.tar.gz" > /dev/null
           echo "$PLAN_SHA256  $RUNNER_TEMP/plan.tar.gz" | sha256sum --check --quiet
-          tar -xzf "$RUNNER_TEMP/plan.tar.gz" -C _infra
+          members=$(tar -tzf "$RUNNER_TEMP/plan.tar.gz")
+          if grep -qvE '^(tfplan|[A-Za-z0-9_-]+\.zip)$' <<< "$members"; then
+            echo "::error::The plan bundle holds a file other than the plan and its Lambda archives; refusing it"
+            exit 1
+          fi
+          grep -qx tfplan <<< "$members"
+          tar -xzf "$RUNNER_TEMP/plan.tar.gz" -C _infra --no-same-owner $members
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
