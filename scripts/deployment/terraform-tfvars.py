@@ -6,7 +6,10 @@ path = Path("_infra/terraform.auto.tfvars.json")
 data = json.loads(os.environ["TERRAFORM_TFVARS_JSON"])
 # Retired inputs: the secret may still carry them, and Terraform warns on them.
 for retired in ["AWS_TOKEN_KEY", "LIVE_VOICE_GATE_MODEL"]:
-    data.pop(retired, None)
+    if retired in data:
+        if retired == "LIVE_VOICE_GATE_MODEL":
+            print(f"::warning::Ignoring retired tfvars key {retired}")
+        del data[retired]
 
 for name in ["REDIS_AUTH_TOKEN", "REDIS_URL"]:
     value = os.environ.get(name, "").strip()
@@ -87,6 +90,9 @@ for name in github_vars:
 seen = set()
 for name, value in github_vars.items():
     if not name.startswith("TFVAR_"):
+        continue
+    if name[6:] in ["AWS_TOKEN_KEY", "LIVE_VOICE_GATE_MODEL"]:
+        print(f"::warning::Ignoring retired tfvars key {name[6:]}")
         continue
     key = name[len("TFVAR_") :]
     if key.lower() in canonical_keys:

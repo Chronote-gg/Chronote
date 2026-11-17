@@ -1,7 +1,7 @@
 import { meetingBrowseSearchSchema } from "../../utils/meetingBrowseSearch";
 import { Center, ScrollArea, Stack, Text } from "@mantine/core";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import type { MouseEvent, RefObject } from "react";
+import type { MouseEvent, RefObject, ReactNode } from "react";
 import { useMemo } from "react";
 import type { AskMessage } from "../../../types/ask";
 import { type ListMode } from "../../utils/askLinks";
@@ -14,6 +14,7 @@ import {
 } from "../../utils/portalLinks";
 
 type AskMessageListProps = {
+  emptyContent?: ReactNode;
   askAccessAllowed: boolean;
   listMode: ListMode;
   sharingEnabled: boolean;
@@ -110,7 +111,22 @@ const buildPortalLinkHandler = (options: {
     }),
 });
 
+function renderEmptyContent(emptyContent: ReactNode, listMode: ListMode) {
+  return (
+    emptyContent ?? (
+      <Center py="lg">
+        <Text size="sm" c="dimmed">
+          {listMode === "shared"
+            ? "Select a shared conversation to view it."
+            : "Start by asking about a meeting."}
+        </Text>
+      </Center>
+    )
+  );
+}
+
 export function AskMessageList({
+  emptyContent,
   askAccessAllowed,
   listMode,
   sharingEnabled,
@@ -174,13 +190,7 @@ export function AskMessageList({
             </Text>
           </Center>
         ) : displayMessages.length === 0 ? (
-          <Center py="lg">
-            <Text size="sm" c="dimmed">
-              {listMode === "shared"
-                ? "Select a shared conversation to view it."
-                : "Start by asking about a recent meeting."}
-            </Text>
-          </Center>
+          renderEmptyContent(emptyContent, listMode)
         ) : (
           displayMessages.map((message) => (
             <AskMessageBubble

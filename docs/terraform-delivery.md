@@ -4,7 +4,7 @@ Terraform changes to `_infra` go through two manual workflows. Merges never appl
 
 Three properties hold for every change:
 
-1. Production Terraform uses two roles, each assumable only through GitHub OIDC on `refs/heads/master`. The Plan role trusts only the `Terraform Plan` workflow in the `production` environment and can only read. The Apply role trusts only the `Terraform Apply` workflow in the `production-terraform` environment.
+1. Production Terraform uses two roles, each assumable only through GitHub OIDC on `refs/heads/master`. The Plan role trusts only the `Terraform Plan` workflow in the `production` environment and can read, lock state and create write-once plan-store objects. The Apply role trusts only the `Terraform Apply` workflow in the `production-terraform` environment.
 2. `production-terraform` is created by hand, never by Terraform, with the owner as its only required reviewer, so every production Apply waits for the owner and no plan or workflow can weaken that gate. The separate environment keeps Apply approvals out of the standing permission for agents to approve production deployments, which pend in `production` along with Plan runs. It does not stop an agent by identity: agents on the owner's machine run `gh` as the owner's own account, which is the sole reviewer, and self-review is allowed, so an agent could technically approve an Apply. "Agents never approve a `Terraform Apply`" therefore remains a rule. The structural fix is a separate GitHub identity for agents (a machine account or GitHub App without reviewer rights); that is an owner follow-up.
 3. Apply runs the exact saved plan that was reviewed, never a replan, and refuses if its commit or the stored plan bundle's digest differs from the reviewed one.
 
@@ -12,7 +12,7 @@ Sandbox keeps one role and runs both workflows in the `sandbox` environment: it 
 
 ## Plan, review, apply
 
-1. **Plan.** Run `Terraform Plan` on `master` with the environment (`production` or `sandbox`; the workspace follows: `default` or `sandbox`). It runs one full `terraform plan -out` of `_infra`. If there are changes, it writes the saved plan and the Lambda archives as one bundle to the Terraform state bucket at `terraform-plans/<environment>/<run id>-<attempt>/plan.tar.gz`. The state bucket is private and already holds the credentials in state; the plan adds no secret to manage, but see [who can read stored plans](#who-can-read-stored-plans). Each key is written once (`If-None-Match`) and never replaced. A plan with no changes stores nothing and cannot be applied.
+1. **Plan.** Run `Terraform Plan` on `master` with the environment (`production` or `sandbox`; the workspace follows: `default` or `sandbox`). It runs one full `terraform plan -out` of `_infra`. If there are changes, it writes the saved plan and the Lambda archives as one bundle to the Terraform state bucket at `terraform-plans/<environment>/<run id>-<attempt>/plan.tar.gz`. The state bucket is private and already holds the credentials in state; the plan adds no secret to manage, but see [who can read stored plans](#who-can-read-stored-plans). Each key is written once (`If-None-Match`) and never replaced. A plan with no changes stores only its log and cannot be applied.
 2. **Review.** The run summary gives the commit SHA, the run attempt, the bundle's S3 key and SHA-256 (`plan_sha256`), and the counts to add, change, replace and destroy. Security-sensitive changes (IAM, KMS, bucket policies and public access blocks, security groups, Secrets Manager, GitHub environments and secrets) and every replace or destroy are flagged first, then every change. It shows addresses and actions only, never values. To read the full plan, see [Reading a plan locally](#reading-a-plan-locally).
 3. **Apply.** Run `Terraform Apply` on `master` with the environment, the plan's run ID and its `plan_sha256`, then approve it in `production-terraform`. Apply checks that the run is a successful first-attempt `Terraform Plan` of the same environment on `master` in this repository, at the Apply's own commit, so a merge between plan and apply means planning again. In production it refuses while any `deploy.yml` run is open. It downloads the bundle from the state bucket, refuses unless its SHA-256 equals `plan_sha256`, then unpacks and applies it.
 
@@ -28,9 +28,9 @@ Settings per environment:
 
 ## Who can read stored plans
 
-Anyone who can read the state bucket could already read every credential in state. A saved plan also holds every input variable value, including ones no resource stores, so it additionally exposes those to the same readers for as long as the object exists (at most 30 days plus a day for the old version, see below): the GitHub provider token (`GITHUB_TOKEN`, which only configures the provider), and `REDIS_AUTH_TOKEN` when ElastiCache is off (it then feeds nothing). Those readers are the two Terraform roles (through `ReadOnlyAccess`), the account administrators, and any other principal in this AWS account with S3 read on the bucket; the account is shared with other products, so the repository cannot list them.
+Anyone who can read the state bucket could already read every credential in state. A saved plan also holds every input variable value, including ones no resource stores, so it additionally exposes those to the same readers for as long as the object exists (at most 30 days plus a day for the old version, see below): the GitHub provider token (`GITHUB_TOKEN`, which only configures the provider), and `REDIS_AUTH_TOKEN` when ElastiCache is off (it then feeds nothing). Without a bucket-policy restriction, those readers include any principal with S3 read on this shared bucket. The required deny policy below limits stored-plan reads to the two Terraform roles and one named administrator role.
 
-**Stored plans expire after 30 days, and the Plan job enforces it.** Before it plans or stores anything, the job reads the state bucket's lifecycle configuration and refuses unless an enabled rule covering `terraform-plans/` expires current objects and noncurrent versions (the bucket is versioned, so expiring the current version alone only adds a delete marker and keeps the plan bytes). No configuration at all is a refusal too. `put-bucket-lifecycle-configuration` replaces the whole configuration, so the rule is added by reading the current one and merging, which works whether or not the bucket has one. An administrator runs once:
+**Stored plans expire after 30 days, and the Plan job enforces it.** Before it plans or stores anything, the job reads the state bucket's lifecycle configuration and refuses unless an enabled rule covering `terraform-plans/` expires current objects within 30 days and noncurrent versions within one day, using the exact `terraform-plans/` prefix with no tag filter (the bucket is versioned, so expiring the current version alone only adds a delete marker and keeps the plan bytes). No configuration at all is a refusal too. `put-bucket-lifecycle-configuration` replaces the whole configuration, so the rule is added by reading the current one and merging, which works whether or not the bucket has one. An administrator runs once:
 
 ```sh
 bash -euo pipefail <<'EOF'
@@ -47,14 +47,14 @@ EOF
 
 The last command must show every earlier rule plus `expire-terraform-plans`. The bucket is managed by `_infra_state_mgmt`, whose committed local state is stale, so the rule is not added there.
 
-Optional hardening: deny reading stored plans to everyone except the two Terraform roles and the administrator role. Merge this statement into the bucket policy (`put-bucket-policy` replaces the whole policy, so read the current one with `get-bucket-policy` first):
+Required before planning: deny reading stored plans to everyone except the two Terraform roles and the administrator role. Merge this statement into the bucket policy (`put-bucket-policy` replaces the whole policy, so read the current one with `get-bucket-policy` first):
 
 ```json
 {
   "Sid": "PlansOnlyForTerraform",
   "Effect": "Deny",
   "Principal": "*",
-  "Action": "s3:GetObject",
+  "Action": ["s3:GetObject", "s3:GetObjectVersion"],
   "Resource": "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/*",
   "Condition": {
     "ArnNotLike": {
@@ -67,6 +67,10 @@ Optional hardening: deny reading stored plans to everyone except the two Terrafo
   }
 }
 ```
+
+The Plan job checks this exact deny statement, including version reads, the two Terraform roles and one named administrator role in the same account. Wildcard administrator ARNs are refused. Keep other bucket policy statements unchanged.
+
+The Plan run also publishes a non-sensitive digest artifact named `terraform-plan-sha256-<digest>`. Apply requires that exact unexpired artifact on the successful Plan run before reading S3. A no-change run has no digest and cannot be applied; after the digest expires, plan again.
 
 ## Reading a plan locally
 
@@ -88,7 +92,7 @@ The plan holds every variable value, credentials included, so delete the local c
 
 `_infra/production-bootstrap` owns both roles.
 
-The **Plan role** `meeting-notes-prod-github-terraform-plan` has the AWS managed `ReadOnlyAccess` policy plus exactly the state lock writes and the secret reads a refresh needs, and is denied reading table items or bucket objects of `meeting-notes-prod-*`. Nothing else. A refresh reads Terraform state, which holds secrets, so approving a Plan run grants read access to those secrets for that run.
+The **Plan role** `meeting-notes-prod-github-terraform-plan` has the AWS managed `ReadOnlyAccess` policy plus state lock writes, write-once plan-store uploads and the secret reads a refresh needs, and is denied reading table items or bucket objects of `meeting-notes-prod-*`. Nothing else. A refresh reads Terraform state, which holds secrets, so approving a Plan run grants read access to those secrets for that run.
 
 The **Apply role** `meeting-notes-prod-github-terraform` is close to account administrator. Its controls are its OIDC trust (the `Terraform Apply` workflow, `master`, `production-terraform`) and the owner's approval. Its IAM denies limit accidents, not a determined Apply: it may write inline policies on any `meeting-notes-prod-*` role, and IAM cannot constrain what those policies say.
 
@@ -149,7 +153,7 @@ Nine steps. Five need the owner's own hands (**owner**, one of them optional): m
    done
    ```
 
-   In the same session, add the 30-day plan expiry rule from [who can read stored plans](#who-can-read-stored-plans). This is required: until it exists every Plan run refuses before planning.
+   In the same session, add the 30-day plan expiry rule and the required read-restriction bucket policy from [who can read stored plans](#who-can-read-stored-plans). This is required: until both exist every Plan run refuses before planning.
 
 4. **Agent: point `production` at the Plan role**: `gh variable set TERRAFORM_AWS_ROLE_ARN --env production --body <terraform_plan_role_arn>`.
 5. **Owner, optional cleanup at any time:** no workflow reads these, so they are safe to delete: in `production`, the secrets `TERRAFORM_PLAN_REFERENCE_JSON`, `BOOTSTRAP_VERIFICATION_STORAGE_JSON`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` and the variables `PRODUCTION_APPLY_ROLE_ARN` and `AWS_ACCESS_KEY_ID` (the first Apply deletes that variable anyway); the secret `TERRAFORM_PLAN_PASSPHRASE` in `production`, `production-terraform` or `sandbox` if it was ever set; in the repository settings, the repository-level secret `AWS_SECRET_ACCESS_KEY`. If the static access key behind them still exists in IAM, deactivate and delete it too. Keep `TERRAFORM_PRIVATE_STORAGE_JSON`: the site publishing jobs in `deploy.yml` read the account binding from it. `AWS_TOKEN_KEY` can be dropped from the tfvars secret whenever it is next edited; the renderer already ignores it.

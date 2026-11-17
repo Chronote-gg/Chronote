@@ -1,8 +1,8 @@
 import React from "react";
-import { beforeEach, describe, expect, test } from "@jest/globals";
+import { beforeEach, describe, expect, test, jest } from "@jest/globals";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithMantine, resetFrontendMocks } from "./testUtils";
-import { guildState } from "./testUtils";
+import { guildState, authState } from "./testUtils";
 import {
   setAskConversationQuery,
   setAskListQuery,
@@ -10,8 +10,11 @@ import {
   setAskSharedConversationQuery,
   setAskSharedListQuery,
   feedbackSubmitAskMutation,
+  askMutation as legacyAskMutation,
+  trpcUtils,
 } from "./mocks/trpc";
 import { setRouteSearch } from "./mocks/routerState";
+import * as askRun from "../../src/frontend/features/ask/useAskRun";
 import Ask from "../../src/frontend/pages/Ask";
 
 describe("Ask page", () => {
@@ -301,4 +304,146 @@ describe("Ask page", () => {
       screen.getByText(/Shared threads are read only/i),
     ).toBeInTheDocument();
   });
+});
+
+test("recovered run merges its final pair with cached history and refreshes canonical history", () => {
+  resetFrontendMocks();
+  guildState.selectedGuildId = "g1";
+  setRouteSearch({ conversationId: "c1" });
+  const conversation = {
+    id: "c1",
+    title: "History",
+    summary: "",
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-02",
+  };
+  const oldMessage = {
+    id: "older-answer",
+    role: "chronote" as const,
+    text: "Earlier answer remains",
+    createdAt: "2026-01-01",
+  };
+  const finalPair = [
+    {
+      id: "latest-question",
+      role: "user" as const,
+      text: "Latest question",
+      createdAt: "2026-01-02",
+    },
+    {
+      id: "latest-answer",
+      role: "chronote" as const,
+      text: "Latest answer",
+      createdAt: "2026-01-02",
+    },
+  ];
+  setAskConversationQuery({ data: { conversation, messages: [oldMessage] } });
+  setAskListQuery({ data: { conversations: [conversation] } });
+  const recoveredResult = {
+    conversationId: "c1",
+    conversation,
+    messages: finalPair,
+  };
+  const spy = jest.spyOn(askRun, "useAskRun").mockReturnValue({
+    isPending: false,
+    text: "",
+    question: "",
+    activity: undefined,
+    recoveredResult,
+    recoveryError: null,
+    mutateAsync: async () => recoveredResult,
+    stop: async () => undefined,
+    reset: () => undefined,
+  });
+  try {
+    renderWithMantine(<Ask />);
+    const [, update] =
+      trpcUtils.ask.getConversation.setData.mock.calls.at(-1) ?? [];
+    expect(update).toEqual(expect.any(Function));
+    if (typeof update !== "function")
+      throw new Error("Expected the history-preserving cache updater");
+    expect(update({ conversation, messages: [oldMessage] }).messages).toEqual([
+      oldMessage,
+      ...finalPair,
+    ]);
+    expect(trpcUtils.ask.getConversation.invalidate).toHaveBeenCalledWith({
+      serverId: "g1",
+      conversationId: "c1",
+    });
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("recent history mode sends through the existing Ask route and never restores an agent run", async () => {
+  resetFrontendMocks();
+  guildState.selectedGuildId = "g1";
+  authState.user = { id: "fallback-user" };
+  setAskSettingsQuery({
+    data: {
+      askMembersEnabled: true,
+      askSharingPolicy: "server",
+      agentEnabled: false,
+      searchEnabled: false,
+    },
+  });
+  sessionStorage.setItem(
+    "chronote-ask-run:fallback-user:g1:new",
+    "saved-conversation",
+  );
+  sessionStorage.setItem(
+    "chronote-ask-run:fallback-user:g1:saved-conversation",
+    JSON.stringify({ runId: "saved-run", requestId: "saved-request" }),
+  );
+  const query = jest.fn();
+  const start = jest.fn();
+  Object.assign(trpcUtils, {
+    client: {
+      ask: {
+        getRun: { query },
+        getRunByRequest: { query },
+        startRun: { mutate: start },
+      },
+    },
+  });
+  const conversation = {
+    id: "fallback-conversation",
+    title: "Recent question",
+    summary: "",
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+  };
+  legacyAskMutation.mutateAsync.mockResolvedValue({
+    conversationId: conversation.id,
+    conversation,
+    messages: [],
+    answer: "Recent answer",
+    sourceMeetingIds: [],
+  });
+  try {
+    renderWithMantine(<Ask />);
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Recent history mode: answers use up to 25 recent accessible meetings. Full history search is not enabled yet.",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Add meeting context" }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("ask-input"), {
+      target: { value: "Recent question" },
+    });
+    fireEvent.click(screen.getByTestId("ask-send"));
+    await waitFor(() =>
+      expect(legacyAskMutation.mutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "g1",
+          question: "Recent question",
+        }),
+      ),
+    );
+    expect(query).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  } finally {
+    Reflect.deleteProperty(trpcUtils, "client");
+    sessionStorage.clear();
+  }
 });

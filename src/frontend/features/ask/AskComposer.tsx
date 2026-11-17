@@ -1,9 +1,14 @@
 import { Button, Group, Stack, Text, Textarea } from "@mantine/core";
 import { IconSparkles } from "@tabler/icons-react";
-import type { RefObject } from "react";
+import type { RefObject, ReactNode } from "react";
 import type { ListMode } from "../../utils/askLinks";
 
 type AskComposerProps = {
+  contextChips?: ReactNode;
+  historyDescription?: string;
+  contextAction?: ReactNode;
+  onStop?: () => void;
+  activity?: string;
   listMode: ListMode;
   isArchived: boolean;
   askAccessAllowed: boolean;
@@ -17,6 +22,11 @@ type AskComposerProps = {
 };
 
 export function AskComposer({
+  contextChips,
+  historyDescription = "Searches accessible meeting history.",
+  contextAction,
+  onStop,
+  activity,
   listMode,
   isArchived,
   askAccessAllowed,
@@ -28,8 +38,15 @@ export function AskComposer({
   errorMessage,
   inputRef,
 }: AskComposerProps) {
+  const disabled =
+    !selectedGuildId ||
+    !askAccessAllowed ||
+    listMode !== "mine" ||
+    isArchived ||
+    askPending;
   return (
     <Stack gap="sm">
+      {contextChips}
       <Textarea
         placeholder={
           listMode === "shared"
@@ -41,13 +58,7 @@ export function AskComposer({
         minRows={3}
         value={draft}
         onChange={(event) => onDraftChange(event.currentTarget.value)}
-        disabled={
-          !selectedGuildId ||
-          !askAccessAllowed ||
-          listMode !== "mine" ||
-          isArchived ||
-          askPending
-        }
+        disabled={disabled}
         ref={inputRef}
         data-testid="ask-input"
         onKeyDown={(event) => {
@@ -57,33 +68,38 @@ export function AskComposer({
           }
         }}
       />
+      {activity ? (
+        <Text size="xs" role="status">
+          {activity}
+        </Text>
+      ) : null}
       {errorMessage ? (
         <Text size="xs" c="red">
           {errorMessage}
         </Text>
       ) : null}
       <Group justify="space-between" align="center" wrap="wrap">
-        <Text size="xs" c="dimmed">
-          Searches recent meetings by default. Press Ctrl+Enter to send.
+        <Text size="xs" c="dimmed" style={{ flex: "1 1 240px", minWidth: 0 }}>
+          {historyDescription} Press Ctrl+Enter to send.
         </Text>
-        <Button
-          variant="gradient"
-          gradient={{ from: "brand", to: "violet" }}
-          leftSection={<IconSparkles size={16} />}
-          onClick={onAsk}
-          disabled={
-            !draft.trim() ||
-            !selectedGuildId ||
-            !askAccessAllowed ||
-            listMode !== "mine" ||
-            isArchived ||
-            askPending
-          }
-          loading={askPending}
-          data-testid="ask-send"
-        >
-          Ask
-        </Button>
+        {contextAction}
+        {askPending && onStop ? (
+          <Button variant="default" onClick={onStop} data-testid="ask-stop">
+            Stop
+          </Button>
+        ) : (
+          <Button
+            variant="gradient"
+            gradient={{ from: "brand", to: "violet" }}
+            leftSection={<IconSparkles size={16} />}
+            onClick={onAsk}
+            disabled={!draft.trim() || disabled}
+            loading={askPending}
+            data-testid="ask-send"
+          >
+            Ask
+          </Button>
+        )}
       </Group>
     </Stack>
   );

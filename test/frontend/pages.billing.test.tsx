@@ -154,6 +154,9 @@ describe("Billing page", () => {
     renderWithMantine(<Billing />);
     const currentPanel = screen.getByTestId("billing-current-plan");
     expect(within(currentPanel).getByText("Current plan")).toBeInTheDocument();
+    expect(currentPanel).toHaveTextContent(
+      "Ask history: All accessible meetings",
+    );
     expect(screen.getByText(/next billing/i)).toBeInTheDocument();
   });
 
@@ -224,6 +227,9 @@ describe("Billing page", () => {
       ).toBeVisible();
       expect(screen.getByTestId("billing-current-plan")).toHaveTextContent(
         "Recording time per rolling week: 20 hours",
+      );
+      expect(screen.getByTestId("billing-current-plan")).toHaveTextContent(
+        "Ask history: All accessible meetings",
       );
       expect(
         screen.queryByText(/normally Pricing unavailable/i),

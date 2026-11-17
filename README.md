@@ -12,7 +12,7 @@ Supported meeting edits, imports, approved corrections and renames save the meet
 - `/autorecord`: Configure auto-recording for a server/channel.
 - `/context`: Manage prompt context.
 - `/dictionary`: Manage dictionary terms used in prompts.
-- `/ask`: Ask questions over recent meeting history (guild scope by default).
+- `/ask`: Ask questions over accessible meeting history (guild scope by default).
 
 ## Recording outcomes
 
@@ -110,7 +110,7 @@ These checks run before PR merge and deployment. Use `yarn run check` for the fu
 - Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`.
 - LLM connection sync (Langfuse) keeps LLM connection YAML aligned with Langfuse. Command: `yarn llm-connections:check`.
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Command: `yarn checkov`. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
-- Terraform drift visibility and reconciliation are manual through `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`. Apply uses a reviewed saved plan artifact and GitHub environment approval.
+- Terraform drift visibility and reconciliation are manual through `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`. Apply uses a reviewed saved plan in the state bucket, a run-owned digest and GitHub environment approval.
 
 CI covers the local checks in `yarn run check:ci`. The separate PR quality workflow may accept an explicitly reviewed exception; local quality commands remain strict. See [code quality checks](docs/engineering/code-quality.md).
 
@@ -195,7 +195,7 @@ Portal sign-in reconnects expired sessions and returns to the requested page. It
   - `/portal/select-server`
   - `/portal/server/:serverId/{library|ask|billing|settings}`
 - Upgrade flow entry points live under `/upgrade`, `/promo/:code`, and `/upgrade/select-server` with a success page at `/upgrade/success`. See `docs/upgrade-flow.md` for details and planned short-link support.
-- Successful Free-server meeting summaries and final notes can include a weekly Upgrade reminder with recorded time across saved meetings, more recording time, deeper meeting search, and support for Chronote's operation, preserving the server and Basic plan selection.
+- Successful Free-server meeting summaries and final notes can include a weekly Upgrade reminder with recorded time across saved meetings, more recording time and support for Chronote's operation, preserving the server and Basic plan selection.
 - Deployed via GitHub Actions to S3 + CloudFront (see `_infra/` and `.github/workflows/deploy.yml`).
 - Static hosting variables (frontend): `FRONTEND_BUCKET`, `FRONTEND_DOMAIN` (optional), `FRONTEND_CERT_ARN` (when custom domain is set).
 - Static hosting variables (docs): `DOCS_BUCKET`, `DOCS_DOMAIN` (optional), `DOCS_CERT_ARN` (when custom domain is set).

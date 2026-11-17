@@ -22,7 +22,6 @@ export interface TierLimits {
   maxMeetingDurationMs?: number;
   maxMeetingDurationPretty?: string;
   maxMeetingMinutesRolling?: number;
-  maxAskMeetings?: number;
   maxChatTtsMessagesMonthly?: number;
   liveVoiceEnabled: boolean;
   imagesEnabled: boolean;
@@ -49,7 +48,6 @@ const DEFAULT_LIMITS: Record<Tier, TierLimits> = {
     maxMeetingDurationMs: 90 * 60 * 1000, // 90 minutes
     maxMeetingDurationPretty: "90 minutes",
     maxMeetingMinutesRolling: 4 * 60,
-    maxAskMeetings: 5,
     maxChatTtsMessagesMonthly: chatTtsLimits.free,
     liveVoiceEnabled: false,
     imagesEnabled: false,
@@ -58,7 +56,6 @@ const DEFAULT_LIMITS: Record<Tier, TierLimits> = {
     maxMeetingDurationMs: 7_200_000,
     maxMeetingDurationPretty: "2 hours",
     maxMeetingMinutesRolling: 20 * 60,
-    maxAskMeetings: 25,
     maxChatTtsMessagesMonthly: chatTtsLimits.basic,
     liveVoiceEnabled: true,
     imagesEnabled: true,
@@ -67,7 +64,6 @@ const DEFAULT_LIMITS: Record<Tier, TierLimits> = {
     maxMeetingDurationMs: 7_200_000,
     maxMeetingDurationPretty: "2 hours",
     maxMeetingMinutesRolling: undefined,
-    maxAskMeetings: 100,
     maxChatTtsMessagesMonthly: chatTtsLimits.pro,
     liveVoiceEnabled: true,
     imagesEnabled: true,

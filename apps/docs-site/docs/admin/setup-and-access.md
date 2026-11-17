@@ -176,6 +176,11 @@ Each plan tier includes a weekly meeting minutes allowance. Monitor usage by wat
 
 ## Billing
 
+On the [upgrade page](https://chronote.gg/upgrade), compare prices and choose
+**Continue with Basic** or **Continue with Pro**. If you are signed out, that
+action takes you through Discord sign-in and keeps your chosen plan and billing
+period. Select a server you manage before continuing to checkout.
+
 Open your server's Billing page in the portal to review its plan and usage. The
 original payer must also have Manage Server permission to manage an existing
 Stripe subscription. Other server managers cannot open the payer's Stripe account.

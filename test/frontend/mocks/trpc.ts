@@ -1,3 +1,9 @@
+import { askQueryMocks, resetAskQueries } from "./askQueries";
+export {
+  askStartingContextQuery,
+  askSettingsQuery,
+  setAskSettingsQuery,
+} from "./askQueries";
 import { emptyMeetingBrowse } from "./emptyMeetingBrowse";
 import type { QueryState, MutationState } from "./trpcState";
 import {
@@ -154,10 +160,6 @@ type AskListData = { conversations: AskConversation[] };
 type AskConversationData = {
   conversation: AskConversation | null;
   messages: AskMessage[];
-};
-type AskSettingsData = {
-  askMembersEnabled: boolean;
-  askSharingPolicy: "off" | "server" | "public";
 };
 type AskSharedListData = { conversations: AskSharedConversation[] };
 type AskSharedConversationData = {
@@ -333,10 +335,6 @@ export const serversChannelsQuery = buildQueryState<ChannelsData>({
   textChannels: [],
 });
 export const askListQuery = buildQueryState<AskListData>({ conversations: [] });
-export const askSettingsQuery = buildQueryState<AskSettingsData>({
-  askMembersEnabled: true,
-  askSharingPolicy: "server",
-});
 export const askSharedListQuery = buildQueryState<AskSharedListData>({
   conversations: [],
 });
@@ -421,7 +419,10 @@ export const billingPortalMutation = buildMutationState<
   [unknown],
   { url: string }
 >({ url: "https://example.com/portal" });
-export const askMutation = buildMutationState<[unknown], void>(undefined);
+export const askMutation = buildMutationState<
+  [unknown],
+  inferRouterOutputs<AppRouter>["ask"]["ask"] | undefined
+>(undefined);
 export const askRenameMutation = buildMutationState<[unknown], void>(undefined);
 const defaultAskConversation: AskConversation = {
   id: "conv-1",
@@ -721,10 +722,7 @@ export const resetTrpcMocks = () => {
     textChannels: [],
   });
   resetQueryState(askListQuery, { conversations: [] });
-  resetQueryState(askSettingsQuery, {
-    askMembersEnabled: true,
-    askSharingPolicy: "server",
-  });
+  resetAskQueries();
   resetQueryState(askSharedListQuery, { conversations: [] });
   resetQueryState(askConversationQuery, { conversation: null, messages: [] });
   resetQueryState(askSharedConversationQuery, {
@@ -917,12 +915,6 @@ export const setAskListQuery = (next: Partial<QueryState<AskListData>>) => {
   Object.assign(askListQuery, next);
 };
 
-export const setAskSettingsQuery = (
-  next: Partial<QueryState<AskSettingsData>>,
-) => {
-  Object.assign(askSettingsQuery, next);
-};
-
 export const setAskSharedListQuery = (
   next: Partial<QueryState<AskSharedListData>>,
 ) => {
@@ -1063,7 +1055,7 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
       portal: { useMutation: () => billingPortalMutation },
     },
     ask: {
-      settings: { useQuery: () => askSettingsQuery },
+      ...askQueryMocks,
       listConversations: { useQuery: () => askListQuery },
       listSharedConversations: { useQuery: () => askSharedListQuery },
       getConversation: { useQuery: () => askConversationQuery },

@@ -71,10 +71,16 @@ describe("askConversationService flow", () => {
       question: "What did we decide?",
       conversationId: "conv-new",
       channelId: "voice-1",
+      contextMeetingIds: ["voice-1#2025-01-01T00:00:00.000Z"],
     });
 
     expect(result.conversationId).toBe("conv-new");
     expect(result.answer).toBe("Answer from Chronote.");
+    expect(mockedAnswerQuestionService).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        contextMeetingIds: ["voice-1#2025-01-01T00:00:00.000Z"],
+      }),
+    );
     const conversation = await getAskConversationWithMessages(
       userId,
       guildId,

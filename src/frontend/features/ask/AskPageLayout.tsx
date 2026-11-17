@@ -1,4 +1,5 @@
-import { Grid, Stack } from "@mantine/core";
+import { Button, Drawer, Grid, Stack } from "@mantine/core";
+import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import PageHeader from "../../components/PageHeader";
 import { ConversationListPanel } from "./ConversationListPanel";
 import type {
@@ -55,6 +56,32 @@ export function AskPageLayout({
   askAccessAllowed,
   conversationPaneProps,
 }: AskPageLayoutProps) {
+  const desktop = useMediaQuery("(min-width: 62em)");
+  const [chatsOpened, chats] = useDisclosure(false);
+  const conversationList = (
+    <ConversationListPanel
+      listMode={listMode}
+      onListModeChange={onListModeChange}
+      query={query}
+      onQueryChange={onQueryChange}
+      mineConversations={mineConversations}
+      archivedConversations={archivedConversations}
+      sharedConversations={sharedConversations}
+      listBusy={listBusy}
+      listError={listError}
+      activeId={activeId}
+      onNewConversation={() => {
+        chats.close();
+        onNewConversation();
+      }}
+      navigateToConversation={(id, mode) => {
+        chats.close();
+        onNavigateConversation(id, mode);
+      }}
+      sharingEnabled={sharingEnabled}
+      askAccessAllowed={askAccessAllowed}
+    />
+  );
   return (
     <Stack
       gap="md"
@@ -63,11 +90,29 @@ export function AskPageLayout({
     >
       <PageHeader
         title="Ask"
-        description="Query recent meetings with links back to your notes. Conversations stay scoped to the selected server."
+        description="Ask about accessible meetings with links back to your notes. Conversations stay scoped to the selected server."
       />
 
       <AskShareModal {...shareModalProps} />
       <AskArchiveModal {...archiveModalProps} />
+      {!desktop ? (
+        <>
+          <Button variant="light" size="xs" onClick={chats.open}>
+            Chats
+          </Button>
+          <Drawer opened={chatsOpened} onClose={chats.close} title="Chats">
+            <div
+              style={{
+                height: "calc(100dvh - 100px)",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              {conversationList}
+            </div>
+          </Drawer>
+        </>
+      ) : null}
 
       <div
         style={{
@@ -84,24 +129,11 @@ export function AskPageLayout({
           align="stretch"
           styles={{ inner: { height: "100%" } }}
         >
-          <Grid.Col span={{ base: 12, md: 4 }} style={{ height: "100%" }}>
-            <ConversationListPanel
-              listMode={listMode}
-              onListModeChange={onListModeChange}
-              query={query}
-              onQueryChange={onQueryChange}
-              mineConversations={mineConversations}
-              archivedConversations={archivedConversations}
-              sharedConversations={sharedConversations}
-              listBusy={listBusy}
-              listError={listError}
-              activeId={activeId}
-              onNewConversation={onNewConversation}
-              navigateToConversation={onNavigateConversation}
-              sharingEnabled={sharingEnabled}
-              askAccessAllowed={askAccessAllowed}
-            />
-          </Grid.Col>
+          {desktop ? (
+            <Grid.Col span={4} style={{ height: "100%" }}>
+              {conversationList}
+            </Grid.Col>
+          ) : null}
           <Grid.Col
             span={{ base: 12, md: 8 }}
             style={{
