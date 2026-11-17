@@ -53,6 +53,23 @@ run "delivery_parity" {
     error_message = "ReadOnlyAccess must never expose production resources, shared production state or another environment's saved plans."
   }
   assert {
+    condition = (one([for s in jsondecode(aws_iam_role_policy.sandbox_terraform_plan[0].policy).Statement : s if s.Sid == "SearchTagMetadata"]).Action == "s3vectors:ListTagsForResource" &&
+      toset(one([for s in jsondecode(aws_iam_role_policy.sandbox_terraform_plan[0].policy).Statement : s if s.Sid == "SearchTagMetadata"]).Resource) == toset([
+        "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-sandbox-search-${var.sandbox_account_id}",
+        "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-sandbox-search-${var.sandbox_account_id}/index/*"
+      ])
+    )
+    error_message = "Plan may read tags only on its exact Sandbox search bucket and retained-generation indexes, without vector content access."
+  }
+  assert {
+    condition = alltrue([for policy in [local.delivery_guardrails, aws_iam_role_policy.sandbox_terraform_plan[0].policy] :
+      contains(one([for s in jsondecode(policy).Statement : s if s.Sid == "CustomerData"]).Action, "dynamodb:GetRecords") &&
+      one([for s in jsondecode(policy).Statement : s if s.Sid == "CustomerData"]).Effect == "Deny" &&
+      contains(one([for s in jsondecode(policy).Statement : s if s.Sid == "CustomerData"]).Resource, "arn:aws:dynamodb:${local.region_account}:table/meeting-notes-sandbox-*")
+    ])
+    error_message = "Terraform roles must deny customer stream records as well as table reads; the table wildcard covers its stream ARNs."
+  }
+  assert {
     condition = alltrue([for policy in [local.delivery_guardrails, aws_iam_role_policy.sandbox_terraform_plan[0].policy] :
       one([for s in jsondecode(policy).Statement : s if s.Sid == "ProductionResources"]).NotAction == "iam:GetOpenIDConnectProvider" &&
       one([for s in jsondecode(policy).Statement : s if s.Sid == "ProductionResources"]).Resource == "*" &&
