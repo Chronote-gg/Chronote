@@ -73,8 +73,10 @@ const FEATURES = {
   ],
 };
 
-const currentPaidPlanBadge = (currentTier: string, tier: PaidTier) =>
-  currentTier === tier ? "Current plan" : undefined;
+const currentPaidPlanBadge = (
+  currentTier: string | undefined,
+  tier: PaidTier,
+) => (currentTier === tier ? "Current plan" : undefined);
 
 const paidTierActionEnabled = (tier: PaidTier, basic: boolean, pro: boolean) =>
   tier === "basic" ? basic : pro;
