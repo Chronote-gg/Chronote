@@ -5,6 +5,7 @@ async function mockAsk(
   page: Page,
   submissionFails = false,
   existingConversation = false,
+  recentHistory = false,
 ) {
   await page.route("**/api/csrf-token", (route) =>
     route.fulfill({ json: { csrfToken: "test-only-csrf" } }),
@@ -37,7 +38,12 @@ async function mockAsk(
       guilds: [{ id: "example", name: "Engineering HQ", canManage: true }],
     },
     "servers.channels": { voiceChannels: [], textChannels: [] },
-    "ask.settings": { askMembersEnabled: true, askSharingPolicy: "server" },
+    "ask.settings": {
+      agentEnabled: !recentHistory,
+      searchEnabled: !recentHistory,
+      askMembersEnabled: true,
+      askSharingPolicy: "server",
+    },
     "ask.listConversations": {
       conversations: existingConversation ? [conversation] : [],
     },
@@ -66,6 +72,12 @@ async function mockAsk(
           timestamp: "2026-11-14T14:00:00Z",
         },
       ],
+    },
+    "ask.ask": {
+      conversationId: conversation.id,
+      answer: "Preview answer",
+      conversation,
+      messages,
     },
     "ask.startRun": {
       runId: "preview-run",
@@ -251,4 +263,29 @@ test("full meeting search adds older context while keeping the question and page
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("ask-input")).toHaveValue("Keep this draft");
   await expect(page).toHaveURL(/\/portal\/server\/example\/ask$/);
+});
+
+test("recent history fallback sends without agent routes or indexed search", async ({
+  page,
+}) => {
+  const agentRequests: string[] = [];
+  page.on("request", (request) => {
+    if (/ask\.(startRun|getRun|watchRun|searchMeetings)/.test(request.url()))
+      agentRequests.push(request.url());
+  });
+  await mockAsk(page, false, false, true);
+  await page.goto("/portal/server/example/ask");
+  await expect(page.getByRole("note")).toHaveText(
+    "Recent history mode: answers use up to 25 recent accessible meetings. Full history search is not enabled yet.",
+  );
+  await expect(
+    page.getByRole("button", { name: "Add meeting context", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Add to context" }).first().click();
+  await page.getByTestId("ask-input").fill("Preview question");
+  await page.getByTestId("ask-send").click();
+  await expect(
+    page.getByText("Preview answer", { exact: true }).first(),
+  ).toBeVisible();
+  expect(agentRequests).toEqual([]);
 });

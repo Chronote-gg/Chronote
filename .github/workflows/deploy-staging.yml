@@ -335,10 +335,11 @@ jobs:
     needs: [deploy-target-preflight, deploy-docs]
     runs-on: ubuntu-latest
     environment: sandbox
-    timeout-minutes: 240
+    timeout-minutes: 300
     permissions:
       contents: read
       id-token: write
+      actions: read
     env:
       DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
@@ -357,6 +358,11 @@ jobs:
           node-version-file: ".nvmrc"
           cache: "yarn"
           cache-dependency-path: "yarn.lock"
+
+      - name: Wait for a running Terraform Apply
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/deployment/terraform-runs.cjs wait-apply-idle sandbox
 
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh

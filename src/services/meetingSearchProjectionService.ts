@@ -55,6 +55,23 @@ export const meetingSearchSourceRevision = (history: MeetingHistory) =>
     ),
   );
 
+function transcriptPassageEnd(transcript: string, start: number) {
+  let end = Math.min(start + 3000, transcript.length);
+  if (end < transcript.length) {
+    const paragraph = transcript.lastIndexOf("\n\n", end - 2);
+    const line = transcript.lastIndexOf("\n", end - 1);
+    if (paragraph > start + 1500) end = paragraph + 2;
+    else if (line > start + 1500) end = line + 1;
+  }
+  while (tokenizer.encode(transcript.slice(start, end), [], []).length > 8192) {
+    end = start + Math.floor((end - start) * 0.9);
+  }
+  // Preserve UTF-16 offsets without dividing a surrogate pair.
+  if (end < transcript.length && /[\uD800-\uDBFF]/.test(transcript[end - 1]))
+    end--;
+  return end;
+}
+
 export function buildMeetingSearchDocuments(
   history: MeetingHistory,
   transcript: string,
@@ -128,21 +145,7 @@ export function buildMeetingSearchDocuments(
     );
   const transcriptHash = hash(transcript);
   for (let start = 0; dataset !== "meetings" && start < transcript.length;) {
-    let end = Math.min(start + 3000, transcript.length);
-    if (end < transcript.length) {
-      const paragraph = transcript.lastIndexOf("\n\n", end - 2);
-      const line = transcript.lastIndexOf("\n", end - 1);
-      if (paragraph > start + 1500) end = paragraph + 2;
-      else if (line > start + 1500) end = line + 1;
-    }
-    while (
-      tokenizer.encode(transcript.slice(start, end), [], []).length > 8192
-    ) {
-      end = start + Math.floor((end - start) * 0.9);
-    }
-    // Preserve UTF-16 offsets without dividing a surrogate pair.
-    if (end < transcript.length && /[\uD800-\uDBFF]/.test(transcript[end - 1]))
-      end--;
+    const end = transcriptPassageEnd(transcript, start);
     append("transcripts", transcript.slice(start, end), {
       start,
       end,
@@ -237,6 +240,55 @@ export function createMeetingSearchProjector(deps: {
         }
       );
     }
+    async function cleanupOld(state: MeetingSearchProjectionState) {
+      for (const old of states) {
+        if (
+          old.dataset === state.dataset &&
+          old.projectionId !== state.projectionId
+        )
+          await cleanup(old);
+      }
+    }
+    async function embedDocuments(
+      documents: SearchProjectionDocument[],
+      state: MeetingSearchProjectionState,
+    ) {
+      const cachedVectors = new Map<string, number[]>();
+      const missing: SearchProjectionDocument[] = [];
+      for (const document of documents) {
+        signal?.throwIfAborted();
+        const prior = states
+          .filter(
+            (s) =>
+              s.status === "ready" &&
+              s.dataset === state.dataset &&
+              s.model === state.model &&
+              s.dimensions === state.dimensions,
+          )
+          .flatMap((s) => s.documents)
+          .find((d) => d.inputHash === document.inputHash);
+        const vector = prior
+          ? await deps.index.get(state.dataset, prior.key)
+          : undefined;
+        if (vector) cachedVectors.set(document.key, vector);
+        else missing.push(document);
+      }
+      const fresh = missing.length
+        ? await deps.embed(
+            missing.map((d) => d.text),
+            signal,
+          )
+        : [];
+      if (fresh.length !== missing.length)
+        throw Error("Embedding batch output mismatch");
+      missing.forEach((document, index) =>
+        cachedVectors.set(document.key, fresh[index]),
+      );
+      return documents.map((document) => ({
+        ...document,
+        vector: cachedVectors.get(document.key)!,
+      }));
+    }
     async function projectDataset(dataset: "meetings" | "transcripts") {
       let state = await loadState(dataset, "");
       let failure: NonNullable<MeetingSearchProjectionState["failure"]> =
@@ -250,12 +302,7 @@ export function createMeetingSearchProjector(deps: {
           dataset === "transcripts" ? hash(transcript) : "";
         state = await loadState(dataset, transcriptHash);
         if (state.status === "ready") {
-          for (const old of states)
-            if (
-              old.dataset === dataset &&
-              old.projectionId !== state.projectionId
-            )
-              await cleanup(old);
+          await cleanupOld(state);
           return;
         }
         state.status = "pending";
@@ -279,41 +326,7 @@ export function createMeetingSearchProjector(deps: {
         // Deterministic revision keys preserve uncertain writes across retries without allocating new intents.
         await save(state);
         failure = "embedding";
-        const cachedVectors = new Map<string, number[]>();
-        const missing: SearchProjectionDocument[] = [];
-        for (const document of documents) {
-          signal?.throwIfAborted();
-          const prior = states
-            .filter(
-              (s) =>
-                s.status === "ready" &&
-                s.dataset === dataset &&
-                s.model === state.model &&
-                s.dimensions === state.dimensions,
-            )
-            .flatMap((s) => s.documents)
-            .find((d) => d.inputHash === document.inputHash);
-          const vector = prior
-            ? await deps.index.get(dataset, prior.key)
-            : undefined;
-          if (vector) cachedVectors.set(document.key, vector);
-          else missing.push(document);
-        }
-        const fresh = missing.length
-          ? await deps.embed(
-              missing.map((d) => d.text),
-              signal,
-            )
-          : [];
-        if (fresh.length !== missing.length)
-          throw Error("Embedding batch output mismatch");
-        missing.forEach((document, index) =>
-          cachedVectors.set(document.key, fresh[index]),
-        );
-        const embedded = documents.map((document) => ({
-          ...document,
-          vector: cachedVectors.get(document.key)!,
-        }));
+        const embedded = await embedDocuments(documents, state);
         async function current() {
           const latest = await deps.source.get(key, signal);
           return (
@@ -340,12 +353,7 @@ export function createMeetingSearchProjector(deps: {
         state.status = "ready";
         state.retryAt = 0;
         await save(state);
-        for (const old of states)
-          if (
-            old.dataset === dataset &&
-            old.projectionId !== state.projectionId
-          )
-            await cleanup(old);
+        await cleanupOld(state);
       } catch (error) {
         if (failure === "source") state.attempts++;
         state.failure = failure;

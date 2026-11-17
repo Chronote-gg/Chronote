@@ -1,7 +1,6 @@
 # Required
 DISCORD_CLIENT_ID="your-sandbox-discord-client-id"
 GITHUB_TOKEN="your-github-token"
-AWS_TOKEN_KEY="your-aws-token-key"
 
 # Environment setup
 environment="sandbox"

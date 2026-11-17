@@ -160,7 +160,7 @@ Ask natural-language questions about past meetings.
 | `tags`     | No       | Filter by tags                                             |
 | `scope`    | No       | "Guild" (default, searches all channels) or "Channel only" |
 
-Chronote searches your meeting history and generates an answer with citations linking to specific meetings. Every plan can search the same accessible retained history when search is enabled. Coverage notices identify indexing that is still catching up.
+Chronote searches your meeting history and generates an answer with citations linking to specific meetings. Every plan can search the same accessible retained history when search is enabled. Coverage notices identify indexing that is still catching up. During rollout, a **Recent history mode** notice means Ask uses up to 25 recent meeting candidates plus any meetings you explicitly selected; full-history search is not enabled yet.
 
 ### `/tts`
 

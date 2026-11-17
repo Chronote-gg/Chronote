@@ -1,28 +1,30 @@
 import { useAuthNavigationBlocker } from "../hooks/useAuthNavigationBlocker";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Button, Group, Modal, Stack, Textarea } from "@mantine/core";
+import type { AskContextMeeting } from "../features/ask/AskStartingState";
 import {
-  Button,
-  Group,
-  Modal,
-  Pill,
-  Stack,
-  Text,
-  Textarea,
-} from "@mantine/core";
-import {
-  AskStartingState,
-  type AskContextMeeting,
-} from "../features/ask/AskStartingState";
+  AskModeNotice,
+  AskStartingContext,
+  AskContextAction,
+  AskContextChips,
+  AskContextModal,
+} from "../features/ask/AskContextControls";
 import { useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { AskPageLayout } from "../features/ask/AskPageLayout";
 import { buildConversationMessagesUpdate } from "../features/ask/askConversationUtils";
-import { useAskRun } from "../features/ask/useAskRun";
+import {
+  resolveAskCapabilities,
+  useAskRequest,
+} from "../features/ask/useAskRequest";
+import {
+  canShowAskStarting,
+  useAskMeetingPicker,
+} from "../features/ask/useAskMeetingPicker";
 import { useAskActions } from "../features/ask/useAskActions";
 import { useAskPageEffects } from "../features/ask/useAskPageEffects";
 import { trpc } from "../services/trpc";
-import { useAuth } from "../contexts/AuthContext";
 import { useGuildContext } from "../contexts/GuildContext";
 import type { AskConversation, AskMessage } from "../../types/ask";
 import {
@@ -31,6 +33,7 @@ import {
   type ListMode,
 } from "../utils/askLinks";
 import {
+  resolveAskFocusReady,
   filterConversationsByQuery,
   prependOptimisticConversation,
   resolveAllowOptimistic,
@@ -48,7 +51,6 @@ import {
 
 export default function Ask() {
   const { selectedGuildId, guilds } = useGuildContext();
-  const { user } = useAuth();
   const trpcUtils = trpc.useUtils();
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as {
@@ -120,6 +122,9 @@ export default function Ask() {
     { serverId: selectedGuildId ?? "" },
     { enabled: Boolean(selectedGuildId) },
   );
+  const { agentEnabled, searchEnabled } = resolveAskCapabilities(
+    settingsQuery.data,
+  );
   const askMembersEnabled = settingsQuery.data?.askMembersEnabled ?? true;
   const askSharingPolicy = settingsQuery.data?.askSharingPolicy ?? "server";
   const sharingEnabled = askSharingPolicy !== "off";
@@ -174,10 +179,12 @@ export default function Ask() {
         prev?.conversation?.id === activeId ? prev : undefined,
     },
   );
-  const askMutation = useAskRun({
-    userId: user?.id ?? null,
+  const askMutation = useAskRequest({
+    agentEnabled,
     serverId: selectedGuildId,
     conversationId: activeId,
+    errorMessage,
+    setErrorMessage,
   });
   const renameMutation = trpc.ask.rename.useMutation();
   const shareMutation = trpc.ask.setVisibility.useMutation();
@@ -416,104 +423,44 @@ export default function Ask() {
     allowOptimistic,
   ]);
 
-  const startingContextQuery = trpc.ask.startingContext.useQuery(
-    { serverId: selectedGuildId ?? "" },
-    {
-      enabled: Boolean(
-        selectedGuildId &&
-        settingsQuery.isSuccess &&
-        askAccessAllowed &&
-        listMode === "mine" &&
-        !isArchived &&
-        !displayMessages.length &&
-        !listBusy &&
-        !conversationBusy,
-      ),
-      staleTime: 30_000,
-    },
-  );
-
-  const meetingSearchQuery = trpc.ask.searchMeetings.useQuery(
-    {
-      serverId: selectedGuildId ?? "",
-      query: debouncedMeetingQuery,
-      cursor: meetingCursor,
-      pageSize: 10,
-    },
-    {
-      enabled: Boolean(
-        selectedGuildId && askAccessAllowed && debouncedMeetingQuery.trim(),
-      ),
-      staleTime: 30_000,
-    },
-  );
-  const pickerProps = {
-    searchQuery: meetingQuery,
-    onSearchChange: (value: string) => {
-      setMeetingQuery(value);
-      setMeetingCursor(undefined);
-    },
-    onLoadMore:
-      meetingQuery === debouncedMeetingQuery &&
-      meetingSearchQuery.data?.nextCursor
-        ? () =>
-            setMeetingCursor(meetingSearchQuery.data?.nextCursor ?? undefined)
-        : undefined,
-    semanticCoverage:
-      meetingQuery === debouncedMeetingQuery
-        ? meetingSearchQuery.data?.coverage.semanticStatus
-        : undefined,
-    coverage: meetingQuery.trim()
-      ? meetingSearchQuery.data?.coverage.status
-      : startingContextQuery.data?.coverage.status,
-    count: undefined,
-    notesCount: undefined,
-    meetings:
-      meetingQuery !== debouncedMeetingQuery
-        ? []
-        : meetingQuery.trim()
-          ? (meetingSearchQuery.data?.hits ?? []).map((hit) => ({
-              id: hit.meeting.id,
-              title: hit.title,
-              timestamp: hit.startedAt,
-            }))
-          : (startingContextQuery.data?.meetings ?? []),
-    loading:
-      meetingQuery !== debouncedMeetingQuery ||
-      (meetingQuery.trim()
-        ? meetingSearchQuery.isPending
-        : startingContextQuery.isPending),
-    failed: meetingQuery.trim()
-      ? meetingSearchQuery.isError
-      : startingContextQuery.isError,
-    selectedIds: contextMeetings.map((meeting) => meeting.id),
-    onRetry: () => {
-      void (meetingQuery.trim()
-        ? meetingSearchQuery.refetch()
-        : startingContextQuery.refetch());
-    },
-    onExample: (question: string) => {
-      setDraft(question);
-      inputRef.current?.focus({ preventScroll: true });
-    },
-    onSelect: (meeting: AskContextMeeting) => {
-      setContextMeetings((current) =>
-        current.some((item) => item.id === meeting.id)
-          ? current
-          : [...current, meeting].slice(0, 3),
-      );
-      if (!pickerOpen) inputRef.current?.focus({ preventScroll: true });
-    },
-  };
+  const startingVisible = canShowAskStarting({
+    serverId: selectedGuildId,
+    listMode,
+    isArchived,
+    listBusy,
+    conversationBusy,
+    listError,
+    conversationError,
+    askAccessAllowed,
+  });
+  const { startingContextQuery, pickerProps } = useAskMeetingPicker({
+    selectedGuildId,
+    askAccessAllowed,
+    searchEnabled,
+    startingVisible,
+    settingsReady: settingsQuery.isSuccess,
+    messageCount: displayMessages.length,
+    meetingQuery,
+    debouncedMeetingQuery,
+    meetingCursor,
+    contextMeetings,
+    setMeetingQuery,
+    setMeetingCursor,
+    setContextMeetings,
+    setDraft,
+    inputRef,
+    pickerOpen,
+  });
 
   useAskPageEffects({
-    focusReady:
-      settingsQuery.isSuccess &&
-      !listError &&
-      !shareModalOpen &&
-      !archiveModalOpen &&
-      !feedbackModalOpen &&
-      !pickerOpen,
+    focusReady: resolveAskFocusReady({
+      ready: settingsQuery.isSuccess,
+      listError,
+      shareModalOpen,
+      archiveModalOpen,
+      feedbackModalOpen,
+      pickerOpen,
+    }),
     selectedGuildId,
     askAccessAllowed,
     listMode,
@@ -706,86 +653,51 @@ export default function Ask() {
         askAccessAllowed={askAccessAllowed}
         conversationPaneProps={{
           ...actions.conversationPaneProps,
-          errorMessage: errorMessage ?? askMutation.recoveryError,
-          activity: askMutation.isPending ? askMutation.activity : undefined,
-          onStop: () => {
-            void askMutation
-              .stop()
-              .catch(() =>
-                setErrorMessage("Stop could not be confirmed. Try Stop again."),
-              );
-          },
-          startingContent:
-            selectedGuildId &&
-            listMode === "mine" &&
-            !isArchived &&
-            !listBusy &&
-            !conversationBusy &&
-            !listError &&
-            !conversationError &&
-            askAccessAllowed ? (
-              <AskStartingState
-                {...pickerProps}
-                onSearchChange={undefined}
-                searchQuery=""
-                meetings={startingContextQuery.data?.meetings ?? []}
-                coverage={startingContextQuery.data?.coverage.status}
-                semanticCoverage={undefined}
-                loading={startingContextQuery.isPending}
-                failed={startingContextQuery.isError}
-                onLoadMore={undefined}
-                onRetry={() => {
-                  void startingContextQuery.refetch();
-                }}
-              />
-            ) : undefined,
-          contextAction:
-            listMode === "mine" && !isArchived ? (
-              <Button
-                variant="subtle"
-                size="compact-xs"
-                disabled={askMutation.isPending}
-                onClick={() => setPickerOpen(true)}
-              >
-                Add meeting context
-              </Button>
-            ) : undefined,
-          contextChips:
-            contextMeetings.length && listMode === "mine" && !isArchived ? (
-              <Stack gap={4}>
-                {contextMeetings.length ? (
-                  <Text size="xs" c="dimmed">
-                    Included with your next question as meeting context
-                  </Text>
-                ) : null}
-                <Pill.Group>
-                  {contextMeetings.map((meeting) => (
-                    <Pill
-                      key={meeting.id}
-                      withRemoveButton
-                      onRemove={() =>
-                        setContextMeetings((current) =>
-                          current.filter((item) => item.id !== meeting.id),
-                        )
-                      }
-                      disabled={askMutation.isPending}
-                    >
-                      {meeting.title}
-                    </Pill>
-                  ))}
-                </Pill.Group>
-              </Stack>
-            ) : undefined,
+          ...askMutation.paneProps,
+          modeNotice: (
+            <AskModeNotice
+              ready={settingsQuery.isSuccess}
+              agentEnabled={agentEnabled}
+            />
+          ),
+          startingContent: (
+            <AskStartingContext
+              visible={startingVisible}
+              agentEnabled={agentEnabled}
+              query={startingContextQuery}
+              pickerProps={pickerProps}
+            />
+          ),
+          contextAction: (
+            <AskContextAction
+              searchEnabled={searchEnabled}
+              listMode={listMode}
+              isArchived={isArchived}
+              pending={askMutation.isPending}
+              onOpen={() => setPickerOpen(true)}
+            />
+          ),
+          contextChips: (
+            <AskContextChips
+              meetings={contextMeetings}
+              listMode={listMode}
+              isArchived={isArchived}
+              pending={askMutation.isPending}
+              onRemove={(id) =>
+                setContextMeetings((current) =>
+                  current.filter((item) => item.id !== id),
+                )
+              }
+            />
+          ),
         }}
       />
-      <Modal
+      <AskContextModal
         opened={pickerOpen}
+        searchEnabled={searchEnabled}
         onClose={() => setPickerOpen(false)}
-        title="Meeting context"
-        size="lg"
-      >
-        <AskStartingState {...pickerProps} />
-      </Modal>
+        pickerProps={pickerProps}
+      />
       <Modal
         opened={feedbackModalOpen}
         onClose={() => {

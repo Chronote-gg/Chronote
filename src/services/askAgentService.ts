@@ -1,10 +1,4 @@
-import type { AgentMessage, StreamFn } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, Context, Usage } from "@mariozechner/pi-ai";
-import type {
-  ResponseInputItem,
-  Response,
-} from "openai/resources/responses/responses";
-import { toResponseInputItems } from "openai/lib/responses/ResponseInputItems";
+import type { Agent, AgentMessage } from "@mariozechner/pi-agent-core";
 import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 import { isLangfuseTracingEnabled } from "./langfuseClient";
 import { toLangfuseAttributeMetadata } from "../observability/langfuseMetadata";
@@ -19,63 +13,13 @@ import {
   resolveChatParamsForRole,
   resolveModelParamsForContext,
 } from "./openaiModelParams";
-import {
-  createOpenAIClient,
-  buildOpenAISafetyIdentifier,
-} from "./openaiClient";
+import { createOpenAIClient } from "./openaiClient";
 
 // Native import preserves Pi's ESM entry point in the CommonJS backend build.
 const importPi = new Function("specifier", "return import(specifier)") as (
   specifier: string,
 ) => Promise<unknown>;
-type PrivateAssistantMessage = AssistantMessage & {
-  responseOutput?: ResponseInputItem[];
-};
-
-const emptyUsage = (): Usage => ({
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-});
-
-function responseInput(context: Context): ResponseInputItem[] {
-  const input: ResponseInputItem[] = [
-    { role: "system", content: context.systemPrompt ?? "" },
-  ];
-  for (const message of context.messages) {
-    if (message.role === "user") {
-      input.push({ role: "user", content: message.content as string });
-    } else if (message.role === "toolResult") {
-      input.push({
-        type: "function_call_output",
-        call_id: message.toolCallId,
-        output: message.content
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("\n"),
-      });
-    } else {
-      const saved = (message as PrivateAssistantMessage).responseOutput;
-      if (saved) input.push(...saved);
-      else
-        for (const part of message.content) {
-          if (part.type === "text")
-            input.push({ role: "assistant", content: part.text });
-          if (part.type === "toolCall")
-            input.push({
-              type: "function_call",
-              call_id: part.id,
-              name: part.name,
-              arguments: JSON.stringify(part.arguments),
-            });
-        }
-    }
-  }
-  return input;
-}
+import { createAskResponsesStream, emptyAskUsage } from "./askAgentResponses";
 
 export type ExecuteAskAgentInput = {
   principal: MeetingSearchPrincipal;
@@ -116,6 +60,125 @@ export async function executeAskAgent(options: ExecuteAskAgentInput) {
         { asType: "chain" },
       ),
   );
+}
+
+function askContextBytes(
+  messages: AgentMessage[],
+  systemPrompt: string,
+  tools: ReturnType<typeof createAskAgentTools>,
+) {
+  return Buffer.byteLength(
+    JSON.stringify({
+      messages,
+      systemPrompt,
+      tools: tools.tools.map(({ name, description, parameters }) => ({
+        name,
+        description,
+        parameters,
+      })),
+    }),
+    "utf8",
+  );
+}
+
+async function loadSelectedMeetings(
+  agent: Agent,
+  tools: ReturnType<typeof createAskAgentTools>,
+  meetings: MeetingRef[],
+  signal: AbortSignal,
+  model: string,
+) {
+  for (const meeting of meetings) {
+    signal.throwIfAborted();
+    const result = await tools.tools
+      .find((tool) => tool.name === "read_meeting_notes")!
+      .execute("selected", { meeting }, signal);
+    const payload = JSON.parse(
+      result.content[0].type === "text" ? result.content[0].text : "{}",
+    );
+    if (payload.error) throw new Error(payload.error.message);
+    const callId = `selected_${agent.state.messages.length}`;
+    agent.appendMessage({
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: callId,
+          name: "read_meeting_notes",
+          arguments: { meeting },
+        },
+      ],
+      api: "openai-responses",
+      provider: "openai",
+      model: model,
+      usage: emptyAskUsage(),
+      stopReason: "toolUse",
+      timestamp: Date.now(),
+    });
+    agent.appendMessage({
+      role: "toolResult",
+      toolCallId: callId,
+      toolName: "read_meeting_notes",
+      content: result.content,
+      isError: false,
+      timestamp: Date.now(),
+    });
+  }
+}
+
+async function finishAskAgent(
+  agent: Agent,
+  tools: ReturnType<typeof createAskAgentTools>,
+  signal: AbortSignal,
+  usage: ReturnType<typeof emptyAskUsage>,
+) {
+  signal.throwIfAborted();
+  if (agent.state.error) throw new Error(agent.state.error);
+  if (!(await tools.revalidate(signal)))
+    throw new Error("Source access or content changed. Retry the question.");
+  const final = [...agent.state.messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  if (!final || final.role !== "assistant" || final.stopReason !== "stop")
+    throw new Error("Ask did not finish an answer.");
+  const answer = final.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+  if (!answer.trim()) throw new Error("Ask returned no answer.");
+  return {
+    ...tools.normalizeCitations(answer),
+    sourceMeetingIds: [
+      ...new Set(tools.snapshot().evidence.map((item) => item.meeting.id)),
+    ],
+    history: agent.state.messages,
+    provenance: tools.snapshot(),
+    usage,
+  };
+}
+
+function boundAskPrincipal(
+  options: ExecuteAskAgentInput,
+): MeetingSearchPrincipal {
+  return {
+    ...options.principal,
+    ...(options.scope === "channel" ? { channelId: options.channelId } : {}),
+    ...(options.tags?.length ? { tags: options.tags } : {}),
+  };
+}
+
+async function restoredAskHistory(
+  options: ExecuteAskAgentInput,
+  tools: ReturnType<typeof createAskAgentTools>,
+  signal: AbortSignal,
+) {
+  let history = options.history ?? [];
+  if (
+    history.length &&
+    (!options.provenance?.evidence.length || !(await tools.revalidate(signal)))
+  )
+    history = history.filter((message) => message.role === "user");
+  return history;
 }
 
 async function executeAskAgentInner(options: ExecuteAskAgentInput) {
@@ -163,11 +226,7 @@ async function executeAskAgentInner(options: ExecuteAskAgentInput) {
     tags: ["feature:ask"],
     metadata: { scope: options.scope ?? "guild", api: "responses" },
   });
-  const principal: MeetingSearchPrincipal = {
-    ...options.principal,
-    ...(options.scope === "channel" ? { channelId: options.channelId } : {}),
-    ...(options.tags?.length ? { tags: options.tags } : {}),
-  };
+  const principal = boundAskPrincipal(options);
   let contextChars = 0;
   let turns = 0;
   const reserve = 4096;
@@ -184,147 +243,18 @@ async function executeAskAgentInner(options: ExecuteAskAgentInput) {
       ...(options.tags?.length ? { tags: options.tags } : {}),
     },
   });
-  const usage = emptyUsage();
-  const streamFn: StreamFn = (_model, requestContext, requestOptions) => {
-    const stream = pi.createAssistantMessageEventStream();
-    const message: PrivateAssistantMessage = {
-      role: "assistant",
-      content: [],
-      api: "openai-responses",
-      provider: "openai",
-      model: modelChoice.model,
-      usage: emptyUsage(),
-      stopReason: "stop",
-      timestamp: Date.now(),
-    };
-    void (async () => {
-      try {
-        signal.throwIfAborted();
-        const requestSignal = AbortSignal.any([
-          signal,
-          ...(requestOptions?.signal ? [requestOptions.signal] : []),
-        ]);
-        const responseStream = await client.responses.create(
-          {
-            model: modelChoice.model,
-            input: responseInput(requestContext),
-            stream: true,
-            store: false,
-            include: ["reasoning.encrypted_content"],
-            max_output_tokens: reserve,
-            reasoning: modelParams.reasoning_effort
-              ? { effort: modelParams.reasoning_effort }
-              : undefined,
-            temperature: modelParams.temperature,
-            text: modelParams.verbosity
-              ? { verbosity: modelParams.verbosity }
-              : undefined,
-            safety_identifier: buildOpenAISafetyIdentifier(
-              options.principal.userId,
-            ),
-            tools: (requestContext.tools ?? []).map((tool) => ({
-              type: "function" as const,
-              name: tool.name,
-              description: tool.description,
-              parameters: tool.parameters as Record<string, unknown>,
-              strict: false,
-            })),
-          },
-          { signal: requestSignal },
-        );
-        stream.push({ type: "start", partial: message });
-        let final: Response | undefined;
-        for await (const event of responseStream) {
-          requestSignal.throwIfAborted();
-          if (event.type === "response.output_text.delta") {
-            let part = message.content.find((item) => item.type === "text");
-            if (!part) {
-              part = { type: "text", text: "" };
-              message.content.push(part);
-            }
-            part.text += event.delta;
-            stream.push({
-              type: "text_delta",
-              contentIndex: message.content.indexOf(part),
-              delta: event.delta,
-              partial: message,
-            });
-          }
-          if (event.type === "response.completed") final = event.response;
-          if (
-            event.type === "response.failed" ||
-            event.type === "response.incomplete" ||
-            event.type === "error"
-          )
-            throw new Error(
-              "Ask response failed or exceeded its output budget.",
-            );
-        }
-        if (!final || final.status !== "completed")
-          throw new Error("Ask response did not complete.");
-        message.responseOutput = toResponseInputItems(final.output);
-        message.content = final.output.flatMap<
-          AssistantMessage["content"][number]
-        >((item) => {
-          if (item.type === "function_call")
-            return [
-              {
-                type: "toolCall" as const,
-                id: item.call_id,
-                name: item.name,
-                arguments: JSON.parse(item.arguments),
-              },
-            ];
-          if (item.type === "message")
-            return item.content.flatMap((part) => {
-              if (part.type === "refusal")
-                throw new Error("Ask generation refused.");
-              return part.type === "output_text"
-                ? [{ type: "text" as const, text: part.text }]
-                : [];
-            });
-          return [];
-        });
-        const cached = final.usage?.input_tokens_details?.cached_tokens ?? 0;
-        message.usage = {
-          ...emptyUsage(),
-          input: (final.usage?.input_tokens ?? 0) - cached,
-          cacheRead: cached,
-          output: final.usage?.output_tokens ?? 0,
-          totalTokens: final.usage?.total_tokens ?? 0,
-        };
-        usage.input += message.usage.input;
-        usage.output += message.usage.output;
-        usage.cacheRead += cached;
-        usage.totalTokens += message.usage.totalTokens;
-        message.stopReason = message.content.some(
-          (part) => part.type === "toolCall",
-        )
-          ? "toolUse"
-          : "stop";
-        stream.push({ type: "done", reason: message.stopReason, message });
-      } catch (cause) {
-        message.stopReason =
-          signal.aborted || requestOptions?.signal?.aborted
-            ? "aborted"
-            : "error";
-        message.errorMessage =
-          cause instanceof Error ? cause.message : "Ask generation failed.";
-        stream.push({
-          type: "error",
-          reason: message.stopReason,
-          error: message,
-        });
-      }
-    })();
-    return stream;
-  };
-  let history = options.history ?? [];
-  if (
-    history.length &&
-    (!options.provenance?.evidence.length || !(await tools.revalidate(signal)))
-  )
-    history = history.filter((message) => message.role === "user");
+  const usage = emptyAskUsage();
+  const streamFn = createAskResponsesStream({
+    client,
+    pi,
+    model: modelChoice.model,
+    modelParams,
+    signal,
+    userId: options.principal.userId,
+    maxOutputTokens: reserve,
+    usage,
+  });
+  const history = await restoredAskHistory(options, tools, signal);
   const systemPrompt = [
     "You are Chronote Ask. Answer meeting questions using the five read-only tools. Search all eligible retained history in the bound scope.",
     `Scope: ${JSON.stringify({ scope: principal.scope, serverIds: principal.serverIds, channelId: principal.channelId, tags: principal.tags })}. Current UTC time: ${new Date().toISOString()}. User timezone: ${options.timezone ?? "UTC"}.`,
@@ -353,18 +283,7 @@ async function executeAskAgentInner(options: ExecuteAskAgentInput) {
         : messages.filter((message) => message.role === "user");
       if (!valid) agent.replaceMessages(current);
       // UTF-8 bytes bound byte-pair tokens, including multilingual source text.
-      contextChars = Buffer.byteLength(
-        JSON.stringify({
-          messages: current,
-          systemPrompt,
-          tools: tools.tools.map(({ name, description, parameters }) => ({
-            name,
-            description,
-            parameters,
-          })),
-        }),
-        "utf8",
-      );
+      contextChars = askContextBytes(current, systemPrompt, tools);
       if (contextChars + reserve >= model.contextWindow)
         throw new Error(
           "Ask context limit reached. Start a fresh conversation.",
@@ -386,78 +305,16 @@ async function executeAskAgentInner(options: ExecuteAskAgentInput) {
   const abort = () => agent.abort();
   signal.addEventListener("abort", abort, { once: true });
   try {
-    contextChars = Buffer.byteLength(
-      JSON.stringify({
-        history,
-        systemPrompt,
-        tools: tools.tools.map(({ name, description, parameters }) => ({
-          name,
-          description,
-          parameters,
-        })),
-      }),
-      "utf8",
+    contextChars = askContextBytes(history, systemPrompt, tools);
+    await loadSelectedMeetings(
+      agent,
+      tools,
+      options.selectedMeetings ?? [],
+      signal,
+      modelChoice.model,
     );
-    for (const meeting of options.selectedMeetings ?? []) {
-      signal.throwIfAborted();
-      const result = await tools.tools
-        .find((tool) => tool.name === "read_meeting_notes")!
-        .execute("selected", { meeting }, signal);
-      const payload = JSON.parse(
-        result.content[0].type === "text" ? result.content[0].text : "{}",
-      );
-      if (payload.error) throw new Error(payload.error.message);
-      const callId = `selected_${agent.state.messages.length}`;
-      agent.appendMessage({
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            id: callId,
-            name: "read_meeting_notes",
-            arguments: { meeting },
-          },
-        ],
-        api: "openai-responses",
-        provider: "openai",
-        model: modelChoice.model,
-        usage: emptyUsage(),
-        stopReason: "toolUse",
-        timestamp: Date.now(),
-      });
-      agent.appendMessage({
-        role: "toolResult",
-        toolCallId: callId,
-        toolName: "read_meeting_notes",
-        content: result.content,
-        isError: false,
-        timestamp: Date.now(),
-      });
-    }
     await agent.prompt(options.question);
-    signal.throwIfAborted();
-    if (agent.state.error) throw new Error(agent.state.error);
-    if (!(await tools.revalidate(signal)))
-      throw new Error("Source access or content changed. Retry the question.");
-    const final = [...agent.state.messages]
-      .reverse()
-      .find((message) => message.role === "assistant");
-    if (!final || final.role !== "assistant" || final.stopReason !== "stop")
-      throw new Error("Ask did not finish an answer.");
-    const answer = final.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("\n");
-    if (!answer.trim()) throw new Error("Ask returned no answer.");
-    return {
-      ...tools.normalizeCitations(answer),
-      sourceMeetingIds: [
-        ...new Set(tools.snapshot().evidence.map((item) => item.meeting.id)),
-      ],
-      history: agent.state.messages,
-      provenance: tools.snapshot(),
-      usage,
-    };
+    return await finishAskAgent(agent, tools, signal, usage);
   } finally {
     signal.removeEventListener("abort", abort);
   }

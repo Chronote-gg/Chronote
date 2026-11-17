@@ -4,6 +4,7 @@ import type { AskAgentProvenance } from "./askAgentTools";
 import { executeAskAgent } from "./askAgentService";
 import { captureEvent } from "./analyticsService";
 import { config } from "./configService";
+import { answerLegacyAskQuestion } from "./legacyAskService";
 
 export type AskScope = "guild" | "channel";
 export interface AskRequest {
@@ -54,8 +55,7 @@ export async function answerQuestionService(
       citations: [],
       sourceMeetingIds: [],
     };
-  if (!config.ask.agentEnabled)
-    throw new Error("The Ask agent is not enabled yet.");
+  if (!config.ask.agentEnabled) return answerLegacyAskQuestion(req);
   return executeAskAgent({
     principal: { userId: req.viewerUserId, serverIds: [req.guildId] },
     question: req.question,

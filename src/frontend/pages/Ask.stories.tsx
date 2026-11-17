@@ -58,3 +58,20 @@ export const SearchContext: Story = {
     ).toBeVisible();
   },
 };
+
+export const RecentHistoryShort: Story = {
+  args: { agentEnabled: false, searchEnabled: false },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByRole("note")).toHaveTextContent(
+      "Recent history mode: answers use up to 25 recent accessible meetings. Full history search is not enabled yet.",
+    );
+    await expect(
+      canvas.queryByRole("button", { name: "Add meeting context" }),
+    ).toBeNull();
+  },
+};
+export const RecentHistoryMobile: Story = {
+  args: { agentEnabled: false, searchEnabled: false },
+  play: RecentHistoryShort.play,
+};

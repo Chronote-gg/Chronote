@@ -14,6 +14,8 @@ Current retained-record byte/token measurements passed the complete-note fit che
 
 Ask opens ready for a question. Recent cards and direct meeting links supply context without requiring navigation away. Full meeting search stays on Ask and adds removable meeting context. Example questions fill an editable draft without sending it.
 
+Until the agent and index are enabled, the existing notes-only Ask path remains available as explicitly labelled recent-history mode. It considers the same operational limit of 25 recent candidates for every tier plus explicitly selected meetings. It does not claim full-library search.
+
 Default scope remains the selected server. Personal/cross-server scope uses the existing source model and must be explicitly selected. Pi cannot widen it. Selected meetings are prioritized context, not a restriction against finding other meetings in the permitted scope.
 
 ### Find evidence and answer a question
@@ -47,7 +49,7 @@ Issue citation handles only for validated sources. Store their canonical ref, re
 
 ## S3 Vectors layout
 
-Use one new vector bucket per environment, with two generation-named indexes: meetings-<generation> and transcript-passages-<generation>. This is separate from the ordinary transcript S3 bucket. Configure ENHANCED explicitly or verify it after creation, float32, 1,536 dimensions and cosine distance. Names, dimensions, metric and non-filterable metadata choices require careful provisioning/replacement; stage new generations for model/schema changes and preserve the old one for rollback.
+Use one new vector bucket per environment, with two generation-named indexes: `meetings-<generation>` and `transcript-passages-<generation>`. This is separate from the ordinary transcript S3 bucket. Configure ENHANCED explicitly or verify it after creation, float32, 1,536 dimensions and cosine distance. Names, dimensions, metric and non-filterable metadata choices require careful provisioning/replacement; stage new generations for model/schema changes and preserve the old one for rollback.
 
 | Index               | One record contains                                                                                             | Search scope                                                                 |
 | ------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |

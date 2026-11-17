@@ -34,6 +34,9 @@ function validateIndex(index: Index, arn: string) {
   }
 }
 
+const textSearchField = (index: Index) =>
+  index.metadataConfiguration?.textSearchConfigurations?.[0];
+
 export async function configureSearchIndex(
   client: S3VectorsClient,
   indexArn: string,
@@ -57,7 +60,7 @@ export async function configureSearchIndex(
     return index;
   };
   let index = await read();
-  let field = index.metadataConfiguration?.textSearchConfigurations?.[0];
+  let field = textSearchField(index);
   if (
     !apply &&
     (index.indexMode !== "ENHANCED" || field?.status !== "ACTIVE")
@@ -84,7 +87,7 @@ export async function configureSearchIndex(
   while (index.indexMode !== "ENHANCED" || field?.status !== "ACTIVE") {
     await delay(1000, undefined, { signal });
     index = await read();
-    field = index.metadataConfiguration?.textSearchConfigurations?.[0];
+    field = textSearchField(index);
   }
   return {
     version: SEARCH_CONFIGURATION_VERSION,

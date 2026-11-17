@@ -2588,25 +2588,7 @@ export async function listAskConversations(
   return [];
 }
 
-export async function getAskConversation(
-  userId: string,
-  guildId: string,
-  conversationId: string,
-): Promise<AskConversationRecord | undefined> {
-  const pk = buildAskPartitionKey(userId, guildId);
-  const sk = `CONV#${conversationId}`;
-  const params = {
-    TableName: tableName("AskConversationTable"),
-    Key: marshall({ pk, sk }),
-    ConsistentRead: true,
-  };
-  const command = new GetItemCommand(params);
-  const result = await dynamoDbClient.send(command);
-  if (result.Item) {
-    return unmarshall(result.Item) as AskConversationRecord;
-  }
-  return undefined;
-}
+export { getAskConversation } from "./repositories/askConversationRead";
 
 export async function listAskMessages(
   userId: string,

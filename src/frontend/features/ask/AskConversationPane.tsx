@@ -16,6 +16,8 @@ import { AskMessageList } from "./AskMessageList";
 
 type AskConversationPaneProps = {
   startingContent?: ReactNode;
+  modeNotice?: ReactNode;
+  historyDescription?: string;
   contextChips?: ReactNode;
   contextAction?: ReactNode;
   onStop?: () => void;
@@ -71,6 +73,8 @@ type AskConversationPaneProps = {
 
 export function AskConversationPane({
   startingContent,
+  modeNotice,
+  historyDescription,
   contextChips,
   contextAction,
   onStop,
@@ -179,6 +183,7 @@ export function AskConversationPane({
           isArchived={isArchived}
           onNewConversation={onNewConversation}
         />
+        {modeNotice}
         <Divider />
         <AskMessageList
           emptyContent={startingContent}
@@ -200,6 +205,7 @@ export function AskConversationPane({
         <Divider my="xs" />
         <AskComposer
           contextChips={contextChips}
+          historyDescription={historyDescription}
           contextAction={contextAction}
           onStop={onStop}
           activity={activity}

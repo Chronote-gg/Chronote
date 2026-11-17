@@ -5,6 +5,7 @@ import type { ListMode } from "../../utils/askLinks";
 
 type AskComposerProps = {
   contextChips?: ReactNode;
+  historyDescription?: string;
   contextAction?: ReactNode;
   onStop?: () => void;
   activity?: string;
@@ -22,6 +23,7 @@ type AskComposerProps = {
 
 export function AskComposer({
   contextChips,
+  historyDescription = "Searches accessible meeting history.",
   contextAction,
   onStop,
   activity,
@@ -36,6 +38,12 @@ export function AskComposer({
   errorMessage,
   inputRef,
 }: AskComposerProps) {
+  const disabled =
+    !selectedGuildId ||
+    !askAccessAllowed ||
+    listMode !== "mine" ||
+    isArchived ||
+    askPending;
   return (
     <Stack gap="sm">
       {contextChips}
@@ -50,13 +58,7 @@ export function AskComposer({
         minRows={3}
         value={draft}
         onChange={(event) => onDraftChange(event.currentTarget.value)}
-        disabled={
-          !selectedGuildId ||
-          !askAccessAllowed ||
-          listMode !== "mine" ||
-          isArchived ||
-          askPending
-        }
+        disabled={disabled}
         ref={inputRef}
         data-testid="ask-input"
         onKeyDown={(event) => {
@@ -78,7 +80,7 @@ export function AskComposer({
       ) : null}
       <Group justify="space-between" align="center" wrap="wrap">
         <Text size="xs" c="dimmed">
-          Searches accessible meeting history. Press Ctrl+Enter to send.
+          {historyDescription} Press Ctrl+Enter to send.
         </Text>
         {contextAction}
         {askPending && onStop ? (
@@ -91,14 +93,7 @@ export function AskComposer({
             gradient={{ from: "brand", to: "violet" }}
             leftSection={<IconSparkles size={16} />}
             onClick={onAsk}
-            disabled={
-              !draft.trim() ||
-              !selectedGuildId ||
-              !askAccessAllowed ||
-              listMode !== "mine" ||
-              isArchived ||
-              askPending
-            }
+            disabled={!draft.trim() || disabled}
             loading={askPending}
             data-testid="ask-send"
           >

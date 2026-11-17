@@ -25,6 +25,7 @@ export type AskRunExecutionResult = {
 };
 export type AskRunServiceOptions = {
   execute: (context: AskRunExecutionContext) => Promise<AskRunExecutionResult>;
+  onCompleted?: (scope: AskRunScope, run: AskRunSnapshot) => Promise<unknown>;
   repository?: AskRunRepository;
   leaseMs?: number;
   pollMs?: number;
@@ -46,6 +47,7 @@ const snapshot = (record: AskRunRecord): AskRunSnapshot =>
 
 export function createAskRunService({
   execute,
+  onCompleted,
   repository = getAskRunRepository(),
   leaseMs = 30_000,
   pollMs = 1000,
@@ -56,6 +58,15 @@ export function createAskRunService({
     { controller: AbortController; timer: ReturnType<typeof setInterval> }
   >();
   const iso = () => new Date(now()).toISOString();
+  async function projectCompleted(record: AskRunRecord) {
+    try {
+      await onCompleted?.(record.input, snapshot(record));
+    } catch {
+      console.error(
+        "Ask answer projection failed; the completed run remains available for retry.",
+      );
+    }
+  }
   async function terminal(
     record: AskRunRecord,
     status: "stopped" | "interrupted",
@@ -169,6 +180,8 @@ export function createAskRunService({
           assertOwnership: () => serialize(assertOwnership),
         });
         await serialize(() => save("completed", output));
+        clearInterval(timer);
+        await projectCompleted(record);
       } catch {
         // A lost owner cannot overwrite the canonical stop or interruption.
         if (!controller.signal.aborted)

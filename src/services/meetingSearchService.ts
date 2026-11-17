@@ -13,6 +13,7 @@ import {
   type MeetingSearchHit,
   type TranscriptSearchHit,
   type SearchCoverage,
+  type MeetingSearchCandidate,
 } from "../types/meetingSearch";
 import { signConsentToken, readConsentToken } from "../utils/consentToken";
 import type { TranscriptPayload } from "../types/transcript";
@@ -113,6 +114,16 @@ function pageLimit(pageSize = 10) {
     );
   return pageSize;
 }
+function matchesChannel(meeting: MeetingHistory, channelId?: string) {
+  return (
+    !channelId ||
+    channelId ===
+      (meeting.channelId?.trim() ||
+        meeting.channelId_timestamp.split("#")[0]) ||
+    channelId ===
+      (meeting.textChannelId?.trim() || meeting.notesChannelId?.trim())
+  );
+}
 function matches(meeting: MeetingHistory, filters: MeetingSearchFilters) {
   const ref = refOf(meeting);
   return (
@@ -121,12 +132,7 @@ function matches(meeting: MeetingHistory, filters: MeetingSearchFilters) {
       filters.meetingIds.some((id) => sameRef(id, ref))) &&
     (!filters.from || meeting.timestamp >= filters.from) &&
     (!filters.before || meeting.timestamp < filters.before) &&
-    (!filters.channelId ||
-      filters.channelId ===
-        (meeting.channelId?.trim() ||
-          meeting.channelId_timestamp.split("#")[0]) ||
-      filters.channelId ===
-        (meeting.textChannelId?.trim() || meeting.notesChannelId?.trim())) &&
+    matchesChannel(meeting, filters.channelId) &&
     (filters.archive === "all" ||
       Boolean(meeting.archivedAt) === (filters.archive === "archived")) &&
     (filters.tags ?? []).every((tag) =>
@@ -285,6 +291,75 @@ const passageSchema = z.object({
   start: z.number().int().nonnegative(),
   end: z.number().int().positive(),
 });
+function readPassageLocator(
+  meeting: MeetingRef,
+  locator: string | undefined,
+  revision: string,
+) {
+  const state = locator
+    ? readConsentToken(
+        locator,
+        secret(),
+        (value): value is z.infer<typeof passageSchema> =>
+          passageSchema.safeParse(value).success,
+      )
+    : undefined;
+  if (locator && (!state || !sameRef(state.meeting, meeting)))
+    throw new MeetingSearchError(
+      "invalid_cursor",
+      "Invalid transcript locator.",
+    );
+  if (state && state.revision !== revision)
+    throw new MeetingSearchError(
+      "source_changed",
+      "Transcript changed. Search again.",
+    );
+  return state;
+}
+async function loadTranscriptSnapshot(
+  principal: MeetingSearchPrincipal,
+  ref: MeetingRef,
+  revision: string,
+  signal?: AbortSignal,
+) {
+  const meeting = await canonical(principal, ref, signal);
+  const text = meeting.transcriptS3Key
+    ? (await fetchJsonFromS3<TranscriptPayload>(meeting.transcriptS3Key))?.text
+    : meeting.transcript;
+  if (!text)
+    throw new MeetingSearchError(
+      "source_unavailable",
+      "Transcript is unavailable.",
+    );
+  const actualRevision =
+    meetingSearchSourceRevision(meeting) +
+    ":" +
+    createHash("sha256").update(text).digest("hex");
+  if (actualRevision !== revision)
+    throw new MeetingSearchError(
+      "source_changed",
+      "Transcript changed. Search again.",
+    );
+  return { meeting, text };
+}
+function sliceStoredTranscript(text: string, start: number, maxChars: number) {
+  const offset = Math.min(start, text.length);
+  let end = Math.min(offset + Math.min(8000, maxChars), text.length);
+  if (end < text.length) {
+    if (/[\uD800-\uDBFF]/.test(text[end - 1])) end--;
+    const paragraph = text.lastIndexOf("\n\n", end);
+    if (paragraph > offset) end = paragraph + 2;
+    for (const match of text
+      .slice(Math.max(offset, end - 32), end + 32)
+      .matchAll(/<@[!&]?\d+>/g)) {
+      const mentionStart = Math.max(offset, end - 32) + match.index;
+      if (mentionStart < end && mentionStart + match[0].length > end)
+        end =
+          mentionStart > offset ? mentionStart : mentionStart + match[0].length;
+    }
+  }
+  return { offset, end };
+}
 export async function readTranscriptPassageForUser(
   principal: MeetingSearchPrincipal,
   input: { meeting: MeetingRef; passageRef?: string; cursor?: string },
@@ -303,61 +378,19 @@ export async function readTranscriptPassageForUser(
     signal,
   );
   const locator = input.passageRef ?? input.cursor;
-  const state = locator
-    ? readConsentToken(
-        locator,
-        secret(),
-        (value): value is z.infer<typeof passageSchema> =>
-          passageSchema.safeParse(value).success,
-      )
-    : undefined;
-  if (locator && (!state || !sameRef(state.meeting, input.meeting)))
-    throw new MeetingSearchError(
-      "invalid_cursor",
-      "Invalid transcript locator.",
-    );
-  if (state && state.revision !== revision)
-    throw new MeetingSearchError(
-      "source_changed",
-      "Transcript changed. Search again.",
-    );
+  const state = readPassageLocator(input.meeting, locator, revision);
   const start = state?.start ?? 0;
-  const meeting = await canonical(principal, input.meeting, signal);
-  const text = meeting.transcriptS3Key
-    ? (await fetchJsonFromS3<TranscriptPayload>(meeting.transcriptS3Key))?.text
-    : meeting.transcript;
-  if (!text)
-    throw new MeetingSearchError(
-      "source_unavailable",
-      "Transcript is unavailable.",
-    );
-  const actualRevision =
-    meetingSearchSourceRevision(meeting) +
-    ":" +
-    createHash("sha256").update(text).digest("hex");
-  if (actualRevision !== revision)
-    throw new MeetingSearchError(
-      "source_changed",
-      "Transcript changed. Search again.",
-    );
-  const offset = Math.min(start, text.length);
-  let end = Math.min(
-    offset + Math.min(8000, state ? state.end - start : 8000),
-    text.length,
+  const { meeting, text } = await loadTranscriptSnapshot(
+    principal,
+    input.meeting,
+    revision,
+    signal,
   );
-  if (end < text.length) {
-    if (/[\uD800-\uDBFF]/.test(text[end - 1])) end--;
-    const paragraph = text.lastIndexOf("\n\n", end);
-    if (paragraph > offset) end = paragraph + 2;
-    for (const match of text
-      .slice(Math.max(offset, end - 32), end + 32)
-      .matchAll(/<@[!&]?\d+>/g)) {
-      const mentionStart = Math.max(offset, end - 32) + match.index;
-      if (mentionStart < end && mentionStart + match[0].length > end)
-        end =
-          mentionStart > offset ? mentionStart : mentionStart + match[0].length;
-    }
-  }
+  const { offset, end } = sliceStoredTranscript(
+    text,
+    start,
+    state ? state.end - start : 8000,
+  );
   const display = await createMeetingMentionReplacer(meeting);
   const result = {
     transcript: display.toText(text.slice(offset, end)),
@@ -423,8 +456,8 @@ function restoreCursor(
         principal.restriction,
         principal.channelId,
         principal.tags,
-        process.env.SEARCH_MEETING_INDEX_ARN,
-        process.env.SEARCH_TRANSCRIPT_INDEX_ARN,
+        config.search.meetingIndexArn,
+        config.search.transcriptIndexArn,
         binding,
       ]),
     )
@@ -448,6 +481,11 @@ function restoreCursor(
       "Search cursor does not match this request.",
     );
   return state;
+}
+function nextSearchCursor(state: Cursor) {
+  return state.pending.length || !state.done
+    ? signConsentToken(state, secret())
+    : null;
 }
 async function discover(
   principal: MeetingSearchPrincipal,
@@ -477,6 +515,35 @@ async function discover(
     id: meeting.id,
   }));
 }
+async function readListedMeeting(
+  principal: MeetingSearchPrincipal,
+  ref: MeetingRef,
+  filters: MeetingSearchFilters,
+  signal?: AbortSignal,
+) {
+  try {
+    const current = await canonical(principal, ref, signal);
+    if (!matches(current, filters)) return;
+    const hit = await readMeetingNotesForUser(
+      principal,
+      { meeting: ref },
+      signal,
+    );
+    return {
+      meeting: hit.meeting,
+      title: hit.title,
+      startedAt: hit.startedAt,
+      tags: hit.tags,
+      archived: hit.archived,
+      summary: hit.summary,
+      transcriptAvailable: hit.transcriptAvailable,
+    };
+  } catch (error) {
+    if (error instanceof MeetingSearchError && error.code === "not_available")
+      return;
+    throw error;
+  }
+}
 export async function listMeetingsForUser(
   principal: MeetingSearchPrincipal,
   input: { filters?: MeetingSearchFilters; pageSize?: number; cursor?: string },
@@ -494,41 +561,216 @@ export async function listMeetingsForUser(
       if (state.done) break;
       continue;
     }
-    try {
-      const current = await canonical(principal, ref, signal);
-      if (!matches(current, filters)) continue;
-      const hit = await readMeetingNotesForUser(
-        principal,
-        { meeting: ref },
-        signal,
-      );
-      meetings.push({
-        meeting: hit.meeting,
-        title: hit.title,
-        startedAt: hit.startedAt,
-        tags: hit.tags,
-        archived: hit.archived,
-        summary: hit.summary,
-        transcriptAvailable: hit.transcriptAvailable,
-      });
-    } catch (error) {
-      if (error instanceof MeetingSearchError && error.code === "not_available")
-        continue;
-      throw error;
-    }
+    const meeting = await readListedMeeting(principal, ref, filters, signal);
+    if (meeting) meetings.push(meeting);
   }
   return {
     meetings,
-    nextCursor:
-      state.pending.length || !state.done
-        ? signConsentToken(state, secret())
-        : null,
+    nextCursor: nextSearchCursor(state),
     coverage: {
       status: "ready",
       semanticStatus: "unavailable",
       ranking: "authorized_partition_order",
     } satisfies SearchCoverage,
   };
+}
+async function authorizeSearchPartition(
+  principal: MeetingSearchPrincipal,
+  refs: MeetingRef[],
+  filters: MeetingSearchFilters,
+  kind: "meeting" | "transcript",
+  signal?: AbortSignal,
+) {
+  const authorized: MeetingRef[] = [];
+  for (const ref of refs) {
+    try {
+      const record = await canonical(principal, ref, signal);
+      if (matches(record, filters)) {
+        if (kind === "transcript")
+          await authorizeMeetingSearchSource(
+            principal,
+            ref,
+            undefined,
+            "transcript",
+            signal,
+          );
+        authorized.push(ref);
+      }
+    } catch (error) {
+      if (error instanceof MeetingSearchError && error.code === "not_available")
+        continue;
+      throw error;
+    }
+  }
+  return authorized;
+}
+async function hydrateSearchCandidate(
+  principal: MeetingSearchPrincipal,
+  candidate: MeetingSearchCandidate,
+  kind: "meeting" | "transcript",
+  signal?: AbortSignal,
+) {
+  try {
+    await authorizeMeetingSearchSource(
+      principal,
+      candidate.meeting,
+      candidate.sourceRevision,
+      "notes",
+      signal,
+    );
+    if (kind === "meeting")
+      return await readMeetingNotesForUser(
+        principal,
+        { meeting: candidate.meeting },
+        signal,
+      );
+    else if (
+      candidate.transcriptHash &&
+      candidate.start != null &&
+      candidate.end != null &&
+      candidate.end > candidate.start
+    ) {
+      const passageRef = signConsentToken(
+        {
+          meeting: candidate.meeting,
+          revision: candidate.sourceRevision + ":" + candidate.transcriptHash,
+          start: candidate.start,
+          end: Math.min(candidate.end, candidate.start + 600),
+          expiresAt: Date.now() + 3600000,
+        },
+        secret(),
+      );
+      const passage = await readTranscriptPassageForUser(
+        principal,
+        { meeting: candidate.meeting, passageRef },
+        signal,
+      );
+      return passage;
+    }
+  } catch (error) {
+    if (
+      error instanceof MeetingSearchError &&
+      ["not_available", "source_changed"].includes(error.code)
+    )
+      return;
+    throw error;
+  }
+}
+async function consumeSearchCandidates(
+  principal: MeetingSearchPrincipal,
+  state: Cursor,
+  kind: "meeting" | "transcript",
+  limit: number,
+  hits: (MeetingSearchHit | TranscriptSearchHit)[],
+  signal?: AbortSignal,
+) {
+  const candidates = state.candidates ?? [];
+  let index = state.offset;
+  for (; index < candidates.length && hits.length < limit; index++) {
+    const candidate = candidates[index];
+    const hit = await hydrateSearchCandidate(
+      principal,
+      candidate,
+      kind,
+      signal,
+    );
+    if (hit) hits.push(hit);
+  }
+  if (index < candidates.length) {
+    state.offset = index;
+    return true;
+  }
+  return false;
+}
+function validateSearch(query: string) {
+  if (!config.search.enabled)
+    throw new MeetingSearchError(
+      "temporarily_unavailable",
+      "Meeting search is not enabled.",
+      true,
+    );
+  if (!query.trim())
+    throw new MeetingSearchError(
+      "invalid_argument",
+      "A search query is required.",
+    );
+}
+async function embedQuery(query: string, signal?: AbortSignal) {
+  let queryVector: number[] | undefined;
+  try {
+    queryVector = await embedSearchText(query, signal);
+  } catch {
+    signal?.throwIfAborted();
+  }
+  return queryVector;
+}
+async function prepareSearchPartition(
+  principal: MeetingSearchPrincipal,
+  state: Cursor,
+  refs: MeetingRef[],
+  filters: MeetingSearchFilters,
+  kind: "meeting" | "transcript",
+  query: string,
+  queryVector: number[] | undefined,
+  signal?: AbortSignal,
+) {
+  const authorized = await authorizeSearchPartition(
+    principal,
+    refs,
+    filters,
+    kind,
+    signal,
+  );
+  if (!authorized.length) {
+    state.pending.splice(0, refs.length);
+    state.offset = 0;
+    state.candidates = undefined;
+    state.nextToken = undefined;
+    return false;
+  }
+  if (!state.candidates) {
+    const result = await queryMeetingSearchCandidates({
+      kind,
+      query,
+      meetingIds: authorized,
+      queryVector,
+      signal,
+      nextToken: state.nextToken,
+    });
+    state.candidates = result.candidates;
+    state.nextToken = result.nextToken;
+    state.windowLimited ||= result.windowLimited;
+  }
+  return true;
+}
+function restoreSearchCursor(
+  principal: MeetingSearchPrincipal,
+  input: MeetingSearchRequest,
+  filters: MeetingSearchFilters,
+  limit: number,
+  kind: "meeting" | "transcript",
+) {
+  const state = restoreCursor(principal, input, [
+    kind,
+    input.query,
+    filters,
+    limit,
+  ]);
+  if (kind === "transcript" && !input.cursor) {
+    state.pending = filters.meetingIds ?? [];
+    state.done = true;
+  }
+  return state;
+}
+async function nextSearchPartition(
+  principal: MeetingSearchPrincipal,
+  state: Cursor,
+  filters: MeetingSearchFilters,
+  kind: "meeting" | "transcript",
+  signal?: AbortSignal,
+) {
+  if (kind === "meeting") await discover(principal, state, filters, signal);
+  return state.pending.slice(0, 25);
 }
 type SearchPage<T> = {
   hits: T[];
@@ -553,147 +795,42 @@ async function search(
   kind: "meeting" | "transcript",
   signal?: AbortSignal,
 ) {
-  if (!config.search.enabled)
-    throw new MeetingSearchError(
-      "temporarily_unavailable",
-      "Meeting search is not enabled.",
-      true,
-    );
-  if (!input.query.trim())
-    throw new MeetingSearchError(
-      "invalid_argument",
-      "A search query is required.",
-    );
+  validateSearch(input.query);
   const filters = parseFilters(input.filters);
   const limit = pageLimit(input.pageSize);
-  const state = restoreCursor(principal, input, [
-    kind,
-    input.query,
-    filters,
-    limit,
-  ]);
-  if (kind === "transcript" && !input.cursor) {
-    state.pending = filters.meetingIds ?? [];
-    state.done = true;
-  }
-  let queryVector: number[] | undefined;
-  try {
-    queryVector = await embedSearchText(input.query, signal);
-  } catch {
-    signal?.throwIfAborted();
-  }
+  const state = restoreSearchCursor(principal, input, filters, limit, kind);
+  const queryVector = await embedQuery(input.query, signal);
   const hits: (MeetingSearchHit | TranscriptSearchHit)[] = [];
-  let windowLimited = state.windowLimited ?? false;
   const deadline = Date.now() + 10000;
   while (hits.length < limit && Date.now() < deadline) {
-    if (kind === "meeting") await discover(principal, state, filters, signal);
-    const refs = state.pending.slice(0, 25);
+    const refs = await nextSearchPartition(
+      principal,
+      state,
+      filters,
+      kind,
+      signal,
+    );
     if (!refs.length) {
       if (state.done) break;
       continue;
     }
-    const authorized: MeetingRef[] = [];
-    for (const ref of refs) {
-      try {
-        const record = await canonical(principal, ref, signal);
-        if (matches(record, filters)) {
-          if (kind === "transcript")
-            await authorizeMeetingSearchSource(
-              principal,
-              ref,
-              undefined,
-              "transcript",
-              signal,
-            );
-          authorized.push(ref);
-        }
-      } catch (error) {
-        if (
-          error instanceof MeetingSearchError &&
-          error.code === "not_available"
-        )
-          continue;
-        throw error;
-      }
-    }
-    if (!authorized.length) {
-      state.pending.splice(0, refs.length);
-      state.offset = 0;
-      state.candidates = undefined;
-      state.nextToken = undefined;
-      continue;
-    }
-    if (!state.candidates) {
-      const result = await queryMeetingSearchCandidates({
+    if (
+      !(await prepareSearchPartition(
+        principal,
+        state,
+        refs,
+        filters,
         kind,
-        query: input.query,
-        meetingIds: authorized,
+        input.query,
         queryVector,
         signal,
-        nextToken: state.nextToken,
-      });
-      state.candidates = result.candidates;
-      state.nextToken = result.nextToken;
-      windowLimited ||= result.windowLimited;
-      state.windowLimited = windowLimited;
-    }
-    const candidates = state.candidates;
-    let index = state.offset;
-    for (; index < candidates.length && hits.length < limit; index++) {
-      const candidate = candidates[index];
-      try {
-        await authorizeMeetingSearchSource(
-          principal,
-          candidate.meeting,
-          candidate.sourceRevision,
-          "notes",
-          signal,
-        );
-        if (kind === "meeting")
-          hits.push(
-            await readMeetingNotesForUser(
-              principal,
-              { meeting: candidate.meeting },
-              signal,
-            ),
-          );
-        else if (
-          candidate.transcriptHash &&
-          candidate.start != null &&
-          candidate.end != null &&
-          candidate.end > candidate.start
-        ) {
-          const passageRef = signConsentToken(
-            {
-              meeting: candidate.meeting,
-              revision:
-                candidate.sourceRevision + ":" + candidate.transcriptHash,
-              start: candidate.start,
-              end: Math.min(candidate.end, candidate.start + 600),
-              expiresAt: Date.now() + 3600000,
-            },
-            secret(),
-          );
-          const passage = await readTranscriptPassageForUser(
-            principal,
-            { meeting: candidate.meeting, passageRef },
-            signal,
-          );
-          hits.push(passage);
-        }
-      } catch (error) {
-        if (
-          error instanceof MeetingSearchError &&
-          ["not_available", "source_changed"].includes(error.code)
-        )
-          continue;
-        throw error;
-      }
-    }
-    if (index < candidates.length) {
-      state.offset = index;
+      ))
+    )
+      continue;
+    if (
+      await consumeSearchCandidates(principal, state, kind, limit, hits, signal)
+    )
       break;
-    }
     state.candidates = undefined;
     state.offset = 0;
     if (!state.nextToken) state.pending.splice(0, refs.length);
@@ -702,14 +839,11 @@ async function search(
     status: "partial",
     semanticStatus: queryVector ? "partial" : "unavailable",
     ranking: "authorized_partition_order",
-    windowLimited,
+    windowLimited: state.windowLimited ?? false,
   };
   return {
     hits,
-    nextCursor:
-      state.pending.length || !state.done
-        ? signConsentToken(state, secret())
-        : null,
+    nextCursor: nextSearchCursor(state),
     coverage,
   };
 }

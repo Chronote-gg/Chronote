@@ -58,10 +58,9 @@ beforeEach(() => {
   stop.mockResolvedValue(snapshot);
 });
 
-test("streams answer text and stops the same run independently", async () => {
-  const { result } = renderHook(() =>
-    useAskRun({ userId: "user", serverId: "server", conversationId: null }),
-  );
+async function beginQuestion(result: {
+  current: ReturnType<typeof useAskRun>;
+}) {
   let pending: Promise<unknown> = Promise.resolve();
   await act(async () => {
     pending = result.current.mutateAsync({
@@ -70,6 +69,14 @@ test("streams answer text and stops the same run independently", async () => {
     });
     await Promise.resolve();
   });
+  return { pending };
+}
+
+test("streams answer text and stops the same run independently", async () => {
+  const { result } = renderHook(() =>
+    useAskRun({ userId: "user", serverId: "server", conversationId: null }),
+  );
+  const { pending } = await beginQuestion(result);
   act(() => receive({ ...snapshot, text: "An answer" }));
   expect(result.current.text).toBe("An answer");
   expect(result.current.isPending).toBe(true);
@@ -115,14 +122,7 @@ test("stream disconnect reads canonical saved state", async () => {
   const { result } = renderHook(() =>
     useAskRun({ userId: "user", serverId: "server", conversationId: null }),
   );
-  let pending: Promise<unknown> = Promise.resolve();
-  await act(async () => {
-    pending = result.current.mutateAsync({
-      serverId: "server",
-      question: "Question",
-    });
-    await Promise.resolve();
-  });
+  const { pending } = await beginQuestion(result);
   await act(async () => {
     disconnect();
     await pending;

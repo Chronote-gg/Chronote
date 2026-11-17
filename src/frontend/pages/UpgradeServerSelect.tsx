@@ -73,6 +73,20 @@ const FEATURES = {
   ],
 };
 
+const currentPaidPlanBadge = (currentTier: string, tier: PaidTier) =>
+  currentTier === tier ? "Current plan" : undefined;
+
+const paidTierActionEnabled = (tier: PaidTier, basic: boolean, pro: boolean) =>
+  tier === "basic" ? basic : pro;
+
+const upgradeActionDisabled = (
+  anonymous: boolean,
+  loading: boolean,
+  hasPrice: boolean,
+  fetching: boolean,
+  allowed: boolean,
+) => (anonymous ? loading || !hasPrice || fetching : !allowed);
+
 export default function UpgradeServerSelect({
   from = "/upgrade/select-server",
 }: {
@@ -345,7 +359,7 @@ export default function UpgradeServerSelect({
     }
     if (
       !selectedServerId ||
-      !(tier === "basic" ? basicActionEnabled : proActionEnabled)
+      !paidTierActionEnabled(tier, basicActionEnabled, proActionEnabled)
     )
       return;
     // The clicked tier travels with the request, never through a state update.
@@ -649,7 +663,7 @@ export default function UpgradeServerSelect({
               description="For regular meetings."
               features={FEATURES.basic}
               highlighted
-              badge={currentTier === "basic" ? "Current plan" : undefined}
+              badge={currentPaidPlanBadge(currentTier, "basic")}
               billingLabel={
                 offerChoice === "promotion" && promoCode.trim()
                   ? "Promotion price confirmed at checkout"
@@ -662,11 +676,13 @@ export default function UpgradeServerSelect({
                   ? "Current plan"
                   : "Continue with Basic"
               }
-              ctaDisabled={
-                authState === "unauthenticated"
-                  ? authLoading || !basicPlan || pricingQuery.isFetching
-                  : !basicActionEnabled
-              }
+              ctaDisabled={upgradeActionDisabled(
+                authState === "unauthenticated",
+                authLoading,
+                Boolean(basicPlan),
+                pricingQuery.isFetching,
+                basicActionEnabled,
+              )}
               ctaProps={{
                 variant: "filled",
                 onClick: () => void handleCheckout("basic"),
@@ -679,14 +695,16 @@ export default function UpgradeServerSelect({
               price={formatPlanPrice(proPlan, interval)}
               description="For busy servers."
               features={FEATURES.pro}
-              badge={currentTier === "pro" ? "Current plan" : undefined}
+              badge={currentPaidPlanBadge(currentTier, "pro")}
               billingLabel={billingLabelForInterval(interval)}
               cta="Continue with Pro"
-              ctaDisabled={
-                authState === "unauthenticated"
-                  ? authLoading || !proPlan || pricingQuery.isFetching
-                  : !proActionEnabled
-              }
+              ctaDisabled={upgradeActionDisabled(
+                authState === "unauthenticated",
+                authLoading,
+                Boolean(proPlan),
+                pricingQuery.isFetching,
+                proActionEnabled,
+              )}
               ctaProps={{
                 variant: "outline",
                 onClick: () => void handleCheckout("pro"),

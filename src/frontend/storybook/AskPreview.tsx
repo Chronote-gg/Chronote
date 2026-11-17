@@ -29,9 +29,13 @@ function PreviewServerSelection() {
 export function AskPreview({
   scenario = "ready",
   submissionFails = false,
+  agentEnabled = true,
+  searchEnabled = true,
 }: {
   scenario?: "ready" | "empty" | "loading" | "error" | "no-notes";
   submissionFails?: boolean;
+  agentEnabled?: boolean;
+  searchEnabled?: boolean;
 }) {
   const [queryClient] = useState(createPreviewQueryClient);
   const [client] = useState(() =>
@@ -85,10 +89,18 @@ export function AskPreview({
                 ],
               },
               "ask.settings": {
+                agentEnabled,
+                searchEnabled,
                 askMembersEnabled: true,
                 askSharingPolicy: "server",
               },
               "ask.listConversations": { conversations: [] },
+              "ask.ask": {
+                conversationId: conversation.id,
+                answer: "Preview answer",
+                conversation,
+                messages,
+              },
               "ask.startRun": {
                 runId: "preview-run",
                 requestId: "preview-request",

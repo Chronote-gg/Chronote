@@ -10,6 +10,7 @@ type PrivateState = { history: AgentMessage[]; provenance: AskAgentProvenance };
 let runs: ReturnType<typeof createAskRunService> | undefined;
 function service() {
   return (runs ??= createAskRunService({
+    onCompleted: project,
     async execute(input) {
       const prior = input.privateState as PrivateState | undefined;
       const answer = await answerQuestionService({

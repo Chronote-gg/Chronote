@@ -375,20 +375,6 @@ function configuredResources(plan, managed, metadata) {
   const unique = new Set();
   for (const config of configs) {
     if (
-      [
-        "aws_iam_policy.sandbox_search",
-        "aws_iam_policy.sandbox_search_keys",
-        "aws_iam_role_policy_attachment.sandbox_search",
-        "aws_iam_role_policy_attachment.sandbox_search_keys",
-      ].includes(config.address) &&
-      plan.variables.enable_sandbox_search_permissions?.value === false
-    ) {
-      strict.deepEqual(config.count_expression, {
-        references: ["var.enable_sandbox_search_permissions"],
-      });
-      continue;
-    }
-    if (
       config.address === "aws_iam_role_policy.sandbox_exec_channels" &&
       plan.variables.enable_sandbox_exec_channels?.value === false
     ) {
@@ -441,12 +427,7 @@ function validateEnvelope(plan, input, applyable) {
       Object.entries(plan.variables)
         .filter(
           ([name, value]) =>
-            !(
-              [
-                "enable_sandbox_exec_channels",
-                "enable_sandbox_search_permissions",
-              ].includes(name) && value.value === false
-            ) && !(name === "search_transcripts_bucket" && value.value === ""),
+            name !== "enable_sandbox_exec_channels" || value.value !== false,
         )
         .map(([name, value]) => [name, value.value]),
     ),
@@ -603,11 +584,6 @@ function preserveInstalledExecChannels(plan, binding) {
   return { plan: keptPlan, binding: keptBinding };
 }
 function validateBootstrapSitePermissionsUpdate(plan, binding) {
-  ({ plan, binding } =
-    require("./verify-search-access.cjs").preserveInstalledSearchAccess(
-      plan,
-      binding,
-    ));
   ({ plan, binding } = preserveInstalledExecChannels(plan, binding));
   validateBinding(binding, true);
   const target = "aws_iam_role_policy.sandbox_terraform[0]";

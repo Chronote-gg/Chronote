@@ -62,6 +62,16 @@ const record = {
   transcript: "A synthetic transcript.",
 };
 const getStrong = jest.fn();
+function mockPersonalMeeting() {
+  const personalRef = { serverId: "personal:owner", id: ref.id };
+  getStrong.mockResolvedValue({
+    ...record,
+    guildId: personalRef.serverId,
+    ownershipScope: "personal",
+    ownerUserId: "owner",
+  });
+  return personalRef;
+}
 beforeEach(() => {
   jest.clearAllMocks();
   config.search.enabled = true;
@@ -247,13 +257,7 @@ test("hydrates strong inline transcript instead of stale eventual MCP contents",
 test.each(["personal", "all"] as const)(
   "%s scope supports authorized personal/shared meeting partitions outside serverIds",
   async (kind) => {
-    const personalRef = { serverId: "personal:owner", id: ref.id };
-    getStrong.mockResolvedValue({
-      ...record,
-      guildId: personalRef.serverId,
-      ownershipScope: "personal",
-      ownerUserId: "owner",
-    });
+    const personalRef = mockPersonalMeeting();
     const result = await readMeetingNotesForUser(
       { ...principal, scope: { kind } },
       { meeting: personalRef },
@@ -318,13 +322,7 @@ test("token guild restriction also applies to broad personal/all scope", async (
 test.each(["free", "basic", "pro"])(
   "%s uses the same authorized personal history and canonical browse scope",
   async () => {
-    const personalRef = { serverId: "personal:owner", id: ref.id };
-    getStrong.mockResolvedValue({
-      ...record,
-      guildId: personalRef.serverId,
-      ownershipScope: "personal",
-      ownerUserId: "owner",
-    });
+    const personalRef = mockPersonalMeeting();
     jest.mocked(listMcpMyMeetings).mockResolvedValue({
       meetings: [personalRef],
       nextCursor: null,
@@ -349,13 +347,7 @@ test.each(["free", "basic", "pro"])(
   },
 );
 test("all scope still rejects an inaccessible shared personal record", async () => {
-  const personalRef = { serverId: "personal:owner", id: ref.id };
-  getStrong.mockResolvedValue({
-    ...record,
-    guildId: personalRef.serverId,
-    ownershipScope: "personal",
-    ownerUserId: "owner",
-  });
+  const personalRef = mockPersonalMeeting();
   jest
     .mocked(ensureMcpMeetingAccess)
     .mockRejectedValue(new McpMeetingAccessError("Denied", "forbidden"));

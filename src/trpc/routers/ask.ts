@@ -1,3 +1,5 @@
+import type { AuthedProfile, TrpcContext } from "../context";
+import { config } from "../../services/configService";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   getAskApplicationRunByRequest,
@@ -47,7 +49,12 @@ const resolveAskSettings = async (guildId: string) => {
       "server",
       "public",
     ]) ?? "server";
-  return { askMembersEnabled, askSharingPolicy };
+  return {
+    askMembersEnabled,
+    askSharingPolicy,
+    agentEnabled: config.mock.enabled || config.ask.agentEnabled,
+    searchEnabled: config.mock.enabled || config.search.enabled,
+  };
 };
 
 const resolveAskAccess = async (options: {
@@ -81,6 +88,17 @@ const resolveAskAccess = async (options: {
   }
   return { settings, isManager };
 };
+
+const resolveAskRouteAccess = (
+  ctx: TrpcContext & { user: AuthedProfile },
+  guildId: string,
+) =>
+  resolveAskAccess({
+    accessToken: ctx.user.accessToken ?? "",
+    guildId,
+    userId: ctx.user.id,
+    session: ctx.req.session,
+  });
 
 const ensureSharingAllowed = (
   policy: string,
@@ -120,12 +138,7 @@ const ask = guildMemberProcedure
     }),
   )
   .mutation(async ({ ctx, input }) => {
-    await resolveAskAccess({
-      accessToken: ctx.user.accessToken ?? "",
-      guildId: input.serverId,
-      userId: ctx.user.id,
-      session: ctx.req.session,
-    });
+    await resolveAskRouteAccess(ctx, input.serverId);
     try {
       const result = await askWithConversation({
         userId: ctx.user.id,
@@ -154,12 +167,7 @@ const ask = guildMemberProcedure
 const listConversations = guildMemberProcedure
   .input(z.object({ serverId: z.string() }))
   .query(async ({ ctx, input }) => {
-    await resolveAskAccess({
-      accessToken: ctx.user.accessToken ?? "",
-      guildId: input.serverId,
-      userId: ctx.user.id,
-      session: ctx.req.session,
-    });
+    await resolveAskRouteAccess(ctx, input.serverId);
     const conversations = await listAskConversations(
       ctx.user.id,
       input.serverId,
@@ -170,12 +178,7 @@ const listConversations = guildMemberProcedure
 const listSharedConversations = guildMemberProcedure
   .input(z.object({ serverId: z.string() }))
   .query(async ({ ctx, input }) => {
-    const { settings } = await resolveAskAccess({
-      accessToken: ctx.user.accessToken ?? "",
-      guildId: input.serverId,
-      userId: ctx.user.id,
-      session: ctx.req.session,
-    });
+    const { settings } = await resolveAskRouteAccess(ctx, input.serverId);
     ensureSharingAllowed(settings.askSharingPolicy);
     const conversations = await listSharedAskConversations(
       input.serverId,
@@ -187,12 +190,7 @@ const listSharedConversations = guildMemberProcedure
 const getConversation = guildMemberProcedure
   .input(z.object({ serverId: z.string(), conversationId: z.string() }))
   .query(async ({ ctx, input }) => {
-    await resolveAskAccess({
-      accessToken: ctx.user.accessToken ?? "",
-      guildId: input.serverId,
-      userId: ctx.user.id,
-      session: ctx.req.session,
-    });
+    await resolveAskRouteAccess(ctx, input.serverId);
     const result = await getAskConversationWithMessages(
       ctx.user.id,
       input.serverId,
@@ -210,12 +208,7 @@ const getConversation = guildMemberProcedure
 const getSharedConversation = guildMemberProcedure
   .input(z.object({ serverId: z.string(), conversationId: z.string() }))
   .query(async ({ ctx, input }) => {
-    const { settings } = await resolveAskAccess({
-      accessToken: ctx.user.accessToken ?? "",
-      guildId: input.serverId,
-      userId: ctx.user.id,
-      session: ctx.req.session,
-    });
+    const { settings } = await resolveAskRouteAccess(ctx, input.serverId);
     ensureSharingAllowed(settings.askSharingPolicy);
     const result = await getSharedConversationWithMessages(
       input.serverId,
@@ -262,12 +255,7 @@ const rename = guildMemberProcedure
     }),
   )
   .mutation(async ({ ctx, input }) => {
-    await resolveAskAccess({
-      accessToken: ctx.user.accessToken ?? "",
-      guildId: input.serverId,
-      userId: ctx.user.id,
-      session: ctx.req.session,
-    });
+    await resolveAskRouteAccess(ctx, input.serverId);
     const updated = await renameAskConversation(
       ctx.user.id,
       input.serverId,
@@ -292,12 +280,7 @@ const setVisibility = guildMemberProcedure
     }),
   )
   .mutation(async ({ ctx, input }) => {
-    const { settings } = await resolveAskAccess({
-      accessToken: ctx.user.accessToken ?? "",
-      guildId: input.serverId,
-      userId: ctx.user.id,
-      session: ctx.req.session,
-    });
+    const { settings } = await resolveAskRouteAccess(ctx, input.serverId);
     ensureSharingAllowed(settings.askSharingPolicy, input.visibility);
     const updated = await setAskConversationVisibility({
       userId: ctx.user.id,
@@ -327,12 +310,7 @@ const setArchived = guildMemberProcedure
     }),
   )
   .mutation(async ({ ctx, input }) => {
-    await resolveAskAccess({
-      accessToken: ctx.user.accessToken ?? "",
-      guildId: input.serverId,
-      userId: ctx.user.id,
-      session: ctx.req.session,
-    });
+    await resolveAskRouteAccess(ctx, input.serverId);
     const updated = await setAskConversationArchived({
       userId: ctx.user.id,
       guildId: input.serverId,
@@ -378,12 +356,7 @@ export const askRouter = router({
       }),
     )
     .query(async ({ ctx, input }) => {
-      await resolveAskAccess({
-        accessToken: ctx.user.accessToken ?? "",
-        guildId: input.serverId,
-        userId: ctx.user.id,
-        session: ctx.req.session,
-      });
+      await resolveAskRouteAccess(ctx, input.serverId);
       return searchMeetingsForUser(
         { userId: ctx.user.id, serverIds: [input.serverId] },
         input,
@@ -412,12 +385,7 @@ export const askRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await resolveAskAccess({
-        accessToken: ctx.user.accessToken ?? "",
-        guildId: input.serverId,
-        userId: ctx.user.id,
-        session: ctx.req.session,
-      });
+      await resolveAskRouteAccess(ctx, input.serverId);
       return startAskApplicationRun({
         ...input,
         userId: ctx.user.id,
@@ -433,12 +401,7 @@ export const askRouter = router({
       }),
     )
     .query(async ({ ctx, input }) => {
-      await resolveAskAccess({
-        accessToken: ctx.user.accessToken ?? "",
-        guildId: input.serverId,
-        userId: ctx.user.id,
-        session: ctx.req.session,
-      });
+      await resolveAskRouteAccess(ctx, input.serverId);
       return getAskApplicationRunByRequest({
         ...input,
         userId: ctx.user.id,
@@ -448,12 +411,7 @@ export const askRouter = router({
   getRun: guildMemberProcedure
     .input(runAddress)
     .query(async ({ ctx, input }) => {
-      await resolveAskAccess({
-        accessToken: ctx.user.accessToken ?? "",
-        guildId: input.serverId,
-        userId: ctx.user.id,
-        session: ctx.req.session,
-      });
+      await resolveAskRouteAccess(ctx, input.serverId);
       return getAskApplicationRun({
         ...input,
         userId: ctx.user.id,
@@ -463,12 +421,7 @@ export const askRouter = router({
   stopRun: guildMemberProcedure
     .input(runAddress)
     .mutation(async ({ ctx, input }) => {
-      await resolveAskAccess({
-        accessToken: ctx.user.accessToken ?? "",
-        guildId: input.serverId,
-        userId: ctx.user.id,
-        session: ctx.req.session,
-      });
+      await resolveAskRouteAccess(ctx, input.serverId);
       return stopAskApplicationRun({
         ...input,
         userId: ctx.user.id,
@@ -485,12 +438,7 @@ export const askRouter = router({
       };
       let version = "";
       while (!signal?.aborted) {
-        await resolveAskAccess({
-          accessToken: ctx.user.accessToken ?? "",
-          guildId: input.serverId,
-          userId: ctx.user.id,
-          session: ctx.req.session,
-        });
+        await resolveAskRouteAccess(ctx, input.serverId);
         const snapshot = await getAskApplicationRun(address);
         const next = JSON.stringify(snapshot);
         if (next !== version) {
@@ -510,12 +458,7 @@ export const askRouter = router({
   startingContext: guildMemberProcedure
     .input(z.object({ serverId: z.string() }))
     .query(async ({ ctx, input }) => {
-      await resolveAskAccess({
-        accessToken: ctx.user.accessToken ?? "",
-        guildId: input.serverId,
-        userId: ctx.user.id,
-        session: ctx.req.session,
-      });
+      await resolveAskRouteAccess(ctx, input.serverId);
       const page = await listMeetingsForUser(
         { userId: ctx.user.id, serverIds: [input.serverId] },
         { pageSize: 3 },

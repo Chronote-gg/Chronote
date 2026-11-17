@@ -3,6 +3,7 @@ import { getEncoding } from "js-tiktoken";
 import { createOpenAIClient } from "./openaiClient";
 import { startObservation } from "@langfuse/tracing";
 import { isLangfuseTracingEnabled } from "./langfuseClient";
+import type { CreateEmbeddingResponse } from "openai/resources/embeddings";
 
 export const SEARCH_EMBEDDING_MODEL = "text-embedding-3-small";
 export const SEARCH_EMBEDDING_DIMENSIONS = 1536;
@@ -23,6 +24,23 @@ export async function embedSearchText(
   signal?: AbortSignal,
 ): Promise<number[]> {
   return (await embedSearchTexts([text], signal))[0];
+}
+
+function embeddingVectors(result: CreateEmbeddingResponse, inputCount: number) {
+  const vectors: number[][] = [];
+  for (let index = 0; index < inputCount; index++) {
+    const vector = result.data.find((item) => item.index === index)?.embedding;
+    if (
+      result.model !== SEARCH_EMBEDDING_MODEL ||
+      !vector ||
+      vector.length !== SEARCH_EMBEDDING_DIMENSIONS ||
+      vector.some((n) => !Number.isFinite(n))
+    ) {
+      throw Error("Search embedding model or dimensions mismatch");
+    }
+    vectors.push(vector);
+  }
+  return vectors;
 }
 
 export async function embedSearchTexts(
@@ -74,20 +92,7 @@ export async function embedSearchTexts(
             total: result.usage.total_tokens,
           },
         });
-      for (let index = 0; index < batch.length; index++) {
-        const vector = result.data.find(
-          (item) => item.index === index,
-        )?.embedding;
-        if (
-          result.model !== SEARCH_EMBEDDING_MODEL ||
-          !vector ||
-          vector.length !== SEARCH_EMBEDDING_DIMENSIONS ||
-          vector.some((n) => !Number.isFinite(n))
-        ) {
-          throw Error("Search embedding model or dimensions mismatch");
-        }
-        vectors.push(vector);
-      }
+      vectors.push(...embeddingVectors(result, batch.length));
     } catch (error) {
       observation?.update({
         level: "ERROR",

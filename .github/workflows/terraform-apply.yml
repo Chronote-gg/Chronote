@@ -1,57 +1,24 @@
 name: Terraform Apply
 
-run-name: Terraform Apply ${{ inputs.github_environment }}/${{ inputs.terraform_workspace }}/${{ inputs.plan_scope }} plan=${{ inputs.plan_run_id }} plan-sha=${{ inputs.plan_sha256 }} bundle-sha=${{ inputs.bundle_sha256 }}
+run-name: Terraform Apply ${{ inputs.environment }} plan=${{ inputs.plan_run_id }} sha256=${{ inputs.plan_sha256 }}
 
 on:
   workflow_dispatch:
     inputs:
-      github_environment:
-        description: GitHub environment containing Terraform apply credentials and tfvars
+      environment:
+        description: GitHub environment the reviewed plan ran in
         required: true
         type: choice
         default: sandbox
         options:
           - sandbox
           - production
-      terraform_workspace:
-        description: Existing Terraform workspace from the reviewed plan; production uses default, sandbox uses sandbox
-        required: true
-        type: string
-        default: sandbox
       plan_run_id:
-        description: GitHub Actions run ID from the reviewed Terraform Plan workflow
-        required: true
-        type: string
-      artifact_name:
-        description: Logical bundle label from the reviewed plan summary, not a storage locator
+        description: Run ID of the reviewed Terraform Plan, made from this same master commit
         required: true
         type: string
       plan_sha256:
-        description: SHA-256 from the reviewed Terraform Plan summary
-        required: true
-        type: string
-      bundle_sha256:
-        description: SHA-256 of the entire reviewed private bundle, including Lambda archives and provenance
-        required: true
-        type: string
-      plan_scope:
-        default: meeting-update-delivery
-        description: Scope of the reviewed saved plan; Sandbox supports meeting-update-delivery, processing-retry, sandbox-site-permissions and artifact-preservation
-        required: true
-        type: choice
-        options:
-          - full
-          - purchase-permission
-          - meeting-update-delivery
-          - deployment-prerequisites
-          - deployment-runtime
-          - site-delivery
-          - sandbox-site-permissions
-          - processing-retry
-          - artifact-preservation
-          - meeting-search
-      confirmation:
-        description: Type apply to request the reviewed plan; native approval is also required
+        description: Encrypted plan SHA-256 from the reviewed plan's summary
         required: true
         type: string
 
@@ -62,55 +29,64 @@ permissions:
 
 concurrency:
   # Own group: a merge-triggered deploy must never displace a queued Apply.
-  group: chronote-terraform-${{ inputs.github_environment }}
+  group: chronote-terraform-${{ inputs.environment }}
   cancel-in-progress: false
 
 jobs:
   apply:
     name: Terraform Apply
     runs-on: ubuntu-latest
-    timeout-minutes: 360
-    environment: ${{ inputs.github_environment }}
+    timeout-minutes: 120
+    # production-terraform is made by hand, never by Terraform, with the owner
+    # as its only reviewer, so a plan can never weaken the gate. It is the only
+    # environment the production Apply role trusts. Sandbox applies in sandbox.
+    environment: ${{ inputs.environment == 'production' && 'production-terraform' || 'sandbox' }}
     env:
-      DEPLOYMENT_ENVIRONMENT: ${{ inputs.github_environment }}
-      DEPLOYMENT_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
-      DEPLOYMENT_CONTROL_TABLE: ${{ vars.DEPLOYMENT_CONTROL_TABLE }}
-      PLAN_RUN_ID: ${{ inputs.plan_run_id }}
-      ARTIFACT_NAME: ${{ inputs.artifact_name }}
-      EXPECTED_SHA256: ${{ inputs.plan_sha256 }}
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
+      TF_WORKSPACE: ${{ inputs.environment == 'production' && 'default' || 'sandbox' }}
+      TF_LOG: ""
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      GH_TOKEN: ${{ github.token }}
+      PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      PLAN_SHA256: ${{ inputs.plan_sha256 }}
     steps:
-      - name: Checkout reviewed source
+      - name: Require master
+        run: test "$GITHUB_REF" = refs/heads/master
+
+      - name: Checkout
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+
+      - name: Verify the plan run is a successful plan of this commit
+        run: node scripts/deployment/terraform-runs.cjs verify-plan-run "$ENVIRONMENT" "$PLAN_RUN_ID"
+
+      - name: Refuse while a production deploy is open
+        if: inputs.environment == 'production'
+        run: node scripts/deployment/terraform-runs.cjs assert-production-idle
+
+      - name: Download encrypted plan
+        uses: actions/download-artifact@v8
         with:
-          node-version-file: ".nvmrc"
-          cache: yarn
-      - name: Install dependencies
-        run: bash scripts/ci-install-dependencies.sh
-      - name: Validate Terraform dispatch scope
-        run: node scripts/deployment/terraform-dispatch.cjs --validate
-      - name: Prepare Sandbox site-permissions session
-        id: site-permissions-session
-        if: ${{ inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions' }}
+          name: terraform-plan-${{ inputs.environment }}
+          run-id: ${{ inputs.plan_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/plan
+
+      # The approval binds this digest; nothing is decrypted unless the
+      # downloaded file is exactly the one the reviewed summary named.
+      - name: Verify and decrypt plan
         env:
-          TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
-          GITHUB_VARS_JSON: ${{ toJSON(vars) }}
-        run: node scripts/deployment/validate-sandbox-site-permissions-plan.cjs --session
-      - name: Prepare Sandbox artifact Apply session
-        id: artifact-session
-        if: ${{ inputs.github_environment == 'sandbox' && inputs.plan_scope == 'artifact-preservation' }}
-        env:
-          TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
-          GITHUB_VARS_JSON: ${{ toJSON(vars) }}
-        run: node scripts/deployment/validate-artifact-preservation-plan.cjs --session apply
-      - name: Configure Sandbox AWS credentials
-        if: ${{ inputs.github_environment == 'sandbox' }}
+          TERRAFORM_PLAN_PASSPHRASE: ${{ secrets.TERRAFORM_PLAN_PASSPHRASE }}
+        run: |
+          set -o pipefail
+          [[ "$PLAN_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          echo "$PLAN_SHA256  $RUNNER_TEMP/plan/plan.tgz.enc" | sha256sum --check --quiet
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass env:TERRAFORM_PLAN_PASSPHRASE -in "$RUNNER_TEMP/plan/plan.tgz.enc" | tar -xz -C _infra
+
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.TERRAFORM_AWS_ROLE_ARN }}
@@ -119,30 +95,46 @@ jobs:
           role-session-name: terraform-apply-${{ github.run_id }}-${{ github.run_attempt }}
           role-duration-seconds: 3600
           unset-current-credentials: true
-          inline-session-policy: ${{ steps.artifact-session.outputs.policy || steps.site-permissions-session.outputs.policy }}
-
-      - name: Configure reviewed production Apply identity
-        if: inputs.github_environment == 'production'
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ vars.PRODUCTION_APPLY_ROLE_ARN }}
-          role-session-name: apply-${{ github.run_id }}-${{ github.run_attempt }}
-          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.17.1
           terraform_wrapper: false
-      - name: Run private Terraform Apply
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TERRAFORM_PRIVATE_STORAGE_JSON: ${{ secrets.TERRAFORM_PRIVATE_STORAGE_JSON }}
-          TERRAFORM_PLAN_REFERENCE_JSON: ${{ secrets.TERRAFORM_PLAN_REFERENCE_JSON }}
-          TERRAFORM_TFVARS_JSON: ${{ secrets.TERRAFORM_TFVARS_JSON }}
-          REDIS_AUTH_TOKEN: ${{ secrets.REDIS_AUTH_TOKEN }}
-          REDIS_URL: ${{ secrets.REDIS_URL }}
-          GITHUB_VARS_JSON: ${{ toJSON(vars) }}
+
+      # A saved plan carries its own variables and refuses to apply against
+      # state that changed since it was made, so there is no replan here.
+      # Output goes only to the encrypted log, as in the plan.
+      - name: Apply the saved plan
         run: |
           set +x
-          node scripts/deployment/terraform-dispatch.cjs
+          unset TF_LOG TF_LOG_CORE TF_LOG_PROVIDER TF_LOG_PATH
+          log="$RUNNER_TEMP/terraform.log"
+          fail() { echo "::error::terraform $1 failed with exit code $2; read the encrypted terraform log artifact"; exit 1; }
+          terraform -chdir=_infra init -input=false -lockfile=readonly >> "$log" 2>&1 || fail init $?
+          terraform -chdir=_infra apply -input=false -lock-timeout=5m tfplan >> "$log" 2>&1 || fail apply $?
+
+      - name: Encrypt log
+        if: always()
+        env:
+          TERRAFORM_PLAN_PASSPHRASE: ${{ secrets.TERRAFORM_PLAN_PASSPHRASE }}
+        run: |
+          log="$RUNNER_TEMP/terraform.log"
+          if [ -f "$log" ] && [ -n "$TERRAFORM_PLAN_PASSPHRASE" ]; then
+            openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -pass env:TERRAFORM_PLAN_PASSPHRASE -in "$log" -out "$log.enc"
+          fi
+          rm -f "$log"
+
+      - name: Upload encrypted log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: terraform-apply-log-${{ inputs.environment }}
+          path: ${{ runner.temp }}/terraform.log.enc
+          retention-days: 1
+          if-no-files-found: ignore
+
+      - name: Remove plaintext plan
+        if: always()
+        run: rm -rf _infra/tfplan "$RUNNER_TEMP/plan" "$RUNNER_TEMP/terraform.log"

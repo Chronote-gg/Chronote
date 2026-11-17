@@ -2,9 +2,35 @@
 import { answerQuestionService } from "../../src/services/askService";
 import { executeAskAgent } from "../../src/services/askAgentService";
 import { config } from "../../src/services/configService";
+import { answerLegacyAskQuestion } from "../../src/services/legacyAskService";
+jest.mock("../../src/services/legacyAskService", () => ({
+  answerLegacyAskQuestion: jest.fn(),
+}));
 jest.mock("../../src/services/askAgentService", () => ({
   executeAskAgent: jest.fn(),
 }));
+
+test("keeps notes-only Ask available while the full-library agent is disabled", async () => {
+  config.mock.enabled = false;
+  config.ask.agentEnabled = false;
+  (answerLegacyAskQuestion as jest.Mock).mockResolvedValue({
+    answer: "Recent-history fallback: Answer",
+    citations: [],
+    sourceMeetingIds: [],
+  });
+  const request = {
+    guildId: "g",
+    channelId: "v",
+    question: "Decision?",
+    viewerUserId: "user",
+    contextMeetingIds: ["older"],
+  };
+  expect(await answerQuestionService(request)).toMatchObject({
+    answer: "Recent-history fallback: Answer",
+  });
+  expect(answerLegacyAskQuestion).toHaveBeenCalledWith(request);
+  expect(executeAskAgent).not.toHaveBeenCalled();
+});
 test("requires a bound acting user before retrieving any meeting data", async () => {
   await expect(
     answerQuestionService({

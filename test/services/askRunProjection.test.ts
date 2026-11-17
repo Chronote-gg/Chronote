@@ -10,8 +10,26 @@ jest.mock("../../src/services/askService", () => ({
   answerQuestionService: jest.fn(),
 }));
 
+async function sharedConversationFixture() {
+  const store = getMockStore(),
+    repo = getAskConversationRepository();
+  const userId = store.user.id,
+    guildId = store.userGuilds[0].id;
+  const shared = (await repo.listConversations(userId, guildId)).find(
+    (item) => item.visibility === "server",
+  );
+  if (!shared) throw new Error("Missing shared conversation fixture");
+  return { repo, userId, guildId, shared };
+}
+
 describe("completed Ask run projection", () => {
-  beforeEach(() => resetMockStore());
+  beforeEach(() => {
+    jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-11-17T00:00:00.000Z"));
+    resetMockStore();
+  });
+  afterEach(() => jest.restoreAllMocks());
   it("reprojects a completed send once with stable message identities and no private history", async () => {
     const store = getMockStore();
     const input = {
@@ -66,13 +84,7 @@ describe("completed Ask run projection", () => {
     ).toBe("Updated shared answer");
   });
   it("a delayed completed-share write cannot recreate a revoked share", async () => {
-    const store = getMockStore(),
-      repo = getAskConversationRepository();
-    const userId = store.user.id,
-      guildId = store.userGuilds[0].id;
-    const shared = (await repo.listConversations(userId, guildId)).find(
-      (item) => item.visibility === "server",
-    )!;
+    const { repo, userId, guildId, shared } = await sharedConversationFixture();
     const oldShare = {
       pk: `GUILD#${guildId}`,
       sk: `SHARE#${shared.id}`,
@@ -102,13 +114,7 @@ describe("completed Ask run projection", () => {
     ).toBeUndefined();
   });
   it("completion only updates answer fields even when a privacy edit races a newer completion timestamp", async () => {
-    const store = getMockStore(),
-      repo = getAskConversationRepository();
-    const userId = store.user.id,
-      guildId = store.userGuilds[0].id;
-    const shared = (await repo.listConversations(userId, guildId)).find(
-      (item) => item.visibility === "server",
-    )!;
+    const { repo, userId, guildId, shared } = await sharedConversationFixture();
     const stale = {
       ...shared,
       summary: "Completed answer",

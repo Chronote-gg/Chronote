@@ -1,3 +1,4 @@
+import { emitMetric, LIFECYCLE_METRICS } from "../lifecycleMetrics";
 import { runBillingWorkerOperation } from "./runtimeBillingOperationService";
 import { getRenewalRecoveryRepository } from "../repositories/renewalRecoveryRepository";
 import {
@@ -68,6 +69,7 @@ async function holdsRenewalRecoveryLease(): Promise<boolean> {
       RENEWAL_RECOVERY_STALLED_LOG,
       error instanceof Error ? error.name : "unknown",
     );
+    emitMetric(LIFECYCLE_METRICS.renewalRecoveryStalled);
     return false;
   }
 }

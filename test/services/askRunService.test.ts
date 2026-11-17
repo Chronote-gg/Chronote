@@ -145,8 +145,10 @@ it("prevents an expired owner from completing over a newer request", async () =>
   let now = 1000;
   const repository = createMemoryAskRunRepository();
   let complete!: (value: { result: { answer: string } }) => void;
+  const onCompleted = jest.fn();
   const old = createAskRunService({
     repository,
+    onCompleted,
     now: () => now,
     leaseMs: 100,
     pollMs: 10000,
@@ -180,6 +182,46 @@ it("prevents an expired owner from completing over a newer request", async () =>
   expect(await repository.getPrivateState(input)).toEqual({
     history: ["new history"],
   });
+  expect(onCompleted).not.toHaveBeenCalled();
   old.dispose();
   newer.dispose();
+});
+
+it("preserves completed state and stops heartbeats before projection failure", async () => {
+  const repository = createMemoryAskRunRepository();
+  const replace = jest.spyOn(repository, "replace");
+  let writesBeforeProjection = 0;
+  let writesAfterProjection = 0;
+  const onCompleted = jest.fn(async () => {
+    writesBeforeProjection = replace.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    writesAfterProjection = replace.mock.calls.length;
+    throw new Error("projection unavailable");
+  });
+  const log = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  const service = createAskRunService({
+    repository,
+    onCompleted,
+    pollMs: 5,
+    execute: async () => ({ result: { answer: "Saved answer" } }),
+  });
+  try {
+    const accepted = await service.start(input);
+    await flush();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(onCompleted).toHaveBeenCalledTimes(1);
+    expect(writesAfterProjection).toBe(writesBeforeProjection);
+    expect(
+      await service.get({ ...input, runId: accepted.runId }),
+    ).toMatchObject({ status: "completed", text: "Saved answer" });
+    expect(
+      replace.mock.calls.map(([, next]) => next.snapshot.status),
+    ).not.toContain("failed");
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("projection failed"),
+    );
+  } finally {
+    service.dispose();
+    log.mockRestore();
+  }
 });

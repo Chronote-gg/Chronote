@@ -111,6 +111,20 @@ const buildPortalLinkHandler = (options: {
     }),
 });
 
+function renderEmptyContent(emptyContent: ReactNode, listMode: ListMode) {
+  return (
+    emptyContent ?? (
+      <Center py="lg">
+        <Text size="sm" c="dimmed">
+          {listMode === "shared"
+            ? "Select a shared conversation to view it."
+            : "Start by asking about a meeting."}
+        </Text>
+      </Center>
+    )
+  );
+}
+
 export function AskMessageList({
   emptyContent,
   askAccessAllowed,
@@ -176,15 +190,7 @@ export function AskMessageList({
             </Text>
           </Center>
         ) : displayMessages.length === 0 ? (
-          (emptyContent ?? (
-            <Center py="lg">
-              <Text size="sm" c="dimmed">
-                {listMode === "shared"
-                  ? "Select a shared conversation to view it."
-                  : "Start by asking about a meeting."}
-              </Text>
-            </Center>
-          ))
+          renderEmptyContent(emptyContent, listMode)
         ) : (
           displayMessages.map((message) => (
             <AskMessageBubble

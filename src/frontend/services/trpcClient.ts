@@ -4,6 +4,10 @@ import { trpc } from "./trpc";
 import { authRecoveryLink } from "./authRecovery";
 
 const trpcUrl = buildApiUrl("/trpc");
+const authenticatedFetch: typeof fetch = async (url, options) => {
+  const requestInit = await withCsrfToken(options);
+  return fetch(url, { ...requestInit, credentials: "include" });
+};
 
 export const trpcClient = trpc.createClient({
   links: [
@@ -14,15 +18,14 @@ export const trpcClient = trpc.createClient({
         url: trpcUrl,
         eventSourceOptions: { withCredentials: true },
       }),
-      false: httpBatchLink({
-        url: trpcUrl,
-        async fetch(url, options) {
-          const requestInit = await withCsrfToken(options);
-          return fetch(url, {
-            ...requestInit,
-            credentials: "include",
-          });
-        },
+      false: splitLink({
+        condition: (op) => op.path === "ask.searchMeetings",
+        true: httpBatchLink({
+          url: trpcUrl,
+          methodOverride: "POST",
+          fetch: authenticatedFetch,
+        }),
+        false: httpBatchLink({ url: trpcUrl, fetch: authenticatedFetch }),
       }),
     }),
   ],

@@ -424,6 +424,8 @@ export async function persistCompletedAskRun(params: {
   };
 }) {
   const { userId, guildId, conversationId, requestId, result } = params;
+  const citations = result.citations ?? [];
+  const sourceMeetingIds = result.sourceMeetingIds ?? [];
   const repo = getAskConversationRepository();
   const existing = await repo.getConversation(userId, guildId, conversationId);
   const conversation: AskConversation = {
@@ -448,8 +450,8 @@ export async function persistCompletedAskRun(params: {
       role: "chronote",
       text: result.answer,
       createdAt: params.completedAt,
-      citations: result.citations ?? [],
-      sourceMeetingIds: result.sourceMeetingIds ?? [],
+      citations,
+      sourceMeetingIds,
     },
   ];
   for (const message of messages)
@@ -479,11 +481,11 @@ export async function persistCompletedAskRun(params: {
     conversation: current,
     answer: renderAskAnswer({
       text: result.answer,
-      citations: result.citations ?? [],
+      citations,
       guildId,
       portalBaseUrl: resolvePortalBaseUrl(),
     }),
-    sourceMeetingIds: result.sourceMeetingIds ?? [],
+    sourceMeetingIds,
     messages: messages.map((message) =>
       renderMessageForDisplay({
         message,
