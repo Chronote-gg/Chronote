@@ -132,39 +132,59 @@ function checkPlanRetention(config) {
   );
 }
 
-// The state bucket is shared, but plans also contain provider credentials.
+// Both prefixes need their own deny: ReadOnlyAccess must not cross environments.
 function checkPlanPolicy(policy, account) {
   assert.match(account, /^\d{12}$/);
-  const roles = [
-    "meeting-notes-prod-github-terraform",
-    "meeting-notes-prod-github-terraform-plan",
-  ].map((role) => `arn:aws:iam::${account}:role/${role}`);
+  const environmentRoles = ["prod", "sandbox"].map((environment) =>
+    ["terraform", "terraform-plan"].map(
+      (role) =>
+        `arn:aws:iam::${account}:role/meeting-notes-${environment}-github-${role}`,
+    ),
+  );
+  const allRoles = environmentRoles.flat();
   assert.ok(
-    policy.Statement?.some((statement) => {
+    !policy.Statement?.some((statement) => {
       const allowed = statement.Condition?.ArnNotLike?.["aws:PrincipalArn"];
       return (
         statement.Effect === "Deny" &&
-        statement.Principal === "*" &&
         statement.Resource ===
           "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/*" &&
-        Array.isArray(statement.Action) &&
-        ["s3:GetObject", "s3:GetObjectVersion"].every((action) =>
-          statement.Action.includes(action),
-        ) &&
-        Object.keys(statement.Condition).length === 1 &&
-        Object.keys(statement.Condition.ArnNotLike).length === 1 &&
         Array.isArray(allowed) &&
-        allowed.length === 3 &&
-        roles.every((role) => allowed.includes(role)) &&
-        allowed.every(
-          (arn) =>
-            arn.startsWith(`arn:aws:iam::${account}:role/`) &&
-            /^arn:aws:iam::[0-9]{12}:role\/[A-Za-z0-9_+=,.@/-]+$/.test(arn),
-        )
+        !allRoles.every((role) => allowed.includes(role))
       );
     }),
-    "Stored plans require the read restriction in docs/terraform-delivery.md before planning",
+    "Replace the legacy shared-prefix read deny with isolated environment restrictions before planning",
   );
+  for (const [index, environment] of ["production", "sandbox"].entries()) {
+    const roles = environmentRoles[index];
+    assert.ok(
+      policy.Statement?.some((statement) => {
+        const allowed = statement.Condition?.ArnNotLike?.["aws:PrincipalArn"];
+        return (
+          statement.Effect === "Deny" &&
+          statement.Principal === "*" &&
+          statement.Resource ===
+            `arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/${environment}/*` &&
+          Array.isArray(statement.Action) &&
+          ["s3:GetObject", "s3:GetObjectVersion"].every((action) =>
+            statement.Action.includes(action),
+          ) &&
+          Object.keys(statement.Condition).length === 1 &&
+          Object.keys(statement.Condition.ArnNotLike).length === 1 &&
+          Array.isArray(allowed) &&
+          allowed.length === 3 &&
+          roles.every((role) => allowed.includes(role)) &&
+          allowed.filter((arn) => !allRoles.includes(arn)).length === 1 &&
+          allowed.every(
+            (arn) =>
+              arn.startsWith(`arn:aws:iam::${account}:role/`) &&
+              /^arn:aws:iam::[0-9]{12}:role\/[A-Za-z0-9_+=,.@/-]+$/.test(arn),
+          )
+        );
+      }),
+      `Stored plans require the ${environment} read restriction in docs/terraform-delivery.md before planning`,
+    );
+  }
 }
 
 // Workflows that move production traffic or roles that the Apply may change.

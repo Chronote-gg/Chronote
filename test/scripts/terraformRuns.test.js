@@ -148,33 +148,35 @@ test.each([
 
 describe("checkPlanPolicy", () => {
   const account = "123456789012";
-  const statement = () => ({
+  const statement = (environment) => ({
     Effect: "Deny",
     Principal: "*",
     Action: ["s3:GetObject", "s3:GetObjectVersion"],
-    Resource:
-      "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/*",
+    Resource: `arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/${environment}/*`,
     Condition: {
       ArnNotLike: {
         "aws:PrincipalArn": [
-          "meeting-notes-prod-github-terraform",
-          "meeting-notes-prod-github-terraform-plan",
+          `meeting-notes-${environment === "production" ? "prod" : "sandbox"}-github-terraform`,
+          `meeting-notes-${environment === "production" ? "prod" : "sandbox"}-github-terraform-plan`,
           "Administrator",
         ].map((name) => `arn:aws:iam::${account}:role/${name}`),
       },
     },
   });
+  const policy = () => ({
+    Statement: [statement("production"), statement("sandbox")],
+  });
   test("the local policy check needs no GitHub token", () => {
     const directory = mkdtempSync(join(tmpdir(), "plan-policy-"));
     try {
-      const policy = join(directory, "policy.json");
-      writeFileSync(policy, JSON.stringify({ Statement: [statement()] }));
+      const path = join(directory, "policy.json");
+      writeFileSync(path, JSON.stringify(policy()));
       const result = spawnSync(
         process.execPath,
         [
           resolve("scripts/deployment/terraform-runs.cjs"),
           "check-plan-policy",
-          policy,
+          path,
           account,
         ],
         { env: { ...process.env, GH_TOKEN: "" }, encoding: "utf8" },
@@ -185,27 +187,72 @@ describe("checkPlanPolicy", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
-  test("accepts only the two Terraform roles and one named administrator role", () => {
-    expect(() =>
-      checkPlanPolicy({ Statement: [statement()] }, account),
-    ).not.toThrow();
+  test("requires isolated prefix denies for both environments", () => {
+    expect(() => checkPlanPolicy(policy(), account)).not.toThrow();
+    for (const environment of ["production", "sandbox"])
+      expect(() =>
+        checkPlanPolicy({ Statement: [statement(environment)] }, account),
+      ).toThrow();
+  });
+  test("refuses a leftover production-only blanket deny even with both isolated statements", () => {
+    const candidate = policy();
+    const legacy = statement("production");
+    legacy.Resource =
+      "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/*";
+    candidate.Statement.push(legacy);
+    expect(() => checkPlanPolicy(candidate, account)).toThrow(
+      "Replace the legacy shared-prefix read deny",
+    );
   });
   test.each([
     {},
     { Effect: "Allow" },
     { Action: ["s3:GetObject"] },
+    {
+      Resource:
+        "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/*",
+    },
     { Condition: { ArnNotLike: { "aws:PrincipalArn": ["*"] } } },
   ])("refuses missing or weaker read restrictions %j", (override) => {
-    expect(() =>
-      checkPlanPolicy(
-        {
-          Statement: Object.keys(override).length
-            ? [{ ...statement(), ...override }]
-            : [],
-        },
-        account,
-      ),
-    ).toThrow();
+    for (const index of [0, 1]) {
+      const candidate = policy();
+      if (Object.keys(override).length)
+        candidate.Statement[index] = {
+          ...candidate.Statement[index],
+          ...override,
+        };
+      else candidate.Statement.splice(index, 1);
+      expect(() => checkPlanPolicy(candidate, account)).toThrow();
+    }
+  });
+  test.each([
+    "cross-environment role",
+    "extra role",
+    "duplicate role",
+    "foreign account",
+    "wildcard role",
+    "conditional bypass",
+  ])("refuses %s", (kind) => {
+    for (const index of [0, 1]) {
+      const candidate = policy();
+      const condition = candidate.Statement[index].Condition;
+      const allowed = condition.ArnNotLike["aws:PrincipalArn"];
+      if (kind === "cross-environment role")
+        allowed[2] =
+          candidate.Statement[1 - index].Condition.ArnNotLike[
+            "aws:PrincipalArn"
+          ][0];
+      if (kind === "extra role")
+        allowed.push(`arn:aws:iam::${account}:role/Other`);
+      if (kind === "duplicate role") allowed[2] = allowed[0];
+      if (kind === "foreign account")
+        allowed[2] = "arn:aws:iam::999999999999:role/Administrator";
+      if (kind === "wildcard role")
+        allowed[2] = `arn:aws:iam::${account}:role/Admin*`;
+      if (kind === "conditional bypass")
+        condition.Bool = { "aws:SecureTransport": "false" };
+      expect(() => checkPlanPolicy(candidate, account)).toThrow();
+    }
   });
 });
 
@@ -767,6 +814,28 @@ describe("workflow shape", () => {
         /\|\| echo "::warning::Storing the [a-z]+ log failed/,
       );
     }
+  });
+
+  test("Sandbox Apply requires its own role without falling back to the Plan role", () => {
+    const requireRole = step(applyJob, "Require the Sandbox Apply role");
+    expect(requireRole.if).toBe("inputs.environment == 'sandbox'");
+    expect(requireRole.env.SANDBOX_APPLY_ROLE_ARN).toBe(
+      "${{ vars.SANDBOX_APPLY_ROLE_ARN }}",
+    );
+    expect(requireRole.run).toContain('test -n "$SANDBOX_APPLY_ROLE_ARN"');
+    expect(requireRole.run).toContain("exit 1");
+    const names = applyJob.steps.map((s) => s.name);
+    expect(names.indexOf(requireRole.name)).toBeLessThan(
+      names.indexOf("Configure AWS credentials"),
+    );
+    expect(
+      step(applyJob, "Configure AWS credentials").with["role-to-assume"],
+    ).toBe(
+      "${{ vars[inputs.environment == 'sandbox' && 'SANDBOX_APPLY_ROLE_ARN' || 'TERRAFORM_AWS_ROLE_ARN'] }}",
+    );
+    expect(
+      step(planJob, "Configure AWS credentials").with["role-to-assume"],
+    ).toBe("${{ vars.TERRAFORM_AWS_ROLE_ARN }}");
   });
 
   test("the Apply session lasts as long as the Apply job may", () => {

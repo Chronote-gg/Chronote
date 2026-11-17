@@ -8,7 +8,7 @@ Three properties hold for every change:
 2. `production-terraform` is created by hand, never by Terraform, with the owner as its only required reviewer, so every production Apply waits for the owner and no plan or workflow can weaken that gate. The separate environment keeps Apply approvals out of the standing permission for agents to approve production deployments, which pend in `production` along with Plan runs. It does not stop an agent by identity: agents on the owner's machine run `gh` as the owner's own account, which is the sole reviewer, and self-review is allowed, so an agent could technically approve an Apply. "Agents never approve a `Terraform Apply`" therefore remains a rule. The structural fix is a separate GitHub identity for agents (a machine account or GitHub App without reviewer rights); that is an owner follow-up.
 3. Apply runs the exact saved plan that was reviewed, never a replan, and refuses if its commit or the stored plan bundle's digest differs from the reviewed one.
 
-Sandbox keeps one role and runs both workflows in the `sandbox` environment: it holds no customer data, and its bootstrap root is still the older narrow design (see [Sandbox](#sandbox)).
+Sandbox runs both workflows in the `sandbox` environment. Its bootstrap migration installs separate Plan and Apply roles while preserving the existing Apply identity (see [Sandbox](#sandbox)).
 
 ## Plan, review, apply
 
@@ -24,7 +24,7 @@ Settings per environment:
 
 - `production` (Plan): variables `TERRAFORM_AWS_ROLE_ARN` (the Plan role) and `AWS_ACCOUNT_ID`; secret `TERRAFORM_TFVARS_JSON`, and optionally `REDIS_AUTH_TOKEN` and `REDIS_URL`, which overlay the tfvars. `TFVAR_<KEY>` variables override tfvars keys through `scripts/deployment/terraform-tfvars.py`, which refuses credentials on that path. Its reviewer, branch policy and bypass setting are set by hand; Terraform manages the environment but ignores those settings.
 - `production-terraform` (Apply): variables `TERRAFORM_AWS_ROLE_ARN` (the Apply role) and `AWS_ACCOUNT_ID`. No secret: the saved plan carries every variable value.
-- `sandbox`: as `production`, with the Sandbox role for both workflows.
+- `sandbox`: as `production`, with `TERRAFORM_AWS_ROLE_ARN` pointing to the Sandbox Plan role and `SANDBOX_APPLY_ROLE_ARN` pointing to the Sandbox Apply role.
 
 ## Who can read stored plans
 
@@ -47,28 +47,46 @@ EOF
 
 The last command must show every earlier rule plus `expire-terraform-plans`. The bucket is managed by `_infra_state_mgmt`, whose committed local state is stale, so the rule is not added there.
 
-Required before planning: deny reading stored plans to everyone except the two Terraform roles and the administrator role. Merge this statement into the bucket policy (`put-bucket-policy` replaces the whole policy, so read the current one with `get-bucket-policy` first):
+Required before planning: isolate production and Sandbox plans with two deny statements. Each prefix allows only that environment's Plan and Apply roles and one named administrator role. Read the current policy first, preserve unrelated statements, and replace the older `PlansOnlyForTerraform` statement covering all of `terraform-plans/*` with both statements below. Do not grant Sandbox roles access to the production prefix. `put-bucket-policy` replaces the whole policy.
 
 ```json
-{
-  "Sid": "PlansOnlyForTerraform",
-  "Effect": "Deny",
-  "Principal": "*",
-  "Action": ["s3:GetObject", "s3:GetObjectVersion"],
-  "Resource": "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/*",
-  "Condition": {
-    "ArnNotLike": {
-      "aws:PrincipalArn": [
-        "arn:aws:iam::<account>:role/meeting-notes-prod-github-terraform",
-        "arn:aws:iam::<account>:role/meeting-notes-prod-github-terraform-plan",
-        "<administrator role ARN>"
-      ]
+[
+  {
+    "Sid": "ProductionPlansOnlyForTerraform",
+    "Effect": "Deny",
+    "Principal": "*",
+    "Action": ["s3:GetObject", "s3:GetObjectVersion"],
+    "Resource": "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/production/*",
+    "Condition": {
+      "ArnNotLike": {
+        "aws:PrincipalArn": [
+          "arn:aws:iam::<account>:role/meeting-notes-prod-github-terraform",
+          "arn:aws:iam::<account>:role/meeting-notes-prod-github-terraform-plan",
+          "<administrator role ARN>"
+        ]
+      }
+    }
+  },
+  {
+    "Sid": "SandboxPlansOnlyForTerraform",
+    "Effect": "Deny",
+    "Principal": "*",
+    "Action": ["s3:GetObject", "s3:GetObjectVersion"],
+    "Resource": "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/sandbox/*",
+    "Condition": {
+      "ArnNotLike": {
+        "aws:PrincipalArn": [
+          "arn:aws:iam::<account>:role/meeting-notes-sandbox-github-terraform",
+          "arn:aws:iam::<account>:role/meeting-notes-sandbox-github-terraform-plan",
+          "<administrator role ARN>"
+        ]
+      }
     }
   }
-}
+]
 ```
 
-The Plan job checks this exact deny statement, including version reads, the two Terraform roles and one named administrator role in the same account. Wildcard administrator ARNs are refused. Keep other bucket policy statements unchanged.
+The Plan job requires both prefix-specific statements before either environment can store a plan. Each statement must deny current and version reads except for its own two Terraform roles and one named administrator role in the same account. Wildcard administrator ARNs and cross-environment role allowlists are refused. Keep other bucket policy statements unchanged.
 
 The Plan run also publishes a non-sensitive digest artifact named `terraform-plan-sha256-<digest>`. Apply requires that exact unexpired artifact on the successful Plan run before reading S3. A no-change run has no digest and cannot be applied; after the digest expires, plan again.
 
@@ -157,14 +175,15 @@ Nine steps. Five need the owner's own hands (**owner**, one of them optional): m
 
 4. **Agent: point `production` at the Plan role**: `gh variable set TERRAFORM_AWS_ROLE_ARN --env production --body <terraform_plan_role_arn>`.
 5. **Owner, optional cleanup at any time:** no workflow reads these, so they are safe to delete: in `production`, the secrets `TERRAFORM_PLAN_REFERENCE_JSON`, `BOOTSTRAP_VERIFICATION_STORAGE_JSON`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` and the variables `PRODUCTION_APPLY_ROLE_ARN` and `AWS_ACCESS_KEY_ID` (the first Apply deletes that variable anyway); the secret `TERRAFORM_PLAN_PASSPHRASE` in `production`, `production-terraform` or `sandbox` if it was ever set; in the repository settings, the repository-level secret `AWS_SECRET_ACCESS_KEY`. If the static access key behind them still exists in IAM, deactivate and delete it too. Keep `TERRAFORM_PRIVATE_STORAGE_JSON`: the site publishing jobs in `deploy.yml` read the account binding from it. `AWS_TOKEN_KEY` can be dropped from the tfvars secret whenever it is next edited; the renderer already ignores it.
-6. **Agent: run the first full production plan**: `gh workflow run terraform-plan.yml --ref master -f environment=production`, and approve its job. Production has only ever received scoped plans, so expect pending changes that never shipped through them: CloudFront routing, the history table's retry index (and its delivery index if still missing), the lifecycle alarms, alarms and ALB access logs, the deploy and prompt guard roles, a new task definition revision with `METRICS_NAMESPACE`, 60 GiB of ephemeral storage and no `LIVE_VOICE_GATE_MODEL` (the code default, `gpt-5-mini` today, applies instead; the tfvars renderer drops a leftover `LIVE_VOICE_GATE_MODEL` key; step 7 checks the running value) (the running task gets both only at the deploy in step 8), the disk alarms' thresholds moving to 75 and 95 percent of the larger disk, `production-deploy` variables and similar. GitHub variables Terraform writes but `production` may hold only by hand (today `VITE_API_BASE_URL` and `ECS_LOG_GROUP` exist there; the Algolia variables only if their tfvars are set) show as `create` if they are not in state, and creating a variable that already exists fails the Apply. Before applying, compare each such value with the existing one (`gh variable get <name> --env production`); if it matches, delete the hand-set variable just before the Apply so Terraform recreates it. `VITE_API_BASE_URL` becomes `https://<API_DOMAIN>` from the tfvars, and the next frontend build bakes in whatever the variable holds, so it changes the frontend only if that differs from today's value. Destroys to expect: the `AWS_ACCESS_KEY_ID` GitHub variable (`github_actions_environment_variable.envvar_aws_access_key_id`), which nothing reads. Lifecycle `aws_cloudwatch_log_metric_filter` destroys: none expected; if any appear, they are the six lifecycle filters and are fine.
-7. **Owner: check, then approve the Apply.** Before the first approval, run the two verification reads from step 2 yourself; they must show one `required_reviewers` rule naming only you, a `branch_policy` rule, `can_admins_bypass: false` and the single policy `master`. Then check the running live voice gate model, because the Apply drops its Terraform pin and the next deploy falls back to the code default (`gpt-5-mini` today); this has not been checked against production yet:
+6. **Agent: run the first full production plan**: `gh workflow run terraform-plan.yml --ref master -f environment=production`, and approve its job. Production has only ever received scoped plans, so expect pending changes that never shipped through them: CloudFront routing, the history table's retry index (and its delivery index if still missing), the lifecycle alarms, alarms and ALB access logs, the deploy and prompt guard roles, a new task definition revision with `METRICS_NAMESPACE`, 60 GiB of ephemeral storage and no `LIVE_VOICE_GATE_MODEL` (the code default, `gpt-6.1-terra`, applies instead; the tfvars renderer drops a leftover `LIVE_VOICE_GATE_MODEL` key; step 7 checks the running value) (the running task gets both only at the deploy in step 8), the disk alarms' thresholds moving to 75 and 95 percent of the larger disk, `production-deploy` variables and similar. GitHub variables Terraform writes but `production` may hold only by hand (today `VITE_API_BASE_URL` and `ECS_LOG_GROUP` exist there; the Algolia variables only if their tfvars are set) show as `create` if they are not in state, and creating a variable that already exists fails the Apply. Before applying, compare each such value with the existing one (`gh variable get <name> --env production`); if it matches, delete the hand-set variable just before the Apply so Terraform recreates it. `VITE_API_BASE_URL` becomes `https://<API_DOMAIN>` from the tfvars, and the next frontend build bakes in whatever the variable holds, so it changes the frontend only if that differs from today's value. Destroys to expect: the `AWS_ACCESS_KEY_ID` GitHub variable (`github_actions_environment_variable.envvar_aws_access_key_id`), which nothing reads. Lifecycle `aws_cloudwatch_log_metric_filter` destroys: none expected; if any appear, they are the six lifecycle filters and are fine.
+7. **Owner: check, then approve the Apply.** Before the first approval, run the two verification reads from step 2 yourself; they must show one `required_reviewers` rule naming only you, a `branch_policy` rule, `can_admins_bypass: false` and the single policy `master`. Then compare the running task's live voice gate pin with the code default (`gpt-6.1-terra`). The Apply removes the pin, so a different value means the next deploy changes the gate model. Include that change in the plan review before the normal owner approval:
 
    ```sh
-   aws ecs describe-task-definition --task-definition meeting-notes-prod-bot-task --query "taskDefinition.containerDefinitions[0].environment[?name=='LIVE_VOICE_GATE_MODEL'].value" --output text
+   task_definition=$(aws ecs describe-services --region us-east-1 --cluster meeting-notes-prod-bot-cluster --services meeting-notes-prod-bot-service --query "services[0].taskDefinition" --output text)
+   aws ecs describe-task-definition --region us-east-1 --task-definition "$task_definition" --query "taskDefinition.containerDefinitions[0].environment[?name=='LIVE_VOICE_GATE_MODEL'].value" --output text
    ```
 
-   It must print `gpt-5-mini`; anything else is a stop until you decide which model the gate should use. Then read every flagged line in the plan summary; a replace of a table, bucket, distribution, the load balancer, the KMS key or a GitHub environment, or any change to the `production` environment's protection, is a stop. An agent may dispatch `gh workflow run terraform-apply.yml --ref master -f environment=production -f plan_run_id=<run id> -f plan_sha256=<digest>`; only you approve it in `production-terraform`.
+   An explicit pin different from the code default is a model change to review. Read every flagged line in the plan summary; a replace of a table, bucket, distribution, the load balancer, the KMS key or a GitHub environment, or any change to the `production` environment's protection, is a stop. An agent may dispatch `gh workflow run terraform-apply.yml --ref master -f environment=production -f plan_run_id=<run id> -f plan_sha256=<digest>`; only you approve it in `production-terraform`.
 
 8. **Agent: deploy the backend straight after**: once the Apply job is running (past its idle check), dispatch `deploy.yml`. The deploy waits for the Apply to finish, then rolls out a task that has `METRICS_NAMESPACE`. The Apply creates the lifecycle alarms, and the running task publishes no lifecycle metric until it is replaced, so `no_eligible_worker` and `finisher_scan_missing` go to ALARM within five and ten minutes of the Apply and back to OK once the new task's heartbeats arrive. Expect those two ALARM and two OK emails.
 9. **Owner (any AWS read session): confirm the metrics arrive** within ten minutes of the deploy. AWS documents extraction from any Embedded Metric Format line in a Standard log group, but not this exact path (ECS awslogs driver):
@@ -180,4 +199,6 @@ Rollback: once step 3 has moved the Apply role's trust to `production-terraform`
 
 ## Sandbox
 
-The workflows accept `sandbox`, but the Sandbox Terraform role in `_infra/sandbox-bootstrap` still has the old narrow policy, so a full Sandbox plan is denied and it has no grant to store a plan under `terraform-plans/sandbox/`: Sandbox fails closed. Its trust pins no workflow either. It needs the same shape as production, applied by an administrator: a Plan role and an Apply role pinned to their workflows (with a hand-made `sandbox-terraform` environment if Sandbox applies should also need the owner), `ReadOnlyAccess`, write-once `PutObject` under `terraform-plans/sandbox/`, a `meeting-notes-sandbox-` write policy, and denies for its own identities and for resources tagged `Environment = prod`.
+The workflows accept `sandbox`, but the installed older bootstrap role cannot run a full plan or store it under `terraform-plans/sandbox/`. An administrator migrates `_infra/sandbox-bootstrap` using the authoritative protected bootstrap inputs and `enable_sandbox_terraform_delivery=true`. Review and approve the exact saved plan before applying it. The migration preserves the existing Apply role and evidence resources, adds a separate Plan role, and pins both roles to their respective workflows on `master` in `sandbox`.
+
+The Plan role receives read-only refresh permissions and write-once plan uploads. The Apply role receives the application write policy. Both deny production resource access, changes to their own identities, and object reads outside the Sandbox application state and Sandbox plan prefix. Install both prefix-specific plan-store restrictions and retention above before planning. Point the Sandbox workflow variables at the separate roles only after installation and verification. The default-off migration flag preserves the legacy bootstrap contract until those exact changes are approved.
