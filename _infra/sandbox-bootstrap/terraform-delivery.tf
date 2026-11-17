@@ -134,7 +134,10 @@ locals {
       { Sid = "BootstrapState", Effect = "Deny", Action = ["s3:PutObject", "s3:DeleteObject*"], Resource = "arn:aws:s3:::${local.state_bucket}/meeting-notes-terraform/*-bootstrap/*" },
       # ReadOnlyAccess would otherwise read meeting data, which Terraform never needs.
       { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:Export*", "s3:GetObject*", "s3vectors:QueryVectors", "s3vectors:GetVectors", "s3vectors:ListVectors"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-sandbox-*", "arn:aws:s3:::meeting-notes-sandbox-*/*", "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-sandbox-*/index/*"] },
-      { Sid = "ProductionResources", Effect = "Deny", Action = "*", Resource = "*", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "prod" } } }
+      # The GitHub provider is shared and production-tagged. Only its metadata read
+      # may cross the tag boundary; every write and other provider read stays denied.
+      { Sid = "ProductionResources", Effect = "Deny", NotAction = "iam:GetOpenIDConnectProvider", Resource = "*", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "prod" } } },
+      { Sid = "ProductionOidcMetadata", Effect = "Deny", Action = "iam:GetOpenIDConnectProvider", NotResource = "${local.iam_arn}:oidc-provider/token.actions.githubusercontent.com", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "prod" } } }
     ]
   })
 }
@@ -176,7 +179,10 @@ resource "aws_iam_role_policy" "sandbox_terraform_plan" {
     Statement = [
       { Sid = "ProductionNamedResources", Effect = "Deny", Action = "*", Resource = local.production_named_resources },
       { Sid = "StateReadsOnlySandbox", Effect = "Deny", Action = ["s3:GetObject", "s3:GetObjectVersion"], NotResource = ["arn:aws:s3:::${local.state_bucket}/${local.state_key}", "arn:aws:s3:::${local.state_bucket}/terraform-plans/sandbox/*"] },
-      { Sid = "ProductionResources", Effect = "Deny", Action = "*", Resource = "*", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "prod" } } },
+      # The GitHub provider is shared and production-tagged. Only its metadata read
+      # may cross the tag boundary; every write and other provider read stays denied.
+      { Sid = "ProductionResources", Effect = "Deny", NotAction = "iam:GetOpenIDConnectProvider", Resource = "*", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "prod" } } },
+      { Sid = "ProductionOidcMetadata", Effect = "Deny", Action = "iam:GetOpenIDConnectProvider", NotResource = "${local.iam_arn}:oidc-provider/token.actions.githubusercontent.com", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "prod" } } },
       { Sid = "StateLock", Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:DeleteItem"], Resource = "arn:aws:dynamodb:${local.region_account}:table/meeting-notes-terraform-state-locks", Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = local.state_lock_keys } } },
       merge({ Sid = "PlanStore" }, local.plan_store_statement),
       { Sid = "SecretRefresh", Effect = "Allow", Action = "secretsmanager:GetSecretValue", Resource = "arn:aws:secretsmanager:${local.region_account}:secret:meeting-notes-sandbox/*" },
