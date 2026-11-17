@@ -304,6 +304,8 @@ describe("rollout", () => {
     ])
       expect(input).not.toHaveProperty(field);
     expect(input.cpu).toBe("512");
+    // Terraform sizes the task's disk; a deploy-registered revision keeps it.
+    expect(input.ephemeralStorage).toEqual({ sizeInGiB: 60 });
     expect(input.containerDefinitions[0].image).toBe(NEW_IMAGE);
     expect(input.containerDefinitions[1].image).toBe("sidecar:1");
   });

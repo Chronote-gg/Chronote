@@ -1,3 +1,4 @@
+import { emitMetric, LIFECYCLE_METRICS } from "../lifecycleMetrics";
 import { closeFailedInitializationOutput } from "./audioPersistenceService";
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -157,15 +158,19 @@ function deliveryFailingSince(row: FinisherRow, now: number) {
     : undefined;
 }
 
-/** The stuck alarm line, for an unfinished row or a delivery that keeps failing. */
+/** The stuck alarm line and metric, for an unfinished row or a delivery that keeps failing. */
 function logIfStuck(row: FinisherRow, now: number) {
   const failingSince = deliveryFailingSince(row, now);
-  if (failingSince !== undefined)
+  if (failingSince !== undefined) {
     console.error(MEETING_STUCK_LOG, {
       ...logContext(row),
       deliveryFailingSince: isoAt(failingSince),
     });
-  else if (isStuck(row, now)) console.error(MEETING_STUCK_LOG, logContext(row));
+    emitMetric(LIFECYCLE_METRICS.meetingStuck, { Phase: "delivery" });
+  } else if (isStuck(row, now)) {
+    console.error(MEETING_STUCK_LOG, logContext(row));
+    emitMetric(LIFECYCLE_METRICS.meetingStuck, { Phase: "open" });
+  }
 }
 
 /**
@@ -505,8 +510,10 @@ export function createMeetingFinisherLoop(deps: MeetingFinisherDeps) {
     const action = classifyFinisherRow(row, lease, now);
     if (action === "skip") return false;
     if (action === "abandon") {
-      if (await deps.repository.abandon(row, now))
+      if (await deps.repository.abandon(row, now)) {
         console.error(MEETING_ABANDONED_LOG, logContext(row));
+        emitMetric(LIFECYCLE_METRICS.meetingStuck, { Phase: "abandoned" });
+      }
       return false;
     }
     return take(row, action);
@@ -550,6 +557,7 @@ export function createMeetingFinisherLoop(deps: MeetingFinisherDeps) {
       return;
     lastScanLogMs = nowMs;
     console.log(MEETING_FINISHER_SCAN_LOG, counts);
+    emitMetric(LIFECYCLE_METRICS.finisherScanCompleted);
   }
 
   /** One pass over open meetings. Returns at once when a pass is running, shutdown began, or this worker is not eligible. */

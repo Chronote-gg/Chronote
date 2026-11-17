@@ -147,15 +147,16 @@ resource "aws_cloudwatch_metric_alarm" "ecs_no_running_tasks" {
 # minimum from 13.3 to 18.1 overnight and then to the 21.5 ceiling. Minimum over
 # an hour separates 13.3 from 18.1 cleanly and ignores the 19.4 peak entirely.
 resource "aws_cloudwatch_metric_alarm" "ecs_ephemeral_storage_leak" {
-  count               = local.alerts_enabled ? 1 : 0
-  alarm_name          = "${local.name_prefix}-ecs-ephemeral-storage-leak"
-  alarm_description   = "The bot task's disk usage never drops below 16 GB of its 21.47 GB, so something is accumulating rather than being cleaned up. Check for leftover meeting audio and transcript files in the task's working directories."
-  namespace           = "ECS/ContainerInsights"
-  metric_name         = "EphemeralStorageUtilized"
-  statistic           = "Minimum"
-  period              = 3600
-  evaluation_periods  = 3
-  threshold           = 16
+  count              = local.alerts_enabled ? 1 : 0
+  alarm_name         = "${local.name_prefix}-ecs-ephemeral-storage-leak"
+  alarm_description  = "The bot task's disk usage never drops below ${floor(local.bot_task_storage_gb * 0.75)} GB of its ${format("%.2f", local.bot_task_storage_gb)} GB, so something is accumulating rather than being cleaned up. Check for leftover meeting audio and transcript files in the task's working directories."
+  namespace          = "ECS/ContainerInsights"
+  metric_name        = "EphemeralStorageUtilized"
+  statistic          = "Minimum"
+  period             = 3600
+  evaluation_periods = 3
+  # 75 percent of the reserved disk.
+  threshold           = floor(local.bot_task_storage_gb * 0.75)
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
 
@@ -177,15 +178,16 @@ resource "aws_cloudwatch_metric_alarm" "ecs_ephemeral_storage_leak" {
 # this close to full the peak is what matters and there is no room left to wait
 # three hours for a floor to confirm.
 resource "aws_cloudwatch_metric_alarm" "ecs_ephemeral_storage_critical" {
-  count               = local.alerts_enabled ? 1 : 0
-  alarm_name          = "${local.name_prefix}-ecs-ephemeral-storage-critical"
-  alarm_description   = "The bot task's disk is within 5 percent of full (20.4 of 21.47 GB). Recording, transcription and notes writes are about to start failing while the task stays healthy."
-  namespace           = "ECS/ContainerInsights"
-  metric_name         = "EphemeralStorageUtilized"
-  statistic           = "Maximum"
-  period              = 300
-  evaluation_periods  = 1
-  threshold           = 20.4
+  count              = local.alerts_enabled ? 1 : 0
+  alarm_name         = "${local.name_prefix}-ecs-ephemeral-storage-critical"
+  alarm_description  = "The bot task's disk is within 5 percent of full (${floor(local.bot_task_storage_gb * 9.5) / 10} of ${format("%.2f", local.bot_task_storage_gb)} GB). Recording, transcription and notes writes are about to start failing while the task stays healthy."
+  namespace          = "ECS/ContainerInsights"
+  metric_name        = "EphemeralStorageUtilized"
+  statistic          = "Maximum"
+  period             = 300
+  evaluation_periods = 1
+  # 95 percent of the reserved disk, to one decimal.
+  threshold           = floor(local.bot_task_storage_gb * 9.5) / 10
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
 

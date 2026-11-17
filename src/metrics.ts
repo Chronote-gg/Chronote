@@ -228,8 +228,8 @@ export const processingRetryJobs = new Counter({
   registers: [metricsRegistry],
 });
 
-// Meeting lifecycle. CloudWatch metric filters match the log lines below,
-// because nothing scrapes these Prometheus metrics in production.
+// Meeting lifecycle log lines, for operators reading the logs. The alarms read
+// the metrics in lifecycleMetrics.ts instead, so this wording may change.
 export const MEETING_STUCK_LOG = "Meeting lifecycle stuck";
 export const MEETING_ABANDONED_LOG = "Meeting lifecycle abandoned";
 export const MEETING_FINISH_FAILED_LOG = "Meeting finish failed after retries";
