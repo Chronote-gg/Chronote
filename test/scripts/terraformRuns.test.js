@@ -1,10 +1,23 @@
 /** @jest-environment node */
-import { readdirSync, readFileSync } from "node:fs";
+import {
+  readdirSync,
+  readFileSync,
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
+import process from "node:process";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, test } from "@jest/globals";
 import { parse } from "yaml";
 import {
   assertProductionIdle,
+  checkPlanRetention,
+  checkPlanPolicy,
   github,
+  planStore,
   planSummary,
   verifyPlanRun,
   waitForApplyIdle,
@@ -52,20 +65,28 @@ describe("verifyPlanRun", () => {
     run_attempt: 1,
     ...overrides,
   });
-  const artifacts = (count = 1) => ({
-    total_count: count,
-    artifacts: Array.from({ length: count }, () => ({
-      name: "terraform-plan-production",
-      expired: false,
-    })),
-  });
-  const verify = (run, environment = "production", found = artifacts()) =>
-    verifyPlanRun(async (path) => (path.includes("/artifacts") ? found : run), {
-      repository,
-      runId: "42",
-      environment,
-      sha,
-    });
+  const verify = (run, environment = "production") =>
+    verifyPlanRun(
+      async (path) =>
+        path.includes("/artifacts?")
+          ? {
+              total_count: 1,
+              artifacts: [
+                {
+                  name: `terraform-plan-sha256-${"c".repeat(64)}`,
+                  expired: false,
+                },
+              ],
+            }
+          : run,
+      {
+        repository,
+        runId: "42",
+        environment,
+        sha,
+        planSha256: "c".repeat(64),
+      },
+    );
 
   test("accepts a successful first-attempt master plan of the same commit", async () => {
     await expect(verify(planRun())).resolves.toMatchObject({ id: 42 });
@@ -86,10 +107,213 @@ describe("verifyPlanRun", () => {
   test("refuses a plan made for the other environment", async () => {
     await expect(verify(planRun(), "sandbox")).rejects.toThrow();
   });
+});
 
-  test("refuses a plan with no changes, which uploads no plan", async () => {
-    await expect(verify(planRun(), "production", artifacts(0))).rejects.toThrow(
-      "The plan has no changes; there is nothing to apply",
+test.each([
+  [],
+  [{ name: `terraform-plan-sha256-${"d".repeat(64)}`, expired: false }],
+  [{ name: `terraform-plan-sha256-${"c".repeat(64)}`, expired: true }],
+])(
+  "refuses missing, mismatched or expired run digest %j",
+  async (...artifacts) => {
+    await expect(
+      verifyPlanRun(
+        async (path) =>
+          path.includes("/artifacts?")
+            ? { total_count: artifacts.length, artifacts }
+            : {
+                id: 42,
+                repository: { full_name: repository },
+                head_repository: { full_name: repository },
+                path: ".github/workflows/terraform-plan.yml",
+                event: "workflow_dispatch",
+                head_branch: "master",
+                display_title: "Terraform Plan production",
+                status: "completed",
+                conclusion: "success",
+                head_sha: sha,
+                run_attempt: 1,
+              },
+        {
+          repository,
+          runId: "42",
+          environment: "production",
+          sha,
+          planSha256: "c".repeat(64),
+        },
+      ),
+    ).rejects.toThrow();
+  },
+);
+
+describe("checkPlanPolicy", () => {
+  const account = "123456789012";
+  const statement = () => ({
+    Effect: "Deny",
+    Principal: "*",
+    Action: ["s3:GetObject", "s3:GetObjectVersion"],
+    Resource:
+      "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/*",
+    Condition: {
+      ArnNotLike: {
+        "aws:PrincipalArn": [
+          "meeting-notes-prod-github-terraform",
+          "meeting-notes-prod-github-terraform-plan",
+          "Administrator",
+        ].map((name) => `arn:aws:iam::${account}:role/${name}`),
+      },
+    },
+  });
+  test("the local policy check needs no GitHub token", () => {
+    const directory = mkdtempSync(join(tmpdir(), "plan-policy-"));
+    try {
+      const policy = join(directory, "policy.json");
+      writeFileSync(policy, JSON.stringify({ Statement: [statement()] }));
+      const result = spawnSync(
+        process.execPath,
+        [
+          resolve("scripts/deployment/terraform-runs.cjs"),
+          "check-plan-policy",
+          policy,
+          account,
+        ],
+        { env: { ...process.env, GH_TOKEN: "" }, encoding: "utf8" },
+      );
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  test("accepts only the two Terraform roles and one named administrator role", () => {
+    expect(() =>
+      checkPlanPolicy({ Statement: [statement()] }, account),
+    ).not.toThrow();
+  });
+  test.each([
+    {},
+    { Effect: "Allow" },
+    { Action: ["s3:GetObject"] },
+    { Condition: { ArnNotLike: { "aws:PrincipalArn": ["*"] } } },
+  ])("refuses missing or weaker read restrictions %j", (override) => {
+    expect(() =>
+      checkPlanPolicy(
+        {
+          Statement: Object.keys(override).length
+            ? [{ ...statement(), ...override }]
+            : [],
+        },
+        account,
+      ),
+    ).toThrow();
+  });
+});
+
+describe("planStore", () => {
+  const backend = readFileSync("_infra/main.tf", "utf8");
+
+  test("keeps each plan run's files under its own key in the state bucket", () => {
+    expect(planStore("production", "42", "1", backend)).toEqual({
+      bucket: "meeting-notes-terraform-state-bucket",
+      prefix: "terraform-plans/production/42-1",
+    });
+  });
+
+  // Terraform lists the workspace prefix and reads state keys; plans must be
+  // outside both, and outside the bootstrap roots' keys.
+  test("never shares a prefix with a state key", () => {
+    const { prefix } = planStore("sandbox", "7", "1", backend);
+    expect(prefix.startsWith("meeting-notes-terraform")).toBe(false);
+    expect(prefix).toBe("terraform-plans/sandbox/7-1");
+  });
+
+  test.each([
+    ["staging", "1", "1"],
+    ["production", "x", "1"],
+    ["production", "1", "0"],
+  ])("refuses %s run %s attempt %s", (environment, runId, attempt) => {
+    expect(() => planStore(environment, runId, attempt, backend)).toThrow();
+  });
+});
+
+describe("checkPlanRetention", () => {
+  const expiring = (prefix, extra = {}) => ({
+    ID: "plans",
+    Status: "Enabled",
+    Filter: { Prefix: prefix },
+    Expiration: { Days: 30 },
+    NoncurrentVersionExpiration: { NoncurrentDays: 1 },
+    ...extra,
+  });
+
+  test.each([["the plans prefix", expiring("terraform-plans/")]])(
+    "accepts a rule expiring %s",
+    (_name, rule) => {
+      expect(() => checkPlanRetention({ Rules: [rule] })).not.toThrow();
+    },
+  );
+
+  test.each([
+    ["no lifecycle configuration", {}],
+    ["whole bucket", { Rules: [expiring("")] }],
+    [
+      "marker only",
+      {
+        Rules: [
+          expiring("terraform-plans/", {
+            Expiration: { ExpiredObjectDeleteMarker: true },
+          }),
+        ],
+      },
+    ],
+    [
+      "too long",
+      { Rules: [expiring("terraform-plans/", { Expiration: { Days: 31 } })] },
+    ],
+    [
+      "tag filter",
+      {
+        Rules: [
+          expiring("terraform-plans/", {
+            Filter: { And: { Prefix: "terraform-plans/", Tags: [] } },
+          }),
+        ],
+      },
+    ],
+    ["no rules", { Rules: [] }],
+    [
+      "a disabled rule",
+      { Rules: [expiring("terraform-plans/", { Status: "Disabled" })] },
+    ],
+    ["a rule for another prefix", { Rules: [expiring("logs/")] }],
+    [
+      "a rule for a narrower prefix",
+      { Rules: [expiring("terraform-plans/sandbox/")] },
+    ],
+    [
+      "a rule with no expiration",
+      { Rules: [{ ...expiring("terraform-plans/"), Expiration: undefined }] },
+    ],
+  ])("refuses %s", (_name, config) => {
+    expect(() => checkPlanRetention(config)).toThrow(
+      "No enabled lifecycle rule expires terraform-plans/ in the state bucket",
+    );
+  });
+
+  // Versioning is on, so expiring the current version only adds a delete
+  // marker; the plan bytes stay as a noncurrent version until this removes them.
+  test("refuses an expiry that keeps noncurrent versions forever", () => {
+    expect(() =>
+      checkPlanRetention({
+        Rules: [
+          {
+            ...expiring("terraform-plans/"),
+            NoncurrentVersionExpiration: undefined,
+          },
+        ],
+      }),
+    ).toThrow(
+      "No enabled lifecycle rule removes noncurrent versions under terraform-plans/",
     );
   });
 });
@@ -268,7 +492,12 @@ describe("planSummary", () => {
       ]),
     ],
   };
-  const meta = { sha, digest: "d".repeat(64), attempt: "1" };
+  const meta = {
+    sha,
+    digest: "d".repeat(64),
+    attempt: "1",
+    location: "s3://example-bucket/terraform-plans/production/42-1/plan.tar.gz",
+  };
   const summary = planSummary(plan, meta);
 
   test("never prints a value from the plan", () => {
@@ -332,11 +561,14 @@ describe("planSummary", () => {
     );
   });
 
-  test("records the commit, attempt and encrypted plan digest", () => {
+  test("records the commit, attempt, digest and where the plan is stored", () => {
     expect(summary).toContain(`Commit: \`${sha}\``);
     expect(summary).toContain("Plan run attempt: 1");
     expect(summary).toContain(
-      `Encrypted plan SHA-256 (\`plan_sha256\`): \`${"d".repeat(64)}\``,
+      `Plan bundle SHA-256 (\`plan_sha256\`): \`${"d".repeat(64)}\``,
+    );
+    expect(summary).toContain(
+      "Plan bundle: `s3://example-bucket/terraform-plans/production/42-1/plan.tar.gz`",
     );
   });
 
@@ -344,7 +576,7 @@ describe("planSummary", () => {
     for (const empty of [{}, { resource_changes: [] }]) {
       const text = planSummary(empty, { sha, attempt: "1" });
       expect(text).toContain(
-        "No changes. Nothing was uploaded and there is nothing to apply.",
+        "No changes. Nothing was stored and there is nothing to apply.",
       );
       expect(text).not.toContain("SHA-256");
     }
@@ -359,6 +591,7 @@ describe("workflow shape", () => {
   const applyJob = applyWorkflow.jobs.apply;
   const step = (job, name) => job.steps.find((s) => s.name === name);
   const scripts = (job) => job.steps.map((s) => s.run ?? "").join("\n");
+  const raw = (name) => readFileSync(`.github/workflows/${name}`, "utf8");
 
   test("both jobs run on master only", () => {
     for (const job of [planJob, applyJob])
@@ -371,31 +604,21 @@ describe("workflow shape", () => {
     expect(scripts(applyJob)).not.toContain("-target");
   });
 
-  const uploads = (job) =>
-    job.steps.filter((s) =>
-      String(s.uses).startsWith("actions/upload-artifact"),
+  test("plans and logs go to the state bucket, never to a GitHub artifact or a passphrase", () => {
+    for (const name of ["terraform-plan.yml", "terraform-apply.yml"])
+      expect(raw(name)).not.toMatch(/download-artifact|openssl|PASSPHRASE/);
+    const store = step(planJob, "Store plan").run;
+    expect(store).toContain(
+      'aws s3api put-object --bucket "$BUCKET" --key "$PREFIX/plan.tar.gz" --body "$RUNNER_TEMP/plan.tar.gz" --if-none-match "*"',
     );
-
-  test("only encrypted files are uploaded, for one day", () => {
     for (const job of [planJob, applyJob])
-      for (const upload of uploads(job)) {
-        expect(upload.with.path).toMatch(/\.enc$/);
-        expect(upload.with["retention-days"]).toBe(1);
-      }
-    expect(uploads(planJob).map((u) => u.with.path)).toEqual([
-      "${{ runner.temp }}/plan.tgz.enc",
-      "${{ runner.temp }}/terraform.log.enc",
-    ]);
-    expect(step(planJob, "Encrypt plan").run).toContain(
-      "openssl enc -aes-256-cbc",
-    );
+      expect(step(job, "Store log").if).toBe("always()");
   });
 
-  test("a plan with no changes uploads no plan", () => {
-    for (const name of ["Encrypt plan", "Upload encrypted plan"])
-      expect(step(planJob, name).if).toBe(
-        "steps.plan.outputs.changes == 'true'",
-      );
+  test("a plan with no changes stores no plan", () => {
+    expect(step(planJob, "Store plan").if).toBe(
+      "steps.plan.outputs.changes == 'true'",
+    );
     expect(step(planJob, "Plan").run).toContain("-detailed-exitcode");
   });
 
@@ -418,18 +641,18 @@ describe("workflow shape", () => {
       .split("\n")
       .filter((line) => line.includes("GITHUB_STEP_SUMMARY"));
     expect(writes).toEqual([
-      'node scripts/deployment/terraform-runs.cjs plan-summary "$RUNNER_TEMP/plan.json" "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT" "$PLAN_SHA256" >> "$GITHUB_STEP_SUMMARY"',
+      'node scripts/deployment/terraform-runs.cjs plan-summary "$RUNNER_TEMP/plan.json" "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT" "$PLAN_SHA256" "$PLAN_LOCATION" >> "$GITHUB_STEP_SUMMARY"',
     ]);
     expect(summary).toContain('rm "$RUNNER_TEMP/plan.json"');
   });
 
-  test("apply checks the plan run, idleness and the digest before it decrypts", () => {
+  test("apply checks the plan run, idleness and the digest before it unpacks", () => {
     const names = applyJob.steps.map((s) => s.name);
     const verify = names.indexOf(
       "Verify the plan run is a successful plan of this commit",
     );
     const idle = names.indexOf("Refuse while a production deploy is open");
-    const download = names.indexOf("Download encrypted plan");
+    const download = names.indexOf("Download and verify plan");
     expect(applyJob.steps[verify].run).toBe(
       'node scripts/deployment/terraform-runs.cjs verify-plan-run "$ENVIRONMENT" "$PLAN_RUN_ID"',
     );
@@ -438,19 +661,119 @@ describe("workflow shape", () => {
     );
     expect(verify).toBeLessThan(download);
     expect(idle).toBeLessThan(download);
-    expect(step(applyJob, "Download encrypted plan").with["run-id"]).toBe(
-      "${{ inputs.plan_run_id }}",
-    );
-    const decrypt = step(applyJob, "Verify and decrypt plan").run.split("\n");
-    const check = decrypt.findIndex((line) =>
-      line.includes("sha256sum --check"),
-    );
-    const openssl = decrypt.findIndex((line) =>
-      line.includes("openssl enc -d"),
-    );
-    expect(check).toBeGreaterThanOrEqual(0);
-    expect(check).toBeLessThan(openssl);
+    const lines = step(applyJob, "Download and verify plan").run.split("\n");
+    const at = (text) => lines.findIndex((line) => line.includes(text));
+    expect(at("set -o pipefail")).toBe(0);
+    expect(at("head-object")).toBeGreaterThan(0);
+    expect(at("head-object")).toBeLessThan(at("sha256sum --check"));
+    expect(at("sha256sum --check")).toBeLessThan(at("tar -tzf"));
+    expect(at("tar -tzf")).toBeLessThan(at("tar -xzf"));
     expect(applyJob.env.PLAN_SHA256).toBe("${{ inputs.plan_sha256 }}");
+    expect(step(applyJob, "Locate the plan").run).toBe(
+      'node scripts/deployment/terraform-runs.cjs plan-store "$ENVIRONMENT" "$PLAN_RUN_ID" 1 >> "$GITHUB_OUTPUT"',
+    );
+  });
+
+  // The bundle is unpacked into _infra, so it may only ever supply the saved
+  // plan and the Lambda archives the plan step put in it, never Terraform
+  // configuration, the lock file or the provider cache.
+  test("apply unpacks only the saved plan and top-level Lambda archives", () => {
+    const store = step(planJob, "Store plan").run;
+    expect(store).toContain(
+      'tar -czf "$RUNNER_TEMP/plan.tar.gz" tfplan $(ls *.zip 2>/dev/null)',
+    );
+    const download = step(applyJob, "Download and verify plan").run;
+    const allowed = download.match(/grep -qvE '([^']+)'/)?.[1];
+    expect(allowed).toBe("^(tfplan|[A-Za-z0-9_-]+\\.zip)$");
+    const pattern = new RegExp(allowed);
+    for (const name of [
+      "tfplan",
+      "discord_alert.zip",
+      "grafana_token_rotation.zip",
+    ])
+      expect(pattern.test(name)).toBe(true);
+    for (const name of [
+      ".terraform.lock.hcl",
+      ".terraform/providers/x.zip",
+      "main.tf",
+      "../x.zip",
+      "/tmp/x.zip",
+    ])
+      expect(pattern.test(name)).toBe(false);
+    // Every archive the plan can produce passes the same pattern.
+    for (const name of readdirSync("_infra").filter((n) => n.endsWith(".tf")))
+      for (const [, output] of readFileSync(`_infra/${name}`, "utf8").matchAll(
+        /output_path\s*=\s*"\$\{path\.module\}\/([^"]+)"/g,
+      ))
+        expect(pattern.test(output)).toBe(true);
+    expect(download).toContain(
+      'tar -xzf "$RUNNER_TEMP/plan.tar.gz" -C _infra --no-same-owner $members',
+    );
+  });
+
+  test("apply tells a missing plan apart from a failed read", () => {
+    const download = step(applyJob, "Download and verify plan").run;
+    expect(download).toContain('if [ "$code" = 404 ]; then');
+    expect(download).toContain(
+      "the plan had no changes or did not finish; there is nothing to apply",
+    );
+    expect(download).toContain("Reading the stored plan failed (");
+    // The raw CLI message is never printed, only the code taken from it.
+    expect(download).not.toMatch(/echo[^\n]*\$err/);
+  });
+
+  test("the plan refuses to run unless the state bucket expires stored plans", () => {
+    const names = planJob.steps.map((s) => s.name);
+    const check = names.indexOf("Check plan retention");
+    expect(check).toBeGreaterThan(names.indexOf("Locate the plan store"));
+    expect(check).toBeLessThan(names.indexOf("Plan"));
+    const run = step(planJob, "Check plan retention").run;
+    expect(run).toContain(
+      'aws s3api get-bucket-lifecycle-configuration --bucket "$BUCKET"',
+    );
+    // No configuration at all is a refusal, not a read failure.
+    expect(run).toContain(
+      'if [ "$code" = NoSuchLifecycleConfiguration ]; then',
+    );
+    expect(run).toContain(
+      'node scripts/deployment/terraform-runs.cjs check-plan-retention "$RUNNER_TEMP/lifecycle.json"',
+    );
+    expect(run).not.toMatch(/echo[^\n]*\$err/);
+  });
+
+  // A lost log must never turn an applied change or a stored plan red.
+  test("the run publishes a non-sensitive digest and checks read access before planning", () => {
+    const digest = step(planJob, "Publish reviewed plan digest");
+    expect(digest.with.name).toBe(
+      "terraform-plan-sha256-${{ steps.bundle.outputs.sha256 }}",
+    );
+    expect(digest.if).toBe("steps.plan.outputs.changes == 'true'");
+    expect(step(planJob, "Check plan read restriction").run).toContain(
+      "check-plan-policy",
+    );
+    const names = planJob.steps.map((s) => s.name);
+    expect(names.indexOf("Check plan read restriction")).toBeLessThan(
+      names.indexOf("Plan"),
+    );
+    expect(step(applyJob, "Download and verify plan").run).toContain(
+      "tr -d '()' || true",
+    );
+  });
+
+  test("storing a log can only warn", () => {
+    for (const job of [planJob, applyJob]) {
+      const store = step(job, "Store log").run;
+      expect(store).toMatch(
+        /\|\| echo "::warning::Storing the [a-z]+ log failed/,
+      );
+    }
+  });
+
+  test("the Apply session lasts as long as the Apply job may", () => {
+    const credentials = step(applyJob, "Configure AWS credentials").with;
+    expect(credentials["role-duration-seconds"]).toBe(
+      applyJob["timeout-minutes"] * 60,
+    );
   });
 
   test("apply applies the saved plan and takes the three reviewed inputs", () => {
@@ -525,14 +848,5 @@ describe("Terraform roles and environments", () => {
       expect(credentials["managed-session-policies"]).toBeUndefined();
       expect(credentials["inline-session-policy"]).toBeUndefined();
     }
-  });
-
-  test("every decrypt pipeline fails when openssl fails", () => {
-    const steps = [
-      ...workflow("terraform-apply.yml").jobs.apply.steps,
-      ...workflow("terraform-plan.yml").jobs.plan.steps,
-    ].filter((s) => /openssl enc -d[^\n]*\|/.test(s.run ?? ""));
-    expect(steps.length).toBeGreaterThan(0);
-    for (const step of steps) expect(step.run).toMatch(/^set -o pipefail$/m);
   });
 });

@@ -14,6 +14,19 @@ import { AuthenticatedPreviewProviders } from "../../storybook/AuthenticatedPrev
 import { trpc } from "../../services/trpc";
 import Settings from "../../pages/Settings";
 import type { ConfigEntryInput } from "../../types/configEntry";
+import { useGuildContext } from "../../contexts/GuildContext";
+
+function SelectedServerSettings() {
+  const { guilds, selectedGuildId, setSelectedGuildId } = useGuildContext();
+  useEffect(() => {
+    if (
+      selectedGuildId !== "fictional-server" &&
+      guilds.some((guild) => guild.id === "fictional-server")
+    )
+      setSelectedGuildId("fictional-server");
+  }, [guilds, selectedGuildId, setSelectedGuildId]);
+  return <Settings />;
+}
 
 const notesEntry: ConfigEntryInput = {
   key: "notes.channelId",
@@ -154,7 +167,7 @@ function NotesDestinationPreview({
   const [router] = useState(() => {
     localStorage.setItem("mn-selected-guild", "fictional-server");
     return createRouter({
-      routeTree: createRootRoute({ component: Settings }),
+      routeTree: createRootRoute({ component: SelectedServerSettings }),
       history: createMemoryHistory({ initialEntries: ["/"] }),
     });
   });

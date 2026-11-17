@@ -2,19 +2,11 @@
 
 Playwright visual tests capture screenshots for key UI pages and compare them
 against baselines to detect unintended UI changes.
-The visual suite captures two snapshots for each view. Component-level crops
-should live in Storybook instead.
-The viewport snapshot shows the exact first-load view at the Playwright
-viewport size with no layout overrides. Most full snapshots enable visual mode
-so headers, footers, and scroll areas expand to show all content. The new mobile
-and wide marketing snapshots use the normal page layout for both captures,
-with `fullPage` enabled for the full image.
-The meeting drawer's bounded Summary pane keeps its normal viewport and
-scrolling in both modes. A full-page screenshot does not show every note
-at once; the remaining notes stay reachable by scrolling.
-
-Visual mode is toggled with query parameters. Use `?visual=1` (or `?screenshot=1`)
-to enable it and `?visual=0` to disable it.
+Keep a small set of representative viewport screenshots for page layout and
+journeys. Cover component states, permissions, errors and billing permutations
+with Storybook fixtures and interaction assertions. Do not multiply screenshots
+across every theme, width, billing period and full-page mode.
+Scroll behavior needs assertions that the intended container actually scrolls.
 
 ## Running locally
 
@@ -24,22 +16,15 @@ to enable it and `?visual=0` to disable it.
 The visual tests run in mock mode, use fixed mock timestamps, and disable
 animations for stable snapshots.
 
-The post-install welcome (`/join`) and Free-server upgrade comparison
-(`/upgrade/select-server`) are covered at 1280x720, 390x844 and 1920x1080.
-Their checks also assert key content, upgrade selection and no horizontal
-document overflow. These baselines record the current UI; passing a pixel
-comparison does not establish that its design is good.
+Short-screen Ask and upgrade checks protect first-load visibility of the input,
+prices and plan action. Functional checks still exercise both billing periods
+and responsive widths without capturing every permutation.
 
-Billing covers Free servers with canceled or expired subscription history at
-desktop and mobile widths. The current-plan card shows Free and its usage;
-the previous subscription appears in a separate billing-history section.
-Direct acquisition covers both terminal statuses and keeps Basic and Pro
-purchase actions available.
-Complimentary plans with terminal Stripe history keep their effective Basic
-or Pro plan and may start paying. Home offer failures disable Basic and
-provide a retry action while keeping Pro available.
-Viewport snapshots show the normal responsive layout; full snapshots use the
-expanded visual mode described above.
+Run `yarn storybook` and then `yarn test-storybook` for isolated state and
+interaction coverage. CI tests the built Storybook. Screenshots are opt-in:
+set `STORYBOOK_SCREENSHOTS=true` before running the test runner, and use
+`--includeTags` to capture the relevant stories only. Captures are written to
+`test/storybook/screenshots` for visual review.
 
 ## Handling nondeterministic UI
 
@@ -85,4 +70,5 @@ filenames and diffs.
 - Inspect each new or changed screenshot before accepting it. Baseline updates
   are deliberate review decisions, not an automatic response to a failing check.
 - Commit the new snapshots in `test/e2e/visual.spec.ts-snapshots`.
-- Expect two snapshots per view, with `-viewport` and `-full` suffixes.
+- Prefer one viewport snapshot per representative layout. Add a second only
+  when it protects a distinct layout failure that assertions cannot cover.

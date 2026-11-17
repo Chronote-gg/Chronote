@@ -251,12 +251,23 @@ jobs:
       - name: Install dependencies
         run: bash scripts/ci-install-dependencies.sh
 
-      # UI changes are expected to ship Storybook screenshots, so the build has
-      # to stay green. A build is sufficient: a preview-level transform failure
-      # takes every story down at once and exits non-zero here, without the
-      # cost of running the browser test runner in CI.
       - name: Build Storybook
         run: yarn build-storybook --quiet
+
+      - name: Install Storybook test browser
+        run: yarn playwright install --with-deps chromium
+
+      - name: Test component states and interactions
+        shell: bash
+        run: |
+          python3 -m http.server 6006 --bind 127.0.0.1 --directory storybook-static > "$RUNNER_TEMP/storybook.log" 2>&1 &
+          storybook_pid=$!
+          trap 'kill "$storybook_pid"' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:6006/index.json > /dev/null; then break; fi
+            sleep 1
+          done
+          yarn test-storybook --url http://127.0.0.1:6006 --ci --maxWorkers=2
 
   docker-build:
     name: Docker Build

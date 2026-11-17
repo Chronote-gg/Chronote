@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: GitHub environment holding the Terraform role, tfvars and plan passphrase
+        description: GitHub environment holding the Terraform role and tfvars
         required: true
         type: choice
         default: sandbox
@@ -33,6 +33,7 @@ jobs:
       TF_INPUT: "false"
       TF_WORKSPACE: ${{ inputs.environment == 'production' && 'default' || 'sandbox' }}
       TF_LOG: ""
+      PLAN_ENVIRONMENT: ${{ inputs.environment }}
       AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
     steps:
       - name: Require master
@@ -68,6 +69,38 @@ jobs:
           GITHUB_VARS_JSON: ${{ toJSON(vars) }}
         run: python3 scripts/deployment/terraform-tfvars.py
 
+      - name: Locate the plan store
+        id: store
+        run: node scripts/deployment/terraform-runs.cjs plan-store "$PLAN_ENVIRONMENT" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+      # A stored plan holds credentials, so nothing is planned or stored unless
+      # the bucket expires stored plans on its own. No lifecycle configuration
+      # at all is a refusal; any other read error is a failure. Only the error
+      # code is printed: the CLI message names just the operation and error.
+      - name: Check plan retention
+        env:
+          BUCKET: ${{ steps.store.outputs.bucket }}
+        run: |
+          if err=$(aws s3api get-bucket-lifecycle-configuration --bucket "$BUCKET" 2>&1 > "$RUNNER_TEMP/lifecycle.json"); then
+            :
+          else
+            code=$(grep -oE '\([A-Za-z0-9]+\)' <<< "$err" | head -n 1 | tr -d '()' || true)
+            if [ "$code" = NoSuchLifecycleConfiguration ]; then
+              echo '{}' > "$RUNNER_TEMP/lifecycle.json"
+            else
+              echo "::error::Reading the state bucket's lifecycle configuration failed (${code:-no error code})"
+              exit 1
+            fi
+          fi
+          node scripts/deployment/terraform-runs.cjs check-plan-retention "$RUNNER_TEMP/lifecycle.json"
+      - name: Check plan read restriction
+        env:
+          BUCKET: ${{ steps.store.outputs.bucket }}
+          ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          aws s3api get-bucket-policy --bucket "$BUCKET" --query Policy --output text > "$RUNNER_TEMP/plan-policy.json"
+          node scripts/deployment/terraform-runs.cjs check-plan-policy "$RUNNER_TEMP/plan-policy.json" "$ACCOUNT"
+
       - name: Read search projection setting
         id: search-projection
         run: |
@@ -96,14 +129,15 @@ jobs:
         run: node scripts/search/build-projection.mjs
 
       # Terraform output can carry values, so it goes only to a log file that
-      # is uploaded encrypted; on failure the job prints the exit code alone.
+      # is stored beside the plan in the state bucket; on failure the job
+      # prints the exit code alone.
       - name: Plan
         id: plan
         run: |
           set +x
           unset TF_LOG TF_LOG_CORE TF_LOG_PROVIDER TF_LOG_PATH
           log="$RUNNER_TEMP/terraform.log"
-          fail() { echo "::error::terraform $1 failed with exit code $2; read the encrypted terraform log artifact"; exit 1; }
+          fail() { echo "::error::terraform $1 failed with exit code $2; read terraform.log in the plan store"; exit 1; }
           terraform -chdir=_infra init -input=false -lockfile=readonly >> "$log" 2>&1 || fail init $?
           status=0
           terraform -chdir=_infra plan -input=false -lock-timeout=5m -detailed-exitcode -out=tfplan >> "$log" 2>&1 || status=$?
@@ -113,62 +147,58 @@ jobs:
             *) fail plan "$status" ;;
           esac
 
-      # The saved plan holds every variable value, including credentials, so
-      # only the encrypted bundle leaves the runner. The Lambda archives are
-      # data-source outputs the apply reads from disk, so they travel with it.
-      - name: Encrypt plan
+      # The saved plan holds every variable value, including credentials, so it
+      # goes only to the state bucket (docs/terraform-delivery.md says who can
+      # read it and how it expires). The Lambda archives are data-source outputs the apply reads from
+      # disk, so they travel with it. A key is written once and never replaced.
+      - name: Store plan
         id: bundle
         if: steps.plan.outputs.changes == 'true'
         env:
-          TERRAFORM_PLAN_PASSPHRASE: ${{ secrets.TERRAFORM_PLAN_PASSPHRASE }}
+          BUCKET: ${{ steps.store.outputs.bucket }}
+          PREFIX: ${{ steps.store.outputs.prefix }}
         run: |
-          test -n "$TERRAFORM_PLAN_PASSPHRASE"
+          set +x
           cd _infra
-          tar -czf "$RUNNER_TEMP/plan.tgz" tfplan $(ls *.zip 2>/dev/null)
-          openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -pass env:TERRAFORM_PLAN_PASSPHRASE -in "$RUNNER_TEMP/plan.tgz" -out "$RUNNER_TEMP/plan.tgz.enc"
-          rm "$RUNNER_TEMP/plan.tgz"
-          echo "sha256=$(sha256sum "$RUNNER_TEMP/plan.tgz.enc" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          tar -czf "$RUNNER_TEMP/plan.tar.gz" tfplan $(ls *.zip 2>/dev/null)
+          sha256sum "$RUNNER_TEMP/plan.tar.gz" | cut -d' ' -f1 > "$RUNNER_TEMP/plan.sha256"
+          echo "sha256=$(cat "$RUNNER_TEMP/plan.sha256")" >> "$GITHUB_OUTPUT"
+          echo "location=s3://$BUCKET/$PREFIX/plan.tar.gz" >> "$GITHUB_OUTPUT"
+          aws s3api put-object --bucket "$BUCKET" --key "$PREFIX/plan.tar.gz" --body "$RUNNER_TEMP/plan.tar.gz" --if-none-match "*" > /dev/null
+
+      # Run-owned artifact metadata binds the digest even after the S3 object expires.
+      - name: Publish reviewed plan digest
+        if: steps.plan.outputs.changes == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: terraform-plan-sha256-${{ steps.bundle.outputs.sha256 }}
+          path: ${{ runner.temp }}/plan.sha256
+          if-no-files-found: error
+          retention-days: 30
 
       # Only types, addresses and actions reach the summary; values never do.
       - name: Summarize changes
         env:
           PLAN_SHA256: ${{ steps.bundle.outputs.sha256 }}
+          PLAN_LOCATION: ${{ steps.bundle.outputs.location }}
         run: |
           set +x
           log="$RUNNER_TEMP/terraform.log"
           terraform -chdir=_infra show -json tfplan > "$RUNNER_TEMP/plan.json" 2>> "$log" || { echo "::error::terraform show failed with exit code $?"; exit 1; }
-          node scripts/deployment/terraform-runs.cjs plan-summary "$RUNNER_TEMP/plan.json" "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT" "$PLAN_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          node scripts/deployment/terraform-runs.cjs plan-summary "$RUNNER_TEMP/plan.json" "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT" "$PLAN_SHA256" "$PLAN_LOCATION" >> "$GITHUB_STEP_SUMMARY"
           rm "$RUNNER_TEMP/plan.json"
 
-      - name: Upload encrypted plan
-        if: steps.plan.outputs.changes == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: terraform-plan-${{ inputs.environment }}
-          path: ${{ runner.temp }}/plan.tgz.enc
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Encrypt log
+      - name: Store log
         if: always()
         env:
-          TERRAFORM_PLAN_PASSPHRASE: ${{ secrets.TERRAFORM_PLAN_PASSPHRASE }}
+          BUCKET: ${{ steps.store.outputs.bucket }}
+          PREFIX: ${{ steps.store.outputs.prefix }}
         run: |
           log="$RUNNER_TEMP/terraform.log"
-          if [ -f "$log" ] && [ -n "$TERRAFORM_PLAN_PASSPHRASE" ]; then
-            openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -pass env:TERRAFORM_PLAN_PASSPHRASE -in "$log" -out "$log.enc"
+          if [ -f "$log" ] && [ -n "$PREFIX" ]; then
+            aws s3api put-object --bucket "$BUCKET" --key "$PREFIX/terraform.log" --body "$log" --if-none-match "*" > /dev/null || echo "::warning::Storing the plan log failed; the plan itself is unaffected"
           fi
-          rm -f "$log"
-
-      - name: Upload encrypted log
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: terraform-plan-log-${{ inputs.environment }}
-          path: ${{ runner.temp }}/terraform.log.enc
-          retention-days: 1
-          if-no-files-found: ignore
 
       - name: Remove plaintext plan
         if: always()
-        run: rm -f _infra/tfplan _infra/terraform.auto.tfvars.json "$RUNNER_TEMP/plan.tgz" "$RUNNER_TEMP/plan.json" "$RUNNER_TEMP/terraform.log"
+        run: rm -f _infra/tfplan _infra/terraform.auto.tfvars.json "$RUNNER_TEMP/lifecycle.json" "$RUNNER_TEMP/plan-policy.json" "$RUNNER_TEMP/plan.sha256" "$RUNNER_TEMP/plan.tar.gz" "$RUNNER_TEMP/plan.json" "$RUNNER_TEMP/terraform.log"

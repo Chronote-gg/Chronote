@@ -27,9 +27,27 @@ function github(token, request = fetch) {
 
 const planWorkflow = ".github/workflows/terraform-plan.yml";
 
-// Apply runs only the artifact of a successful first-attempt plan of this
-// exact commit: a re-run could replace the artifact that was reviewed.
-async function verifyPlanRun(get, { repository, runId, environment, sha }) {
+// Saved plans and Terraform logs live in a restricted prefix of the state bucket.
+function planStore(environment, runId, attempt, backendSource) {
+  assert.ok(["production", "sandbox"].includes(environment));
+  assert.match(String(runId), /^[1-9]\d{0,15}$/);
+  assert.match(String(attempt), /^[1-9]\d{0,3}$/);
+  const bucket = backendSource.match(
+    /backend "s3" \{[^}]*?\bbucket\s*=\s*"([^"]+)"/,
+  )?.[1];
+  assert.ok(bucket, "No S3 backend bucket in _infra/main.tf");
+  return {
+    bucket,
+    prefix: `terraform-plans/${environment}/${runId}-${attempt}`,
+  };
+}
+
+// Apply runs only the bundle of a successful first-attempt plan of this exact
+// commit: a re-run would store a different bundle under another attempt.
+async function verifyPlanRun(
+  get,
+  { repository, runId, environment, sha, planSha256 },
+) {
   const run = await get(`/repos/${repository}/actions/runs/${runId}`);
   assert.equal(String(run.id), String(runId));
   assert.equal(run.repository.full_name, repository);
@@ -54,15 +72,99 @@ async function verifyPlanRun(get, { repository, runId, environment, sha }) {
     1,
     "A re-run plan cannot be applied; plan again",
   );
+  assert.match(planSha256, /^[0-9a-f]{64}$/);
   const artifacts = await get(
-    `/repos/${repository}/actions/runs/${runId}/artifacts?name=terraform-plan-${environment}`,
+    `/repos/${repository}/actions/runs/${runId}/artifacts?per_page=100`,
+  );
+  assert.equal(artifacts.artifacts.length, artifacts.total_count);
+  const digests = artifacts.artifacts.filter((artifact) =>
+    artifact.name.startsWith("terraform-plan-sha256-"),
   );
   assert.equal(
-    artifacts.total_count,
+    digests.length,
     1,
-    "The plan has no changes; there is nothing to apply",
+    "The plan run must publish one reviewed bundle digest",
+  );
+  assert.equal(
+    digests[0].expired,
+    false,
+    "The reviewed plan digest expired; plan again",
+  );
+  assert.equal(
+    digests[0].name,
+    `terraform-plan-sha256-${planSha256}`,
+    "The digest does not match the plan run",
   );
   return run;
+}
+
+const planPrefix = "terraform-plans/";
+// A stored plan holds credentials, so nothing may be stored unless the bucket
+// itself expires it. The bucket is versioned: expiring the current version
+// only adds a delete marker, so noncurrent versions must expire too.
+function checkPlanRetention(config) {
+  const covering = (config.Rules ?? []).filter((rule) => {
+    if (rule.Status !== "Enabled") return false;
+    const prefix =
+      rule.Filter?.Prefix ?? rule.Filter?.And?.Prefix ?? rule.Prefix ?? "";
+    return (
+      prefix === planPrefix &&
+      !rule.Filter?.And &&
+      Object.keys(rule.Filter ?? {}).every((key) => key === "Prefix")
+    );
+  });
+  assert.ok(
+    covering.some(
+      (rule) =>
+        Number.isInteger(rule.Expiration?.Days) &&
+        rule.Expiration.Days > 0 &&
+        rule.Expiration.Days <= 30,
+    ),
+    "No enabled lifecycle rule expires terraform-plans/ in the state bucket; add the rule in docs/terraform-delivery.md before planning",
+  );
+  assert.ok(
+    covering.some(
+      (rule) =>
+        rule.NoncurrentVersionExpiration?.NoncurrentDays === 1 &&
+        !rule.NoncurrentVersionExpiration.NewerNoncurrentVersions,
+    ),
+    "No enabled lifecycle rule removes noncurrent versions under terraform-plans/; add the rule in docs/terraform-delivery.md before planning",
+  );
+}
+
+// The state bucket is shared, but plans also contain provider credentials.
+function checkPlanPolicy(policy, account) {
+  assert.match(account, /^\d{12}$/);
+  const roles = [
+    "meeting-notes-prod-github-terraform",
+    "meeting-notes-prod-github-terraform-plan",
+  ].map((role) => `arn:aws:iam::${account}:role/${role}`);
+  assert.ok(
+    policy.Statement?.some((statement) => {
+      const allowed = statement.Condition?.ArnNotLike?.["aws:PrincipalArn"];
+      return (
+        statement.Effect === "Deny" &&
+        statement.Principal === "*" &&
+        statement.Resource ===
+          "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/*" &&
+        Array.isArray(statement.Action) &&
+        ["s3:GetObject", "s3:GetObjectVersion"].every((action) =>
+          statement.Action.includes(action),
+        ) &&
+        Object.keys(statement.Condition).length === 1 &&
+        Object.keys(statement.Condition.ArnNotLike).length === 1 &&
+        Array.isArray(allowed) &&
+        allowed.length === 3 &&
+        roles.every((role) => allowed.includes(role)) &&
+        allowed.every(
+          (arn) =>
+            arn.startsWith(`arn:aws:iam::${account}:role/`) &&
+            /^arn:aws:iam::[0-9]{12}:role\/[A-Za-z0-9_+=,.@/-]+$/.test(arn),
+        )
+      );
+    }),
+    "Stored plans require the read restriction in docs/terraform-delivery.md before planning",
+  );
 }
 
 // Workflows that move production traffic or roles that the Apply may change.
@@ -155,7 +257,7 @@ const sensitiveType =
 
 // Reads only types, addresses and actions from `terraform show -json`: the
 // plan's before/after values carry secrets and must never reach the summary.
-function planSummary(plan, { sha, digest, attempt }) {
+function planSummary(plan, { sha, digest, attempt, location }) {
   const changes = (plan.resource_changes ?? [])
     .map(({ address, type, change }) => ({
       address,
@@ -173,7 +275,7 @@ function planSummary(plan, { sha, digest, attempt }) {
     return [
       ...header,
       "",
-      "No changes. Nothing was uploaded and there is nothing to apply.",
+      "No changes. Nothing was stored and there is nothing to apply.",
       "",
     ].join("\n");
   const count = (kind) => changes.filter((c) => c.kind === kind).length;
@@ -188,7 +290,8 @@ function planSummary(plan, { sha, digest, attempt }) {
       : [];
   return [
     ...header,
-    `Encrypted plan SHA-256 (\`plan_sha256\`): \`${digest}\``,
+    `Plan bundle SHA-256 (\`plan_sha256\`): \`${digest}\``,
+    `Plan bundle: \`${location}\``,
     "",
     `${count("add")} to add, ${count("change")} to change, ${count("replace")} to replace, ${count("destroy")} to destroy.`,
     "",
@@ -209,18 +312,40 @@ function planSummary(plan, { sha, digest, attempt }) {
 
 module.exports = {
   github,
+  checkPlanRetention,
+  checkPlanPolicy,
   verifyPlanRun,
   assertProductionIdle,
   waitForApplyIdle,
+  planStore,
   planSummary,
 };
 
 async function main([command, ...args]) {
   const { GITHUB_REPOSITORY: repository, GH_TOKEN: token } = process.env;
   if (command === "plan-summary") {
-    const [planPath, sha, attempt, digest] = args;
+    const [planPath, sha, attempt, digest, location] = args;
     const plan = JSON.parse(readFileSync(planPath, "utf8"));
-    process.stdout.write(planSummary(plan, { sha, attempt, digest }));
+    process.stdout.write(planSummary(plan, { sha, attempt, digest, location }));
+    return;
+  }
+  if (command === "check-plan-retention") {
+    checkPlanRetention(JSON.parse(readFileSync(args[0], "utf8")));
+    return;
+  }
+  if (command === "plan-store") {
+    const [environment, runId, attempt] = args;
+    const store = planStore(
+      environment,
+      runId,
+      attempt,
+      readFileSync("_infra/main.tf", "utf8"),
+    );
+    process.stdout.write(`bucket=${store.bucket}\nprefix=${store.prefix}\n`);
+    return;
+  }
+  if (command === "check-plan-policy") {
+    checkPlanPolicy(JSON.parse(readFileSync(args[0], "utf8")), args[1]);
     return;
   }
   const get = github(token);
@@ -238,6 +363,7 @@ async function main([command, ...args]) {
       runId,
       environment,
       sha: process.env.GITHUB_SHA,
+      planSha256: process.env.PLAN_SHA256,
     });
   } else throw new Error(`Unknown command ${command}`);
 }
