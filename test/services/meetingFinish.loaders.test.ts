@@ -59,11 +59,7 @@ import {
   PROCESSING_FAILED_NOTICE,
 } from "../../src/utils/meetingProcessing";
 import { autoRecordCompletionPolicy } from "../fixtures/completionPolicy";
-import {
-  pcmArtifact,
-  recoveryFixture,
-  withoutFinalPass,
-} from "./meetingRecoveryFixtures";
+import { pcmArtifact, recoveryFixture } from "./meetingRecoveryFixtures";
 import {
   INTERRUPTED_CAPTURE_NOTICE,
   type RecoveryReader,
@@ -194,7 +190,6 @@ function transcribedPiece(
 ) {
   return recoveryFixture(text, {
     timestamp: START,
-    context: withoutFinalPass,
     artifacts: [
       pcmArtifact("user:123", 0, Buffer.alloc(PIECE_BYTES, 1), [
         { startOffsetMs: 0, durationMs: 20 },

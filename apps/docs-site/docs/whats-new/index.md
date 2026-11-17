@@ -12,6 +12,12 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 - We are preparing Ask search across accessible retained history on every plan. Search uses a private derived copy of titles, summaries, meeting identifiers and dates, tags, archive status, current notes and transcript passages in Amazon S3 Vectors, with embeddings produced by OpenAI. This notice must be published before the new indexing or embedding processing begins. It does not mean full-library indexing is complete.
 - Current access checks still apply. A partial-coverage notice means some meetings may be missing while indexing catches up. See the updated [Privacy Policy](/legal/privacy/#meeting-search).
 
+### Simpler, more accurate transcription (November 16)
+
+- Discord meetings now use a newer speech recognition model and detect the spoken language of each snippet by default, so meetings in other languages are no longer forced into English. Servers that mostly speak one language other than English can still pin it under **Transcription language**, which avoids occasional misdetection of very short utterances. See [Discord meeting notes](/discord-meeting-notes/#transcription-language).
+- Chronote no longer rewrites transcripts with extra language model passes during or after a meeting. In our tests those passes occasionally dropped or changed real speech. Transcripts and notes are ready sooner after a meeting ends.
+- Dictionary terms are now sent to speech recognition as dedicated recognition hints (terms only, up to 20 per snippet) instead of as part of a written prompt, which spells names and jargon correctly far more often and is much less likely to write glossary terms into the transcript on background noise. Definitions still go to notes and cleanup. See [Dictionary](/features/#dictionary).
+
 ### Smoother portal sign-in (November 12)
 
 - Expired sessions reconnect through Discord and return to the requested page. Returning users can skip another approval click when Discord recognizes their existing grant. The portal warns before leaving unfinished edits or an upload. See [Sign in to the portal](/getting-started/#sign-in-to-the-portal).

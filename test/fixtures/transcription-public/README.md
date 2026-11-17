@@ -18,15 +18,12 @@ npm run eval:transcription -- --manifest test/fixtures/transcription-public/mani
 npm run eval:transcription -- --manifest test/fixtures/transcription-public/manifest.json --mode pipeline --pass-mode slow --runs 1 --batch-index 1
 ```
 
-The `dictionary` fields (manifest and per case) are accepted but unused until
-the runner sends dictionary terms as recognition keywords, which arrives with
-the transcription simplification (#633), together with per-run language
-selection. Until then the runner forces `language: "en"`, so `ja-fleurs-1607`
-is scored through an English hint and counts in the pooled `wer`; read it from
-`byTag["non-english"]` and the per-case results rather than the headline. The
-five `tts-*` (`dictionary-terms`) cases therefore run as a no-dictionary
-baseline under the Lantern Hollow glossary prompt, which names none of their
-terms; `byTag["dictionary-terms"]` is not a measure of dictionary support here.
+Dictionary terms are sent as recognition keywords, as in production; each
+`tts-*` case sends its own case `dictionary`, so `byTag["dictionary-terms"]`
+measures dictionary support. `--no-keywords` runs without them, as the
+no-dictionary baseline. No prompt is sent unless `--prompt-file` passes one, and
+no language hint unless `--language` forces one. `ja-fleurs-1607` is scored by
+`cer`, outside the pooled `wer`.
 
 ## Contents
 
@@ -45,9 +42,10 @@ terms; `byTag["dictionary-terms"]` is not a measure of dictionary support here.
 - The manifest `dictionary` is the made-up server's twenty terms. Each `tts-*`
   case carries its own made-up server's terms (eight or nine) as a case
   `dictionary`.
-- `glossary-prompt.txt`: a made-up server glossary in the production prompt
-  template, also stored as the manifest `prompt`. Nine of its dictionary terms
-  occur in the speech references (twelve occurrences).
+- `glossary-prompt.txt`: a made-up server glossary in the former production
+  prompt template, also stored as the manifest `prompt`. Production sends no
+  prompt; pass it with `--prompt-file` to reproduce the former prompted path.
+  Nine of its dictionary terms occur in the speech references (twelve occurrences).
 - `terms-prompt.txt`: the dictionary terms alone. `no-prompt.txt`: empty. Pass
   either with `--prompt-file`.
 

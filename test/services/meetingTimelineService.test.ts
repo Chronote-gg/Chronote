@@ -227,7 +227,7 @@ test("buildLiveMeetingTimelineEvents dedupes chat TTS and includes end events", 
     audioBytes: 4,
     policyFingerprint: "test",
   };
-  rejected.finalPassTranscript = "late guess";
+  rejected.slowTranscript = "late guess";
   expect(
     buildLiveMeetingTimelineEvents(meeting).some(
       (event) => event.text === "late guess" || event.text === "Voice line",

@@ -46,7 +46,7 @@ You can also manage one exact term at a time from Discord:
 /dictionary add term: Priya Patel definition: VP of Engineering
 ```
 
-Terms are injected into the transcription prompt to help improve spelling accuracy. Definitions are included in the notes prompt to give the AI more context.
+Terms are sent to speech recognition as keyword hints to help improve spelling accuracy. Definitions are included in the notes prompt to give the AI more context.
 
 Only members with **Manage Server** can use the portal teaching flow. `/dictionary` retains its **Manage Channels** permission for existing Discord workflows. Both paths update the same server dictionary; the portal flow adds AI proposals and a separate human approval step.
 

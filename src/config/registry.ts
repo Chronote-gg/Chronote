@@ -82,20 +82,6 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "toggle" },
   },
   {
-    key: "transcription.finalPass.enabled",
-    label: "Finalized audio verification pass",
-    description:
-      "Run a final transcription verification pass over the finalized meeting audio and auto-apply high-confidence hallucination fixes.",
-    category: "Transcription",
-    group: "Experimental",
-    valueType: "boolean",
-    defaultValue: true,
-    scopes: {
-      global: scope(true, true, "superadmin", "toggle"),
-    },
-    ui: { type: "toggle" },
-  },
-  {
     key: "transcription.suppression.enabled",
     label: "Loudness gate",
     description:
@@ -184,36 +170,6 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
       server: scope(false, false, "admin", "number"),
     },
     ui: { type: "number", min: 1, max: 20, step: 0.1 },
-  },
-  {
-    key: "transcription.promptEcho.enabled",
-    label: "Prompt echo gate",
-    description:
-      "Suppress text that appears to repeat the transcription prompt.",
-    category: "Transcription",
-    group: "Advanced",
-    valueType: "boolean",
-    defaultValue: true,
-    scopes: {
-      global: scope(true, true, "superadmin", "toggle"),
-      server: scope(true, false, "admin", "tri-state"),
-    },
-    ui: { type: "toggle" },
-  },
-  {
-    key: "transcription.vote.enabled",
-    label: "Prompt vote fallback",
-    description:
-      "For low-confidence slow snippets, run a no-prompt fallback transcription and pick the better result.",
-    category: "Transcription",
-    group: "Advanced",
-    valueType: "boolean",
-    defaultValue: true,
-    scopes: {
-      global: scope(true, true, "superadmin", "toggle"),
-      server: scope(true, false, "admin", "tri-state"),
-    },
-    ui: { type: "toggle" },
   },
   {
     key: "transcription.fastSilenceMs",
@@ -495,7 +451,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     key: "dictionary.maxChars.transcription",
     label: "Dictionary transcription chars",
     description:
-      "Character budget for dictionary terms in the transcription prompt. Definitions are not included. Set to 0 to disable dictionary terms in transcription, clamped by the global transcription cap.",
+      "Character budget for dictionary terms sent to speech recognition as keyword hints, at most 20 terms per request. Definitions are not included. Set to 0 to disable dictionary terms in transcription, clamped by the global transcription cap.",
     category: "Dictionary",
     group: "Advanced",
     valueType: "number",
@@ -515,7 +471,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     key: "dictionary.maxChars.transcription.pro",
     label: "Dictionary transcription chars (pro)",
     description:
-      "Pro tier character budget for dictionary terms in the transcription prompt. Definitions are not included, clamped by the global transcription cap.",
+      "Pro tier character budget for dictionary terms sent to speech recognition as keyword hints. Definitions are not included, clamped by the global transcription cap.",
     category: "Dictionary",
     group: "Advanced",
     valueType: "number",
@@ -536,7 +492,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     key: "dictionary.maxChars.transcription.cap",
     label: "Dictionary transcription chars cap",
     description:
-      "Global hard cap for dictionary transcription characters to keep prompts within a safe context window.",
+      "Global hard cap for dictionary characters sent to speech recognition.",
     category: "Dictionary",
     group: "Advanced",
     valueType: "number",
@@ -550,7 +506,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     key: "dictionary.maxChars.context",
     label: "Dictionary context chars",
     description:
-      "Character budget for dictionary terms and definitions in cleanup, coalesce, and notes prompts. Set to 0 to disable dictionary context, clamped by the global context cap.",
+      "Character budget for dictionary terms and definitions in cleanup and notes prompts. Set to 0 to disable dictionary context, clamped by the global context cap.",
     category: "Dictionary",
     group: "Advanced",
     valueType: "number",
@@ -570,7 +526,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     key: "dictionary.maxChars.context.pro",
     label: "Dictionary context chars (pro)",
     description:
-      "Pro tier character budget for dictionary terms and definitions in cleanup, coalesce, and notes prompts, clamped by the global context cap.",
+      "Pro tier character budget for dictionary terms and definitions in cleanup and notes prompts, clamped by the global context cap.",
     category: "Dictionary",
     group: "Advanced",
     valueType: "number",

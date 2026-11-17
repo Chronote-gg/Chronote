@@ -7,12 +7,6 @@ export type LangfusePromptMeta = {
   isFallback: boolean;
 };
 
-export type TextPromptResult = {
-  prompt: string;
-  langfusePrompt?: LangfusePromptMeta;
-  source: "langfuse" | "fallback";
-};
-
 type ChatRole = "system" | "user" | "assistant";
 
 const allowedChatRoles: Record<ChatRole, true> = {
@@ -44,53 +38,6 @@ function toTemplateVariables(
       value === null || value === undefined ? "" : String(value),
     ]),
   );
-}
-
-export async function getLangfuseTextPrompt(options: {
-  name: string;
-  label?: string;
-  variables?: Record<string, string | number | boolean | null | undefined>;
-}): Promise<TextPromptResult> {
-  if (!isLangfuseEnabled()) {
-    throw new Error(
-      `Langfuse is required for prompt "${options.name}" but is not configured.`,
-    );
-  }
-
-  const client = getLangfuseClient();
-  if (!client) {
-    throw new Error(
-      `Langfuse client is unavailable for prompt "${options.name}".`,
-    );
-  }
-
-  const label = options.label ?? config.langfuse.promptLabel;
-  const cacheTtlSeconds = Math.floor(
-    Math.max(config.langfuse.promptCacheTtlMs, 0) / 1000,
-  );
-
-  try {
-    const prompt = await client.prompt.get(options.name, {
-      label,
-      cacheTtlSeconds,
-    });
-    const promptMeta: LangfusePromptMeta = {
-      name: prompt.name,
-      version: prompt.version,
-      isFallback: prompt.isFallback,
-    };
-    const compiledVariables = toTemplateVariables(options.variables ?? {});
-    return {
-      prompt: prompt.compile(compiledVariables),
-      langfusePrompt: promptMeta,
-      source: "langfuse",
-    };
-  } catch (error) {
-    throw new Error(
-      `Langfuse prompt fetch failed for "${options.name}" (${label}).`,
-      { cause: error },
-    );
-  }
 }
 
 export async function getLangfuseChatPrompt(options: {
@@ -171,9 +118,7 @@ const buildPromptVerificationList = () => {
     config.langfuse.askPromptName,
     config.langfuse.meetingSummaryPromptName,
     config.langfuse.notesPromptName,
-    config.langfuse.transcriptionPromptName,
     config.langfuse.transcriptionCleanupPromptName,
-    config.langfuse.transcriptionCoalescePromptName,
     config.langfuse.imagePromptName,
     config.langfuse.notesCorrectionPromptName,
     config.langfuse.dictionaryTeachingPromptName,

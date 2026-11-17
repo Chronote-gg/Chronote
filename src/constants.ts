@@ -39,22 +39,10 @@ export const TRANSCRIPTION_RATE_MAX_SECONDS = 3;
 export const TRANSCRIPTION_RATE_MIN_WORDS = 4;
 export const TRANSCRIPTION_RATE_MIN_SYLLABLES = 8;
 export const TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND = 7;
-export const TRANSCRIPTION_PROMPT_ECHO_SIMILARITY_THRESHOLD = 0.2;
-export const TRANSCRIPTION_PROMPT_ECHO_MIN_CHARS = 12;
-export const TRANSCRIPTION_PROMPT_ECHO_MIN_WORDS = 2;
 // Long audio is always split by duration, never sent whole: the transcription
 // model caps output near 2,000 tokens per request, so a long request returns
-// a silently truncated transcript. In the final pass, the reconcile prompt then
-// reads the missing tail as "not in the chunk transcript" and drops those lines.
-export const TRANSCRIPTION_FINAL_PASS_CHUNK_SECONDS = 300;
+// a silently truncated transcript.
 export const PERSONAL_UPLOAD_TRANSCRIPTION_CHUNK_SECONDS = 300;
-export const TRANSCRIPTION_FINAL_PASS_MAX_REQUEST_BYTES = 25 * 1024 * 1024;
-export const TRANSCRIPTION_FINAL_PASS_TARGET_MAX_CHUNK_BYTES = 20 * 1024 * 1024;
-export const TRANSCRIPTION_FINAL_PASS_SEGMENT_BATCH_MAX_CHARS = 6000;
-export const TRANSCRIPTION_FINAL_PASS_MIN_CONFIDENCE = 0.8;
-export const TRANSCRIPTION_FINAL_PASS_MAX_DROP_RATIO = 0.5;
-export const TRANSCRIPTION_FINAL_PASS_MAX_CHANGE_RATIO = 0.6;
-export const TRANSCRIPTION_FINAL_PASS_PREVIOUS_TAIL_CHARS = 400;
 export const TRANSCRIPTION_FAILURE_PLACEHOLDER = "[Transcription failed]";
 export const NOISE_GATE_ENABLED = true;
 export const NOISE_GATE_WINDOW_MS = 20;

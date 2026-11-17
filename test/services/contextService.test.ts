@@ -70,8 +70,6 @@ const DEFAULT_TRANSCRIPTION_CONFIG: MeetingRuntimeConfig["transcription"] = {
   suppressionRateMinSyllables: TRANSCRIPTION_RATE_MIN_SYLLABLES,
   suppressionRateMaxSyllablesPerSecond:
     TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
-  promptEchoEnabled: true,
-  voteEnabled: true,
   fastSilenceMs: FAST_SILENCE_THRESHOLD,
   slowSilenceMs: SILENCE_THRESHOLD,
   minSnippetSeconds: MINIMUM_TRANSCRIPTION_LENGTH,
@@ -80,7 +78,6 @@ const DEFAULT_TRANSCRIPTION_CONFIG: MeetingRuntimeConfig["transcription"] = {
   interjectionEnabled: false,
   interjectionMinSpeakerSeconds: MINIMUM_TRANSCRIPTION_LENGTH,
   noiseGate: DEFAULT_NOISE_GATE_CONFIG,
-  finalPassEnabled: false,
 };
 
 const buildRuntimeConfig = (

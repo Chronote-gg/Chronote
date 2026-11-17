@@ -65,7 +65,7 @@ export const TRANSCRIPTION_LANGUAGES = [
 ] as const;
 export const transcriptionLanguageSchema = z.enum(TRANSCRIPTION_LANGUAGES);
 export type TranscriptionLanguage = z.infer<typeof transcriptionLanguageSchema>;
-export const DEFAULT_TRANSCRIPTION_LANGUAGE: TranscriptionLanguage = "en";
+export const DEFAULT_TRANSCRIPTION_LANGUAGE: TranscriptionLanguage = "auto";
 
 export function resolveTranscriptionLanguage(
   value: unknown,
@@ -73,7 +73,6 @@ export function resolveTranscriptionLanguage(
   return transcriptionLanguageSchema.parse(value);
 }
 
-// Live snippets and the finalized pass must share this value, or reconcile compares two languages.
 export function meetingTranscriptionLanguage(runtimeConfig?: {
   transcription: { language: TranscriptionLanguage };
 }): TranscriptionLanguage {
@@ -82,20 +81,12 @@ export function meetingTranscriptionLanguage(runtimeConfig?: {
   );
 }
 
-// Auto omits the hint so the provider detects the spoken language.
-export function transcriptionLanguageParam(language: TranscriptionLanguage): {
-  language?: string;
-} {
-  return language === "auto" ? {} : { language };
-}
-
 export const transcriptionLanguageConfigEntry: ConfigEntry = {
   key: CONFIG_KEYS.transcription.language,
   label: "Transcription language",
   description:
-    "Auto detects the spoken language of each snippet. A fixed language helps accuracy when every meeting uses it.",
-  notes:
-    "Captured when a meeting starts. Changes apply to new meetings, and the finalized audio pass uses the same value.",
+    "Auto detects the spoken language of each snippet. Pin a language when a server mostly speaks one language other than English, because very short utterances are otherwise occasionally misdetected.",
+  notes: "Captured when a meeting starts. Changes apply to new meetings.",
   category: "Transcription",
   group: "Advanced",
   valueType: "select",

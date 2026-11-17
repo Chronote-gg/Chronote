@@ -5,9 +5,12 @@ baseUrl: https://api.openai.com/v1
 withDefaultModels: true
 customModels:
   - gpt-6.1-sol
+  - gpt-6.1-terra
   - gpt-5.2
   - gpt-5.1
   - gpt-5-mini
+  - gpt-transcribe
+  - gpt-4o-mini-transcribe
   - gpt-4o-transcribe
   - gpt-4o-transcribe-diarize
 extraHeadersEnv:

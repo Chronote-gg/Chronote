@@ -18,7 +18,7 @@ The next design should split "the bot is connected and can speak" from "Chronote
 - `src/services/meetingVoiceSettingsService.ts` gates live voice, live commands, and chat TTS on the existing `limits.liveVoiceEnabled` tier flag.
 - `src/config/registry.ts` already supports global AppConfig defaults and server/channel overrides for TTS-style booleans.
 - `src/utils/participants.ts` already has display-name helpers that prefer server nickname, then global display name, then username/tag.
-- `docs/dictionary.md` and `src/services/transcriptionPromptService.ts` already support server dictionary terms in transcription prompts.
+- `docs/dictionary.md` and `src/utils/dictionary.ts` already send server dictionary terms to `gpt-transcribe` as `keywords` hints.
 
 ## Product Modes
 
@@ -37,7 +37,7 @@ TTS-only mode must guarantee these behaviors:
 - Do not call `openOutputFile`.
 - Do not call `subscribeToUserVoice`.
 - Do not attach `receiver.speaking` handlers that feed the audio pipeline.
-- Do not run transcription, final-pass verification, cleanup, or notes generation.
+- Do not run transcription, cleanup, or notes generation.
 - Do not store chat as meeting history or transcript data unless we intentionally add a separate moderation/audit feature later.
 - Do not pass ambient chat history to an LLM for TTS. Only the specific text selected for speech may be sent to the TTS provider.
 - Do not enable live voice responses or live voice commands in the same session.
@@ -106,9 +106,9 @@ Keep this deterministic. Do not add fuzzy name inference. Store explicit nicknam
 
 ## STT and Dictionary Plan
 
-Current OpenAI STT support is already prompt-based:
+Current OpenAI STT support uses the provider-native hint:
 
-- The transcription prompt includes server name, channel, attendees, bot names, dictionary terms, and meeting context.
+- ASR sends no prompt. Dictionary terms go to `gpt-transcribe` as `keywords`, up to 20 per request, on snippets assessed as speech.
 - Dictionary terms are terms only for transcription and terms plus definitions for cleanup/notes/Ask.
 
 Recommended improvements:

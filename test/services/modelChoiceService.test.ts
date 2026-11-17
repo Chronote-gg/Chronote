@@ -17,7 +17,7 @@ describe("modelChoiceService", () => {
     expect(resolved.transcription).toBe(MODEL_SELECTION_DEFAULTS.transcription);
     expect(resolved.notes).toBe("gpt-6.1-sol");
     expect(resolved.ask).toBe("gpt-4o-mini");
-    expect(resolved.liveVoiceGate).toBe("gpt-5-mini");
+    expect(resolved.liveVoiceGate).toBe("gpt-6.1-terra");
     expect(resolved.imageCaption).toBe("gpt-4o-mini");
   });
 

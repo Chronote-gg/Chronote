@@ -42,8 +42,6 @@ function uploadFixture(): MeetingData {
           ...base,
           transcript: "rejected guess",
           slowTranscript: "",
-          coalescedTranscript: "old guess",
-          finalPassTranscript: "late guess",
           finalSpeechRejection: {
             pcmSha256: "synthetic",
             audioBytes: 4,

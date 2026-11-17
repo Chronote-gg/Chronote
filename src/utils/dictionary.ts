@@ -213,7 +213,23 @@ export const normalizeDictionaryEntries = (entries: DictionaryItem[]) => {
   });
 };
 
-type LineResult = { lines: string[]; chars: number; entries: number };
+type LineResult = {
+  lines: string[];
+  used: NormalizedEntry[];
+  chars: number;
+  entries: number;
+};
+
+/**
+ * More keywords is not better: at 100 term recall fell and sound-alike terms
+ * replaced spoken ones, while 20 showed neither
+ * (docs/adr-20261116-transcription-simplification.md).
+ */
+export const TRANSCRIPTION_KEYWORD_LIMIT = 20;
+
+// The provider rejects the whole request when any keyword contains one of these.
+// Line breaks never get here: terms are whitespace-normalized first.
+const UNSENDABLE_KEYWORD = /[<>]/;
 
 const buildLines = (
   entries: NormalizedEntry[],
@@ -222,10 +238,11 @@ const buildLines = (
   maxChars: number,
 ): LineResult => {
   if (maxEntries <= 0 || maxChars <= 0) {
-    return { lines: [], chars: 0, entries: 0 };
+    return { lines: [], used: [], chars: 0, entries: 0 };
   }
 
   const lines: string[] = [];
+  const used: NormalizedEntry[] = [];
   let chars = 0;
   let entriesUsed = 0;
 
@@ -236,26 +253,27 @@ const buildLines = (
     const nextChars = chars + line.length + (lines.length > 0 ? 1 : 0);
     if (nextChars > maxChars) break;
     lines.push(line);
+    used.push(entry);
     chars = nextChars;
     entriesUsed += 1;
   }
 
-  return { lines, chars, entries: entriesUsed };
+  return { lines, used, chars, entries: entriesUsed };
 };
 
 export const buildDictionaryPromptLines = (
   entries: DictionaryItem[],
   budgets: DictionaryBudgets,
 ): {
-  transcriptionLines: string[];
+  transcriptionKeywords: string[];
   contextLines: string[];
   usage: DictionaryUsage;
 } => {
   const normalized = normalizeDictionaryEntries(entries);
   const transcription = buildLines(
-    normalized,
+    normalized.filter((entry) => !UNSENDABLE_KEYWORD.test(entry.term)),
     (entry) => `- ${entry.term}`,
-    budgets.maxEntries,
+    Math.min(budgets.maxEntries, TRANSCRIPTION_KEYWORD_LIMIT),
     budgets.maxCharsTranscription,
   );
   const context = buildLines(
@@ -269,7 +287,7 @@ export const buildDictionaryPromptLines = (
   );
 
   return {
-    transcriptionLines: transcription.lines,
+    transcriptionKeywords: transcription.used.map((entry) => entry.term),
     contextLines: context.lines,
     usage: {
       totalEntries: normalized.length,

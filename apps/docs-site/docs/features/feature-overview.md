@@ -127,7 +127,7 @@ Context stacks: server context applies to all meetings, channel context applies 
 
 ### `/dictionary`
 
-Manages a glossary of terms that are injected into prompts. Requires **Manage Channels** permission.
+Manages a glossary of terms that guide speech recognition and are added to the notes and cleanup prompts. Requires **Manage Channels** permission.
 
 | Subcommand | Options                                                       | Description                     |
 | ---------- | ------------------------------------------------------------- | ------------------------------- |
@@ -138,7 +138,7 @@ Manages a glossary of terms that are injected into prompts. Requires **Manage Ch
 
 All responses are ephemeral (visible only to you).
 
-Dictionary terms are injected into the transcription prompt to help the AI spell them correctly. Definitions are included in the notes prompt (but not the transcription prompt) to give the AI additional context without bloating the transcription input.
+Dictionary terms are sent to speech recognition as recognition hints, terms only and up to 20 per audio snippet, so names and jargon are spelled correctly in the transcript. Definitions are not sent to speech recognition; terms and definitions are included in the notes and cleanup prompts. Keep the dictionary to terms people actually say: a long list of similar-sounding names makes recognition worse, not better.
 
 Members with **Manage Server** can also open **Server Settings** -> **Teach Chronote** and describe the vocabulary in ordinary language. Chronote creates temporary proposed entries and short descriptions, but no entry is added to the server dictionary until the member reviews the batch and approves that entry. Possible conflicts and proposals without an exact spelling start unchecked.
 
@@ -369,7 +369,7 @@ Use **Upload Media** in the web portal to turn an existing audio or video file i
 
 When processing completes, the meeting appears in **My Meetings** under your personal workspace. Uploaded personal meetings are owned by your Chronote account, not by a Discord server.
 
-Chronote detects the spoken language of uploads and Chronote Desktop recordings, so a meeting held in a language other than English is transcribed in that language rather than forced into English. Discord voice meetings use the server's transcription language setting instead, described in [Discord meeting notes](/discord-meeting-notes/#transcription-language).
+Chronote detects the spoken language of uploads and Chronote Desktop recordings, so a meeting held in a language other than English is transcribed in that language rather than forced into English. Discord voice meetings detect the spoken language the same way unless a server pins one, described in [Discord meeting notes](/discord-meeting-notes/#transcription-language).
 
 ## Chronote Desktop recordings
 

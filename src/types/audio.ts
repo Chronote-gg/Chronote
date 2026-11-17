@@ -33,12 +33,6 @@ export type TranscriptVariant = {
   correspondence?: TranscriptCorrespondence;
 };
 
-export type CoalesceMeta = {
-  model: string;
-  usedFastRevisions: number[];
-  createdAt: string;
-};
-
 export type SnippetTranscriptionResult =
   | { status: "succeeded"; text: string; admission: SpeechAdmission }
   | { status: "skipped"; reason: "non_speech"; coverage: SpeechCoverage }
@@ -67,14 +61,9 @@ export interface AudioFileData {
   transcript?: string;
   transcriptCorrespondence?: TranscriptCorrespondence;
   slowCorrespondence?: TranscriptCorrespondence;
-  coalescedCorrespondence?: TranscriptCorrespondence;
-  finalPassCorrespondence?: TranscriptCorrespondence;
   terminalOmission?: TranscriptCorrespondence;
-  finalPassTranscript?: string;
   fastTranscripts?: TranscriptVariant[];
   slowTranscript?: string;
-  coalescedTranscript?: string;
-  coalesceMeta?: CoalesceMeta;
   transcriptionFailed?: boolean;
   finalSpeechRejection?: SpeechCoverage;
   source?: AudioSegmentSource;

@@ -132,9 +132,10 @@ type PromptType = "transcription" | "notes" | "image";
  * Server, channel and meeting context are free-text authoring context. They
  * are safe for a model that authors something *about* the meeting and unsafe
  * for one that shapes the transcript *of* it, because that model follows them:
- * a guild asking for its notes in a fixed heading structure had the coalesce
- * model write that structure into the transcript as if it were speech. Notes
- * and image generation author about the meeting, so they keep these fields.
+ * a guild asking for its notes in a fixed heading structure had a
+ * transcript-rewriting model write that structure into the transcript as if it
+ * were speech. Notes and image generation author about the meeting, so they
+ * keep these fields.
  *
  * Keep the prompt types below a positive list. It fails closed: a
  * transcript-shaping prompt type added later is protected by default. An

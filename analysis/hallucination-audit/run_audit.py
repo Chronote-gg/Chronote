@@ -1,3 +1,5 @@
+# Historical: audits traces from before the 2026-11-16 transcription simplification.
+# promptEcho metadata exists only on those traces; newer traces simply lack it.
 import argparse
 import datetime as dt
 import json

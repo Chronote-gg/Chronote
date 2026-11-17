@@ -5,12 +5,8 @@ import { buildLangfuseTranscriptionAccounting } from "../../src/observability/la
 import { validResponse } from "../fixtures/transcriptionTracing";
 
 type Ledger = ReturnType<typeof createTranscriptionAttemptLedger>;
-async function dispatch(
-  ledger: Ledger,
-  candidate: "prompt" | "no_prompt",
-  usage?: Transcription["usage"],
-) {
-  const attempt = ledger.beginAttempt(candidate);
+async function dispatch(ledger: Ledger, usage?: Transcription["usage"]) {
+  const attempt = ledger.beginAttempt();
   attempt.markSdkInvocation();
   await attempt.wrapFetch(async () => Response.json({}))(
     "https://synthetic.invalid",
@@ -26,11 +22,9 @@ async function dispatch(
 
 test("local preparation has no dispatch, usage or inferred billing", () => {
   const ledger = createTranscriptionAttemptLedger(3);
-  ledger.beginCandidate("prompt");
-  ledger.beginAttempt("prompt").settle({ kind: "failure", failure: "input" });
+  ledger.beginAttempt().settle({ kind: "failure", failure: "input" });
   const snapshot = ledger.snapshot();
   expect(snapshot).toMatchObject({
-    logicalCandidateCount: 1,
     sdkInvocationCount: 0,
     httpDispatchAttemptCount: 0,
     knownUsageAttemptCount: 0,
@@ -45,12 +39,10 @@ test("local preparation has no dispatch, usage or inferred billing", () => {
 
 test("failed dispatch plus returned usage is partial despite one priced response", async () => {
   const ledger = createTranscriptionAttemptLedger(2);
-  ledger.beginCandidate("prompt");
-  await dispatch(ledger, "prompt");
-  await dispatch(ledger, "prompt", validResponse.usage);
+  await dispatch(ledger);
+  await dispatch(ledger, validResponse.usage);
   const snapshot = ledger.snapshot();
   expect(snapshot).toMatchObject({
-    logicalCandidateCount: 1,
     sdkInvocationCount: 2,
     httpDispatchAttemptCount: 2,
     retryCount: 1,
@@ -71,28 +63,6 @@ test("failed dispatch plus returned usage is partial despite one priced response
   });
 });
 
-test("two priced candidates sum tokens without counting a retry", async () => {
-  const ledger = createTranscriptionAttemptLedger(2);
-  for (const candidate of ["prompt", "no_prompt"] as const) {
-    ledger.beginCandidate(candidate);
-    await dispatch(ledger, candidate, validResponse.usage);
-  }
-  const snapshot = ledger.snapshot();
-  expect(snapshot).toMatchObject({
-    logicalCandidateCount: 2,
-    retryCount: 0,
-    knownUsageAttemptCount: 2,
-    attemptUsageCoverage: "complete",
-  });
-  expect(
-    buildLangfuseTranscriptionAccounting(snapshot.returnedUsages, 2, snapshot),
-  ).toMatchObject({
-    status: "priced",
-    requestCount: 2,
-    usageDetails: { input: 46, output: 22, total: 68 },
-  });
-});
-
 test.each([
   { type: "duration", seconds: 3 },
   { type: "duration", seconds: 0 },
@@ -100,8 +70,7 @@ test.each([
   "duration usage %# is known but cannot establish token pricing",
   async (usage) => {
     const ledger = createTranscriptionAttemptLedger();
-    ledger.beginCandidate("prompt");
-    await dispatch(ledger, "prompt", usage);
+    await dispatch(ledger, usage);
     const snapshot = ledger.snapshot();
     expect(snapshot.attemptUsageCoverage).toBe("complete");
     expect(snapshot.knownUsageAttemptCount).toBe(1);
@@ -115,14 +84,13 @@ test.each([Number.NaN, -1, Infinity])(
   "invalid usage %s remains unknown without invalid aggregate numbers",
   async (value) => {
     const ledger = createTranscriptionAttemptLedger(value);
-    ledger.beginCandidate("prompt");
     const usage: Transcription["usage"] = {
       type: "tokens",
       input_tokens: value,
       output_tokens: 2,
       total_tokens: value,
     };
-    await dispatch(ledger, "prompt", usage);
+    await dispatch(ledger, usage);
     const snapshot = ledger.snapshot();
     expect(snapshot).toMatchObject({
       knownUsageAttemptCount: 0,
@@ -139,8 +107,7 @@ test.each([Number.NaN, -1, Infinity])(
 
 test("a returned response without usage still contributes to response counts", async () => {
   const ledger = createTranscriptionAttemptLedger();
-  ledger.beginCandidate("prompt");
-  const attempt = await dispatch(ledger, "prompt");
+  const attempt = await dispatch(ledger);
   attempt.recordReturnedUsage(undefined);
   const snapshot = ledger.snapshot();
   expect(snapshot.returnedUsages).toEqual([undefined]);
@@ -157,12 +124,10 @@ test("a returned response without usage still contributes to response counts", a
   });
 });
 
-test("attempt-bound fetches keep overlapping candidate usage separate", async () => {
+test("attempt-bound fetches keep overlapping attempt usage separate", async () => {
   const ledger = createTranscriptionAttemptLedger();
-  ledger.beginCandidate("prompt");
-  ledger.beginCandidate("no_prompt");
-  const first = ledger.beginAttempt("prompt");
-  const second = ledger.beginAttempt("no_prompt");
+  const first = ledger.beginAttempt();
+  const second = ledger.beginAttempt();
   first.markSdkInvocation();
   second.markSdkInvocation();
   const firstFetch = first.wrapFetch(async () => {
@@ -180,19 +145,17 @@ test("attempt-bound fetches keep overlapping candidate usage separate", async ()
     httpDispatchAttemptCount: 2,
     knownUsageAttemptCount: 1,
     unknownUsageAttemptCount: 1,
-    retryCount: 0,
+    retryCount: 1,
   });
   expect(JSON.stringify(ledger.snapshot())).not.toMatch(
     /private body|private-path/,
   );
 });
 
-test("snapshot usage survives a later candidate failure and caller mutation", async () => {
+test("snapshot usage survives a later attempt failure and caller mutation", async () => {
   const ledger = createTranscriptionAttemptLedger();
-  ledger.beginCandidate("prompt");
-  await dispatch(ledger, "prompt", validResponse.usage);
+  await dispatch(ledger, validResponse.usage);
   ledger.snapshot().returnedUsages.length = 0;
-  ledger.beginCandidate("no_prompt");
-  await dispatch(ledger, "no_prompt");
+  await dispatch(ledger);
   expect(ledger.snapshot().returnedUsages).toEqual([validResponse.usage]);
 });

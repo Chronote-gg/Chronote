@@ -1,6 +1,8 @@
 import { CONFIG_KEYS } from "../../src/config/keys";
 import {
   buildDictionaryPromptLines,
+  DEFAULT_DICTIONARY_BUDGETS,
+  TRANSCRIPTION_KEYWORD_LIMIT,
   normalizeDictionaryEntries,
   resolveDictionaryBudgets,
 } from "../../src/utils/dictionary";
@@ -46,7 +48,7 @@ describe("dictionary utils", () => {
 
     const result = buildDictionaryPromptLines(entries, budgets);
 
-    expect(result.transcriptionLines).toEqual(["- Alpha"]);
+    expect(result.transcriptionKeywords).toEqual(["Alpha"]);
     expect(result.contextLines).toEqual(["- Alpha: First"]);
     expect(result.usage.transcription.entries).toBe(1);
     expect(result.usage.context.entries).toBe(1);
@@ -78,5 +80,42 @@ describe("dictionary utils", () => {
       maxCharsTranscription: 2000,
       maxCharsContext: 8000,
     });
+  });
+
+  test("transcription keywords are terms only, newest first, capped", () => {
+    const entries = Array.from({ length: 30 }, (_, index) => ({
+      term: `Term ${String(index).padStart(2, "0")}`,
+      definition: "Never sent to speech recognition",
+      updatedAt: `2026-01-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+    }));
+
+    const { transcriptionKeywords, usage } = buildDictionaryPromptLines(
+      entries,
+      DEFAULT_DICTIONARY_BUDGETS,
+    );
+
+    expect(transcriptionKeywords).toHaveLength(TRANSCRIPTION_KEYWORD_LIMIT);
+    expect(transcriptionKeywords[0]).toBe("Term 29");
+    expect(transcriptionKeywords.at(-1)).toBe("Term 10");
+    expect(usage.transcription.entries).toBe(TRANSCRIPTION_KEYWORD_LIMIT);
+  });
+
+  test("transcription keywords skip terms the provider would reject", () => {
+    const { transcriptionKeywords, contextLines } = buildDictionaryPromptLines(
+      [{ term: "<Guild>" }, { term: "a>b" }, { term: "Kwylt\r\nRaid" }],
+      DEFAULT_DICTIONARY_BUDGETS,
+    );
+
+    expect(transcriptionKeywords).toEqual(["Kwylt Raid"]);
+    expect(contextLines).toHaveLength(3);
+  });
+
+  test("a zero transcription budget sends no keywords", () => {
+    expect(
+      buildDictionaryPromptLines([{ term: "Kwylt" }], {
+        ...DEFAULT_DICTIONARY_BUDGETS,
+        maxCharsTranscription: 0,
+      }).transcriptionKeywords,
+    ).toEqual([]);
   });
 });

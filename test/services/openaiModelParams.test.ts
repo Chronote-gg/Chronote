@@ -126,7 +126,7 @@ test.each(["gpt-6.1-sol", "gpt-6-astra"])(
   },
 );
 
-test.each(["gpt-6-sol", "gpt-6-luna"])(
+test.each(["gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"])(
   "preserves explicit non-reasoning temperature mode for %s",
   (model) => {
     const params = resolveChatParamsForRole({
@@ -138,38 +138,44 @@ test.each(["gpt-6-sol", "gpt-6-luna"])(
   },
 );
 
-test.each(["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"])(
-  "supports maximum reasoning without sampling parameters for %s",
-  (model) => {
-    const params = resolveChatParamsForRole({
+test.each([
+  "gpt-6.1-sol",
+  "gpt-6.1-terra",
+  "gpt-6-astra",
+  "gpt-6-sol",
+  "gpt-6-luna",
+])("supports maximum reasoning without sampling parameters for %s", (model) => {
+  const params = resolveChatParamsForRole({
+    role: "notes",
+    model,
+    config: {
+      ...baseConfig,
+      samplingMode: "reasoning",
+      reasoningEffort: "max",
+    },
+  });
+  expect(params).toEqual({ reasoning_effort: "max" });
+});
+
+test.each([
+  "gpt-6.1-sol",
+  "gpt-6.1-terra",
+  "gpt-6-astra",
+  "gpt-6-sol",
+  "gpt-6-luna",
+])("maps unsupported minimal reasoning to low for %s", (model) => {
+  expect(
+    resolveChatParamsForRole({
       role: "notes",
       model,
       config: {
         ...baseConfig,
         samplingMode: "reasoning",
-        reasoningEffort: "max",
+        reasoningEffort: "minimal",
       },
-    });
-    expect(params).toEqual({ reasoning_effort: "max" });
-  },
-);
-
-test.each(["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"])(
-  "maps unsupported minimal reasoning to low for %s",
-  (model) => {
-    expect(
-      resolveChatParamsForRole({
-        role: "notes",
-        model,
-        config: {
-          ...baseConfig,
-          samplingMode: "reasoning",
-          reasoningEffort: "minimal",
-        },
-      }),
-    ).toEqual({ reasoning_effort: "low" });
-  },
-);
+    }),
+  ).toEqual({ reasoning_effort: "low" });
+});
 
 test("preserves legacy GPT-5.6 minimal effort fallback", () => {
   expect(

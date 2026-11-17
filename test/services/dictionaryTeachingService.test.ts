@@ -234,14 +234,15 @@ test("generates grounded dictionary drafts through Responses", async () => {
     action: "create",
   });
   expect(result.model).toMatchObject({
-    model: "gpt-5-mini",
+    model: "gpt-6.1-terra",
     promptVersion: 7,
   });
   expect(responsesCreate).toHaveBeenCalledWith(
     expect.objectContaining({
-      model: "gpt-5-mini",
+      model: "gpt-6.1-terra",
       input: [{ role: "user", content: "Teach the corrected spelling." }],
-      reasoning: { effort: "low" },
+      reasoning: { effort: "none" },
+      temperature: 0,
       text: { format: { type: "json_object" } },
       max_output_tokens: 8_000,
       store: false,

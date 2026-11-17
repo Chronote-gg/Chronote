@@ -274,12 +274,9 @@ export function pipelineRowSemantics(row, report, fingerprint) {
       row.requests === 0 &&
       row.text === ""
     );
-  const maximum = maximumPipelineRequests(report);
+  // One request per admitted row: the pipeline has no second vote request.
   return (
-    row.status === "succeeded" &&
-    row.reason === undefined &&
-    row.requests >= 1 &&
-    row.requests <= maximum
+    row.status === "succeeded" && row.reason === undefined && row.requests === 1
   );
 }
 
@@ -332,12 +329,4 @@ function validRowAccounting(row) {
     row.submittedAudioSeconds !== row.requests * row.audioSeconds ||
     typeof row.text !== "string"
   );
-}
-
-function maximumPipelineRequests(report) {
-  return report.passMode === "slow" &&
-    report.policy?.voteEnabled !== false &&
-    report.prompt.trim()
-    ? 2
-    : 1;
 }

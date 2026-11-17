@@ -14,11 +14,6 @@ import {
   PCM_RESERVED_COPIES,
 } from "../../src/services/recordingCheckpointCapture";
 import { transcribeContentSnippet } from "../../src/services/transcriptionService";
-jest.mock("../../src/services/transcriptionFinalPassService", () => ({
-  runContentTranscriptionFinalPass: jest.fn(async () => ({
-    fallbackApplied: false,
-  })),
-}));
 jest.mock("../../src/services/mixedPcmService", () => ({
   renderMixedPcmTracks: jest.fn(async (_tracks, output) => output),
 }));
@@ -44,9 +39,8 @@ import { PROCESSING_RETRY_MAX_CONCURRENT } from "../../src/constants";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { liveTranscriptionProcessingSettings } from "../../src/services/transcriptionProcessingSettings";
-import { runContentTranscriptionFinalPass } from "../../src/services/transcriptionFinalPassService";
 import { renderMixedPcmTracks } from "../../src/services/mixedPcmService";
+import { generationContextSchema } from "../../src/types/recordingContent";
 import { createOpenAIClient } from "../../src/services/openaiClient";
 async function fixture(complete = false) {
   const f = await recoveryFixture();
@@ -55,14 +49,13 @@ async function fixture(complete = false) {
   const content = await readRecoveryContent(f.claim.history, f.reader, signal);
   if (content.context.settings.availability !== "available")
     throw new Error("settings");
-  content.context.settings.value.processing = structuredClone(
-    liveTranscriptionProcessingSettings,
-  );
+  content.context.settings.value.processing = {
+    cleanupMinimumRetainedLineRatio: 0.75,
+  };
   content.context.settings.value.premiumTranscription = {
     enabled: true,
     cleanupEnabled: true,
   };
-  content.context.settings.value.transcription.finalPassEnabled = true;
   content.context.context.transcriptionFormattedContext =
     "Frozen transcription context";
   content.context.context.transcriptionMaxContextLength = 1000;
@@ -83,17 +76,6 @@ async function fixture(complete = false) {
     },
   };
   content.context.prompts.cleanup = prompt;
-  content.context.prompts.finalPass = prompt;
-  content.context.prompts.transcription = {
-    availability: "available",
-    value: {
-      type: "text",
-      name: "original-audio",
-      version: 9,
-      label: "original",
-      template: "Original audio prompt",
-    },
-  };
   if (complete) {
     content.manifest.captureState = {
       kind: "complete",
@@ -138,16 +120,15 @@ async function fixture(complete = false) {
   return { ...f, content, signal, controller };
 }
 beforeEach(() => jest.clearAllMocks());
-test("partial capture uses frozen cleanup and explicitly skips finalized-only stage", async () => {
+test("partial capture uses frozen cleanup", async () => {
   const f = await fixture();
   expect(
     await recoverTranscript(f.content, f.reader, f.signal, (run) => run()),
   ).toMatchObject({ text: "Original saved cleanup result." });
-  expect(f.content.processing).toMatchObject({
-    finalPass: "not_applicable",
+  expect(f.content.processing).toEqual({
     cleanup: "acknowledged",
+    finalText: "Original saved cleanup result.",
   });
-  expect(runContentTranscriptionFinalPass).not.toHaveBeenCalled();
   expect(createOpenAIClient).toHaveBeenCalledWith(
     expect.objectContaining({
       langfusePrompt: expect.objectContaining({ version: 31 }),
@@ -169,18 +150,94 @@ test("partial capture uses frozen cleanup and explicitly skips finalized-only st
   f.controller.abort(new Error("cancel recovery"));
   expect(sdkSignal?.aborted).toBe(true);
 });
-test("complete verified PCM uses shared mixer and plain finalized-pass with frozen budgets", async () => {
+// A recording the previous version captured carries settings, prompts and a
+// processed-transcript outcome this version no longer has. It must still load,
+// re-transcribe its uncovered audio without a prompt, and finish.
+test("a recording saved by the previous version recovers without its removed stages", async () => {
   const f = await fixture(true);
-  if (f.content.context.settings.availability === "available")
-    f.content.context.settings.value.transcription.language = "ja";
+  const legacyContext = generationContextSchema.parse({
+    ...f.content.context,
+    settings: {
+      availability: "available",
+      value: {
+        ...(f.content.context.settings.availability === "available"
+          ? f.content.context.settings.value
+          : {}),
+        processing: {
+          cleanupMinimumRetainedLineRatio: 0.75,
+          finalPass: { chunkSeconds: 300, repeatWindowSeconds: 180 },
+        },
+        models: {
+          notes: { model: "original-model", provider: "openai", params: {} },
+          meetingSummary: {
+            model: "original-model",
+            provider: "openai",
+            params: {},
+          },
+          transcription: {
+            model: "gpt-4o-transcribe",
+            provider: "openai",
+            params: {},
+          },
+          transcriptionCleanup: {
+            model: "original-model",
+            provider: "openai",
+            params: {},
+          },
+          transcriptionCoalesce: {
+            model: "gpt-5.6-luna",
+            provider: "openai",
+            params: { reasoning_effort: "low" },
+          },
+        },
+        transcription: {
+          ...(f.content.context.settings.availability === "available"
+            ? f.content.context.settings.value.transcription
+            : {}),
+          language: "en",
+          promptEchoEnabled: true,
+          voteEnabled: true,
+          finalPassEnabled: true,
+        },
+      },
+    },
+    prompts: {
+      ...f.content.context.prompts,
+      transcription: {
+        availability: "available",
+        value: {
+          type: "text",
+          name: "original-audio",
+          version: 9,
+          label: "original",
+          template: "Original audio prompt",
+        },
+      },
+      coalesce: { availability: "unavailable" },
+      finalPass: { availability: "unavailable" },
+    },
+  });
+  f.content.context = legacyContext;
+  f.content.entries = [];
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   await recoverTranscript(f.content, f.reader, f.signal, (run) => run());
-  expect(renderMixedPcmTracks).toHaveBeenCalledTimes(1);
-  const input = jest.mocked(runContentTranscriptionFinalPass).mock.calls[0][0];
-  expect(input).not.toHaveProperty("connection");
-  expect(input.settings).toEqual(liveTranscriptionProcessingSettings.finalPass);
-  expect(input.reconcileModel.model).toBe("original-model");
-  expect(input.transcriptionLanguage).toBe("ja");
-  expect(f.content.processing?.finalPass).toBe("acknowledged");
+  const [input] = jest.mocked(transcribeContentSnippet).mock.calls[0];
+  expect(input).not.toHaveProperty("prompt");
+  expect(input.runtimeConfig?.modelChoices).toEqual({
+    transcription: "gpt-transcribe",
+  });
+  expect(input.runtimeConfig?.transcription.language).toBe("en");
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(
+    "Recovery transcription model superseded.",
+    expect.objectContaining({ frozenModel: "gpt-4o-transcribe" }),
+  );
+  warn.mockRestore();
+  expect(renderMixedPcmTracks).not.toHaveBeenCalled();
+  expect(f.content.processing).toEqual({
+    cleanup: "acknowledged",
+    finalText: "Original saved cleanup result.",
+  });
 });
 test("missing original processing inputs reconcile while a verified processed transcript needs no audio or provider", async () => {
   const f = await fixture();
@@ -191,7 +248,6 @@ test("missing original processing inputs reconcile while a verified processed tr
     recoverTranscript(f.content, f.reader, f.signal, (run) => run()),
   ).rejects.toThrow("Original cleanup");
   f.content.processing = {
-    finalPass: "not_applicable",
     cleanup: "acknowledged",
     finalText: "Verified processed text",
   };
@@ -200,14 +256,6 @@ test("missing original processing inputs reconcile while a verified processed tr
   ).toMatchObject({ text: "Verified processed text" });
   expect(createOpenAIClient).not.toHaveBeenCalled();
 });
-test("known missing coverage never masquerades as a full finalized recording", async () => {
-  const f = await fixture(true);
-  f.content.context.captureIncomplete = true;
-  await recoverTranscript(f.content, f.reader, f.signal, (run) => run());
-  expect(runContentTranscriptionFinalPass).not.toHaveBeenCalled();
-  expect(f.content.processing?.finalPass).toBe("not_applicable");
-});
-
 test("legacy processed transcript with PCM reconciles before any provider replay", async () => {
   const f = await fixture(true);
   f.content.processing = {
@@ -219,7 +267,6 @@ test("legacy processed transcript with PCM reconciles before any provider replay
     recoverTranscript(f.content, f.reader, f.signal, (run) => run()),
   ).rejects.toThrow("overlap");
   expect(transcribeContentSnippet).not.toHaveBeenCalled();
-  expect(runContentTranscriptionFinalPass).not.toHaveBeenCalled();
   expect(createOpenAIClient).not.toHaveBeenCalled();
 });
 
@@ -229,7 +276,6 @@ function addIntervalAudio(
 ) {
   if (f.content.context.settings.availability !== "available")
     throw new Error("settings");
-  f.content.context.settings.value.transcription.finalPassEnabled = false;
   f.content.context.settings.value.premiumTranscription.enabled = false;
   f.content.entries = [];
   const bytes = Buffer.concat(
@@ -577,7 +623,6 @@ test.each(["complete", "tail", "empty", "supplemental"] as const)(
       ).toBe(saved.finalText);
     expect(f.content.processing).toEqual(saved);
     expect(transcribeContentSnippet).not.toHaveBeenCalled();
-    expect(runContentTranscriptionFinalPass).not.toHaveBeenCalled();
     expect(createOpenAIClient).not.toHaveBeenCalled();
   },
 );

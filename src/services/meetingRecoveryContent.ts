@@ -26,12 +26,13 @@ import type {
   RecordingCheckpoint,
 } from "../types/recordingCheckpoint";
 import { createRecordingCheckpointService } from "./recordingCheckpointService";
-import {
-  compileSavedChatPrompt,
-  compileSavedPrompt,
-} from "./savedRecordingPrompt";
+import { compileSavedChatPrompt } from "./savedRecordingPrompt";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 import { buildDictionaryPromptLines } from "../utils/dictionary";
+import {
+  MODEL_SELECTION_DEFAULTS,
+  RETIRED_TRANSCRIPTION_MODELS,
+} from "../config/modelChoices";
 import { chatContextVariables } from "./notesPromptService";
 import {
   transcribeContentSnippet,
@@ -173,38 +174,21 @@ export function transcriptionInput(
 ): TranscriptionContentInput {
   if (
     context.settings.availability !== "available" ||
-    context.context.availability !== "available" ||
-    context.prompts.transcription?.availability !== "available" ||
-    context.prompts.transcription.value.type !== "text"
+    context.context.availability !== "available"
   )
     throw new InvalidRecoveryContent(
       "Original transcription inputs unavailable",
     );
   const settings = context.settings.value;
-  const saved = context.prompts.transcription.value;
-  const dictionary = buildDictionaryPromptLines(
-    context.context.dictionaryEntries,
-    settings.dictionary,
-  ).transcriptionLines;
-  const compiled = compileSavedPrompt(saved, {
-    serverName: context.serverName,
-    channelName: context.voiceChannelName,
-    serverDescriptionLine: context.serverDescription
-      ? `Server Description: ${context.serverDescription}`
-      : "",
-    attendeesLine: `Attendees: ${context.attendees}`,
-    botNamesLine: context.botNames.length
-      ? `Bot Names: ${context.botNames.join(", ")}`
-      : "",
-    dictionaryBlock: dictionary.length
-      ? `Dictionary terms:\n${dictionary.join("\n")}`
-      : "",
-    meetingContextLine: context.context.meetingContext
-      ? `Meeting Context: ${context.context.meetingContext}`
-      : "",
-  });
-  if (typeof compiled !== "string")
-    throw new InvalidRecoveryContent("Transcription prompt type changed");
+  const frozenModel = settings.models.transcription.model;
+  // The saved settings keep the frozen model.
+  const superseded = RETIRED_TRANSCRIPTION_MODELS.includes(frozenModel);
+  if (superseded)
+    console.warn("Recovery transcription model superseded.", {
+      meetingId: context.capture.meetingId,
+      frozenModel,
+      model: MODEL_SELECTION_DEFAULTS.transcription,
+    });
   return {
     tempDirectory: artifacts?.directory,
     meetingId: context.capture.meetingId,
@@ -213,19 +197,18 @@ export function transcriptionInput(
     voiceChannel: { id: context.capture.channelId },
     signal,
     effect,
+    keywords: buildDictionaryPromptLines(
+      context.context.dictionaryEntries,
+      settings.dictionary,
+    ).transcriptionKeywords,
     runtimeConfig: {
       transcription: settings.transcription,
-      modelChoices: { transcription: settings.models.transcription.model },
-    },
-    prompt: async () => ({
-      source: "langfuse",
-      prompt: compiled,
-      langfusePrompt: {
-        name: saved.name,
-        version: saved.version,
-        isFallback: false,
+      modelChoices: {
+        transcription: superseded
+          ? MODEL_SELECTION_DEFAULTS.transcription
+          : frozenModel,
       },
-    }),
+    },
   };
 }
 const RECOVERY_CHUNK_FRAMES = 48000 * 30;
@@ -576,7 +559,6 @@ export async function recoverTranscript(
     signal,
     effect,
     dispositions,
-    false,
   );
   return { text, segments };
 }
@@ -604,21 +586,14 @@ export async function retranscribeOmittedRanges(
     signal,
     effect,
     represented,
-    true,
   );
 }
-/**
- * A retry accepts ranges the speech gate skips again and never replays the
- * frozen finalized-audio pass, which would rewrite kept entries and can carry
- * a superseded chunk length.
- */
 async function composeRecoveredTranscript(
   content: RecoveryContent,
   reader: RecoveryReader,
   signal: AbortSignal,
   effect: TranscriptionContentInput["effect"],
   covered: readonly PcmSpan[],
-  retry: boolean,
 ) {
   const artifacts = content.verified.some((item) => item.kind === "audio")
     ? await createRecoveryArtifactScope(content.manifest.capture.meetingId)
@@ -630,7 +605,6 @@ async function composeRecoveredTranscript(
       signal,
       effect,
       covered,
-      retry,
       artifacts,
     );
   } finally {
@@ -644,7 +618,6 @@ async function composeOwnedRecoveredTranscript(
   signal: AbortSignal,
   effect: TranscriptionContentInput["effect"],
   covered: readonly PcmSpan[],
-  retry: boolean,
   artifacts?: RecoveryArtifactScope,
 ) {
   const audio = content.verified.filter((item) => item.kind === "audio");
@@ -691,17 +664,9 @@ async function composeOwnedRecoveredTranscript(
   // Only ranges that came back with text count, so audio the gate rejects
   // again is "nothing to retry" rather than a recovered transcript.
   const retranscribedRanges = files.length - savedCount;
-  const text = await processRecoveryTranscript(
-    content,
-    reader,
-    files,
-    signal,
-    effect,
-    !retry,
-    artifacts,
-  );
-  // Final-pass corrections mutate these files. Cleanup can alter aggregate text,
-  // but cannot invent a more precise speaker/time alignment for a segment.
+  const text = await processRecoveryTranscript(content, files, signal);
+  // Cleanup can alter aggregate text, but cannot invent a more precise
+  // speaker/time alignment for a segment.
   const segments = files.map((file): TranscriptSegment => {
     const participant = content.context.participants.find(
       (p) => p.id === file.userId,

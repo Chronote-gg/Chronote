@@ -4,7 +4,7 @@ This CLI runs repeated transcription passes against labeled audio and measures u
 
 ## Production pipeline corpus runs
 
-Use `--manifest` to compare the raw provider with the same audio gate, conversion, transcript guards, and candidate selection used by the bot. No Langfuse dataset is required. Corpus tracing stays disabled and results stay in an ignored artifact directory.
+Use `--manifest` to compare the raw provider with the same audio gate, conversion, speech admission and transcript guards used by the bot. Pipeline mode sends one unprompted request per run through the production request builder and `guardTranscription`, with no language hint (the `auto` default). A manifest or case `dictionary` becomes keywords under the production budget and admission rule; `--no-keywords` omits them. No Langfuse dataset is required. Corpus tracing stays disabled and results stay in an ignored artifact directory.
 
 ```powershell
 npm run eval:transcription:corpus -- --speech
@@ -18,7 +18,7 @@ Corpus preparation generates eight nonspeech controls. `--speech` adds eight sho
 
 Each manifest case requires an audio SHA-256, split, tags, and explicit speech/nonspeech/unreviewed label with provenance. Every repetition is scored. An empty expected transcript means nonspeech; an absent reference is unscored. Provider failures and exhausted budgets stay unscored, retain request accounting, and cause a nonzero exit code. SDK retries are disabled in corpus mode. Usage is retained for every successful response; dollar cost is unpriced.
 
-`--policy` loads validated guard settings, `--prompt-file` changes the prompt, and `--split tune` limits development runs. Keep a fresh holdout separate from tuning. `--vad-report` applies experimental detector decisions bound to each clip's hash. The optional Silero Python script is an offline experiment and does not change the production bot.
+`--policy` loads validated guard settings, `--prompt-file` sends a prompt for comparison with the former prompted path, `--language <code>` forces a language hint for comparison, and `--split tune` limits development runs. Keep a fresh holdout separate from tuning. `--vad-report` applies experimental detector decisions bound to each clip's hash. The optional Silero Python script is an offline experiment and does not change the production bot.
 
 Keep real recordings, references, and results in the private ops workspace. Use `--artifact-dir D:/bench/chronote-ops/.cache/transcription-eval`, with any explicit `--output` inside that directory. Production recording replay retains the private ops authorization requirement.
 
@@ -33,13 +33,17 @@ npm run eval:transcription -- --manifest test/fixtures/transcription-public/mani
 
 The corpus has 43 cases, so run both batches; each report's `complete` covers its own batch. Non-speech metrics exist only in batch 1, and the Japanese case should be read from `byTag["non-english"]`. It is a public `tune` set, never holdout evidence.
 
+The summary adds `cer` for CJK references (kept out of `wer`), `speechMostlyDroppedRate`, `unwantedWordsPerSilenceRun`, and term scores `termMentions`, `termHits`, `termRecall` (exact spelling), `termInsertions` and `keywordRequests`.
+
+Results of the 2026-11-16 runs, including dictionary keywords, are in [ADR-20261116](adr-20261116-transcription-simplification.md).
+
 See [the October 13 findings and run instructions](analysis/2026-10-13-transcription-quality-evals.md) for the corpus format, optional speech detector, observed results, and release limits.
 
 ## Bundled speech detection and packaging proof
 
 The Discord pipeline includes `transcription.speechDetection.mode`, with `off`, `shadow`, and `enforce` options. The default is `off`. It is a global superadmin setting in Experimental, captured at meeting start. Switching off changes new meetings and does not cancel detector work in an active meeting.
 
-Enforce mode gates whole snippets, retaining original audio and offsets. Uncertain or unavailable assessments preserve transcription. Forced transcription bypasses the detector. Exact audio and policy coverage can be reused, but uncertainty or a failed coverage proof can require additional final-pass SDK submissions. This behavior alone proves neither quality improvement nor request savings.
+Enforce mode gates whole snippets, retaining original audio and offsets. Uncertain or unavailable assessments preserve transcription. Forced transcription bypasses the detector. Exact audio and policy coverage can be reused, but uncertainty or a failed coverage proof can require additional provider submissions. This behavior alone proves neither quality improvement nor request savings.
 
 The bundled model and matching runtime assets need no meeting-time download. After `npm run build`, verify the production service and worker with synthetic controls:
 
@@ -190,11 +194,10 @@ Pipeline provider replay of private recordings requires its separate authorizati
 For an authorized replay, repeat each numbered batch until the split is exhausted,
 replace `production` with `off` for baseline (omit `--speech-mode`), and repeat
 both comparisons with `--pass-mode fast`. Baseline and candidate must use identical
-source, model, prompt, echo and other policy settings, split, and repetitions.
+source, model, prompt, language and other policy settings, split, and repetitions.
 Selection sorts case IDs after split filtering, then takes at most 25 cases.
 An out-of-range batch errors before decoding or provider setup. Three repetitions
-of 25 slow clips allow at most 150 SDK invocations, including prompt/no-prompt
-voting. SDK retries are disabled. Failed submitted calls count toward work;
+of 25 slow clips make 75 SDK invocations. SDK retries are disabled. Failed submitted calls count toward work;
 budget exhaustion is incomplete. Eligible preflight rows remain unscored and
 cannot satisfy pipeline acceptance.
 
@@ -215,7 +218,7 @@ Waiting only to collect its completed artifact is excluded from end-to-end time.
 Older reports that cached off-mode conversion used a different boundary and must
 be regenerated before a matched latency comparison.
 
-Final-pass exact-coverage reuse, changed PCM and whole-meeting
+Recovery re-transcription of changed PCM and whole-meeting
 reprocessing can add SDK calls that this snippet replay does not model; use live
 SDK counters to measure those calls, and never extrapolate guaranteed savings.
 

@@ -36,7 +36,7 @@ of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts
 
 1. Set up the [native voice build prerequisites](#native-voice-build-prerequisites), then run `yarn install`.
 2. Install FFMPEG (e.g., `choco install ffmpeg` on Windows).
-3. Copy `.env.example` to `.env`; set required keys: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`. Optional: Stripe keys to enable checkout/portal endpoints; `USE_LOCAL_DYNAMODB=true` for local tables. For Langfuse prompt sync or tracing, set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`, `LANGFUSE_PROMPT_DICTIONARY_TEACHING`. For Notion export, set `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and `NOTION_REDIRECT_URI`.
+3. Copy `.env.example` to `.env`; set required keys: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`. Optional: Stripe keys to enable checkout/portal endpoints; `USE_LOCAL_DYNAMODB=true` for local tables. For Langfuse prompt sync or tracing, set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_DICTIONARY_TEACHING`. For Notion export, set `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and `NOTION_REDIRECT_URI`.
    - For mock portal data + OAuth bypass, set `MOCK_MODE=true` (no Discord/Dynamo required), or run `yarn start:mock` / `yarn dev:mock` to toggle mock mode without editing `.env`.
    - Deployed ECS uses **AWS Secrets Manager** for secrets (see `_infra/README.md`).
 4. Start everything (local Dynamo + table init + bot): `yarn dev`
@@ -215,10 +215,9 @@ Portal sign-in reconnects expired sessions and returns to the requested page. It
 - Bot + API: Node 24.22.2, Express 5. API routes are modularized under `src/api/` (billing, guilds). New typed API surface is tRPC at `/trpc` (routers in `src/trpc/`).
 - Voice capture: discord.js v14, @discordjs/voice/opus, prism-media.
 - Transcription flow and tuning: `docs/audio-transcription.md`.
-- Slow transcription now includes a default low-confidence prompt/no-prompt vote fallback to reduce hallucinated prompt echoes.
+- Snippet ASR sends no prompt, and a language hint only when a server pins one; deterministic guards suppress hallucinated text on quiet or non-speech audio.
 - Feature toggle evaluation checklist: `docs/feature-toggles.md`.
-- OpenAI: gpt-4o-transcribe for ASR, gpt-6.1-sol for notes, gpt-5.2 for summaries, cleanup, corrections and image prompts, gpt-5-mini for live gate, DALL-E 3 for images. `NOTES_MODEL` overrides notes generation only; other roles use their existing per-role settings.
-- Transcription can run a finalized audio verification pass at meeting end to auto-apply high-confidence hallucination fixes before notes are generated.
+- OpenAI: gpt-transcribe for ASR (`models.transcription`), gpt-6.1-sol for notes, summaries, cleanup, corrections and image prompts, gpt-6.1-terra for dictionary teaching and the live gate (production pins the gate to gpt-5-mini through `LIVE_VOICE_GATE_MODEL` in Terraform), DALL-E 3 for images. `NOTES_MODEL` overrides notes generation only; other roles use their existing per-role settings.
 - Text generation uses OpenAI's Responses API through one shared service for notes, corrections, Ask, live-voice text decisions, captions and dictionary suggestions. See the [Responses and model evaluation design](docs/superpowers/specs/2026-10-21-responses-meeting-evaluation-design.md) for request contracts and model comparisons.
 - Prompt management and tracing: Langfuse for prompt versioning, tracing, and prompt sync scripts.
 - Langfuse transcription traces attach compressed MP3 snippets (mono 16 kHz VBR, 8 MB cap) for observability.

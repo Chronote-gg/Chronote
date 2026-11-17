@@ -11,21 +11,14 @@ import {
 
 jest.setTimeout(30_000);
 
-const uncertainResponse = {
-  ...validResponse,
-  text: "Uncertain wording.",
-  logprobs: [{ token: "Uncertain", logprob: -3, bytes: [] }],
-};
-
-function providerTransport(
-  respond: (prompt: boolean, attempt: number) => Promise<Response>,
-) {
-  const calls: boolean[] = [];
+function providerTransport(respond: (attempt: number) => Promise<Response>) {
+  const calls: string[] = [];
   const fetch: NonNullable<ClientOptions["fetch"]> = async (_url, init) => {
     const body = await new Response(init?.body).text();
-    const prompt = body.includes('name="prompt"');
-    calls.push(prompt);
-    return respond(prompt, calls.length);
+    expect(body).not.toContain('name="prompt"');
+    expect(body).not.toContain('name="language"');
+    calls.push(body);
+    return respond(calls.length);
   };
   return { fetch, calls };
 }
@@ -36,90 +29,48 @@ const unavailable = () =>
     { status: 503, headers: { "retry-after-ms": "0" } },
   );
 
-test("vote retry retains prompted success and prepares prompt and attachment once", async () => {
-  let voteAttempts = 0;
-  const provider = providerTransport(async (prompt) => {
-    if (prompt) return Response.json(uncertainResponse);
-    return ++voteAttempts === 1 ? unavailable() : Response.json(validResponse);
-  });
+test("a transient retry retains the later success and prepares the attachment once", async () => {
+  const provider = providerTransport(async (attempt) =>
+    attempt === 1 ? unavailable() : Response.json(validResponse),
+  );
   await withTracingFixture({ transport: provider.fetch }, async (f) => {
     f.attachment.resolve();
     await expect(f.transcribe()).resolves.toMatchObject({
       status: "succeeded",
       text: validResponse.text,
     });
-    expect(provider.calls).toEqual([true, false, false]);
-    expect(f.preparePrompt).toHaveBeenCalledTimes(1);
+    expect(provider.calls).toHaveLength(2);
     expect(f.helperStarted).toHaveBeenCalledTimes(1);
-    expect(f.inputClosed).toHaveBeenCalledTimes(3);
+    expect(f.inputClosed).toHaveBeenCalledTimes(2);
     expect(f.state.metadata).toMatchObject({
-      transcriptionLogicalCandidateCount: 2,
-      transcriptionSdkInvocationCount: 3,
-      transcriptionHttpDispatchAttemptCount: 3,
+      transcriptionSdkInvocationCount: 2,
+      transcriptionHttpDispatchAttemptCount: 2,
       transcriptionRetryCount: 1,
-      transcriptionKnownUsageAttemptCount: 2,
+      transcriptionKnownUsageAttemptCount: 1,
       transcriptionUnknownUsageAttemptCount: 1,
       transcriptionAttemptUsageCoverage: "partial",
       transcriptionCostAccountingStatus: "partial",
-      transcriptionRequestCount: 2,
+      transcriptionRequestCount: 1,
     });
-    expect(f.state.usageDetails).toEqual({ input: 46, output: 22, total: 68 });
+    expect(f.state.usageDetails).toEqual({ input: 23, output: 11, total: 34 });
   });
 });
 
-test.each([400, 503])(
-  "prompt usage survives terminal or exhausted vote HTTP %i",
-  async (status) => {
-    const provider = providerTransport(async (prompt) =>
-      prompt
-        ? Response.json(uncertainResponse)
-        : Response.json(
-            { error: { message: "synthetic vote failure" } },
-            { status, headers: { "retry-after-ms": "0" } },
-          ),
-    );
-    await withTracingFixture({ transport: provider.fetch }, async (f) => {
-      f.attachment.resolve();
-      await expect(f.transcribe()).resolves.toMatchObject({ status: "failed" });
-      expect(provider.calls.filter(Boolean)).toHaveLength(1);
-      expect(provider.calls.filter((prompt) => !prompt)).toHaveLength(
-        status === 503 ? 4 : 1,
-      );
-      expect(f.preparePrompt).toHaveBeenCalledTimes(1);
-      expect(f.state.usageDetails).toEqual({
-        input: 23,
-        output: 11,
-        total: 34,
-      });
-      expect(f.state.metadata).toMatchObject({
-        transcriptionCostAccountingStatus: "partial",
-        transcriptionRequestCount: 1,
-        transcriptionKnownUsageAttemptCount: 1,
-      });
-    });
-  },
-);
-
-test("both candidates may each use four attempts but never a fifth", async () => {
-  const attempts = { prompt: 0, vote: 0 };
-  const provider = providerTransport(async (prompt) => {
-    const key = prompt ? "prompt" : "vote";
-    attempts[key] += 1;
-    return attempts[key] < 4
-      ? unavailable()
-      : Response.json(prompt ? uncertainResponse : validResponse);
-  });
+test("a request may use four attempts but never a fifth", async () => {
+  const provider = providerTransport(async (attempt) =>
+    attempt < 4 ? unavailable() : Response.json(validResponse),
+  );
   await withTracingFixture({ transport: provider.fetch }, async (f) => {
     f.attachment.resolve();
     await expect(f.transcribe()).resolves.toMatchObject({
       status: "succeeded",
     });
-    expect(attempts).toEqual({ prompt: 4, vote: 4 });
+    expect(provider.calls).toHaveLength(4);
     expect(f.state.metadata).toMatchObject({
-      transcriptionHttpDispatchAttemptCount: 8,
-      transcriptionRetryCount: 6,
-      transcriptionKnownUsageAttemptCount: 2,
-      transcriptionUnknownUsageAttemptCount: 6,
+      transcriptionHttpDispatchAttemptCount: 4,
+      transcriptionRetryCount: 3,
+      transcriptionKnownUsageAttemptCount: 1,
+      transcriptionUnknownUsageAttemptCount: 3,
     });
   });
 });
@@ -162,7 +113,7 @@ test("new diagnostics exclude provider body, header, path and identifier sentine
 test("real bulkhead retires an aborted queued item and starts the next while another remains active", async () => {
   const held = [deferred<void>(), deferred<void>()];
   const started = [deferred<void>(), deferred<void>(), deferred<void>()];
-  const provider = providerTransport(async (_prompt, attempt) => {
+  const provider = providerTransport(async (attempt) => {
     started[attempt - 1]?.resolve();
     await held[attempt - 1]?.promise;
     return Response.json(validResponse);
@@ -202,7 +153,7 @@ test("real bulkhead retires an aborted queued item and starts the next while ano
 
 test("real policy keeps the concurrency slot until attachment work drains", async () => {
   const entered = [deferred<void>(), deferred<void>(), deferred<void>()];
-  const provider = providerTransport(async (_prompt, attempt) => {
+  const provider = providerTransport(async (attempt) => {
     entered[attempt - 1]?.resolve();
     return Response.json(validResponse);
   });
@@ -226,8 +177,20 @@ test("real policy keeps the concurrency slot until attachment work drains", asyn
   }
 });
 
-test("real breaker counts five exhausted logical ASR failures, then rejects before dispatch", async () => {
-  const provider = providerTransport(async () => unavailable());
+test.each([
+  {
+    name: "counts five exhausted logical ASR failures, then rejects before dispatch",
+    respond: unavailable,
+    calls: 20,
+  },
+  {
+    name: "ignores terminal provider failures",
+    respond: () =>
+      Response.json({ error: { message: "terminal" } }, { status: 400 }),
+    calls: 6,
+  },
+])("real breaker $name", async ({ respond, calls }) => {
+  const provider = providerTransport(async () => respond());
   await withTracingFixture(
     { realPolicies: true, transport: provider.fetch },
     async (f) => {
@@ -237,42 +200,7 @@ test("real breaker counts five exhausted logical ASR failures, then rejects befo
           status: "failed",
         });
       }
-      expect(provider.calls).toHaveLength(20);
-      expect(f.preparePrompt).toHaveBeenCalledTimes(5);
-      expect(f.helperStarted).toHaveBeenCalledTimes(5);
-    },
-  );
-});
-
-test("real breaker ignores terminal provider failures and unrelated SDK-shaped prompt errors", async () => {
-  const provider = providerTransport(async () =>
-    Response.json({ error: { message: "terminal" } }, { status: 400 }),
-  );
-  await withTracingFixture(
-    { realPolicies: true, transport: provider.fetch },
-    async (f) => {
-      f.attachment.resolve();
-      const { default: OpenAI } = await import("openai");
-      const unrelated = new OpenAI.APIConnectionError({
-        message: "prompt failure",
-      });
-      const { isTransientTranscriptionFailure } =
-        await import("../../src/services/transcriptionRequest");
-      expect(isTransientTranscriptionFailure(unrelated)).toBe(true);
-      const failedPrompt = async () => {
-        throw unrelated;
-      };
-      for (let logical = 0; logical < 6; logical += 1) {
-        await expect(
-          f.transcribe({ prompt: failedPrompt }),
-        ).resolves.toMatchObject({ status: "failed" });
-      }
-      for (let logical = 0; logical < 6; logical += 1) {
-        await expect(f.transcribe()).resolves.toMatchObject({
-          status: "failed",
-        });
-      }
-      expect(provider.calls).toHaveLength(6);
+      expect(provider.calls).toHaveLength(calls);
     },
   );
 });
@@ -280,7 +208,7 @@ test("real breaker ignores terminal provider failures and unrelated SDK-shaped p
 test("real bulkhead admits two active and one hundred queued jobs", async () => {
   const release = deferred<void>();
   const bothActive = deferred<void>();
-  const provider = providerTransport(async (_prompt, attempt) => {
+  const provider = providerTransport(async (attempt) => {
     if (attempt === 2) bothActive.resolve();
     await release.promise;
     return Response.json(validResponse);
@@ -313,24 +241,17 @@ test("real bulkhead admits two active and one hundred queued jobs", async () => 
 test("real limiter spaces logical starts and records queue wait", async () => {
   jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
   const starts: number[] = [];
-  const provider = providerTransport(async () => Response.json(validResponse));
+  const provider = providerTransport(async () => {
+    starts.push(performance.now());
+    if (starts.length === 1)
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    return Response.json(validResponse);
+  });
   try {
     await withTracingFixture(
       { realPolicies: true, transport: provider.fetch },
       async (f) => {
         f.attachment.resolve();
-        f.preparePrompt.mockImplementation(async () => {
-          // Admission precedes prompt and SDK preparation, which may delay dispatch.
-          starts.push(performance.now());
-          if (starts.length === 1) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 100));
-          }
-          return {
-            prompt: "Project Orion delivery terminology.",
-            langfusePrompt: undefined,
-            source: "fallback" as const,
-          };
-        });
         const tasks = [f.transcribe(), f.transcribe()];
         await jest.advanceTimersByTimeAsync(1_000);
         await Promise.all(tasks);
@@ -346,25 +267,55 @@ test("real limiter spaces logical starts and records queue wait", async () => {
   }
 });
 
-test("accounting failure preserves the vote error and attempts retained prompt usage", async () => {
+test("accounting failure preserves the provider error", async () => {
   await withTracingFixture({ accountingFailure: true }, async (f) => {
-    const providerError = new Error("original vote failure");
-    f.create
-      .mockResolvedValueOnce(uncertainResponse)
-      .mockRejectedValueOnce(providerError);
+    const providerError = new Error("original provider failure");
+    f.create.mockRejectedValueOnce(providerError);
     f.attachment.resolve();
     await expect(f.transcribe()).resolves.toMatchObject({
       status: "failed",
     });
-    expect(f.create).toHaveBeenCalledTimes(2);
+    expect(f.create).toHaveBeenCalledTimes(1);
     expect(f.policyRejected).toHaveBeenCalledTimes(1);
     expect(f.policyRejected.mock.calls[0][0]).toBe(providerError);
-    const accounting = f.update.mock.calls
-      .map(([value]) => value)
-      .find((value) => value.usageDetails);
-    expect(accounting).toMatchObject({
-      usageDetails: { input: 23, output: 11, total: 34 },
-      metadata: { transcriptionRequestCount: 1 },
+  });
+});
+
+test("a response without logprobs is counted and logged", async () => {
+  const withoutLogprobs = { ...validResponse, logprobs: undefined };
+  const provider = providerTransport(async () =>
+    Response.json(withoutLogprobs),
+  );
+  await withTracingFixture({ transport: provider.fetch }, async (f) => {
+    const { metricsRegistry } = await import("../../src/metrics");
+    f.attachment.resolve();
+    await expect(f.transcribe()).resolves.toMatchObject({
+      status: "succeeded",
     });
+    const metric = await metricsRegistry
+      .getSingleMetric("chronote_transcription_missing_logprobs_total")
+      ?.get();
+    expect(metric?.values.map((value) => value.value)).toEqual([1]);
+    expect(console.warn).toHaveBeenCalledWith(
+      "Transcription response has no logprobs.",
+      expect.objectContaining({ model: expect.any(String) }),
+    );
+  });
+});
+
+test("a response without text remains an empty result", async () => {
+  const withoutText = { ...validResponse, text: undefined };
+  const provider = providerTransport(async () => Response.json(withoutText));
+  await withTracingFixture({ transport: provider.fetch }, async (f) => {
+    f.attachment.resolve();
+    await expect(f.transcribe()).resolves.toMatchObject({
+      status: "succeeded",
+      text: "",
+    });
+    expect(provider.calls).toHaveLength(1);
+    expect(console.warn).not.toHaveBeenCalledWith(
+      "Transcription response has no logprobs.",
+      expect.anything(),
+    );
   });
 });

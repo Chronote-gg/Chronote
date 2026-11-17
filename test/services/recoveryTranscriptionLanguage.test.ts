@@ -1,0 +1,105 @@
+/** @jest-environment node */
+jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
+import { transcriptionInput } from "../../src/services/meetingRecoveryContent";
+import { buildTranscriptionRequest } from "../../src/services/transcriptionRequest";
+import { meetingTranscriptionLanguage } from "../../src/config/transcriptionLanguage";
+import { generationContextSchema } from "../../src/types/recordingContent";
+import { resetMockStore } from "../../src/repositories/mockStore";
+import { recoveryFixture } from "./meetingRecoveryFixtures";
+
+beforeEach(() => resetMockStore());
+
+async function recoveryRequest(options: {
+  frozenLanguage?: string;
+  model?: string;
+  dictionaryEntries?: { term: string; updatedAt?: string }[];
+}) {
+  const { payload } = await recoveryFixture();
+  if (payload.settings.availability !== "available")
+    throw new Error("settings");
+  const transcription: Record<string, unknown> = {
+    ...payload.settings.value.transcription,
+    language: options.frozenLanguage,
+  };
+  if (options.frozenLanguage === undefined) delete transcription.language;
+  const model = options.model ?? "gpt-transcribe";
+  const models = payload.settings.value.models;
+  const context = generationContextSchema.parse({
+    ...payload,
+    context: {
+      ...payload.context,
+      dictionaryEntries: options.dictionaryEntries ?? [],
+    },
+    settings: {
+      availability: "available",
+      value: {
+        ...payload.settings.value,
+        transcription,
+        models: {
+          ...models,
+          transcription: { ...models.transcription, model },
+        },
+      },
+    },
+  });
+  const input = transcriptionInput(
+    context,
+    new AbortController().signal,
+    (run) => run(),
+  );
+  return buildTranscriptionRequest(
+    input.runtimeConfig!.modelChoices!.transcription!,
+    meetingTranscriptionLanguage(input.runtimeConfig),
+    input.keywords,
+  );
+}
+
+test.each([
+  ["a recording frozen with a pinned language", "ja", ["ja"]],
+  ["a recording frozen with auto detection", "auto", undefined],
+  ["a recording older than the language setting", undefined, ["en"]],
+])("recovery of %s honours the frozen language", async (_, frozen, sent) => {
+  const request = await recoveryRequest({ frozenLanguage: frozen });
+  expect(request.languages).toEqual(sent);
+  expect(request).not.toHaveProperty("language");
+});
+
+test.each(["gpt-4o-transcribe", "gpt-4o-mini-transcribe"])(
+  "recovery frozen on retired %s runs on the default with saved language and keywords",
+  async (model) => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    const request = await recoveryRequest({
+      frozenLanguage: "ja",
+      model,
+      dictionaryEntries: [{ term: "Kwylt" }],
+    });
+    expect(request).toMatchObject({
+      model: "gpt-transcribe",
+      languages: ["ja"],
+      keywords: ["Kwylt"],
+    });
+    expect(request).not.toHaveProperty("language");
+  },
+);
+
+test("recovery sends the saved dictionary terms as keywords", async () => {
+  const request = await recoveryRequest({
+    frozenLanguage: "auto",
+    dictionaryEntries: [
+      { term: "Xaerith", updatedAt: "2026-01-01T00:00:00.000Z" },
+      { term: "Kwylt", updatedAt: "2026-02-01T00:00:00.000Z" },
+    ],
+  });
+  expect(request.keywords).toEqual(["Kwylt", "Xaerith"]);
+});
+
+test("recovery refuses a recording whose saved context was unavailable", async () => {
+  const { payload } = await recoveryFixture();
+  const context = generationContextSchema.parse({
+    ...payload,
+    context: { ...payload.context, availability: "unavailable" },
+  });
+  expect(() =>
+    transcriptionInput(context, new AbortController().signal, (run) => run()),
+  ).toThrow("Original transcription inputs unavailable");
+});

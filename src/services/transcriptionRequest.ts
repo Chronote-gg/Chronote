@@ -16,21 +16,23 @@ import {
 import {
   type createTranscriptionAttemptLedger,
   type TranscriptionAttemptOutcome,
-  type TranscriptionCandidateId,
 } from "../observability/transcriptionAttempts";
+import { recordTranscriptionKeywordsRejected } from "../metrics";
 import { createOpenAIClient } from "./openaiClient";
 import {
   TranscriptionInputError,
   withTranscriptionInput,
 } from "./transcriptionInput";
 
+import type { TranscriptionLanguage } from "../config/transcriptionLanguage";
 const nativeFetch = globalThis.fetch;
 const failureScopes = new AsyncLocalStorage<WeakSet<Error>>();
+const rejectedKeywordModels = new WeakMap<object, Set<string>>();
 
 type RequestInput = {
-  candidate: TranscriptionCandidateId;
   file: string;
   signal: AbortSignal;
+  keywordRejectionScope?: object;
   request: Omit<TranscriptionCreateParamsNonStreaming<"json">, "file">;
   ledger: ReturnType<typeof createTranscriptionAttemptLedger>;
   clientOptions?: Parameters<typeof createOpenAIClient>[0];
@@ -126,9 +128,9 @@ function retryAfterDelay(error: unknown) {
 }
 
 async function runAttempt(input: RequestInput): Promise<Transcription> {
-  const { signal, ledger, candidate } = input;
+  const { signal, ledger } = input;
   signal.throwIfAborted();
-  const attempt = ledger.beginAttempt(candidate);
+  const attempt = ledger.beginAttempt();
   try {
     const client = createOpenAIClient(input.clientOptions, {
       fetch: attempt.wrapFetch(input.transport?.fetch ?? nativeFetch),
@@ -154,32 +156,148 @@ async function runAttempt(input: RequestInput): Promise<Transcription> {
   }
 }
 
+// Handle both an explicit keyword parameter and the observed unlabelled 400.
+function keywordsRejected(error: unknown, request: RequestInput["request"]) {
+  return (
+    Boolean(request.keywords?.length) &&
+    error instanceof OpenAI.BadRequestError &&
+    (error.param === "keywords" ||
+      error.param?.startsWith("keywords[") ||
+      (error.code === "invalid_value" && error.param == null))
+  );
+}
+
+function withoutKeywords(request: RequestInput["request"]) {
+  const rest = { ...request };
+  delete rest.keywords;
+  return rest;
+}
+
+function requestWithoutRejectedKeywords(
+  error: unknown,
+  request: RequestInput["request"],
+  retryCount: number,
+) {
+  if (
+    retryCount >= TRANSCRIPTION_MAX_RETRIES ||
+    !keywordsRejected(error, request)
+  ) {
+    return undefined;
+  }
+  recordTranscriptionKeywordsRejected(request.model);
+  console.warn("Transcription keywords rejected; retrying without them.", {
+    model: request.model,
+    keywordCount: request.keywords?.length,
+  });
+  return withoutKeywords(request);
+}
+
+function throwUnlessRetryable(error: unknown, retryCount: number) {
+  const transient = isTransientTranscriptionFailure(error);
+  if (transient && retryCount < TRANSCRIPTION_MAX_RETRIES) return;
+  if (transient && error instanceof Error) {
+    failureScopes.getStore()?.add(error);
+  }
+  throw error;
+}
+
 export async function runTranscriptionRequest(
   input: RequestInput,
 ): Promise<Transcription> {
-  input.ledger.beginCandidate(input.candidate);
   const generator = new ExponentialBackoff({
     initialDelay: TRANSCRIPTION_RETRY_INITIAL_DELAY_MS,
     exponent: TRANSCRIPTION_RETRY_EXPONENT,
     maxDelay: TRANSCRIPTION_RETRY_MAX_DELAY_MS,
   });
   let backoff: IBackoff<unknown> | undefined;
+  const scope = input.keywordRejectionScope ?? input.signal;
+  let keywordsWereRejected = false;
+  let request = rejectedKeywordModels.get(scope)?.has(input.request.model)
+    ? withoutKeywords(input.request)
+    : input.request;
   for (let retryCount = 0; ; retryCount += 1) {
     input.signal.throwIfAborted();
     try {
-      return await runAttempt(input);
+      const result = await runAttempt({ ...input, request });
+      // Only remember a rejection after the keyword-free request actually works.
+      if (keywordsWereRejected) {
+        const models = rejectedKeywordModels.get(scope) ?? new Set<string>();
+        models.add(request.model);
+        rejectedKeywordModels.set(scope, models);
+      }
+      return result;
     } catch (error) {
       input.signal.throwIfAborted();
-      const transient = isTransientTranscriptionFailure(error);
-      if (!transient || retryCount === TRANSCRIPTION_MAX_RETRIES) {
-        if (transient && error instanceof Error) {
-          failureScopes.getStore()?.add(error);
-        }
-        throw error;
+      const fallback = requestWithoutRejectedKeywords(
+        error,
+        request,
+        retryCount,
+      );
+      if (fallback) {
+        keywordsWereRejected = true;
+        request = fallback;
+        continue;
       }
+      throwUnlessRetryable(error, retryCount);
       backoff = backoff ? backoff.next(undefined) : generator.next();
       const delay = retryAfterDelay(error) ?? backoff.duration;
       await setTimeout(delay, undefined, { signal: input.signal });
     }
   }
+}
+
+type TranscriptionModelCapabilities = {
+  keywords: boolean;
+  languageField: "language" | "languages";
+};
+
+// Verified against the API: gpt-transcribe takes `keywords` and a `languages`
+// list that replaces `language`; the older models reject both with HTTP 400.
+// Only gpt-transcribe is selectable; the other rows serve the eval's --model.
+const TRANSCRIPTION_MODEL_CAPABILITIES: Record<
+  string,
+  TranscriptionModelCapabilities
+> = {
+  "gpt-transcribe": { keywords: true, languageField: "languages" },
+  "gpt-4o-transcribe": { keywords: false, languageField: "language" },
+  "gpt-4o-mini-transcribe": { keywords: false, languageField: "language" },
+  // Not selectable in production; the offline eval compares against it.
+  "whisper-1": { keywords: false, languageField: "language" },
+};
+
+export function transcriptionModelCapabilities(
+  model: string,
+): TranscriptionModelCapabilities {
+  const capabilities = TRANSCRIPTION_MODEL_CAPABILITIES[model];
+  if (!capabilities)
+    throw new Error(`Unsupported transcription model ${model}`);
+  return capabilities;
+}
+
+/**
+ * The production ASR request. It sends no prompt, so the provider has nothing
+ * to echo back. A language hint goes out only when the server pins one; auto
+ * lets the provider detect the language. Dictionary keywords go out only to a
+ * model that accepts them.
+ */
+export function buildTranscriptionRequest(
+  model: string,
+  language: TranscriptionLanguage,
+  keywords: readonly string[],
+) {
+  const capabilities = transcriptionModelCapabilities(model);
+  return {
+    model,
+    temperature: 0,
+    response_format: "json" as const,
+    include: ["logprobs" as const],
+    ...(language === "auto"
+      ? {}
+      : capabilities.languageField === "languages"
+        ? { languages: [language] }
+        : { language }),
+    ...(capabilities.keywords && keywords.length
+      ? { keywords: [...keywords] }
+      : {}),
+  };
 }

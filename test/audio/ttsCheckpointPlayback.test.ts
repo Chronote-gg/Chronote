@@ -303,7 +303,7 @@ test.each([false, true])(
     const baseline = {
       userId: "generated",
       timestamp: 2000,
-      transcript: "Before final pass",
+      transcript: "Before finalization",
       transcriptCorrespondence: { kind: "text_only" as const },
       processing: false,
       audioOnlyProcessing: false,
@@ -314,13 +314,12 @@ test.each([false, true])(
     await settle();
     expect(f.meeting.audioData.audioFiles).toHaveLength(1);
     guardRecordingFinalization(f.meeting);
-    Object.assign(baseline, { finalPassTranscript: "Final pass result" });
+    Object.assign(baseline, { slowTranscript: "Finalized result" });
     if (acknowledged) {
       captureRecordingTranscriptScope(f.meeting, [baseline]);
       checkpointCompletedTranscription(f.meeting, {
-        finalPass: "acknowledged",
         cleanup: "disabled",
-        finalText: "Final pass result",
+        finalText: "Finalized result",
       });
     }
     // stopAndClear requests termination but does not await the running finally block.
@@ -336,13 +335,13 @@ test.each([false, true])(
       JSON.parse(Buffer.from(raw.bytes).toString()),
     );
     expect(result.entries.map((entry) => entry.text)).toEqual([
-      acknowledged ? "Final pass result" : "Before final pass",
+      acknowledged ? "Finalized result" : "Before finalization",
       item.text,
     ]);
     expect(result.entries[1].correspondence).toEqual({ kind: "text_only" });
     if (acknowledged)
       expect(result.processing).toMatchObject({
-        finalText: "Final pass result",
+        finalText: "Finalized result",
         supplementalEntries: true,
       });
     else expect(result.processing).toBeUndefined();

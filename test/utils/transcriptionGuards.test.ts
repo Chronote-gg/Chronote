@@ -28,8 +28,6 @@ describe("applyTranscriptionGuards", () => {
     const result = applyTranscriptionGuards({
       transcription: "###",
       suppressionEnabled: true,
-      promptEchoEnabled: true,
-      promptText: "Glossary context",
     });
     expect(result.text).toBe("");
     expect(result.suppressed).toBe(true);
@@ -40,7 +38,6 @@ describe("applyTranscriptionGuards", () => {
     const result = applyTranscriptionGuards({
       transcription: "I think we should start with the Vket event.",
       suppressionEnabled: true,
-      promptEchoEnabled: false,
       noiseGateMetrics: quietMetrics,
       logprobs: [{ logprob: -1.4 }, { logprob: -2.6 }],
     });
@@ -59,7 +56,6 @@ describe("applyTranscriptionGuards", () => {
     const result = applyTranscriptionGuards({
       transcription: "hello there",
       suppressionEnabled: true,
-      promptEchoEnabled: false,
       logprobs: [{ logprob: -3 }],
     });
 
@@ -71,7 +67,6 @@ describe("applyTranscriptionGuards", () => {
     const result = applyTranscriptionGuards({
       transcription: "quiet but suppression is off",
       suppressionEnabled: false,
-      promptEchoEnabled: false,
       noiseGateMetrics: quietMetrics,
       logprobs: [{ logprob: -2.5 }],
     });
@@ -84,7 +79,6 @@ describe("applyTranscriptionGuards", () => {
     const result = applyTranscriptionGuards({
       transcription: "We should coordinate on the Vket schedule.",
       suppressionEnabled: true,
-      promptEchoEnabled: false,
       noiseGateMetrics: quietMetrics,
       logprobs: [{ logprob: -0.1 }, { logprob: -2.6 }, { logprob: -0.2 }],
     });
@@ -104,7 +98,6 @@ describe("applyTranscriptionGuards", () => {
       transcription: "hello there",
       suppressionEnabled: true,
       hardSilenceDbfs: -60,
-      promptEchoEnabled: false,
       noiseGateMetrics: hardSilenceMetrics,
       logprobs: [{ logprob: -0.2 }, { logprob: -0.3 }],
     });
@@ -120,7 +113,6 @@ describe("applyTranscriptionGuards", () => {
       transcription:
         "I think we should have a meeting to discuss the Vket event.",
       suppressionEnabled: true,
-      promptEchoEnabled: false,
       audioSeconds: 0.5,
       transcriptWordCount: 13,
       transcriptSyllableCount: 18,
@@ -140,7 +132,6 @@ describe("applyTranscriptionGuards", () => {
     const result = applyTranscriptionGuards({
       transcription: "Yeah, ok.",
       suppressionEnabled: true,
-      promptEchoEnabled: false,
       audioSeconds: 0.8,
       transcriptWordCount: 2,
       transcriptSyllableCount: 2,
@@ -151,55 +142,6 @@ describe("applyTranscriptionGuards", () => {
     });
 
     expect(result.text).toBe("Yeah, ok.");
-    expect(result.flags).toEqual([]);
-  });
-
-  test("suppresses prompt echo when enabled", () => {
-    const result = applyTranscriptionGuards({
-      transcription: "Server Name: BASIC's Creations",
-      suppressionEnabled: false,
-      promptEchoEnabled: true,
-      promptText:
-        "Server Name: BASIC's Creations Channel: staff-chat Attendees: BASIC",
-    });
-
-    expect(result.text).toBe("");
-    expect(result.flags).toEqual(
-      expect.arrayContaining([
-        "prompt_echo_substring",
-        "suppressed_prompt_echo",
-      ]),
-    );
-  });
-
-  test("suppresses non-Latin prompt echo", () => {
-    const result = applyTranscriptionGuards({
-      transcription: "Название сервера: Творческая студия",
-      suppressionEnabled: false,
-      promptEchoEnabled: true,
-      promptText:
-        "Название сервера: Творческая студия Канал: общий Участники: Пользователь",
-    });
-
-    expect(result.text).toBe("");
-    expect(result.flags).toEqual(
-      expect.arrayContaining([
-        "prompt_echo_substring",
-        "suppressed_prompt_echo",
-      ]),
-    );
-  });
-
-  test("keeps text when prompt echo gate is disabled", () => {
-    const result = applyTranscriptionGuards({
-      transcription: "Server Name: BASIC's Creations",
-      suppressionEnabled: false,
-      promptEchoEnabled: false,
-      promptText:
-        "Server Name: BASIC's Creations Channel: staff-chat Attendees: BASIC",
-    });
-
-    expect(result.text).toBe("Server Name: BASIC's Creations");
     expect(result.flags).toEqual([]);
   });
 });

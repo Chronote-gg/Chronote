@@ -27,42 +27,29 @@ function expectReleased(f: TracingFixture) {
   );
 }
 
-function expectPreservedTrace(f: TracingFixture, vote: boolean) {
-  const requests = vote ? 2 : 1;
-  const candidate = vote ? "no_prompt" : "prompt";
+function expectPreservedTrace(f: TracingFixture) {
+  const requests = 1;
   expect(f.create).toHaveBeenCalledTimes(requests);
   expect(f.create.mock.calls[0]).toEqual([
-    expect.objectContaining({
-      model: "gpt-4o-transcribe",
-      language: "en",
+    {
+      model: "gpt-transcribe",
       temperature: 0,
       response_format: "json",
       include: ["logprobs"],
-      prompt: "Project Orion delivery terminology.",
-    }),
+      file: expect.anything(),
+    },
     { signal: f.signal, maxRetries: 0 },
   ]);
-  if (vote) {
-    expect(f.create.mock.calls[1][0]).not.toHaveProperty("prompt");
-  }
   expect(f.state).toMatchObject({
-    input: {
-      language: "en",
-      prompt: "Project Orion delivery terminology.",
-      audio: expect.anything(),
-    },
-    model: "gpt-4o-transcribe",
+    input: { transcriptionLanguage: "auto", audio: expect.anything() },
+    model: "gpt-transcribe",
     modelParameters: {
       temperature: 0,
       response_format: "json",
       include: "logprobs",
     },
     output: validResponse.text,
-    usageDetails: {
-      input: 23 * requests,
-      output: 11 * requests,
-      total: 34 * requests,
-    },
+    usageDetails: { input: 23, output: 11, total: 34 },
     metadata: {
       audioBytes: 192_000,
       audioSeconds: 1,
@@ -70,16 +57,15 @@ function expectPreservedTrace(f: TracingFixture, vote: boolean) {
       speechAdmissionReason: "off",
       audioAttachmentBytes: 12,
       audioAttachmentContentType: "audio/mpeg",
-      promptLength: "Project Orion delivery terminology.".length,
       transcriptionCostAccountingStatus: "priced",
       transcriptionRequestCount: requests,
       transcriptionPricedRequestCount: requests,
       transcriptionUnpricedRequestCount: 0,
-      transcriptionCandidate: candidate,
-      transcriptionVoteSelected: candidate,
-      transcriptionVoteAttempted: vote,
+      transcriptionLanguage: "auto",
+      transcriptionLanguageHintSent: false,
     },
   });
+  expect(f.state.input).not.toHaveProperty("prompt");
   expect(f.inputClosed).toHaveBeenCalledTimes(requests);
   expect(f.mp3Deleted).toHaveBeenCalledTimes(1);
   expect(f.events.indexOf("mp3-deleted")).toBeLessThan(
@@ -87,14 +73,9 @@ function expectPreservedTrace(f: TracingFixture, vote: boolean) {
   );
 }
 
-test.each([
-  { attachmentFirst: false, vote: false },
-  { attachmentFirst: true, vote: false },
-  { attachmentFirst: false, vote: true },
-  { attachmentFirst: true, vote: true },
-])(
-  "overlaps ASR and preserves trace fields (attachmentFirst=$attachmentFirst, vote=$vote)",
-  async ({ attachmentFirst, vote }) => {
+test.each([{ attachmentFirst: false }, { attachmentFirst: true }])(
+  "overlaps ASR and preserves trace fields (attachmentFirst=$attachmentFirst)",
+  async ({ attachmentFirst }) => {
     await withTracingFixture({}, async (f) => {
       const result = f.transcribe();
       await waitFor(f.executionEntered, "policy execution entered");
@@ -108,15 +89,7 @@ test.each([
         await waitFor(f.attachmentRecorded, "attachment input recorded");
         await expectOwned(f);
       }
-      f.provider.resolve(
-        vote
-          ? {
-              ...validResponse,
-              text: "Uncertain wording.",
-              logprobs: [{ token: "Uncertain", logprob: -3, bytes: [] }],
-            }
-          : validResponse,
-      );
+      f.provider.resolve(validResponse);
       await waitFor(f.usageRecorded, "selection and usage recorded");
       if (!attachmentFirst) {
         await expectOwned(f);
@@ -129,7 +102,7 @@ test.each([
         admission: { kind: "not_enforced", reason: "off" },
       });
       expectReleased(f);
-      expectPreservedTrace(f, vote);
+      expectPreservedTrace(f);
       const earlier = attachmentFirst
         ? "attachment-recorded"
         : "usage-recorded";

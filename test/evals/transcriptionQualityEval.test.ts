@@ -8,7 +8,6 @@ const tone = Buffer.from(silence);
 for (let index = 0; index < tone.length; index += 2)
   tone.writeInt16LE(4000, index);
 const options = {
-  prompt: "Dictionary: VRChat",
   passMode: "slow" as const,
   policy: {},
   force: false,
@@ -76,26 +75,29 @@ test("preflight never calls the provider or invents a successful speech score", 
     score: { scored: false },
   });
 });
-test("counts both candidate requests and retains usage when rejecting both", async () => {
+test("pipeline sends one unprompted request and applies the production guards", async () => {
+  const prompts: (string | undefined)[] = [];
   const result = await runTranscriptionQualityCase({
     ...options,
     mode: "pipeline",
     pcm: tone,
     reference: "",
-    transcribe: async () => ({
-      text: "The Den",
-      logprobs: [{ logprob: -3 }],
-      usage: { type: "duration", seconds: 1 },
-    }),
+    transcribe: async (prompt) => {
+      prompts.push(prompt);
+      return {
+        text: "...",
+        usage: { type: "duration", seconds: 1 },
+      };
+    },
   });
+  expect(prompts).toEqual([undefined]);
   expect(result).toMatchObject({
     status: "succeeded",
-    requests: 2,
-    submittedAudioSeconds: 2,
-    selectedId: "none",
+    requests: 1,
+    submittedAudioSeconds: 1,
     text: "",
   });
-  expect(result.candidates).toHaveLength(2);
+  expect(result.flags).toContain("suppressed_punctuation_only");
 });
 test("a forced request bypasses the noise gate", async () => {
   const result = await runTranscriptionQualityCase({
@@ -126,24 +128,4 @@ test("a budget refusal is unscored and is not counted as an HTTP request", async
     submittedAudioSeconds: 0,
     score: { scored: false },
   });
-});
-
-test("a failed retry retains the successful candidate but does not grade partial output", async () => {
-  let calls = 0;
-  const result = await runTranscriptionQualityCase({
-    ...options,
-    mode: "pipeline",
-    pcm: tone,
-    reference: "",
-    transcribe: async () => {
-      if (++calls === 2) throw new Error("retry failed");
-      return { text: "VRChat", logprobs: [{ logprob: -3 }] };
-    },
-  });
-  expect(result).toMatchObject({
-    status: "failed",
-    requests: 2,
-    score: { scored: false },
-  });
-  expect(result.candidates).toHaveLength(1);
 });

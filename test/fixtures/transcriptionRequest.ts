@@ -7,17 +7,23 @@ import { deferred, validResponse } from "./transcriptionTracing";
 export type AsrOutcome =
   | Transcription
   | Error
-  | { status: number; headers?: Record<string, string>; code?: string };
+  | {
+      status: number;
+      headers?: Record<string, string>;
+      code?: string;
+      param?: string;
+    };
 type FixtureOptions = {
   outcomes: AsrOutcome[];
   signal?: AbortSignal;
-  prompt?: string;
   openError?: Error;
   readError?: Error;
   multipartError?: Error;
   holdFetch?: Promise<void>;
   defaultTransport?: boolean;
   generationPrompt?: LangfusePromptMeta;
+  keywords?: string[];
+  keywordRejectionScope?: object;
 };
 
 export async function buildAsrFixture(options: FixtureOptions) {
@@ -68,7 +74,13 @@ export async function buildAsrFixture(options: FixtureOptions) {
       if (outcome instanceof Error) throw outcome;
       if ("status" in outcome) {
         return Response.json(
-          { error: { message: "synthetic failure", code: outcome.code } },
+          {
+            error: {
+              message: "synthetic failure",
+              code: outcome.code,
+              param: outcome.param,
+            },
+          },
           { status: outcome.status, headers: outcome.headers },
         );
       }
@@ -88,18 +100,17 @@ export async function buildAsrFixture(options: FixtureOptions) {
   const ledger = createTranscriptionAttemptLedger(2);
   const controller = new AbortController();
   const signal = options.signal ?? controller.signal;
-  const run = () =>
+  const run = (requestSignal = signal) =>
     request.runTranscriptionRequest({
-      candidate: "prompt",
       file: "/synthetic/request.wav",
-      signal,
+      signal: requestSignal,
+      keywordRejectionScope: options.keywordRejectionScope,
       request: {
-        model: "gpt-4o-transcribe",
-        language: "en",
+        model: "gpt-transcribe",
         temperature: 0,
         response_format: "json",
         include: ["logprobs"],
-        prompt: options.prompt ?? "Project terminology.",
+        ...(options.keywords ? { keywords: options.keywords } : {}),
       },
       ledger,
       clientOptions: {

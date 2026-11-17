@@ -23,8 +23,9 @@ describe("audio transcript selection", () => {
     const rejected = file({
       transcript: "old guess",
       slowTranscript: "",
-      coalescedTranscript: "older guess",
-      finalPassTranscript: "late guess",
+      fastTranscripts: [
+        { revision: 1, text: "older guess", createdAt: "2026-11-16T00:00:00Z" },
+      ],
       finalSpeechRejection: coverage,
     });
     const audioContaining = (entry: AudioFileData): AudioData => ({
@@ -36,12 +37,38 @@ describe("audio transcript selection", () => {
       getAudioTranscriptionFacts(audioContaining(rejected)).failedSegments,
     ).toBe(0);
   });
-  test("unmarked compiler falls through an empty slow result", () => {
+  test("a guard-suppressed slow result stays empty despite earlier fast text", () => {
     expect(
       resolveAudioFileText(
-        file({ slowTranscript: "", transcript: "retained guess" }),
+        file({
+          slowTranscript: "",
+          transcript: "",
+          fastTranscripts: [
+            {
+              revision: 1,
+              text: "fast guess",
+              createdAt: "2026-11-16T00:00:00Z",
+            },
+          ],
+        }),
       ),
-    ).toBe("retained guess");
+    ).toBe("");
+  });
+  test("uses the latest fast text while the slow result is pending", () => {
+    expect(
+      resolveAudioFileText(
+        file({
+          processing: true,
+          fastTranscripts: [
+            {
+              revision: 1,
+              text: "fast guess",
+              createdAt: "2026-11-16T00:00:00Z",
+            },
+          ],
+        }),
+      ),
+    ).toBe("fast guess");
   });
   test.each([false, true])(
     "counts spoken user chat with captureIncomplete=%s",
@@ -61,14 +88,6 @@ describe("audio transcript selection", () => {
       });
     },
   );
-  test("an authoritative empty final pass suppresses older text", () => {
-    expect(
-      resolveAudioFileText(
-        file({ transcript: "old text", finalPassTranscript: "" }),
-      ),
-    ).toBe("");
-  });
-
   test("retains the valid baseline when optional refinement has no result", () => {
     expect(resolveAudioFileText(file({ slowTranscript: "  baseline  " }))).toBe(
       "baseline",

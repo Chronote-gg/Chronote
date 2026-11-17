@@ -6,6 +6,11 @@ import {
   validResponse,
 } from "../fixtures/transcriptionRequest";
 import { deferred, flushTurn } from "../fixtures/transcriptionTracing";
+import {
+  buildTranscriptionRequest,
+  transcriptionModelCapabilities,
+} from "../../src/services/transcriptionRequest";
+import { MODEL_SELECTION_OPTIONS } from "../../src/config/modelChoices";
 
 afterEach(() => jest.restoreAllMocks());
 
@@ -43,6 +48,121 @@ test.each([400, 401, 403, 404, 422])(
   },
 );
 
+const keywordsRejected = async () => {
+  const { metricsRegistry } = await import("../../src/metrics");
+  const metric = await metricsRegistry
+    .getSingleMetric("chronote_transcription_keywords_rejected_total")
+    ?.get();
+  return metric?.values ?? [];
+};
+
+test.each([
+  { code: "invalid_value" },
+  { code: "invalid_value", param: "keywords" },
+  { code: "invalid_request_error", param: "keywords[0]" },
+])("a keyword rejection %j is retried once without keywords", async (error) => {
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  const f = await buildAsrFixture({
+    outcomes: [{ status: 400, ...error }, validResponse],
+    keywords: ["Kwylt"],
+  });
+  await expect(f.run()).resolves.toEqual(validResponse);
+  expect(f.bodies[0]).toContain("Kwylt");
+  expect(f.bodies[1]).not.toContain("Kwylt");
+  expect(f.ledger.snapshot()).toMatchObject({ sdkInvocationCount: 2 });
+  expect(await keywordsRejected()).toEqual([
+    expect.objectContaining({ value: 1, labels: { model: "gpt-transcribe" } }),
+  ]);
+  expect(warn).toHaveBeenCalledWith(
+    "Transcription keywords rejected; retrying without them.",
+    expect.objectContaining({ keywordCount: 1 }),
+  );
+});
+
+test.each([
+  {
+    name: "same meeting",
+    newSignal: false,
+    sharedScope: false,
+    sendsHints: false,
+  },
+  {
+    name: "another meeting",
+    newSignal: true,
+    sharedScope: false,
+    sendsHints: true,
+  },
+  {
+    name: "new snippet signal",
+    newSignal: true,
+    sharedScope: true,
+    sendsHints: false,
+  },
+])("later keyword hints follow the $name scope", async (scenario) => {
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+  const f = await buildAsrFixture({
+    outcomes: [
+      { status: 400, code: "invalid_value" },
+      validResponse,
+      validResponse,
+    ],
+    keywords: ["Kwylt"],
+    keywordRejectionScope: scenario.sharedScope ? {} : undefined,
+  });
+  await expect(f.run()).resolves.toEqual(validResponse);
+  const signal = scenario.newSignal ? new AbortController().signal : f.signal;
+  await expect(f.run(signal)).resolves.toEqual(validResponse);
+  expect(f.fetch).toHaveBeenCalledTimes(3);
+  expect(f.bodies[2].includes("Kwylt")).toBe(scenario.sendsHints);
+  expect(await keywordsRejected()).toEqual([
+    expect.objectContaining({ value: 1 }),
+  ]);
+});
+
+test("an unsuccessful keyword-free retry does not disable later hints", async () => {
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+  const f = await buildAsrFixture({
+    outcomes: [
+      { status: 400, code: "invalid_value" },
+      { status: 400, code: "invalid_value" },
+      validResponse,
+    ],
+    keywords: ["Kwylt"],
+  });
+  await expect(f.run()).rejects.toMatchObject({ status: 400 });
+  await expect(f.run()).resolves.toEqual(validResponse);
+  expect(f.bodies[2]).toContain("Kwylt");
+});
+
+test("a keyword rejection on the final attempt is not retried", async () => {
+  const f = await buildAsrFixture({
+    outcomes: [
+      ...Array.from({ length: 3 }, () => transientResponse),
+      { status: 400, code: "invalid_value" },
+    ],
+    keywords: ["Kwylt"],
+  });
+  await expect(f.run()).rejects.toMatchObject({ status: 400 });
+  expect(f.fetch).toHaveBeenCalledTimes(4);
+  expect(f.bodies[3]).toContain("Kwylt");
+  expect(await keywordsRejected()).toEqual([]);
+});
+
+test.each([
+  [{ status: 400, code: "unsupported_format" }, ["Kwylt"]],
+  [{ status: 400, code: "invalid_value" }, undefined],
+  [{ status: 400, code: "invalid_value", param: "file" }, ["Kwylt"]],
+  [{ status: 422, code: "invalid_value" }, ["Kwylt"]],
+])(
+  "unrelated %j with keywords %j is not retried",
+  async (outcome, keywords) => {
+    const f = await buildAsrFixture({ outcomes: [outcome], keywords });
+    await expect(f.run()).rejects.toMatchObject({ status: outcome.status });
+    expect(f.fetch).toHaveBeenCalledTimes(1);
+    expect(await keywordsRejected()).toEqual([]);
+  },
+);
+
 test.each([
   { status: 429, code: "insufficient_quota" },
   { status: 503, headers: { "x-should-retry": "false" } },
@@ -66,7 +186,6 @@ test("exhaustion dispatches exactly four times with SDK retries disabled", async
   ).toEqual(["0", "0", "0", "0"]);
   expect(f.closedStreams).toHaveLength(4);
   expect(f.ledger.snapshot()).toMatchObject({
-    logicalCandidateCount: 1,
     sdkInvocationCount: 4,
     httpDispatchAttemptCount: 4,
     retryCount: 3,
@@ -253,8 +372,8 @@ test("SDK-returned usage survives abort before the result publication fence", as
   const f = await buildAsrFixture({ outcomes: [validResponse] });
   const beginAttempt = f.ledger.beginAttempt;
   const returned = jest.fn();
-  jest.spyOn(f.ledger, "beginAttempt").mockImplementation((candidate) => {
-    const attempt = beginAttempt(candidate);
+  jest.spyOn(f.ledger, "beginAttempt").mockImplementation(() => {
+    const attempt = beginAttempt();
     const recordReturnedUsage = attempt.recordReturnedUsage;
     jest.spyOn(attempt, "recordReturnedUsage").mockImplementation((usage) => {
       expect(f.signal.aborted).toBe(false);
@@ -335,11 +454,7 @@ test.each([false, true])(
     await f.run();
     expect(f.fetch).toHaveBeenCalledTimes(1);
     expect(f.bodies[0]).toContain("synthetic wav bytes");
-    for (const value of [
-      "gpt-4o-transcribe",
-      "Project terminology.",
-      "logprobs",
-    ]) {
+    for (const value of ["gpt-transcribe", "logprobs"]) {
       expect(f.bodies[0]).toContain(value);
     }
     expect(f.requests[0]?.headers.get("authorization")).toBe(
@@ -428,4 +543,41 @@ test("default transport fixture replaces a synthetic inherited credential before
   expect(f.requests[0]?.headers.get("authorization")).toBe(
     "Bearer test-openai-api-key",
   );
+});
+
+describe("buildTranscriptionRequest", () => {
+  test.each(MODEL_SELECTION_OPTIONS.transcription)(
+    "selectable model %s has declared capabilities",
+    (model) => {
+      expect(() => transcriptionModelCapabilities(model)).not.toThrow();
+    },
+  );
+
+  test("gpt-transcribe takes keywords and a languages list", () => {
+    expect(
+      buildTranscriptionRequest("gpt-transcribe", "ja", ["Kwylt"]),
+    ).toMatchObject({ languages: ["ja"], keywords: ["Kwylt"] });
+  });
+
+  test.each(["gpt-4o-transcribe", "gpt-4o-mini-transcribe"])(
+    "%s gets the singular language and never keywords",
+    (model) => {
+      const request = buildTranscriptionRequest(model, "ja", ["Kwylt"]);
+      expect(request).toMatchObject({ language: "ja" });
+      expect(request).not.toHaveProperty("languages");
+      expect(request).not.toHaveProperty("keywords");
+    },
+  );
+
+  test("an empty dictionary sends no keywords field", () => {
+    expect(
+      buildTranscriptionRequest("gpt-transcribe", "auto", []),
+    ).not.toHaveProperty("keywords");
+  });
+
+  test("an unknown model is refused rather than guessed", () => {
+    expect(() =>
+      buildTranscriptionRequest("gpt-unknown-transcribe", "auto", []),
+    ).toThrow("Unsupported transcription model");
+  });
 });

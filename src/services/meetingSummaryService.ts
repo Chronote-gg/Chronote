@@ -130,6 +130,10 @@ async function prepareSummaryPrompt(input: MeetingSummaryInput) {
 
   return { messages, langfusePrompt };
 }
+// Answers measured at 57 to 83 tokens. Reasoning counts against the cap and a
+// truncated JSON answer cannot be continued, so leave room for it.
+const MEETING_SUMMARY_MAX_OUTPUT_TOKENS = 1_000;
+
 export async function generateMeetingSummaries(
   input: MeetingSummaryInput,
 ): Promise<MeetingSummaries> {
@@ -160,7 +164,7 @@ export async function generateMeetingSummaries(
       input: messages,
       modelParams: chatParams,
       format: { kind: "json_object" },
-      maxOutputTokens: 160,
+      maxOutputTokens: MEETING_SUMMARY_MAX_OUTPUT_TOKENS,
       signal: input.signal,
       tracing: {
         traceName: "meeting-summary",

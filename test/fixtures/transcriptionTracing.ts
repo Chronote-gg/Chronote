@@ -270,7 +270,7 @@ function mockProvider(realTransport: boolean) {
       options: { signal: AbortSignal },
     ) => {
       expect(options.signal.aborted).toBe(false);
-      if (!request.prompt) return validResponse;
+      expect(request).not.toHaveProperty("prompt");
       providerEntered.resolve();
       try {
         return await provider.promise;
@@ -287,7 +287,7 @@ function mockProvider(realTransport: boolean) {
     }));
   }
   jest.doMock("../../src/services/modelFactory", () => ({
-    getModelChoice: () => ({ model: "gpt-4o-transcribe" }),
+    getModelChoice: () => ({ model: "gpt-transcribe" }),
   }));
   jest.doMock("../../src/services/meetingModelOverrides", () => ({
     getMeetingModelOverrides: () => undefined,
@@ -295,7 +295,6 @@ function mockProvider(realTransport: boolean) {
   jest.doMock("../../src/services/langfuseClient", () => ({
     isLangfuseTracingEnabled: () => true,
   }));
-  jest.doMock("../../src/services/transcriptionPromptService", () => ({}));
   jest.doMock("../../src/services/openaiChatService", () => ({}));
   jest.doMock("syllable", () => ({ syllable: () => 12 }));
   return {
@@ -363,18 +362,13 @@ export async function buildTracingFixture(options: FixtureOptions = {}) {
   const service = await import("../../src/services/transcriptionService");
   const owner = {} as MeetingData;
   const signal = lifetime.getMeetingProcessingSignal(owner);
-  const preparePrompt = jest.fn(async () => ({
-    prompt: "  Project Orion delivery terminology.  ",
-    langfusePrompt: undefined,
-    source: "fallback" as const,
-  }));
   const input: TranscriptionContentInput = {
     meetingId: "tracing-meeting",
     creator: { id: "creator" },
     guild: { id: "guild" },
     voiceChannel: { id: "voice" },
     signal,
-    prompt: preparePrompt,
+    keywords: [],
     effect: (run) => lifetime.runMeetingProcessingEffect(owner, run),
   };
   const tasks: Promise<SnippetTranscriptionResult>[] = [];
@@ -421,7 +415,6 @@ export async function buildTracingFixture(options: FixtureOptions = {}) {
     events,
     signal,
     warning,
-    preparePrompt,
     transcribe,
     stop: () => lifetime.stopMeetingProcessing(owner),
     dispose,

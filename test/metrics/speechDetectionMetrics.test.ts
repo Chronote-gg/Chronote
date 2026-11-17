@@ -84,7 +84,7 @@ it("records unavailable and nonspeech assessments without treating them as actua
   );
 });
 
-it("records comparison events independently of detection and counts both voting candidates", async () => {
+it("records comparison events independently of detection and counts each submission", async () => {
   metrics.recordSpeechCapturedAudio({ mode: "off", audioSeconds: 10 });
   metrics.recordSpeechSnippetOutcome({
     mode: "off",
@@ -96,19 +96,16 @@ it("records comparison events independently of detection and counts both voting 
   metrics.recordSpeechProviderSubmission({
     mode: "off",
     phase: "fast",
-    candidate: "prompt",
     audioSeconds: 2,
   });
   metrics.recordSpeechProviderSubmission({
     mode: "shadow",
     phase: "slow",
-    candidate: "prompt",
     audioSeconds: 3,
   });
   metrics.recordSpeechProviderSubmission({
     mode: "shadow",
     phase: "slow",
-    candidate: "no_prompt",
     audioSeconds: 3,
   });
   metrics.recordSpeechSnippetOutcome({
@@ -134,12 +131,12 @@ it("records comparison events independently of detection and counts both voting 
   });
   expect(
     (await samples("provider_submissions_total")).map((sample) => sample.value),
-  ).toEqual([1, 1, 1]);
+  ).toEqual([1, 2]);
   expect(
     (await samples("submitted_audio_seconds_total")).map(
       (sample) => sample.value,
     ),
-  ).toEqual([2, 3, 3]);
+  ).toEqual([2, 6]);
   expect(await samples("captured_audio_seconds_total")).toContainEqual(
     expect.objectContaining({ value: 10, labels: { mode: "off" } }),
   );
@@ -174,15 +171,7 @@ it("exposes fixed label names and no content or policy fields", async () => {
     for (const sample of metric.values) {
       expect(
         Object.keys(sample.labels).every((label) =>
-          [
-            "mode",
-            "phase",
-            "kind",
-            "reason",
-            "candidate",
-            "outcome",
-            "le",
-          ].includes(label),
+          ["mode", "phase", "kind", "reason", "outcome", "le"].includes(label),
         ),
       ).toBe(true);
     }

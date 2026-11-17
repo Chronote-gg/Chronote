@@ -1,7 +1,6 @@
 import type { ClientOptions } from "openai";
 import type { Transcription } from "openai/resources/audio";
 
-export type TranscriptionCandidateId = "prompt" | "no_prompt";
 export type TranscriptionAttemptOutcome =
   | { kind: "success" }
   | { kind: "failure"; failure: "http"; status: number }
@@ -13,7 +12,6 @@ export type TranscriptionAttemptOutcome =
 type Usage = Transcription["usage"];
 type ReturnedUsage = { kind: "missing" } | { kind: "returned"; usage: Usage };
 type Attempt = {
-  candidate: TranscriptionCandidateId;
   invocations: number;
   dispatches: number;
   returned: ReturnedUsage;
@@ -21,7 +19,6 @@ type Attempt = {
 };
 
 export type TranscriptionAttemptSnapshot = {
-  logicalCandidateCount: number;
   sdkInvocationCount: number;
   httpDispatchAttemptCount: number;
   retryCount: number;
@@ -69,18 +66,15 @@ function estimatedAudioSeconds(
 }
 
 function snapshotAttempts(
-  candidates: Set<TranscriptionCandidateId>,
   attempts: Attempt[],
   audioSeconds?: number,
 ): TranscriptionAttemptSnapshot {
   let sdkInvocationCount = 0;
   let httpDispatchAttemptCount = 0;
   let knownUsageAttemptCount = 0;
-  const invocations = { prompt: 0, no_prompt: 0 };
   const returnedUsages: Usage[] = [];
   for (const attempt of attempts) {
     sdkInvocationCount += attempt.invocations;
-    invocations[attempt.candidate] += attempt.invocations;
     httpDispatchAttemptCount += attempt.dispatches;
     if (attempt.returned.kind === "returned") {
       returnedUsages.push(attempt.returned.usage);
@@ -90,13 +84,9 @@ function snapshotAttempts(
     }
   }
   return {
-    logicalCandidateCount: candidates.size,
     sdkInvocationCount,
     httpDispatchAttemptCount,
-    retryCount: Object.values(invocations).reduce(
-      (sum, count) => sum + Math.max(0, count - 1),
-      0,
-    ),
+    retryCount: Math.max(0, sdkInvocationCount - 1),
     knownUsageAttemptCount,
     unknownUsageAttemptCount: httpDispatchAttemptCount - knownUsageAttemptCount,
     attemptUsageCoverage: usageCoverage(
@@ -133,15 +123,10 @@ function attemptRecord(attempt: Attempt) {
 }
 
 export function createTranscriptionAttemptLedger(audioSeconds?: number) {
-  const candidates = new Set<TranscriptionCandidateId>();
   const attempts: Attempt[] = [];
   return {
-    beginCandidate(candidate: TranscriptionCandidateId) {
-      candidates.add(candidate);
-    },
-    beginAttempt(candidate: TranscriptionCandidateId) {
+    beginAttempt() {
       const attempt: Attempt = {
-        candidate,
         invocations: 0,
         dispatches: 0,
         returned: { kind: "missing" },
@@ -150,7 +135,7 @@ export function createTranscriptionAttemptLedger(audioSeconds?: number) {
       return attemptRecord(attempt);
     },
     snapshot() {
-      return snapshotAttempts(candidates, attempts, audioSeconds);
+      return snapshotAttempts(attempts, audioSeconds);
     },
   };
 }
@@ -159,7 +144,6 @@ export function transcriptionAttemptMetadata(
   snapshot: TranscriptionAttemptSnapshot,
 ) {
   return {
-    transcriptionLogicalCandidateCount: snapshot.logicalCandidateCount,
     transcriptionSdkInvocationCount: snapshot.sdkInvocationCount,
     transcriptionHttpDispatchAttemptCount: snapshot.httpDispatchAttemptCount,
     transcriptionRetryCount: snapshot.retryCount,

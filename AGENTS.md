@@ -10,8 +10,8 @@
 
 ## What this project is
 
-- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-4o-transcribe), generates notes with GPT-6.1 Sol, and posts results back to Discord.
-- Supports auto-recording, meeting history in DynamoDB, context injection (server/channel/meeting), dictionary terms for prompt context, and a user-driven notes correction flow using LLMs.
+- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-transcribe), generates notes with GPT-6.1 Sol, and posts results back to Discord.
+- Supports auto-recording, meeting history in DynamoDB, context injection (server/channel/meeting), dictionary terms for prompt context and speech recognition keyword hints, and a user-driven notes correction flow using LLMs.
 
 ## Rules for every session
 

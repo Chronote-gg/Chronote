@@ -1,6 +1,6 @@
 import path from "node:path";
 import { APIError } from "openai";
-import { ChatPromptClient, TextPromptClient } from "@langfuse/client";
+import { ChatPromptClient } from "@langfuse/client";
 import {
   buildPromptPath,
   readPromptFileResolved,
@@ -94,7 +94,7 @@ export function createPromptModule(actual: typeof LangfusePromptService) {
     readPromptFileResolved(buildPromptPath(PROMPTS_DIR, name), PROMPTS_DIR);
   const meta = (name: string) => ({ name, version: 1, isFallback: false });
   type Variables = Parameters<
-    typeof actual.getLangfuseTextPrompt
+    typeof actual.getLangfuseChatPrompt
   >[0]["variables"];
   const compiledVariables = (variables: Variables = {}) =>
     Object.fromEntries(
@@ -103,28 +103,6 @@ export function createPromptModule(actual: typeof LangfusePromptService) {
         String(value ?? ""),
       ]),
     );
-  const getLangfuseTextPrompt: typeof actual.getLangfuseTextPrompt = async ({
-    name,
-    variables,
-  }) => {
-    const file = await load(name);
-    if (typeof file.prompt !== "string")
-      throw new Error(`Prompt ${name} is not a text prompt`);
-    const client = new TextPromptClient({
-      name,
-      version: 1,
-      type: "text",
-      prompt: file.prompt,
-      labels: file.labels,
-      tags: file.tags,
-      config: file.config,
-    });
-    return {
-      prompt: client.compile(compiledVariables(variables)),
-      langfusePrompt: meta(name),
-      source: "langfuse",
-    };
-  };
   const getLangfuseChatPrompt: typeof actual.getLangfuseChatPrompt = async ({
     name,
     variables,
@@ -161,7 +139,6 @@ export function createPromptModule(actual: typeof LangfusePromptService) {
   };
   return {
     ...actual,
-    getLangfuseTextPrompt,
     getLangfuseChatPrompt,
     verifyLangfusePrompts: async () => undefined,
   };
@@ -171,7 +148,6 @@ export function createPromptModule(actual: typeof LangfusePromptService) {
 export function createSavedPromptModule(actual: typeof SavedRecordingPrompt) {
   const snapshotRecordingPrompt: typeof actual.snapshotRecordingPrompt = async (
     name,
-    type,
     label,
   ) => {
     const file = await readPromptFileResolved(
@@ -182,7 +158,7 @@ export function createSavedPromptModule(actual: typeof SavedRecordingPrompt) {
       name,
       version: 1,
       label,
-      type,
+      type: "chat",
       template: file.prompt,
     });
   };

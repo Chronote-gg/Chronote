@@ -46,6 +46,9 @@ const model = z
       .strict(),
   })
   .strict();
+// Recordings saved before the transcription simplification carry settings that
+// no longer exist. They still parse so those recordings can finish and recover.
+const legacy = z.unknown().optional();
 const budgets = z
   .object({
     maxEntries: number,
@@ -63,8 +66,8 @@ const transcription = z
     suppressionRateMinWords: number,
     suppressionRateMinSyllables: number,
     suppressionRateMaxSyllablesPerSecond: number,
-    promptEchoEnabled: z.boolean(),
-    voteEnabled: z.boolean(),
+    promptEchoEnabled: legacy,
+    voteEnabled: legacy,
     fastSilenceMs: number,
     slowSilenceMs: number,
     minSnippetSeconds: number,
@@ -72,7 +75,7 @@ const transcription = z
     fastFinalizationEnabled: z.boolean(),
     interjectionEnabled: z.boolean(),
     interjectionMinSpeakerSeconds: number,
-    finalPassEnabled: z.boolean(),
+    finalPassEnabled: legacy,
     noiseGate: z
       .object({
         enabled: z.boolean(),
@@ -86,45 +89,13 @@ const transcription = z
       .strict(),
   })
   .strict();
-// Saved executable budgets stay within the two-hour recording and 25MiB request bounds.
-const seconds = number.int().min(1).max(7200);
-const bytes = number
-  .int()
-  .min(1)
-  .max(25 * 1024 * 1024);
-const chars = number.int().min(1).max(1_000_000);
-export const finalPassSettingsSchema = z
-  .object({
-    maxSnippetMilliseconds: number.int().min(1).max(7_200_000),
-    chunkSeconds: seconds,
-    maxRequestBytes: bytes,
-    targetMaxChunkBytes: bytes,
-    segmentBatchMaxChars: chars,
-    minConfidence: number.min(0).max(1),
-    maxDropRatio: number.min(0).max(1),
-    maxChangeRatio: number.min(0).max(1),
-    previousTailChars: number.int().min(0).max(1_000_000),
-    minChunkSeconds: seconds,
-    estimatedMp3BytesPerSecond: bytes,
-    repeatWindowSeconds: seconds,
-  })
-  .strict()
-  .refine(
-    (value) =>
-      value.minChunkSeconds <= value.chunkSeconds &&
-      value.targetMaxChunkBytes <= value.maxRequestBytes &&
-      value.minChunkSeconds * value.estimatedMp3BytesPerSecond <=
-        value.targetMaxChunkBytes,
-    { message: "Final-pass timing and byte budgets are incoherent" },
-  );
-export type FinalPassSettings = z.infer<typeof finalPassSettingsSchema>;
 export const savedRecordingSettingsSchema = z
   .object({
     autoCompletion: autoCompletionPolicySchema.optional(),
     processing: z
       .object({
         cleanupMinimumRetainedLineRatio: number.min(0).max(1),
-        finalPass: finalPassSettingsSchema,
+        finalPass: legacy,
       })
       .strict()
       .optional(),
@@ -134,7 +105,7 @@ export const savedRecordingSettingsSchema = z
         meetingSummary: model,
         transcription: model,
         transcriptionCleanup: model,
-        transcriptionCoalesce: model,
+        transcriptionCoalesce: legacy,
       })
       .strict(),
     transcription,
@@ -236,10 +207,10 @@ export const generationContextSchema = base
       .object({
         notes: prompt.optional(),
         summary: prompt.optional(),
-        transcription: prompt.optional(),
         cleanup: prompt.optional(),
-        coalesce: prompt.optional(),
-        finalPass: prompt.optional(),
+        transcription: legacy,
+        coalesce: legacy,
+        finalPass: legacy,
       })
       .strict(),
   })
@@ -251,12 +222,7 @@ export const completedTranscriptionSchema = base
     speechRejectionEvidenceIncomplete: z.boolean().optional(),
     processing: z
       .object({
-        finalPass: z.enum([
-          "acknowledged",
-          "fallback",
-          "disabled",
-          "not_applicable",
-        ]),
+        finalPass: legacy,
         cleanup: z.enum(["acknowledged", "fallback", "disabled"]),
         finalText: text,
         correspondence: transcriptCorrespondenceSchema.optional(),

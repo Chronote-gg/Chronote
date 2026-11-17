@@ -32,7 +32,6 @@ import { runFastTranscription } from "../../src/services/audioSnippetService";
 import type { AudioSnippet } from "../../src/types/audio";
 
 let mockTempDir: string;
-let mockPrompt = "";
 let mockClientMetadata: Record<string, unknown> | undefined;
 const mockEnsureTemp = jest.fn(() => mockTempDir);
 const consumeFile = async (file: ReadStream) => {
@@ -83,11 +82,8 @@ jest.mock("../../src/services/openaiClient", () => ({
     return mockOpenAIClient;
   },
 }));
-jest.mock("../../src/services/transcriptionPromptService", () => ({
-  getTranscriptionPrompt: async () => ({ prompt: mockPrompt }),
-}));
 jest.mock("../../src/services/modelFactory", () => ({
-  getModelChoice: () => ({ model: "test" }),
+  getModelChoice: () => ({ model: "gpt-transcribe" }),
   buildModelOverrides: () => undefined,
 }));
 jest.mock("../../src/services/langfuseClient", () => ({
@@ -122,8 +118,6 @@ const buildMeeting = (mode: "off" | "shadow" | "enforce"): MeetingData =>
       transcription: {
         speechDetectionMode: mode,
         suppressionEnabled: false,
-        promptEchoEnabled: false,
-        voteEnabled: false,
         noiseGate: { enabled: false },
       },
       modelChoices: {},
@@ -142,7 +136,6 @@ beforeEach(() => {
   mockGetDetector.mockClear();
   mockAssess.mockReset().mockResolvedValue(assessment("non_speech"));
   mockCreate.mockReset().mockImplementation(providerSuccess);
-  mockPrompt = "";
   mockClientMetadata = undefined;
 });
 afterEach(() => {
@@ -174,8 +167,8 @@ test("abort during detection cannot finalize a nonspeech rejection or count a sk
     voiceChannel: meeting.voiceChannel,
     runtimeConfig: meeting.runtimeConfig,
     signal: controller.signal,
+    keywords: [],
     effect: (run) => run(),
-    prompt: async () => ({ prompt: "", source: "fallback" }),
   };
   await expect(transcribeContentSnippet(input, snippet)).resolves.toMatchObject(
     { status: "failed" },
@@ -248,21 +241,84 @@ test.each(["off", "shadow", "enforce"] as const)(
     await expectOutcome(mode, "transcribed");
   },
 );
-test.each([
-  { language: undefined, expected: "en" },
-  { language: "fr", expected: "fr" },
-  { language: "auto", expected: undefined },
-] as const)(
-  "live request language for setting $language is $expected",
-  async ({ language, expected }) => {
-    const meeting = buildMeeting("off");
-    if (language) meeting.runtimeConfig!.transcription.language = language;
-    await transcribeSnippet(meeting, snippet);
-    const request = mockCreate.mock.calls[0][0];
-    if (expected) expect(request).toHaveProperty("language", expected);
-    else expect(request).not.toHaveProperty("language");
+test("live request on the default auto language sends no prompt and no language hint", async () => {
+  const meeting = buildMeeting("off");
+  meeting.runtimeConfig!.transcription.language = "auto";
+  await transcribeSnippet(meeting, snippet);
+  const request = mockCreate.mock.calls[0][0];
+  expect(request).not.toHaveProperty("prompt");
+  expect(request).not.toHaveProperty("language");
+  expect(request).not.toHaveProperty("languages");
+  expect(request).toMatchObject({
+    response_format: "json",
+    include: ["logprobs"],
+    temperature: 0,
+  });
+});
+test("live request sends the language a server pins as gpt-transcribe languages", async () => {
+  const meeting = buildMeeting("off");
+  meeting.runtimeConfig!.transcription.language = "ja";
+  await transcribeSnippet(meeting, snippet);
+  const request = mockCreate.mock.calls[0][0];
+  expect(request).toMatchObject({ languages: ["ja"] });
+  expect(request).not.toHaveProperty("language");
+});
+const dictionaryMeeting = () => {
+  const meeting = buildMeeting("enforce");
+  meeting.dictionaryEntries = [
+    {
+      guildId: "test-guild",
+      termKey: "kwylt",
+      term: "Kwylt",
+      definition: "Raid leader, never sent to speech recognition",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      createdBy: "test-user",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      updatedBy: "test-user",
+    },
+  ];
+  return meeting;
+};
+test.each(["fast", "slow"] as const)(
+  "%s pass sends dictionary terms as keywords on assessed speech",
+  async (noiseGateMode) => {
+    mockAssess.mockResolvedValue(assessment("speech"));
+    await transcribeSnippet(dictionaryMeeting(), snippet, { noiseGateMode });
+    expect(mockCreate.mock.calls[0][0]).toMatchObject({ keywords: ["Kwylt"] });
+    expect(mockClientMetadata).toMatchObject({ keywordCount: 1 });
   },
 );
+test.each([
+  ["off", false],
+  ["shadow", false],
+  ["enforce", true],
+] as const)(
+  "%s sends keywords when detection decides nothing",
+  async (mode, bypass) => {
+    const meeting = dictionaryMeeting();
+    meeting.runtimeConfig!.transcription.speechDetectionMode = mode;
+    mockAssess.mockResolvedValue(assessment("uncertain"));
+    await transcribeSnippet(meeting, snippet, {
+      speechDetectionBypass: bypass,
+    });
+    expect(mockCreate.mock.calls[0][0]).toMatchObject({ keywords: ["Kwylt"] });
+  },
+);
+test.each([
+  ["uncertain speech", assessment("uncertain")],
+  [
+    "an unavailable detector",
+    {
+      kind: "unavailable",
+      reason: "timeout",
+      policyFingerprint: DEFAULT_SPEECH_POLICY.policyFingerprint,
+    },
+  ],
+] as const)("enforced %s carries no keywords", async (_, result) => {
+  mockAssess.mockResolvedValue(result);
+  await transcribeSnippet(dictionaryMeeting(), snippet);
+  expect(mockCreate.mock.calls[0][0]).not.toHaveProperty("keywords");
+});
 test("off supplies the baseline without acquiring a detector", async () => {
   expect(await transcribeSnippet(buildMeeting("off"), snippet)).toMatchObject({
     status: "succeeded",
@@ -448,41 +504,6 @@ test("records received PCM once while repeated rejected fast snapshots do not sh
   await expectOutcome("enforce", "vad_skipped", 2);
 });
 
-test("real voting counts prompt and no-prompt SDK calls, conversion and outcome happen once", async () => {
-  const convert = jest.spyOn(conversion, "convertTranscriptionPcmToWav");
-  mockPrompt = "transcription vocabulary";
-  mockCreate.mockImplementationOnce(async ({ file }) => {
-    await consumeFile(file);
-    return { text: "uncertain words", logprobs: [{ logprob: -5 }] };
-  });
-  const meeting = buildMeeting("enforce");
-  meeting.runtimeConfig!.transcription.voteEnabled = true;
-  mockAssess.mockResolvedValue(assessment("speech"));
-  try {
-    expect(await transcribeSnippet(meeting, snippet)).toMatchObject({
-      status: "succeeded",
-      text: "retained words",
-    });
-    expect(convert).toHaveBeenCalledTimes(1);
-    expect(mockAssess).toHaveBeenCalledTimes(1);
-    expect(
-      await metricTotal("provider_submissions_total", {
-        mode: "enforce",
-        candidate: "prompt",
-      }),
-    ).toBe(1);
-    expect(
-      await metricTotal("provider_submissions_total", {
-        mode: "enforce",
-        candidate: "no_prompt",
-      }),
-    ).toBe(1);
-    expect(await metricTotal("submitted_audio_seconds_total")).toBe(2);
-    await expectOutcome("enforce", "transcribed");
-  } finally {
-    convert.mockRestore();
-  }
-});
 test("terminal SDK failure counts every retry but only one failed snippet", async () => {
   mockCreate.mockImplementation(async ({ file }) => {
     await consumeFile(file);

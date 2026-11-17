@@ -38,11 +38,10 @@ TTS-only sessions skip capture entirely. Chronote does not subscribe to user voi
 
 Processing begins when the meeting ends. The embed updates to show "processing" status. This stage involves several steps:
 
-1. **Transcription**: Each audio snippet is sent to OpenAI's transcription model with a prompt that includes your dictionary terms and context. Quality checks filter out noise, prompt echoes, and low-confidence segments.
-2. **Finalized audio verification**: After mixed audio is built, Chronote can run a final verification pass against the full recording and apply only high-confidence hallucination fixes before notes generation.
-3. **Transcript cleanup**: A language model pass cleans up the raw transcription for readability.
-4. **Notes generation**: The full transcript, chat log, participant roster, server/channel/meeting context, dictionary entries (with definitions), and recent meeting history are sent to a language model that produces structured meeting notes.
-5. **Artifact upload**: The audio recording, transcript, and chat log are uploaded to cloud storage.
+1. **Transcription**: Each audio snippet is sent to OpenAI's transcription model, which detects the spoken language unless the server pins one. Snippets recognized as speech also carry up to 20 of your dictionary terms as recognition hints, so names and jargon are spelled correctly in the transcript. Quality checks filter out noise, silence, low-confidence text from quiet audio, and output that only lists dictionary terms.
+2. **Transcript cleanup**: A language model pass cleans up the raw transcription for readability.
+3. **Notes generation**: The full transcript, chat log, participant roster, server/channel/meeting context, dictionary entries (with definitions), and recent meeting history are sent to a language model that produces structured meeting notes.
+4. **Artifact upload**: The audio recording, transcript, and chat log are uploaded to cloud storage.
 
 The processing step typically takes 1-3 minutes depending on meeting length.
 

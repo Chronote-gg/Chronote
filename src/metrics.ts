@@ -112,14 +112,27 @@ const speechSnippetOutcomes = new Counter({
 });
 const speechProviderSubmissions = new Counter({
   name: "chronote_speech_detection_provider_submissions_total",
-  help: "Application provider SDK invocations including voting and failed submissions",
-  labelNames: ["mode", "phase", "candidate"],
+  help: "Application provider SDK invocations including failed submissions",
+  labelNames: ["mode", "phase"],
   registers: [metricsRegistry],
 });
 const speechSubmittedAudio = new Counter({
   name: "chronote_speech_detection_submitted_audio_seconds_total",
   help: "Audio seconds passed to application provider SDK invocations",
-  labelNames: ["mode", "phase", "candidate"],
+  labelNames: ["mode", "phase"],
+  registers: [metricsRegistry],
+});
+// The logprob guard fails open without logprobs, so their absence must be visible.
+const transcriptionMissingLogprobs = new Counter({
+  name: "chronote_transcription_missing_logprobs_total",
+  help: "ASR responses with text but no logprobs, which disables the low-confidence guard",
+  labelNames: ["model"],
+  registers: [metricsRegistry],
+});
+const transcriptionKeywordsRejected = new Counter({
+  name: "chronote_transcription_keywords_rejected_total",
+  help: "ASR requests rejected with HTTP 400 while carrying keywords, then retried without them",
+  labelNames: ["model"],
   registers: [metricsRegistry],
 });
 const speechCapturedAudio = new Counter({
@@ -188,16 +201,19 @@ export function recordSpeechSnippetOutcome(input: {
 export function recordSpeechProviderSubmission(input: {
   mode: SpeechDetectionMode;
   phase: SpeechPhase;
-  candidate: "prompt" | "no_prompt";
   audioSeconds: number;
 }): void {
-  const labels = {
-    mode: input.mode,
-    phase: input.phase,
-    candidate: input.candidate,
-  };
+  const labels = { mode: input.mode, phase: input.phase };
   speechProviderSubmissions.inc(labels);
   speechSubmittedAudio.inc(labels, input.audioSeconds);
+}
+
+export function recordTranscriptionMissingLogprobs(model: string): void {
+  transcriptionMissingLogprobs.inc({ model });
+}
+
+export function recordTranscriptionKeywordsRejected(model: string): void {
+  transcriptionKeywordsRejected.inc({ model });
 }
 
 export function recordSpeechCapturedAudio(input: {

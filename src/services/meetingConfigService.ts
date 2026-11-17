@@ -86,12 +86,6 @@ export async function resolveMeetingRuntimeConfig(input: {
           CONFIG_KEYS.transcription.suppressionRateMaxSyllablesPerSecond,
         ),
       ),
-      promptEchoEnabled: Boolean(
-        requireValue(snapshot, CONFIG_KEYS.transcription.promptEchoEnabled),
-      ),
-      voteEnabled: Boolean(
-        requireValue(snapshot, CONFIG_KEYS.transcription.voteEnabled),
-      ),
       fastSilenceMs: Number(
         requireValue(snapshot, CONFIG_KEYS.transcription.fastSilenceMs),
       ),
@@ -154,9 +148,6 @@ export async function resolveMeetingRuntimeConfig(input: {
           ),
         ),
       },
-      finalPassEnabled: Boolean(
-        requireValue(snapshot, CONFIG_KEYS.transcription.finalPassEnabled),
-      ),
     },
     premiumTranscription: {
       enabled: Boolean(

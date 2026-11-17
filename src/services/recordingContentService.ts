@@ -11,7 +11,7 @@ import {
   combineCorrespondence,
   copyCorrespondence,
 } from "../utils/transcriptCorrespondence";
-import { liveTranscriptionProcessingSettings } from "./transcriptionProcessingSettings";
+import { TRANSCRIPTION_CLEANUP_LINES_DIFFERENCE_ISSUE } from "../constants";
 import {
   freezeCompletionPolicy,
   completionSnapshot,
@@ -92,16 +92,55 @@ function provenance(meeting: MeetingData): RecordingCaptureProvenance {
     },
   };
 }
+// Workers from before the transcription simplification strictly require these
+// fields, and a rollback or a rolling deploy can hand one this recording to
+// finish or recover. The values make that code run the simplified pipeline: no
+// prompt, no echo gate, vote, coalesce or final pass. Delete once
+// no pre-simplification worker can run.
+const PRE_SIMPLIFICATION_WORKER_FIELDS = {
+  transcription: {
+    promptEchoEnabled: false,
+    voteEnabled: false,
+    finalPassEnabled: false,
+  },
+  transcriptionCoalesceModel: {
+    model: "gpt-5-mini",
+    provider: "openai",
+    params: {},
+  },
+  // Never run while finalPassEnabled is false; only has to satisfy the old schema.
+  finalPassSettings: {
+    maxSnippetMilliseconds: 60_000,
+    chunkSeconds: 300,
+    maxRequestBytes: 25 * 1024 * 1024,
+    targetMaxChunkBytes: 20 * 1024 * 1024,
+    segmentBatchMaxChars: 6000,
+    minConfidence: 0.8,
+    maxDropRatio: 0.5,
+    maxChangeRatio: 0.6,
+    previousTailChars: 400,
+    minChunkSeconds: 60,
+    estimatedMp3BytesPerSecond: 16000,
+    repeatWindowSeconds: 180,
+  },
+  completedFinalPass: "disabled",
+  // An empty text prompt compiles to no prompt in the old request path.
+  transcriptionPrompt: (label: string) => ({
+    availability: "available",
+    value: {
+      type: "text",
+      name: "no-transcription-prompt",
+      label,
+      version: 1,
+      template: "",
+    },
+  }),
+} as const;
 function settings(meeting: MeetingData): SavedRecordingSettings {
   const runtime = meeting.runtimeConfig;
   if (!runtime) throw new Error("Original recording settings unavailable");
   const model = (
-    role:
-      | "notes"
-      | "meetingSummary"
-      | "transcription"
-      | "transcriptionCleanup"
-      | "transcriptionCoalesce",
+    role: "notes" | "meetingSummary" | "transcription" | "transcriptionCleanup",
   ) => {
     const choice = getModelChoice(role, getMeetingModelOverrides(meeting));
     return {
@@ -118,15 +157,23 @@ function settings(meeting: MeetingData): SavedRecordingSettings {
   };
   return savedRecordingSettingsSchema.parse({
     autoCompletion: freezeCompletionPolicy(meeting),
-    processing: liveTranscriptionProcessingSettings,
+    processing: {
+      cleanupMinimumRetainedLineRatio:
+        TRANSCRIPTION_CLEANUP_LINES_DIFFERENCE_ISSUE,
+      finalPass: PRE_SIMPLIFICATION_WORKER_FIELDS.finalPassSettings,
+    },
     models: {
       notes: model("notes"),
       meetingSummary: model("meetingSummary"),
       transcription: model("transcription"),
       transcriptionCleanup: model("transcriptionCleanup"),
-      transcriptionCoalesce: model("transcriptionCoalesce"),
+      transcriptionCoalesce:
+        PRE_SIMPLIFICATION_WORKER_FIELDS.transcriptionCoalesceModel,
     },
-    transcription: runtime.transcription,
+    transcription: {
+      ...runtime.transcription,
+      ...PRE_SIMPLIFICATION_WORKER_FIELDS.transcription,
+    },
     premiumTranscription: runtime.premiumTranscription,
     dictionary: runtime.dictionary,
     visionCaptions: runtime.visionCaptions,
@@ -267,7 +314,7 @@ function snapshotOmissions(selected: ReturnType<typeof selectFile>[]) {
     .map((item) => item.correspondence);
   return values.length ? combineCorrespondence(values) : undefined;
 }
-/** Seal opportunistic snapshots before mutable finalized-stage output exists. */
+/** Seal opportunistic snapshots before finalization starts. */
 export function guardRecordingFinalization(meeting: MeetingData): void {
   const frozen = snapshots.get(meeting);
   if (frozen?.phase !== "capturing") return;
@@ -319,7 +366,7 @@ function snapshotGuardedTranscription(
       baseline.supplemental.set(item.file, item);
   }
   if (!baseline.supplemental.size) return;
-  // Preserve sole late text without publishing mutable baseline final-pass output.
+  // Preserve sole late text without republishing the sealed baseline.
   selected = [...baseline.supplemental.values()];
   const entries = [
     ...baseline.entries,
@@ -412,6 +459,7 @@ export function checkpointCompletedTranscription(
   if (processing && !frozen.processing) {
     frozen.processing = {
       ...processing,
+      finalPass: PRE_SIMPLIFICATION_WORKER_FIELDS.completedFinalPass,
       correspondence: copyCorrespondence(frozen.aggregate?.correspondence),
     };
     frozen.phase = "finalized";
@@ -469,15 +517,15 @@ export function checkpointCompletedTranscription(
 
 async function capturePrompts(
   frozen: Frozen,
-  names: Array<[keyof Frozen["prompts"], string, "text" | "chat"]>,
+  names: Array<[keyof Frozen["prompts"], string]>,
   label: string,
 ) {
   await Promise.all(
-    names.map(async ([role, name, type]) => {
+    names.map(async ([role, name]) => {
       try {
         frozen.prompts[role] = {
           availability: "available",
-          value: await snapshotRecordingPrompt(name, type, label),
+          value: await snapshotRecordingPrompt(name, label),
         };
       } catch {
         frozen.prompts[role] = { availability: "unavailable" };
@@ -568,7 +616,7 @@ export function startRecordingContentCheckpoint(meeting: MeetingData): void {
     },
   };
   snapshots.set(meeting, frozen);
-  const names: Array<[keyof Frozen["prompts"], string, "text" | "chat"]> = [];
+  const names: Array<[keyof Frozen["prompts"], string]> = [];
   let effective: SavedRecordingSettings;
   try {
     effective = settings(meeting);
@@ -578,29 +626,12 @@ export function startRecordingContentCheckpoint(meeting: MeetingData): void {
     return;
   }
   if (frozen.capture.requested.transcribeMeeting) {
-    names.push([
-      "transcription",
-      config.langfuse.transcriptionPromptName,
-      "text",
-    ]);
+    frozen.prompts.transcription =
+      PRE_SIMPLIFICATION_WORKER_FIELDS.transcriptionPrompt(
+        config.langfuse.promptLabel,
+      );
     if (effective.premiumTranscription.cleanupEnabled)
-      names.push([
-        "cleanup",
-        config.langfuse.transcriptionCleanupPromptName,
-        "chat",
-      ]);
-    if (effective.premiumTranscription.enabled)
-      names.push([
-        "coalesce",
-        config.langfuse.transcriptionCoalescePromptName,
-        "chat",
-      ]);
-    if (effective.transcription.finalPassEnabled)
-      names.push([
-        "finalPass",
-        config.langfuse.transcriptionFinalPassPromptName,
-        "chat",
-      ]);
+      names.push(["cleanup", config.langfuse.transcriptionCleanupPromptName]);
     if (frozen.capture.requested.generateNotes) {
       names.push(
         [
@@ -610,9 +641,8 @@ export function startRecordingContentCheckpoint(meeting: MeetingData): void {
             : effective.notes.contextTestMode
               ? config.langfuse.notesContextTestPromptName
               : config.langfuse.notesPromptName,
-          "chat",
         ],
-        ["summary", config.langfuse.meetingSummaryPromptName, "chat"],
+        ["summary", config.langfuse.meetingSummaryPromptName],
       );
     }
   }

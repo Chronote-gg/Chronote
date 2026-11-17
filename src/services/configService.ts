@@ -1,9 +1,6 @@
 import dotenv from "dotenv";
 import path from "node:path";
-import {
-  resolveLangfuseBaseUrl,
-  DEFAULT_TRANSCRIPTION_PROMPT_NAME,
-} from "./langfuseDefaults";
+import { resolveLangfuseBaseUrl } from "./langfuseDefaults";
 
 // Load environment variables once
 dotenv.config();
@@ -86,15 +83,6 @@ class ConfigService {
     transcriptionCleanupPromptName:
       process.env.LANGFUSE_PROMPT_TRANSCRIPTION_CLEANUP ||
       "chronote-transcription-cleanup-chat",
-    transcriptionCoalescePromptName:
-      process.env.LANGFUSE_PROMPT_TRANSCRIPTION_COALESCE ||
-      "chronote-transcription-coalesce-chat",
-    transcriptionFinalPassPromptName:
-      process.env.LANGFUSE_PROMPT_TRANSCRIPTION_FINAL_PASS ||
-      "chronote-transcription-final-pass-chat",
-    transcriptionPromptName:
-      process.env.LANGFUSE_PROMPT_TRANSCRIPTION ||
-      DEFAULT_TRANSCRIPTION_PROMPT_NAME,
     imagePromptName:
       process.env.LANGFUSE_PROMPT_IMAGE || "chronote-image-prompt-chat",
     askPromptName:
@@ -147,7 +135,7 @@ class ConfigService {
   // Live voice configuration
   readonly liveVoice = {
     mode: process.env.LIVE_VOICE_MODE || "off",
-    gateModel: process.env.LIVE_VOICE_GATE_MODEL || "gpt-5-mini",
+    gateModel: process.env.LIVE_VOICE_GATE_MODEL || "gpt-6.1-terra",
     responderModel: process.env.LIVE_VOICE_RESPONDER_MODEL || "gpt-4o-mini",
     ttsModel: process.env.LIVE_VOICE_TTS_MODEL || "gpt-4o-mini-tts",
     ttsVoice: process.env.LIVE_VOICE_TTS_VOICE || "alloy",

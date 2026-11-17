@@ -37,11 +37,7 @@ import {
 } from "../../src/services/processingRetryTranscript";
 import { resetMockStore } from "../../src/repositories/mockStore";
 import type { TranscriptPayload } from "../../src/types/transcript";
-import {
-  pcmArtifact,
-  recoveryFixture,
-  savedTranscriptionPrompt,
-} from "./meetingRecoveryFixtures";
+import { pcmArtifact, recoveryFixture } from "./meetingRecoveryFixtures";
 
 const signal = new AbortController().signal;
 const run = <T>(effect: () => Promise<T>) => effect();
@@ -59,7 +55,6 @@ const savedSpan = {
 
 async function checkpointContent() {
   const f = await recoveryFixture("Saved words.", {
-    context: savedTranscriptionPrompt,
     artifacts: [
       pcmArtifact("user:123", 0, Buffer.alloc(3840, 1), [
         { startOffsetMs: 0, durationMs: 20 },
@@ -136,7 +131,7 @@ test("a provider failure on any range fails the transcription", async () => {
   ).rejects.toThrow("Recovery transcription failed");
 });
 
-test("a retry never replays the frozen finalized-audio pass", async () => {
+test("a retry of a recording saved with the former final pass completes without it", async () => {
   const { f, content } = await checkpointContent();
   content.manifest.captureState = {
     kind: "complete",
@@ -146,11 +141,10 @@ test("a retry never replays the frozen finalized-audio pass", async () => {
   if (content.context.settings.availability !== "available")
     throw new Error("settings");
   content.context.settings.value.transcription.finalPassEnabled = true;
-  // The fixture has no final-pass prompt, so running the pass would throw.
   await expect(
     retranscribeOmittedRanges(content, f.reader, signal, run),
   ).resolves.toMatchObject({ retranscribedRanges: 1 });
-  expect(content.processing?.finalPass).toBe("not_applicable");
+  expect(content.processing).not.toHaveProperty("finalPass");
 });
 
 test("recoverTranscript still refuses an acknowledged transcript with uncovered input", async () => {
