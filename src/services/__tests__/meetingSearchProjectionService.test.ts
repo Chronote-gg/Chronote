@@ -81,6 +81,17 @@ function fixture() {
   };
 }
 
+function expectReadyProjection(
+  f: ReturnType<typeof fixture>,
+  current: MeetingSearchProjectionState[],
+) {
+  for (const row of current) {
+    expect(f.rows.get(row.projectionId)?.status).toBe("ready");
+    for (const document of row.documents)
+      expect(f.vectors.has(document.key)).toBe(true);
+  }
+}
+
 test("meeting record contains full notes and searchable summary, transcript offsets retain original coordinates", () => {
   const documents = buildMeetingSearchDocuments(
     history,
@@ -284,4 +295,102 @@ test("deletion during an external write is rechecked and cleaned before ready st
   expect([...f.rows.values()].some((row) => row.status === "ready")).toBe(
     false,
   );
+});
+
+test("a stale ready worker preserves the newer canonical projection returned in its state snapshot", async () => {
+  const f = fixture();
+  await f.project(history);
+  const older = [...f.rows.values()].map((row) => structuredClone(row));
+  const newer = {
+    ...history,
+    notes: "newer canonical notes",
+    contentRevision: 2,
+  };
+  f.setCurrent(newer);
+  await f.project(history);
+  for (const row of older) {
+    f.rows.set(row.projectionId, row);
+    for (const document of row.documents) f.vectors.set(document.key, [1]);
+  }
+  const current = [...f.rows.values()].filter(
+    (row) => row.revision === meetingSearchSourceRevision(newer),
+  );
+  f.source.get.mockResolvedValueOnce(history);
+  await f.project(history);
+  expectReadyProjection(f, current);
+});
+
+test("a missing-history snapshot cannot delete a concurrently recreated canonical projection", async () => {
+  const f = fixture();
+  const recreated = { ...history, meetingId: "recreated" };
+  f.setCurrent(recreated);
+  await f.project(history);
+  const current = [...f.rows.values()].map((row) => structuredClone(row));
+  f.source.get.mockResolvedValueOnce(undefined);
+  await f.project(history);
+  expectReadyProjection(f, current);
+});
+
+test("normal publication cleanup preserves a newer canonical source published after the write check", async () => {
+  const f = fixture();
+  const newer = {
+    ...history,
+    notes: "newer canonical notes",
+    contentRevision: 2,
+  };
+  f.setCurrent(newer);
+  await f.project(history);
+  const current = [...f.rows.values()].map((row) => structuredClone(row));
+  f.setCurrent(history);
+  const original = f.state.put.getMockImplementation()!;
+  f.state.put.mockImplementation(async (row) => {
+    await original(row);
+    if (
+      row.status === "ready" &&
+      row.revision === meetingSearchSourceRevision(history)
+    )
+      f.setCurrent(newer);
+  });
+  await f.project(history);
+  expectReadyProjection(f, current);
+});
+
+test("stale transcript cleanup preserves a same-key replacement using its current content hash", async () => {
+  const f = fixture();
+  await f.project(history);
+  const older = [...f.rows.values()]
+    .filter((row) => row.dataset === "transcripts")
+    .map((row) => structuredClone(row));
+  f.setTranscript("replacement transcript");
+  await f.project(history);
+  const current = [...f.rows.values()].filter(
+    (row) => row.dataset === "transcripts" && row.status === "ready",
+  );
+  for (const row of older) f.rows.set(row.projectionId, row);
+  f.source.transcript.mockResolvedValueOnce("first transcript");
+  await f.project(history);
+  expectReadyProjection(f, current);
+});
+
+test("cleanup never targets another index generation and fails closed when canonical reads fail", async () => {
+  const f = fixture();
+  await f.project(history);
+  const current = [...f.rows.values()].map((row) => structuredClone(row));
+  const foreign = {
+    ...current[0],
+    projectionId: "foreign",
+    generation: "other-generation",
+    documents: [{ ...current[0].documents[0], key: "foreign-vector" }],
+  };
+  f.rows.set(foreign.projectionId, foreign);
+  f.vectors.set("foreign-vector", [1]);
+  f.source.get.mockResolvedValueOnce(undefined);
+  await f.project(history);
+  expect(f.rows.get("foreign")?.status).toBe("ready");
+  expect(f.vectors.has("foreign-vector")).toBe(true);
+  f.source.get
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(Error("canonical unavailable"));
+  await expect(f.project(history)).rejects.toThrow("canonical unavailable");
+  expectReadyProjection(f, current);
 });

@@ -27,6 +27,7 @@ type AskPageEffectsOptions = {
   askPending: boolean;
   highlightedMessageId: string | null;
   displayMessagesLength: number;
+  streamContentLength?: number;
   chatViewportRef: RefObject<HTMLDivElement | null>;
   inputRef: RefObject<HTMLTextAreaElement | null>;
   navigateToConversation: (
@@ -254,6 +255,7 @@ export const useAskPageEffects = ({
   askPending,
   highlightedMessageId,
   displayMessagesLength,
+  streamContentLength = 0,
   chatViewportRef,
   inputRef,
   navigateToConversation,
@@ -473,14 +475,38 @@ export const useAskPageEffects = ({
     setOptimisticConversation,
   ]);
 
+  const followingBottom = useRef(true);
+  const previousMessageCount = useRef(displayMessagesLength);
   useEffect(() => {
     const viewport = chatViewportRef.current;
     if (!viewport) return;
+    followingBottom.current = true;
+    let previousTop = viewport.scrollTop;
+    const trackPosition = () => {
+      if (viewport.scrollTop < previousTop) followingBottom.current = false;
+      if (
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <=
+        32
+      )
+        followingBottom.current = true;
+      previousTop = viewport.scrollTop;
+    };
+    viewport.addEventListener("scroll", trackPosition, { passive: true });
+    return () => viewport.removeEventListener("scroll", trackPosition);
+  }, [chatViewportRef, selectedGuildId, activeId]);
+
+  useEffect(() => {
+    const viewport = chatViewportRef.current;
+    if (!viewport) return;
+    if (previousMessageCount.current !== displayMessagesLength)
+      followingBottom.current = true;
+    previousMessageCount.current = displayMessagesLength;
+    if (!followingBottom.current) return;
     viewport.scrollTo({
       top: viewport.scrollHeight,
       behavior: askPending ? "smooth" : "auto",
     });
-  }, [displayMessagesLength, askPending, chatViewportRef]);
+  }, [displayMessagesLength, streamContentLength, askPending, chatViewportRef]);
 
   useEffect(() => {
     if (!highlightedMessageId) return;

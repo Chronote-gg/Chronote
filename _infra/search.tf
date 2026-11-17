@@ -79,7 +79,8 @@ resource "aws_s3vectors_vector_bucket" "search" {
   vector_bucket_name = "${local.name_prefix}-search-${data.aws_caller_identity.current.account_id}"
   force_destroy      = false
   encryption_configuration = [{
-    sse_type = "AES256"
+    sse_type    = "AES256"
+    kms_key_arn = null
   }]
   lifecycle { prevent_destroy = true }
 }

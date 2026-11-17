@@ -478,6 +478,7 @@ export default function Ask() {
     askPending: askMutation.isPending,
     highlightedMessageId,
     displayMessagesLength: displayMessages.length,
+    streamContentLength: askMutation.text.length,
     chatViewportRef,
     inputRef,
     navigateToConversation,

@@ -51,7 +51,7 @@ export async function answerQuestionService(
   });
   if (config.mock.enabled)
     return {
-      answer: "Mock answer from the Ask agent.",
+      answer: `Mock answer for "${req.question}".`,
       citations: [],
       sourceMeetingIds: [],
     };

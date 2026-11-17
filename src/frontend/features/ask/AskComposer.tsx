@@ -79,7 +79,7 @@ export function AskComposer({
         </Text>
       ) : null}
       <Group justify="space-between" align="center" wrap="wrap">
-        <Text size="xs" c="dimmed">
+        <Text size="xs" c="dimmed" style={{ flex: "1 1 240px", minWidth: 0 }}>
           {historyDescription} Press Ctrl+Enter to send.
         </Text>
         {contextAction}

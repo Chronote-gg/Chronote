@@ -19,6 +19,7 @@ const snapshot = {
   status: "running",
   question: "Question",
   text: "",
+  activity: "Working...",
   createdAt: "2026-01-01",
   updatedAt: "2026-01-01",
   result: completed,
@@ -58,13 +59,24 @@ beforeEach(() => {
   stop.mockResolvedValue(snapshot);
 });
 
-async function beginQuestion(result: {
-  current: ReturnType<typeof useAskRun>;
-}) {
+function renderScopedRun(scope = "server") {
+  return renderHook(
+    ({ scope }) =>
+      useAskRun({ userId: "user", serverId: scope, conversationId: null }),
+    { initialProps: { scope } },
+  );
+}
+
+async function beginQuestion(
+  result: {
+    current: ReturnType<typeof useAskRun>;
+  },
+  serverId = "server",
+) {
   let pending: Promise<unknown> = Promise.resolve();
   await act(async () => {
     pending = result.current.mutateAsync({
-      serverId: "server",
+      serverId,
       question: "Question",
     });
     await Promise.resolve();
@@ -135,21 +147,8 @@ test("stream disconnect reads canonical saved state", async () => {
 });
 
 test("scope changes detach old results and clear answer text", async () => {
-  const { result, rerender } = renderHook(
-    ({ scope }) =>
-      useAskRun({ userId: "user", serverId: scope, conversationId: null }),
-    {
-      initialProps: { scope: "a" },
-    },
-  );
-  let pending: Promise<unknown> = Promise.resolve();
-  await act(async () => {
-    pending = result.current.mutateAsync({
-      serverId: "a",
-      question: "Question",
-    });
-    await Promise.resolve();
-  });
+  const { result, rerender } = renderScopedRun("a");
+  const { pending } = await beginQuestion(result, "a");
   const rejected = expect(pending).rejects.toHaveProperty("name", "AbortError");
   rerender({ scope: "b" });
   await rejected;
@@ -286,4 +285,39 @@ test("an unknown send after reload keeps the outbound identities for deliberate 
       requestId: "original-request",
     }),
   );
+});
+
+test("a rejected poll from an old scope cannot clear the next run", async () => {
+  let rejectOldPoll: (reason: Error) => void = () => undefined;
+  read.mockImplementationOnce(
+    () =>
+      new Promise((_, reject) => {
+        rejectOldPoll = reject;
+      }),
+  );
+  const { result, rerender } = renderScopedRun();
+  const old = await beginQuestion(result);
+  act(() => disconnect());
+  const oldStopped = expect(old.pending).rejects.toHaveProperty(
+    "name",
+    "AbortError",
+  );
+  rerender({ scope: "next" });
+  await oldStopped;
+  const next = await beginQuestion(result, "next");
+  act(() =>
+    receive({ ...snapshot, text: "New answer", activity: "New run activity" }),
+  );
+  await act(async () => {
+    rejectOldPoll(new Error("Old poll failed"));
+    await Promise.resolve();
+  });
+  const latestText = result.current.text;
+  const latestActivity = result.current.activity;
+  await act(async () => {
+    receive({ ...snapshot, status: "completed" });
+    await next.pending;
+  });
+  expect(latestText).toBe("New answer");
+  expect(latestActivity).toBe("New run activity");
 });

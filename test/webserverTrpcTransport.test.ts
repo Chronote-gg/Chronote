@@ -1,6 +1,5 @@
 /** @jest-environment node */
-import { createServer, type RequestListener, type Server } from "node:http";
-import type { RuntimeHealthServer } from "../src/services/runtimeHealthServer";
+import type { Server } from "node:http";
 
 jest.mock("../src/services/sessionStore", () => ({
   DynamoSessionStore: jest.requireActual("express-session").MemoryStore,
@@ -20,7 +19,7 @@ jest.mock("../src/services/meetingSearchService", () => ({
 }));
 
 import { config } from "../src/services/configService";
-import { setupWebServer } from "../src/webserver";
+import { serveWebApplication } from "./fixtures/webserver";
 
 let server: Server;
 const previousMock = config.mock.enabled;
@@ -29,28 +28,13 @@ afterEach(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-async function serveApplication(signedIn: boolean): Promise<string> {
-  config.mock.enabled = signedIn;
-  let application: RequestListener | undefined;
-  const captured: Pick<RuntimeHealthServer, "activate"> = {
-    activate(handler) {
-      application = handler;
-    },
-  };
-  await setupWebServer(captured);
-  if (!application) throw new Error("The web server did not activate");
-  server = createServer(application);
-  await new Promise<void>((resolve) => server.listen(0, resolve));
-  const address = server.address();
-  if (!address || typeof address === "string")
-    throw new Error("Missing test port");
-  return `http://127.0.0.1:${address.port}`;
-}
-
 test.each([true, false])(
   "production tRPC mount accepts POST queries and preserves CSRF and auth, signed in: %s",
   async (signedIn) => {
-    const origin = await serveApplication(signedIn);
+    config.mock.enabled = signedIn;
+    const application = await serveWebApplication();
+    server = application.server;
+    const { origin } = application;
     const url = `${origin}/trpc/ask.searchMeetings?batch=1`;
     const body = JSON.stringify({
       0: { serverId: "test-server", query: "synthetic private phrase" },

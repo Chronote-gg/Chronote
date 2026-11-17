@@ -1,17 +1,25 @@
 import { useRef } from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { useAskPageEffects } from "../useAskPageEffects";
 
 const noop = () => undefined;
 function Harness({
   ready = true,
   shared = false,
+  viewport,
+  streamContentLength = 0,
+  messageCount = 0,
+  pending = false,
 }: {
   ready?: boolean;
   shared?: boolean;
+  viewport?: HTMLDivElement;
+  streamContentLength?: number;
+  messageCount?: number;
+  pending?: boolean;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const chatViewportRef = useRef<HTMLDivElement>(null);
+  const chatViewportRef = useRef<HTMLDivElement>(viewport ?? null);
   useAskPageEffects({
     focusReady: ready,
     selectedGuildId: "guild",
@@ -28,9 +36,10 @@ function Harness({
     conversationBusy: false,
     isCreatingNew: false,
     newConversationRequested: false,
-    askPending: false,
+    askPending: pending,
     highlightedMessageId: null,
-    displayMessagesLength: 0,
+    displayMessagesLength: messageCount,
+    streamContentLength,
     chatViewportRef,
     inputRef,
     navigateToConversation: noop,
@@ -96,5 +105,69 @@ describe("Ask initial focus", () => {
   test("does not focus a read-only shared chat", () => {
     render(<Harness shared />);
     expect(screen.getByRole("textbox")).not.toHaveFocus();
+  });
+
+  test("growing streamed text follows the bottom at a fixed message count and respects scrolling up", () => {
+    const viewport = document.createElement("div");
+    let height = 300;
+    Object.defineProperties(viewport, {
+      scrollHeight: { get: () => height },
+      clientHeight: { value: 100 },
+      scrollTop: { value: 0, writable: true },
+    });
+    const scrollTo = jest.fn(({ top }: ScrollToOptions) => {
+      viewport.scrollTop = Number(top) - viewport.clientHeight;
+      fireEvent.scroll(viewport);
+    });
+    Object.defineProperty(viewport, "scrollTo", { value: scrollTo });
+    const { rerender } = render(
+      <Harness
+        ready={false}
+        viewport={viewport}
+        streamContentLength={5}
+        messageCount={2}
+        pending
+      />,
+    );
+    scrollTo.mockClear();
+    height = 450;
+    rerender(
+      <Harness
+        ready={false}
+        viewport={viewport}
+        streamContentLength={15}
+        messageCount={2}
+        pending
+      />,
+    );
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 450, behavior: "smooth" });
+    viewport.scrollTop = 100;
+    fireEvent.scroll(viewport);
+    scrollTo.mockClear();
+    height = 600;
+    rerender(
+      <Harness
+        ready={false}
+        viewport={viewport}
+        streamContentLength={25}
+        messageCount={2}
+        pending
+      />,
+    );
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(viewport.scrollTop).toBe(100);
+    viewport.scrollTop = height - viewport.clientHeight;
+    fireEvent.scroll(viewport);
+    height = 700;
+    rerender(
+      <Harness
+        ready={false}
+        viewport={viewport}
+        streamContentLength={35}
+        messageCount={2}
+        pending
+      />,
+    );
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 700, behavior: "smooth" });
   });
 });

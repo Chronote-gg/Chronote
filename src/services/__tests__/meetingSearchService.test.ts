@@ -367,3 +367,40 @@ test("disabled serving gate prevents embeddings and index reads", async () => {
   expect(embedSearchText).not.toHaveBeenCalled();
   expect(queryMeetingSearchCandidates).not.toHaveBeenCalled();
 });
+
+test.each(["x".repeat(2400), "x".repeat(1200) + "\n\n" + "x".repeat(1198)])(
+  "a transcript search hit near the chunk end opens the full matched passage (%#)",
+  async (prefix) => {
+    const query = "unique matched detail";
+    const chunk = prefix + query + "y".repeat(500);
+    const transcript = chunk + "neighbor".repeat(150);
+    getStrong.mockResolvedValue({ ...record, transcript });
+    const { createHash } = await import("node:crypto");
+    jest.mocked(queryMeetingSearchCandidates).mockResolvedValue({
+      candidates: [
+        {
+          key: "late-match",
+          meeting: ref,
+          sourceRevision: "rev",
+          transcriptHash: createHash("sha256").update(transcript).digest("hex"),
+          start: 0,
+          end: chunk.length,
+        },
+      ],
+      windowLimited: false,
+      nextToken: undefined,
+    });
+    const result = await searchTranscriptsForUser(principal, {
+      query,
+      meetingIds: [ref],
+    });
+    expect(result.hits[0].text).toContain(query);
+    expect(result.hits[0].text.length).toBeLessThanOrEqual(600);
+    const passage = await readTranscriptPassageForUser(principal, {
+      meeting: ref,
+      passageRef: result.hits[0].passageRef,
+    });
+    expect(passage.text).toContain(query);
+    expect(passage.text).toBe(transcript.slice(0, chunk.length + 300));
+  },
+);

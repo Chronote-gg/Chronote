@@ -202,7 +202,7 @@ export function AskConversationPane({
           onFeedbackDown={onFeedbackDown}
           viewportRef={chatViewportRef}
         />
-        <Divider my="xs" />
+        <Divider />
         <AskComposer
           contextChips={contextChips}
           historyDescription={historyDescription}

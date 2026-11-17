@@ -342,21 +342,25 @@ async function loadTranscriptSnapshot(
     );
   return { meeting, text };
 }
-function sliceStoredTranscript(text: string, start: number, maxChars: number) {
+function sliceStoredTranscript(
+  text: string,
+  start: number,
+  maxChars: number,
+  preserveWindow: boolean,
+) {
   const offset = Math.min(start, text.length);
   let end = Math.min(offset + Math.min(8000, maxChars), text.length);
-  if (end < text.length) {
-    if (/[\uD800-\uDBFF]/.test(text[end - 1])) end--;
-    const paragraph = text.lastIndexOf("\n\n", end);
-    if (paragraph > offset) end = paragraph + 2;
-    for (const match of text
-      .slice(Math.max(offset, end - 32), end + 32)
-      .matchAll(/<@[!&]?\d+>/g)) {
-      const mentionStart = Math.max(offset, end - 32) + match.index;
-      if (mentionStart < end && mentionStart + match[0].length > end)
-        end =
-          mentionStart > offset ? mentionStart : mentionStart + match[0].length;
-    }
+  if (end === text.length) return { offset, end };
+  if (/[\uD800-\uDBFF]/.test(text[end - 1])) end--;
+  const paragraph = text.lastIndexOf("\n\n", end);
+  if (!preserveWindow && paragraph > offset) end = paragraph + 2;
+  for (const match of text
+    .slice(Math.max(offset, end - 32), end + 32)
+    .matchAll(/<@[!&]?\d+>/g)) {
+    const mentionStart = Math.max(offset, end - 32) + match.index;
+    if (mentionStart < end && mentionStart + match[0].length > end)
+      end =
+        mentionStart > offset ? mentionStart : mentionStart + match[0].length;
   }
   return { offset, end };
 }
@@ -390,6 +394,7 @@ export async function readTranscriptPassageForUser(
     text,
     start,
     state ? state.end - start : 8000,
+    Boolean(input.passageRef),
   );
   const display = await createMeetingMentionReplacer(meeting);
   const result = {
@@ -604,10 +609,20 @@ async function authorizeSearchPartition(
   }
   return authorized;
 }
+function transcriptSearchExcerpt(
+  passage: Awaited<ReturnType<typeof readTranscriptPassageForUser>>,
+  query: string,
+) {
+  const match = passage.text.toLowerCase().indexOf(query.trim().toLowerCase());
+  const start = Math.max(0, match - 150);
+  // Display text can expand mentions, so retain the validated stored-source window for locators.
+  return { ...passage, text: passage.text.slice(start, start + 600) };
+}
 async function hydrateSearchCandidate(
   principal: MeetingSearchPrincipal,
   candidate: MeetingSearchCandidate,
   kind: "meeting" | "transcript",
+  query: string,
   signal?: AbortSignal,
 ) {
   try {
@@ -634,8 +649,8 @@ async function hydrateSearchCandidate(
         {
           meeting: candidate.meeting,
           revision: candidate.sourceRevision + ":" + candidate.transcriptHash,
-          start: candidate.start,
-          end: Math.min(candidate.end, candidate.start + 600),
+          start: Math.max(0, candidate.start - 300),
+          end: candidate.end + 300,
           expiresAt: Date.now() + 3600000,
         },
         secret(),
@@ -645,7 +660,7 @@ async function hydrateSearchCandidate(
         { meeting: candidate.meeting, passageRef },
         signal,
       );
-      return passage;
+      return transcriptSearchExcerpt(passage, query);
     }
   } catch (error) {
     if (
@@ -662,6 +677,7 @@ async function consumeSearchCandidates(
   kind: "meeting" | "transcript",
   limit: number,
   hits: (MeetingSearchHit | TranscriptSearchHit)[],
+  query: string,
   signal?: AbortSignal,
 ) {
   const candidates = state.candidates ?? [];
@@ -672,6 +688,7 @@ async function consumeSearchCandidates(
       principal,
       candidate,
       kind,
+      query,
       signal,
     );
     if (hit) hits.push(hit);
@@ -828,7 +845,15 @@ async function search(
     )
       continue;
     if (
-      await consumeSearchCandidates(principal, state, kind, limit, hits, signal)
+      await consumeSearchCandidates(
+        principal,
+        state,
+        kind,
+        limit,
+        hits,
+        input.query,
+        signal,
+      )
     )
       break;
     state.candidates = undefined;

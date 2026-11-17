@@ -10,6 +10,25 @@ jest.mock("../../src/services/askAgentService", () => ({
   executeAskAgent: jest.fn(),
 }));
 
+test("mock replies preserve the submitted question without calling either live answer path", async () => {
+  config.mock.enabled = true;
+  jest.mocked(executeAskAgent).mockClear();
+  jest.mocked(answerLegacyAskQuestion).mockClear();
+  const result = await answerQuestionService({
+    guildId: "g",
+    channelId: "v",
+    question: "Summarize the last session.",
+    viewerUserId: "user",
+  });
+  expect(result).toEqual({
+    answer: 'Mock answer for "Summarize the last session.".',
+    citations: [],
+    sourceMeetingIds: [],
+  });
+  expect(executeAskAgent).not.toHaveBeenCalled();
+  expect(answerLegacyAskQuestion).not.toHaveBeenCalled();
+});
+
 test("keeps notes-only Ask available while the full-library agent is disabled", async () => {
   config.mock.enabled = false;
   config.ask.agentEnabled = false;

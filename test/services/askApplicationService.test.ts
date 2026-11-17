@@ -11,10 +11,13 @@ jest.mock("../../src/services/askService", () => ({
   answerQuestionService: jest.fn(),
 }));
 
-test("accepted retry uses the original run and projects only the completed safe answer", async () => {
+beforeEach(() => {
   config.ask.agentEnabled = true;
   config.mock.enabled = true;
   resetMockStore();
+});
+
+test("accepted retry uses the original run and projects only the completed safe answer", async () => {
   const store = getMockStore();
   const input = {
     userId: store.user.id,
@@ -57,9 +60,6 @@ test("accepted retry uses the original run and projects only the completed safe 
 });
 
 it("projects a completed run after the browser stops reading", async () => {
-  config.ask.agentEnabled = true;
-  config.mock.enabled = true;
-  resetMockStore();
   const store = getMockStore();
   const input = {
     userId: store.user.id,

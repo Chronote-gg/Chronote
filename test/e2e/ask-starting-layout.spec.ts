@@ -158,7 +158,7 @@ for (const viewport of [
   { width: 1366, height: 600 },
   { width: 390, height: 844 },
 ]) {
-  test(`Ask starting layout ${viewport.width}x${viewport.height}`, async ({
+  test(`Ask starting layout ${viewport.width}x${viewport.height} @visual`, async ({
     page,
   }) => {
     await page.setViewportSize(viewport);
@@ -288,4 +288,25 @@ test("recent history fallback sends without agent routes or indexed search", asy
     page.getByText("Preview answer", { exact: true }).first(),
   ).toBeVisible();
   expect(agentRequests).toEqual([]);
+});
+
+test("short Ask viewport keeps its first context action with wider footer text", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1366, height: 600 });
+  await mockAsk(page);
+  await page.goto("/portal/server/example/ask");
+  const hint = page.getByText(
+    "Searches accessible meeting history. Press Ctrl+Enter to send.",
+    { exact: true },
+  );
+  await hint.evaluate((element) => {
+    element.style.fontSize = "16px";
+  });
+  const firstContext = page
+    .getByRole("button", { name: "Add to context" })
+    .first();
+  await expect(firstContext).toBeInViewport({ ratio: 1 });
+  await expect(page.getByTestId("ask-input")).toBeInViewport({ ratio: 1 });
+  await expect(page.getByTestId("ask-send")).toBeInViewport({ ratio: 1 });
 });

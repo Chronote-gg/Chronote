@@ -183,7 +183,29 @@ export function createMeetingSearchProjector(deps: {
 }) {
   const now = deps.now ?? Date.now;
   const save = (state: MeetingSearchProjectionState) => deps.state.put(state);
-  async function cleanup(state: MeetingSearchProjectionState) {
+  async function canonicalMatches(
+    state: MeetingSearchProjectionState,
+    signal?: AbortSignal,
+  ) {
+    const latest = await deps.source.get(state.meeting, signal);
+    if (!latest || meetingSearchSourceRevision(latest) !== state.revision)
+      return false;
+    return (
+      state.dataset === "meetings" ||
+      hash(await deps.source.transcript(latest, signal)) ===
+        state.transcriptHash
+    );
+  }
+  async function cleanup(
+    state: MeetingSearchProjectionState,
+    signal?: AbortSignal,
+  ) {
+    // A stale worker's snapshot may contain the replacement that is now canonical.
+    if (
+      state.generation !== deps.generation ||
+      (await canonicalMatches(state, signal))
+    )
+      return;
     state.status = "tombstone";
     // Retain tombstones: an unacknowledged old PutVectors may finish after this delete.
     await save(state);
@@ -197,10 +219,10 @@ export function createMeetingSearchProjector(deps: {
     signal?: AbortSignal,
   ) {
     signal?.throwIfAborted();
-    const history = await deps.source.get(key, signal);
     const states = await deps.state.list(key, deps.generation);
+    const history = await deps.source.get(key, signal);
     if (!history) {
-      for (const old of states) await cleanup(old);
+      for (const old of states) await cleanup(old, signal);
       return;
     }
     const revision = meetingSearchSourceRevision(history);
@@ -246,7 +268,7 @@ export function createMeetingSearchProjector(deps: {
           old.dataset === state.dataset &&
           old.projectionId !== state.projectionId
         )
-          await cleanup(old);
+          await cleanup(old, signal);
       }
     }
     async function embedDocuments(
@@ -302,7 +324,7 @@ export function createMeetingSearchProjector(deps: {
           dataset === "transcripts" ? hash(transcript) : "";
         state = await loadState(dataset, transcriptHash);
         if (state.status === "ready") {
-          await cleanupOld(state);
+          if (await canonicalMatches(state, signal)) await cleanupOld(state);
           return;
         }
         state.status = "pending";
@@ -327,18 +349,8 @@ export function createMeetingSearchProjector(deps: {
         await save(state);
         failure = "embedding";
         const embedded = await embedDocuments(documents, state);
-        async function current() {
-          const latest = await deps.source.get(key, signal);
-          return (
-            latest &&
-            meetingSearchSourceRevision(latest) === revision &&
-            (dataset === "meetings" ||
-              hash(await deps.source.transcript(latest, signal)) ===
-                transcriptHash)
-          );
-        }
-        if (!(await current())) {
-          await cleanup(state);
+        if (!(await canonicalMatches(state, signal))) {
+          await cleanup(state, signal);
           return;
         }
         failure = "index";
@@ -346,8 +358,8 @@ export function createMeetingSearchProjector(deps: {
           signal?.throwIfAborted();
           await deps.index.put(embedded.slice(offset, offset + 100), signal);
         }
-        if (!(await current())) {
-          await cleanup(state);
+        if (!(await canonicalMatches(state, signal))) {
+          await cleanup(state, signal);
           return;
         }
         state.status = "ready";

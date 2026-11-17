@@ -964,9 +964,12 @@ for (const width of [320, 768, 993, 1199, 1201, 1280]) {
     ).toBe(true);
     await period.getByText("Monthly", { exact: true }).click();
     await expect(
-      page.getByText("Your subscription helps keep Chronote running.", {
-        exact: true,
-      }),
+      page.getByText(
+        "One subscription covers everyone in a server you manage.",
+        {
+          exact: true,
+        },
+      ),
     ).toBeVisible();
     await expect(page.getByText(/running for communities on Free/)).toHaveCount(
       0,

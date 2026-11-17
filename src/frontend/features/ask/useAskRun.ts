@@ -139,6 +139,7 @@ export function useAskRun(scope: Scope) {
         try {
           receive(await utils.client.ask.getRun.query(address));
         } catch {
+          if (ended || generation.current !== sendGeneration) return;
           setText("");
           setActivity("Connection lost. Reconnecting...");
         }
