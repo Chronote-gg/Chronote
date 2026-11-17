@@ -151,7 +151,10 @@ jobs:
       - name: Build isolated object storage from pinned source
         run: docker build -f test/deployment/fixtures/Minio.Dockerfile -t chronote-minio-test:source .
       - name: Run integration tests
-        run: yarn test:integration
+        env:
+          # The serial Jest process exhausted its default heap near 4 GiB.
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: yarn test:integration --logHeapUsage
 
   build:
     name: Build

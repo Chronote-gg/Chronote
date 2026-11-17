@@ -5,6 +5,19 @@ import { createRenewalFixture } from "../../src/frontend/pages/renewalFixtures";
 import { mockGuilds } from "./mockData";
 import { applyVisualDefaults, waitForVisualReady } from "./visualUtils";
 import type { RenewalView } from "../../src/types/renewal";
+import type { Page } from "@playwright/test";
+
+async function openBilling(page: Page) {
+  const billingResponse = page.waitForResponse((response) => {
+    const paths = new URL(response.url()).pathname.split("/trpc/")[1];
+    return Boolean(
+      paths && decodeURIComponent(paths).split(",").includes("billing.me"),
+    );
+  });
+  await page.goto(`/portal/server/${mockGuilds.ddm.id}/billing`);
+  await (await billingResponse).finished();
+}
+
 const runVisual = process.env.PW_VISUAL === "true";
 const views = [
   { name: "desktop", width: 1280, height: 720 },
@@ -51,7 +64,7 @@ for (const viewport of views) {
           renewal,
         });
       }
-      await page.goto(`/portal/server/${mockGuilds.ddm.id}/billing`);
+      await openBilling(page);
       await expect(page.getByTestId("billing-current-plan")).toBeVisible();
       if (state === "history-open") {
         await page
@@ -85,7 +98,7 @@ test("short billing page scrolls to its history and comparison actions", async (
     cancellationAt: annualSubscriber.renewalAt,
     renewal,
   });
-  await page.goto(`/portal/server/${mockGuilds.ddm.id}/billing`);
+  await openBilling(page);
   await expect(page.getByTestId("renewal-off")).toBeVisible();
   const scrolling = await page
     .getByTestId("billing-current-plan")
@@ -121,4 +134,17 @@ test("short billing page scrolls to its history and comparison actions", async (
   await expect(
     page.getByRole("button", { name: "View invoices and receipts" }),
   ).toBeInViewport();
+});
+
+test("renewal waits for slow billing data before checking rendering", async ({
+  page,
+}) => {
+  await useIntroBilling(page, { details: annualSubscriber });
+  await page.route("**/trpc/**", async (route) => {
+    if (route.request().url().includes("billing.me"))
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+    await route.fallback();
+  });
+  await openBilling(page);
+  await expect(page.getByTestId("billing-current-plan")).toBeVisible();
 });
