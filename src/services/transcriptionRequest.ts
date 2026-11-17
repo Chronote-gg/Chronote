@@ -165,6 +165,35 @@ function keywordsRejected(error: unknown, request: RequestInput["request"]) {
   );
 }
 
+function requestWithoutRejectedKeywords(
+  error: unknown,
+  request: RequestInput["request"],
+  retryCount: number,
+) {
+  if (
+    retryCount >= TRANSCRIPTION_MAX_RETRIES ||
+    !keywordsRejected(error, request)
+  ) {
+    return undefined;
+  }
+  const { keywords, ...withoutKeywords } = request;
+  recordTranscriptionKeywordsRejected(request.model);
+  console.warn("Transcription keywords rejected; retrying without them.", {
+    model: request.model,
+    keywordCount: keywords?.length,
+  });
+  return withoutKeywords;
+}
+
+function throwUnlessRetryable(error: unknown, retryCount: number) {
+  const transient = isTransientTranscriptionFailure(error);
+  if (transient && retryCount < TRANSCRIPTION_MAX_RETRIES) return;
+  if (transient && error instanceof Error) {
+    failureScopes.getStore()?.add(error);
+  }
+  throw error;
+}
+
 export async function runTranscriptionRequest(
   input: RequestInput,
 ): Promise<Transcription> {
@@ -181,29 +210,16 @@ export async function runTranscriptionRequest(
       return await runAttempt({ ...input, request });
     } catch (error) {
       input.signal.throwIfAborted();
-      if (
-        retryCount < TRANSCRIPTION_MAX_RETRIES &&
-        keywordsRejected(error, request)
-      ) {
-        const { keywords, ...withoutKeywords } = request;
-        recordTranscriptionKeywordsRejected(request.model);
-        console.warn(
-          "Transcription keywords rejected; retrying without them.",
-          {
-            model: request.model,
-            keywordCount: keywords?.length,
-          },
-        );
-        request = withoutKeywords;
+      const fallback = requestWithoutRejectedKeywords(
+        error,
+        request,
+        retryCount,
+      );
+      if (fallback) {
+        request = fallback;
         continue;
       }
-      const transient = isTransientTranscriptionFailure(error);
-      if (!transient || retryCount === TRANSCRIPTION_MAX_RETRIES) {
-        if (transient && error instanceof Error) {
-          failureScopes.getStore()?.add(error);
-        }
-        throw error;
-      }
+      throwUnlessRetryable(error, retryCount);
       backoff = backoff ? backoff.next(undefined) : generator.next();
       const delay = retryAfterDelay(error) ?? backoff.duration;
       await setTimeout(delay, undefined, { signal: input.signal });
