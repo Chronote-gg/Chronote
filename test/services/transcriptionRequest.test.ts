@@ -79,7 +79,26 @@ test.each([
   );
 });
 
-test("later snippets in the meeting omit rejected keywords", async () => {
+test.each([
+  {
+    name: "same meeting",
+    newSignal: false,
+    sharedScope: false,
+    sendsHints: false,
+  },
+  {
+    name: "another meeting",
+    newSignal: true,
+    sharedScope: false,
+    sendsHints: true,
+  },
+  {
+    name: "new snippet signal",
+    newSignal: true,
+    sharedScope: true,
+    sendsHints: false,
+  },
+])("later keyword hints follow the $name scope", async (scenario) => {
   jest.spyOn(console, "warn").mockImplementation(() => {});
   const f = await buildAsrFixture({
     outcomes: [
@@ -88,49 +107,16 @@ test("later snippets in the meeting omit rejected keywords", async () => {
       validResponse,
     ],
     keywords: ["Kwylt"],
+    keywordRejectionScope: scenario.sharedScope ? {} : undefined,
   });
   await expect(f.run()).resolves.toEqual(validResponse);
-  await expect(f.run()).resolves.toEqual(validResponse);
+  const signal = scenario.newSignal ? new AbortController().signal : f.signal;
+  await expect(f.run(signal)).resolves.toEqual(validResponse);
   expect(f.fetch).toHaveBeenCalledTimes(3);
-  expect(f.bodies[2]).not.toContain("Kwylt");
+  expect(f.bodies[2].includes("Kwylt")).toBe(scenario.sendsHints);
   expect(await keywordsRejected()).toEqual([
     expect.objectContaining({ value: 1 }),
   ]);
-});
-
-test("a keyword rejection does not disable hints in another meeting", async () => {
-  jest.spyOn(console, "warn").mockImplementation(() => {});
-  const f = await buildAsrFixture({
-    outcomes: [
-      { status: 400, code: "invalid_value" },
-      validResponse,
-      validResponse,
-    ],
-    keywords: ["Kwylt"],
-  });
-  await expect(f.run()).resolves.toEqual(validResponse);
-  await expect(f.run(new AbortController().signal)).resolves.toEqual(
-    validResponse,
-  );
-  expect(f.bodies[2]).toContain("Kwylt");
-});
-
-test("a meeting retains its keyword fallback across distinct snippet signals", async () => {
-  jest.spyOn(console, "warn").mockImplementation(() => {});
-  const f = await buildAsrFixture({
-    outcomes: [
-      { status: 400, code: "invalid_value" },
-      validResponse,
-      validResponse,
-    ],
-    keywords: ["Kwylt"],
-    keywordRejectionScope: {},
-  });
-  await expect(f.run()).resolves.toEqual(validResponse);
-  await expect(f.run(new AbortController().signal)).resolves.toEqual(
-    validResponse,
-  );
-  expect(f.bodies[2]).not.toContain("Kwylt");
 });
 
 test("an unsuccessful keyword-free retry does not disable later hints", async () => {
