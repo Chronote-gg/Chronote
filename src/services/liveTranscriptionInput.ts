@@ -18,6 +18,7 @@ export function liveTranscriptionInput(
     guild: { id: meeting.guild.id },
     voiceChannel: { id: meeting.voiceChannel.id },
     signal: getMeetingProcessingSignal(meeting),
+    keywordRejectionScope: meeting,
     keywords: buildDictionaryPromptLines(
       meeting.dictionaryEntries ?? [],
       meeting.runtimeConfig?.dictionary ?? DEFAULT_DICTIONARY_BUDGETS,

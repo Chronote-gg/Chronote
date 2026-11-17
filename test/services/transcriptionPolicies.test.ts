@@ -302,3 +302,20 @@ test("a response without logprobs is counted and logged", async () => {
     );
   });
 });
+
+test("a response without text remains an empty result", async () => {
+  const withoutText = { ...validResponse, text: undefined };
+  const provider = providerTransport(async () => Response.json(withoutText));
+  await withTracingFixture({ transport: provider.fetch }, async (f) => {
+    f.attachment.resolve();
+    await expect(f.transcribe()).resolves.toMatchObject({
+      status: "succeeded",
+      text: "",
+    });
+    expect(provider.calls).toHaveLength(1);
+    expect(console.warn).not.toHaveBeenCalledWith(
+      "Transcription response has no logprobs.",
+      expect.anything(),
+    );
+  });
+});

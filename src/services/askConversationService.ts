@@ -154,7 +154,7 @@ export async function getSharedConversationWithMessages(
     guildId,
     conversationId,
   );
-  if (!conversation) {
+  if (!conversation || !isSharedVisibility(conversation.visibility)) {
     return undefined;
   }
   const messages = await repo.listMessages(
@@ -292,6 +292,7 @@ export async function askWithConversation(params: {
   tags?: string[];
   scope?: "guild" | "channel";
   viewerUserId?: string;
+  contextMeetingIds?: string[];
 }) {
   const repo = getAskConversationRepository();
   const {
@@ -341,6 +342,7 @@ export async function askWithConversation(params: {
     scope,
     history,
     viewerUserId,
+    contextMeetingIds: params.contextMeetingIds,
   });
   const resolvedCitations = citations ?? [];
   const portalBaseUrl = resolvePortalBaseUrl();
@@ -403,5 +405,93 @@ export async function askWithConversation(params: {
         portalBaseUrl,
       }),
     ],
+  };
+}
+
+/** Project an authoritative completed run. Retrying this does not run the agent. */
+export async function persistCompletedAskRun(params: {
+  userId: string;
+  guildId: string;
+  conversationId: string;
+  requestId: string;
+  question: string;
+  createdAt: string;
+  completedAt: string;
+  result: {
+    answer: string;
+    citations?: import("../types/ask").AskCitation[];
+    sourceMeetingIds?: string[];
+  };
+}) {
+  const { userId, guildId, conversationId, requestId, result } = params;
+  const citations = result.citations ?? [];
+  const sourceMeetingIds = result.sourceMeetingIds ?? [];
+  const repo = getAskConversationRepository();
+  const existing = await repo.getConversation(userId, guildId, conversationId);
+  const conversation: AskConversation = {
+    ...(existing ?? buildConversation(userId, guildId, conversationId)),
+    createdAt: existing?.createdAt ?? params.createdAt,
+    updatedAt: params.completedAt,
+    title:
+      !existing || existing.title === DEFAULT_TITLE
+        ? truncate(params.question, 80)
+        : existing.title,
+    summary: summarize(stripCitationTags(result.answer)),
+  };
+  const messages: AskMessage[] = [
+    {
+      id: `${requestId}:user`,
+      role: "user",
+      text: params.question,
+      createdAt: params.createdAt,
+    },
+    {
+      id: `${requestId}:answer`,
+      role: "chronote",
+      text: result.answer,
+      createdAt: params.completedAt,
+      citations,
+      sourceMeetingIds,
+    },
+  ];
+  for (const message of messages)
+    await repo.writeMessage(userId, guildId, conversationId, message);
+  await repo.writeCompletedConversation(userId, guildId, conversation);
+  const current =
+    (await repo.getConversation(userId, guildId, conversationId)) ??
+    conversation;
+  if (
+    isSharedVisibility(current.visibility) &&
+    current.updatedAt === params.completedAt
+  ) {
+    await repo.writeCompletedShare(
+      buildShareRecord({
+        guildId,
+        ownerUserId: userId,
+        ownerTag: current.sharedByTag,
+        conversation: current,
+        sharedAt: current.sharedAt ?? params.completedAt,
+        sharedByUserId: current.sharedByUserId ?? userId,
+        sharedByTag: current.sharedByTag,
+      }),
+    );
+  }
+  return {
+    conversationId,
+    conversation: current,
+    answer: renderAskAnswer({
+      text: result.answer,
+      citations,
+      guildId,
+      portalBaseUrl: resolvePortalBaseUrl(),
+    }),
+    sourceMeetingIds,
+    messages: messages.map((message) =>
+      renderMessageForDisplay({
+        message,
+        guildId,
+        portalBaseUrl: resolvePortalBaseUrl(),
+      }),
+    ),
   };
 }

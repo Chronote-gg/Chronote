@@ -135,7 +135,7 @@ Keep the saved files if you want to preserve the draft. You can start a separate
 
 1. Run `/billing` to check your current plan status.
 2. Verify the payment method is valid in the Stripe portal.
-3. Some features (image generation, extended `/ask` history) require specific plan tiers.
+3. Some features, such as image generation, require specific plan tiers. Ask has the same accessible retained history on every plan when search is enabled.
 
 ### A renewal payment failed
 

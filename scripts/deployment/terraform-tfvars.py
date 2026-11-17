@@ -4,9 +4,8 @@ from pathlib import Path
 
 path = Path("_infra/terraform.auto.tfvars.json")
 data = json.loads(os.environ["TERRAFORM_TFVARS_JSON"])
-aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
-if aws_access_key_id:
-    data["AWS_TOKEN_KEY"] = aws_access_key_id
+# Retired input: the secret may still carry it, and Terraform warns on it.
+data.pop("AWS_TOKEN_KEY", None)
 
 for name in ["REDIS_AUTH_TOKEN", "REDIS_URL"]:
     value = os.environ.get(name, "").strip()
@@ -21,7 +20,6 @@ for name in ["REDIS_AUTH_TOKEN", "REDIS_URL"]:
 # Any variable named TFVAR_<KEY> overrides <KEY>.
 credential_tfvars = {
     "GITHUB_TOKEN",
-    "AWS_TOKEN_KEY",
     "LANGFUSE_SECRET_KEY",
     "DOCS_ALGOLIA_API_KEY",
     "REDIS_AUTH_TOKEN",
@@ -106,7 +104,7 @@ for name, value in github_vars.items():
         else:
             data[key] = value
 
-required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]
+required = ["GITHUB_TOKEN", "DISCORD_CLIENT_ID"]
 string_fields = required + [
     "SUPER_ADMIN_USER_IDS",
     "grafana_api_key",

@@ -27,10 +27,12 @@ import {
 import type { TranscriptionLanguage } from "../config/transcriptionLanguage";
 const nativeFetch = globalThis.fetch;
 const failureScopes = new AsyncLocalStorage<WeakSet<Error>>();
+const rejectedKeywordModels = new WeakMap<object, Set<string>>();
 
 type RequestInput = {
   file: string;
   signal: AbortSignal;
+  keywordRejectionScope?: object;
   request: Omit<TranscriptionCreateParamsNonStreaming<"json">, "file">;
   ledger: ReturnType<typeof createTranscriptionAttemptLedger>;
   clientOptions?: Parameters<typeof createOpenAIClient>[0];
@@ -154,15 +156,21 @@ async function runAttempt(input: RequestInput): Promise<Transcription> {
   }
 }
 
-// A bad keyword gets HTTP 400 `invalid_value` with no `param` (observed
-// 2026-11-17); without this one term fails every snippet in the server.
+// Handle both an explicit keyword parameter and the observed unlabelled 400.
 function keywordsRejected(error: unknown, request: RequestInput["request"]) {
   return (
     Boolean(request.keywords?.length) &&
     error instanceof OpenAI.BadRequestError &&
-    error.code === "invalid_value" &&
-    error.param == null
+    (error.param === "keywords" ||
+      error.param?.startsWith("keywords[") ||
+      (error.code === "invalid_value" && error.param == null))
   );
+}
+
+function withoutKeywords(request: RequestInput["request"]) {
+  const rest = { ...request };
+  delete rest.keywords;
+  return rest;
 }
 
 function requestWithoutRejectedKeywords(
@@ -176,13 +184,12 @@ function requestWithoutRejectedKeywords(
   ) {
     return undefined;
   }
-  const { keywords, ...withoutKeywords } = request;
   recordTranscriptionKeywordsRejected(request.model);
   console.warn("Transcription keywords rejected; retrying without them.", {
     model: request.model,
-    keywordCount: keywords?.length,
+    keywordCount: request.keywords?.length,
   });
-  return withoutKeywords;
+  return withoutKeywords(request);
 }
 
 function throwUnlessRetryable(error: unknown, retryCount: number) {
@@ -203,11 +210,22 @@ export async function runTranscriptionRequest(
     maxDelay: TRANSCRIPTION_RETRY_MAX_DELAY_MS,
   });
   let backoff: IBackoff<unknown> | undefined;
-  let request = input.request;
+  const scope = input.keywordRejectionScope ?? input.signal;
+  let keywordsWereRejected = false;
+  let request = rejectedKeywordModels.get(scope)?.has(input.request.model)
+    ? withoutKeywords(input.request)
+    : input.request;
   for (let retryCount = 0; ; retryCount += 1) {
     input.signal.throwIfAborted();
     try {
-      return await runAttempt({ ...input, request });
+      const result = await runAttempt({ ...input, request });
+      // Only remember a rejection after the keyword-free request actually works.
+      if (keywordsWereRejected) {
+        const models = rejectedKeywordModels.get(scope) ?? new Set<string>();
+        models.add(request.model);
+        rejectedKeywordModels.set(scope, models);
+      }
+      return result;
     } catch (error) {
       input.signal.throwIfAborted();
       const fallback = requestWithoutRejectedKeywords(
@@ -216,6 +234,7 @@ export async function runTranscriptionRequest(
         retryCount,
       );
       if (fallback) {
+        keywordsWereRejected = true;
         request = fallback;
         continue;
       }

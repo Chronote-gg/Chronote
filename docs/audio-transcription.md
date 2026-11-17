@@ -32,9 +32,12 @@ Each snippet request owns at most four ASR attempts, including
 the first. Only connection failures, timeouts and HTTP 408, 409, 429 or 5xx
 responses can retry. Cancellation, local input failures, other 4xx responses,
 quota exhaustion and an explicit `x-should-retry: false` are terminal.
-A keyword rejection (HTTP 400 `invalid_value` with no `param`) is retried
+A keyword rejection (HTTP 400 naming `keywords` or an indexed keyword, or
+`invalid_value` with no `param`) is retried
 once without keywords, as one of the four attempts, with a warning and
 `chronote_transcription_keywords_rejected_total`. Other 400s stay terminal.
+Once that fallback succeeds, later snippets in the same meeting omit keywords
+for that model. A failed fallback leaves later dictionary hints enabled.
 Guards and attachment failures do not retry ASR.
 
 Each attempt opens and closes a fresh upload stream and disables SDK retries

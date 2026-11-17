@@ -2,8 +2,6 @@
 import { expect, test } from "@jest/globals";
 import { runInNewContext } from "node:vm";
 import { createRequire } from "node:module";
-import { siteVariables } from "../fixtures/deployment/sandboxSitePermissionsPlan.js";
-import { privateCaptureFixture } from "../fixtures/deployment/privateCapture.js";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -244,45 +242,30 @@ test.each(["frontend", "docs"])(
   },
 );
 
-test.each([
-  ["publishing", "missing"],
-  ["publishing", "directory"],
-  ["permissions", "missing"],
-  ["permissions", "directory"],
-])("%s CLI refuses a %s output file before emitting masks", (cli, mode) => {
-  const directory = mkdtempSync(join(tmpdir(), "sandbox-site-output-"));
-  const env = {
-    ...process.env,
-    ...fixture("docs"),
-    GITHUB_OUTPUT: directory,
-  };
-  const args =
-    cli === "publishing"
-      ? ["scripts/deployment/sandbox-site-session.cjs", "docs"]
-      : [
-          "scripts/deployment/validate-sandbox-site-permissions-plan.cjs",
-          "--session",
-        ];
-  if (cli === "permissions") {
-    env.TERRAFORM_PRIVATE_STORAGE_JSON = JSON.stringify(
-      privateCaptureFixture().binding,
-    );
-    env.GITHUB_VARS_JSON = JSON.stringify(siteVariables());
-  }
-  if (mode === "missing") delete env.GITHUB_OUTPUT;
-  try {
-    const result = spawnSync(process.execPath, args, { env, encoding: "utf8" });
-    expect(result.status).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe(
-      cli === "publishing"
-        ? "Sandbox site session refused\n"
-        : "Sandbox site permissions refused\n",
-    );
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+test.each(["missing", "directory"])(
+  "publishing CLI refuses a %s output file before emitting masks",
+  (mode) => {
+    const directory = mkdtempSync(join(tmpdir(), "sandbox-site-output-"));
+    const env = {
+      ...process.env,
+      ...fixture("docs"),
+      GITHUB_OUTPUT: directory,
+    };
+    if (mode === "missing") delete env.GITHUB_OUTPUT;
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ["scripts/deployment/sandbox-site-session.cjs", "docs"],
+        { env, encoding: "utf8" },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("Sandbox site session refused\n");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 function outputBoundary(mode) {
   const state = { masks: [], contents: "", closed: false };

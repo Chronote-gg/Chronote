@@ -1,3 +1,4 @@
+import { emitMetric, LIFECYCLE_METRICS } from "../lifecycleMetrics";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { TASK_PROTECTION_FAILED_LOG, workerTaskProtections } from "../metrics";
@@ -121,8 +122,10 @@ export function createTaskProtection(deps: {
   ): boolean {
     if (signal?.aborted) return false;
     workerTaskProtections.inc({ outcome: succeeded ? "success" : "failure" });
-    // The log metric filter matches the fixed token, so it stays at the start.
-    if (!succeeded) console.error(`${TASK_PROTECTION_FAILED_LOG}: ${detail}`);
+    if (!succeeded) {
+      console.error(`${TASK_PROTECTION_FAILED_LOG}: ${detail}`);
+      emitMetric(LIFECYCLE_METRICS.taskProtectionFailed);
+    }
     return succeeded;
   }
 

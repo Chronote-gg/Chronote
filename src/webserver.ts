@@ -492,6 +492,7 @@ export function setupWebServer(
     trpcExpress.createExpressMiddleware({
       router: appRouter,
       createContext,
+      allowMethodOverride: true,
     }),
   );
 

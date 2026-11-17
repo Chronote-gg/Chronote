@@ -78,6 +78,7 @@ test("backend uses OIDC and validates identity before any image or service write
   expect(backend.permissions).toEqual({
     contents: "read",
     "id-token": "write",
+    actions: "read",
   });
   expect(backend.environment).toBe("sandbox");
   const auth = backend.steps.findIndex((step) =>
@@ -97,7 +98,7 @@ test("backend uses OIDC and validates identity before any image or service write
   const image = backend.steps.findIndex((step) => step.id === "build-image");
   expect(check).toBeGreaterThan(auth);
   expect(check).toBeLessThan(image);
-  expect(backend["timeout-minutes"]).toBe(240);
+  expect(backend["timeout-minutes"]).toBe(300);
 });
 
 test.each(["frontend", "docs"])(

@@ -42,6 +42,24 @@ describe.each(FILES)("%s", (name) => {
     );
   });
 
+  test("the backend waits for a running Apply of its environment before anything else", () => {
+    const environment = name === "deploy.yml" ? "production" : "sandbox";
+    const wait = runs(backend).findIndex((run) =>
+      run.includes(
+        "node scripts/deployment/terraform-runs.cjs wait-apply-idle",
+      ),
+    );
+    expect(backend.steps[wait].run).toBe(
+      `node scripts/deployment/terraform-runs.cjs wait-apply-idle ${environment}`,
+    );
+    expect(backend.steps[wait].env).toEqual({
+      GH_TOKEN: "${{ github.token }}",
+    });
+    expect(backend.permissions.actions).toBe("read");
+    expect(wait).toBeLessThan(Math.min(...roleAssumptions(backend)));
+    expect(wait).toBeLessThan(indexOfCommand(backend, "wait-drain"));
+  });
+
   test("the backend runs preflight, rollout and wait-ready in order", () => {
     const order = ["preflight", "rollout", "wait-ready"].map((command) =>
       indexOfCommand(backend, command),

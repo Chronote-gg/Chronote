@@ -56,10 +56,14 @@ const keywordsRejected = async () => {
   return metric?.values ?? [];
 };
 
-test("a keyword rejection is retried once without keywords", async () => {
+test.each([
+  { code: "invalid_value" },
+  { code: "invalid_value", param: "keywords" },
+  { code: "invalid_request_error", param: "keywords[0]" },
+])("a keyword rejection %j is retried once without keywords", async (error) => {
   const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   const f = await buildAsrFixture({
-    outcomes: [{ status: 400, code: "invalid_value" }, validResponse],
+    outcomes: [{ status: 400, ...error }, validResponse],
     keywords: ["Kwylt"],
   });
   await expect(f.run()).resolves.toEqual(validResponse);
@@ -73,6 +77,75 @@ test("a keyword rejection is retried once without keywords", async () => {
     "Transcription keywords rejected; retrying without them.",
     expect.objectContaining({ keywordCount: 1 }),
   );
+});
+
+test("later snippets in the meeting omit rejected keywords", async () => {
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+  const f = await buildAsrFixture({
+    outcomes: [
+      { status: 400, code: "invalid_value" },
+      validResponse,
+      validResponse,
+    ],
+    keywords: ["Kwylt"],
+  });
+  await expect(f.run()).resolves.toEqual(validResponse);
+  await expect(f.run()).resolves.toEqual(validResponse);
+  expect(f.fetch).toHaveBeenCalledTimes(3);
+  expect(f.bodies[2]).not.toContain("Kwylt");
+  expect(await keywordsRejected()).toEqual([
+    expect.objectContaining({ value: 1 }),
+  ]);
+});
+
+test("a keyword rejection does not disable hints in another meeting", async () => {
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+  const f = await buildAsrFixture({
+    outcomes: [
+      { status: 400, code: "invalid_value" },
+      validResponse,
+      validResponse,
+    ],
+    keywords: ["Kwylt"],
+  });
+  await expect(f.run()).resolves.toEqual(validResponse);
+  await expect(f.run(new AbortController().signal)).resolves.toEqual(
+    validResponse,
+  );
+  expect(f.bodies[2]).toContain("Kwylt");
+});
+
+test("a meeting retains its keyword fallback across distinct snippet signals", async () => {
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+  const f = await buildAsrFixture({
+    outcomes: [
+      { status: 400, code: "invalid_value" },
+      validResponse,
+      validResponse,
+    ],
+    keywords: ["Kwylt"],
+    keywordRejectionScope: {},
+  });
+  await expect(f.run()).resolves.toEqual(validResponse);
+  await expect(f.run(new AbortController().signal)).resolves.toEqual(
+    validResponse,
+  );
+  expect(f.bodies[2]).not.toContain("Kwylt");
+});
+
+test("an unsuccessful keyword-free retry does not disable later hints", async () => {
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+  const f = await buildAsrFixture({
+    outcomes: [
+      { status: 400, code: "invalid_value" },
+      { status: 400, code: "invalid_value" },
+      validResponse,
+    ],
+    keywords: ["Kwylt"],
+  });
+  await expect(f.run()).rejects.toMatchObject({ status: 400 });
+  await expect(f.run()).resolves.toEqual(validResponse);
+  expect(f.bodies[2]).toContain("Kwylt");
 });
 
 test("a keyword rejection on the final attempt is not retried", async () => {
@@ -92,6 +165,7 @@ test("a keyword rejection on the final attempt is not retried", async () => {
 test.each([
   [{ status: 400, code: "unsupported_format" }, ["Kwylt"]],
   [{ status: 400, code: "invalid_value" }, undefined],
+  [{ status: 400, code: "invalid_value", param: "file" }, ["Kwylt"]],
   [{ status: 422, code: "invalid_value" }, ["Kwylt"]],
 ])(
   "unrelated %j with keywords %j is not retried",

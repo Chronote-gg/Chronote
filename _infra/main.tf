@@ -88,9 +88,6 @@ variable "github_repository" {
 variable "GITHUB_TOKEN" {
   sensitive = true
 }
-variable "AWS_TOKEN_KEY" {
-  sensitive = true
-}
 variable "DISCORD_CLIENT_ID" {
   sensitive = true
 }
@@ -541,9 +538,14 @@ provider "github" {
 }
 
 locals {
-  name_prefix             = "${var.project_name}-${var.environment}"
-  bot_task_cpu            = var.environment == "prod" ? 1024 : 512
-  bot_task_memory         = var.environment == "prod" ? 2048 : 1024
+  name_prefix     = "${var.project_name}-${var.environment}"
+  bot_task_cpu    = var.environment == "prod" ? 1024 : 512
+  bot_task_memory = var.environment == "prod" ? 2048 : 1024
+  # Per-speaker PCM is about 0.69 GB per speaker-hour, so one long meeting with
+  # many speakers can fill the 20 GiB Fargate default. Sandbox keeps the default.
+  bot_task_storage_gib = var.environment == "prod" ? 60 : 20
+  # EphemeralStorageUtilized reports decimal GB: 20 GiB reads as 21.47.
+  bot_task_storage_gb     = local.bot_task_storage_gib * 1.073741824
   app_log_group_name      = "/ecs/${local.name_prefix}-bot"
   transcripts_bucket_name = var.TRANSCRIPTS_BUCKET != "" ? var.TRANSCRIPTS_BUCKET : "${local.name_prefix}-transcripts-${data.aws_caller_identity.current.account_id}"
   frontend_bucket_name    = var.FRONTEND_BUCKET != "" ? var.FRONTEND_BUCKET : "${local.name_prefix}-frontend-${data.aws_caller_identity.current.account_id}"
@@ -608,12 +610,17 @@ data "github_repository" "repo" {
   full_name = "${var.github_owner}/${var.github_repository}"
 }
 
+# The reviewer, branch policy and bypass settings gate production deploys and
+# Terraform Plan runs. They are set by hand and never by a plan: this resource
+# declares none of them, and the provider would otherwise reset each to its
+# default (no reviewer, any branch, admin bypass on).
 resource "github_repository_environment" "repo_env" {
   repository  = data.github_repository.repo.name
   environment = var.github_environment
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [reviewers, deployment_branch_policy, can_admins_bypass, prevent_self_review, wait_timer]
   }
 }
 
@@ -629,13 +636,6 @@ resource "github_actions_environment_variable" "envvar_ecr_repository" {
   environment   = github_repository_environment.repo_env.environment
   variable_name = "ECR_REPOSITORY"
   value         = aws_ecr_repository.app_ecr_repo.name
-}
-
-resource "github_actions_environment_variable" "envvar_aws_access_key_id" {
-  repository    = data.github_repository.repo.name
-  environment   = github_repository_environment.repo_env.environment
-  variable_name = "AWS_ACCESS_KEY_ID"
-  value         = var.AWS_TOKEN_KEY
 }
 
 resource "github_actions_environment_variable" "envvar_frontend_bucket" {
@@ -872,6 +872,8 @@ resource "aws_cloudwatch_log_group" "app_log_group" {
   name              = local.app_log_group_name
   retention_in_days = 365
   kms_key_id        = aws_kms_key.app_general.arn
+  # The lifecycle alarms read embedded metrics, which only Standard extracts.
+  log_group_class = "STANDARD"
 
   tags = {
     Name = "app-log-group"
@@ -1742,6 +1744,14 @@ resource "aws_ecs_task_definition" "app_task" {
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_app_role.arn
 
+  # Fargate accepts 21 to 200 GiB here; 20 is the default and is left implicit.
+  dynamic "ephemeral_storage" {
+    for_each = local.bot_task_storage_gib > 20 ? [local.bot_task_storage_gib] : []
+    content {
+      size_in_gib = ephemeral_storage.value
+    }
+  }
+
   container_definitions = jsonencode([
     {
       name        = "${local.name_prefix}-bot"
@@ -1764,7 +1774,7 @@ resource "aws_ecs_task_definition" "app_task" {
           "awslogs-stream-prefix" = "ecs"
         }
       }
-      environment = [
+      environment = concat(local.search_runtime_environment, [
         {
           name  = "DISCORD_CLIENT_ID"
           value = var.DISCORD_CLIENT_ID
@@ -1888,6 +1898,10 @@ resource "aws_ecs_task_definition" "app_task" {
         {
           name  = "DDB_TABLE_PREFIX"
           value = "${local.name_prefix}-"
+        },
+        {
+          name  = "METRICS_NAMESPACE"
+          value = local.lifecycle_metrics_namespace
         },
         {
           name  = "MCP_PUBLIC_BASE_URL"
@@ -2053,7 +2067,7 @@ resource "aws_ecs_task_definition" "app_task" {
           name  = "POSTHOG_KEY"
           value = var.POSTHOG_KEY
         },
-      ]
+      ])
       secrets = [
         {
           name      = "DISCORD_BOT_TOKEN"
@@ -2958,10 +2972,12 @@ resource "aws_dynamodb_table" "chat_tts_usage_table" {
 
 # Meeting History Table
 resource "aws_dynamodb_table" "meeting_history_table" {
-  name         = "${local.name_prefix}-MeetingHistoryTable"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "guildId"
-  range_key    = "channelId_timestamp"
+  name             = "${local.name_prefix}-MeetingHistoryTable"
+  billing_mode     = "PAY_PER_REQUEST"
+  hash_key         = "guildId"
+  range_key        = "channelId_timestamp"
+  stream_enabled   = var.ENABLE_SEARCH_PROJECTION
+  stream_view_type = var.ENABLE_SEARCH_PROJECTION ? "NEW_AND_OLD_IMAGES" : null
 
   attribute {
     name = "guildId"

@@ -3,6 +3,7 @@ import { NotionIntegrationCard } from "./NotionIntegrationCard";
 
 const meta: Meta<typeof NotionIntegrationCard> = {
   title: "Settings/NotionIntegrationCard",
+  tags: ["notion-integration"],
   component: NotionIntegrationCard,
   args: {
     loading: false,
@@ -16,8 +17,18 @@ const meta: Meta<typeof NotionIntegrationCard> = {
       },
     ],
     voiceChannels: [
-      { value: "voice-1", label: "Weekly sync", botAccess: true },
-      { value: "voice-2", label: "Campaign planning", botAccess: true },
+      {
+        value: "voice-1",
+        label: "Weekly sync",
+        botAccess: true,
+        missingPermissions: [],
+      },
+      {
+        value: "voice-2",
+        label: "Campaign planning",
+        botAccess: true,
+        missingPermissions: [],
+      },
     ],
     onConnect: () => undefined,
     onSearchDestinations: () => undefined,
@@ -56,6 +67,14 @@ export const NeedsConnection: Story = {
       configured: true,
       userConnected: false,
     },
+  },
+};
+
+export const PersonalDisconnected: Story = {
+  args: {
+    ...NeedsConnection.args,
+    personal: true,
+    voiceChannels: [],
   },
 };
 

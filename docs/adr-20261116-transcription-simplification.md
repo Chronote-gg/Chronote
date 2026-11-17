@@ -47,9 +47,12 @@ Production meetings showed these layers hurting transcripts:
    `enforce` mode assessed the snippet `uncertain` or was unavailable and
    admitted it anyway; with detection `off`, in `shadow` or on forced
    admission every admitted snippet carries them. A keyword rejection
-   (HTTP 400 `invalid_value` with no `param`) is retried once without them,
+   (HTTP 400 naming `keywords` or an indexed keyword, or `invalid_value`
+   with no `param`) is retried once without them,
    inside the request's four attempts, so a bad term costs dictionary
-   spelling, not the snippet. A per-model capability
+   spelling, not the snippet. After a successful fallback, later snippets in
+   the same meeting omit keywords for that model. A failed fallback does
+   not disable later hints. A per-model capability
    table decides the keyword and language fields; an unknown
    model throws.
 3. Delete the prompt echo gate, the vote and its second call, the ASR prompt

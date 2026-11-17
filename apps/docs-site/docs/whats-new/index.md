@@ -7,6 +7,11 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Meeting search privacy notice (November 17)
+
+- We are preparing Ask search across accessible retained history on every plan. Search uses a private derived copy of titles, summaries, meeting identifiers and dates, tags, archive status, current notes and transcript passages in Amazon S3 Vectors, with embeddings produced by OpenAI. This notice must be published before the new indexing or embedding processing begins. It does not mean full-library indexing is complete.
+- Current access checks still apply. A partial-coverage notice means some meetings may be missing while indexing catches up. See the updated [Privacy Policy](/legal/privacy/#meeting-search).
+
 ### Simpler, more accurate transcription (November 16)
 
 - Discord meetings now use a newer speech recognition model and detect the spoken language of each snippet by default, so meetings in other languages are no longer forced into English. Servers that mostly speak one language other than English can still pin it under **Transcription language**, which avoids occasional misdetection of very short utterances. See [Discord meeting notes](/discord-meeting-notes/#transcription-language).

@@ -477,7 +477,7 @@ const list = guildMemberProcedure
 
     const meetings = await listRecentMeetingsForGuildService(
       input.serverId,
-      input.limit ?? config.ask.maxMeetings,
+      input.limit ?? 25,
       {
         archivedOnly: input.archivedOnly,
         includeArchived: input.includeArchived,

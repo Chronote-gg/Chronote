@@ -24,7 +24,7 @@ One install covers the whole server, and notes land in the channel where the gro
 2. **Keep talking normally.** Chronote records the voice channel, captures meeting-channel chat and attendance, and transcribes each speaker separately.
 3. **End the meeting.** Use the End Meeting button, disconnect Chronote, or leave the voice channel. Auto-recorded meetings also end when the channel empties.
 4. **Read the result in Discord.** Chronote posts a summary, decisions, open questions, and next steps back to the notes channel.
-5. **Find it later.** The web portal stores the meeting record, and `/ask` answers questions about recent meetings, citing the source meeting and timestamp.
+5. **Find it later.** The web portal stores the meeting record, and `/ask` answers questions about accessible meetings, citing the source meeting and timestamp.
 
 See [Meeting Lifecycle](/core-concepts/meeting-lifecycle/) for the complete recording and processing flow.
 

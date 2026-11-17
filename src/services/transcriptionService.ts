@@ -327,6 +327,7 @@ async function transcribeInternal(
     const transcription = await runTranscriptionRequest({
       file,
       signal: meeting.signal,
+      keywordRejectionScope: meeting.keywordRejectionScope ?? meeting,
       ledger,
       clientOptions,
       onSdkInvocation: () =>
@@ -337,7 +338,7 @@ async function transcribeInternal(
         }),
       request: buildTranscriptionRequest(modelChoice.model, language, keywords),
     });
-    if (transcription.text.trim() && !transcription.logprobs?.length) {
+    if (transcription.text?.trim() && !transcription.logprobs?.length) {
       recordTranscriptionMissingLogprobs(modelChoice.model);
       console.warn("Transcription response has no logprobs.", {
         ...traceMetadata,

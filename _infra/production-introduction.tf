@@ -27,7 +27,19 @@ variable "production_introduction_standalone_tasks" {
 locals {
   production_introduction_enabled = var.environment == "prod" && var.enable_production_introduction_roles
   production_prompt_guard_enabled = var.environment == "prod" && (var.enable_production_introduction_roles || var.enable_production_prompt_guard_role)
-  production_oidc_roles           = toset(concat(local.production_introduction_enabled ? ["introduction"] : [], local.production_prompt_guard_enabled ? ["prompt-guard"] : []))
+  # Introduction stays on the reviewed production environment only; the prompt
+  # guard runs in deploy.yml, which may use either deploy environment.
+  production_oidc_environment_claims = {
+    introduction = {
+      "token.actions.githubusercontent.com:sub"         = "repo:Chronote-gg/Chronote:environment:production"
+      "token.actions.githubusercontent.com:environment" = "production"
+    }
+    prompt-guard = {
+      "token.actions.githubusercontent.com:sub"         = [for name in local.production_deploy_environments : "repo:Chronote-gg/Chronote:environment:${name}"]
+      "token.actions.githubusercontent.com:environment" = local.production_deploy_environments
+    }
+  }
+  production_oidc_roles = toset(concat(local.production_introduction_enabled ? ["introduction"] : [], local.production_prompt_guard_enabled ? ["prompt-guard"] : []))
   production_introduction_tables = [
     aws_dynamodb_table.deployment_control_table,
     aws_dynamodb_table.active_meeting_table,
@@ -59,15 +71,13 @@ resource "aws_iam_role" "production_introduction" {
       Effect    = "Allow"
       Principal = { Federated = data.aws_iam_openid_connect_provider.production_introduction[0].arn }
       Action    = "sts:AssumeRoleWithWebIdentity"
-      Condition = { StringEquals = {
+      Condition = { StringEquals = merge(local.production_oidc_environment_claims[each.key], {
         "token.actions.githubusercontent.com:aud"                 = "sts.amazonaws.com"
-        "token.actions.githubusercontent.com:sub"                 = "repo:Chronote-gg/Chronote:environment:production"
-        "token.actions.githubusercontent.com:environment"         = "production"
         "token.actions.githubusercontent.com:ref"                 = "refs/heads/master"
         "token.actions.githubusercontent.com:workflow"            = each.key == "introduction" ? "Production introduction" : "Meeting Notes Bot Deploy"
         "token.actions.githubusercontent.com:repository_id"       = tostring(data.github_repository.repo.repo_id)
         "token.actions.githubusercontent.com:repository_owner_id" = data.github_organization.production_introduction_owner[0].id
-      } }
+      }) }
     }]
   })
   lifecycle {

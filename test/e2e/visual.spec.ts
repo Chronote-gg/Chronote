@@ -902,8 +902,6 @@ test.describe("visual regression", () => {
         );
         const main = page.locator("main");
         await expect(main).toBeVisible();
-        // Wait for the Free server's Basic/Pro comparison to finish loading.
-        await expect(page.getByText("Recommended")).toBeVisible();
         await expect(
           page.getByRole("heading", { name: "Basic", exact: true }),
         ).toBeVisible();
@@ -920,6 +918,7 @@ test.describe("visual regression", () => {
           page.getByText(mockGuilds.ddm.name, { exact: true }),
         ).toBeVisible();
         await expect(page.getByTestId("upgrade-plan-free")).toBeVisible();
+        await expect(page.getByText(/Recommended|Best value/i)).toHaveCount(0);
         const boxes = await page
           .getByTestId("upgrade-plans")
           .locator(".mantine-Paper-root")

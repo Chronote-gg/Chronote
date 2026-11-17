@@ -7,7 +7,12 @@ import { deferred, validResponse } from "./transcriptionTracing";
 export type AsrOutcome =
   | Transcription
   | Error
-  | { status: number; headers?: Record<string, string>; code?: string };
+  | {
+      status: number;
+      headers?: Record<string, string>;
+      code?: string;
+      param?: string;
+    };
 type FixtureOptions = {
   outcomes: AsrOutcome[];
   signal?: AbortSignal;
@@ -18,6 +23,7 @@ type FixtureOptions = {
   defaultTransport?: boolean;
   generationPrompt?: LangfusePromptMeta;
   keywords?: string[];
+  keywordRejectionScope?: object;
 };
 
 export async function buildAsrFixture(options: FixtureOptions) {
@@ -68,7 +74,13 @@ export async function buildAsrFixture(options: FixtureOptions) {
       if (outcome instanceof Error) throw outcome;
       if ("status" in outcome) {
         return Response.json(
-          { error: { message: "synthetic failure", code: outcome.code } },
+          {
+            error: {
+              message: "synthetic failure",
+              code: outcome.code,
+              param: outcome.param,
+            },
+          },
           { status: outcome.status, headers: outcome.headers },
         );
       }
@@ -88,10 +100,11 @@ export async function buildAsrFixture(options: FixtureOptions) {
   const ledger = createTranscriptionAttemptLedger(2);
   const controller = new AbortController();
   const signal = options.signal ?? controller.signal;
-  const run = () =>
+  const run = (requestSignal = signal) =>
     request.runTranscriptionRequest({
       file: "/synthetic/request.wav",
-      signal,
+      signal: requestSignal,
+      keywordRejectionScope: options.keywordRejectionScope,
       request: {
         model: "gpt-transcribe",
         temperature: 0,

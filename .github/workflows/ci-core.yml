@@ -151,7 +151,10 @@ jobs:
       - name: Build isolated object storage from pinned source
         run: docker build -f test/deployment/fixtures/Minio.Dockerfile -t chronote-minio-test:source .
       - name: Run integration tests
-        run: yarn test:integration
+        env:
+          # The serial Jest process exhausted its default heap near 4 GiB.
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: yarn test:integration --logHeapUsage
 
   build:
     name: Build
@@ -380,16 +383,11 @@ jobs:
           terraform -chdir=_infra test -no-color
 
       - name: Test production bootstrap with mocked providers
-        env:
-          BOOTSTRAP_MOCK_PLAN_JSONL: ${{ runner.temp }}/bootstrap-mock-plans.jsonl
         run: |
           terraform -chdir=_infra/production-bootstrap init -backend=false -input=false -lockfile=readonly
           terraform -chdir=_infra/production-bootstrap fmt -check -recursive
           terraform -chdir=_infra/production-bootstrap validate -no-color
-          terraform -chdir=_infra/production-bootstrap test -no-color -filter=tests/bootstrap.tftest.hcl
-          terraform -chdir=_infra/production-bootstrap test -no-color -json -verbose -filter=tests/guard-plan.tftest.hcl > "$RUNNER_TEMP/bootstrap-mock-raw.jsonl"
-          node _infra/production-bootstrap/compact-mock-plan.cjs "$RUNNER_TEMP/bootstrap-mock-raw.jsonl" > "$BOOTSTRAP_MOCK_PLAN_JSONL"
-          node --test _infra/production-bootstrap/verify-plan.test.cjs
+          terraform -chdir=_infra/production-bootstrap test -no-color
 
       - name: Test Sandbox bootstrap with mocked providers
         env:

@@ -1,0 +1,19 @@
+{
+  "repositoryLevel": {
+    "variables": ["DEPLOY_ENVIRONMENT"],
+    "secrets": ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"]
+  },
+  "handCopied": {
+    "variables": [
+      "DEPLOYMENT_CONTROL_TABLE",
+      "DEPLOYMENT_LISTENER_ARN",
+      "PRODUCTION_PROMPT_GUARD_ROLE_ARN",
+      "VITE_POSTHOG_HOST",
+      "VITE_POSTHOG_KEY"
+    ],
+    "secrets": ["TERRAFORM_PRIVATE_STORAGE_JSON"]
+  },
+  "unsetDefaultsApply": {
+    "variables": ["LANGFUSE_BASE_URL", "LANGFUSE_PROMPT_LABEL"]
+  }
+}
