@@ -331,12 +331,6 @@ variable "LIVE_VOICE_MODE" {
   default     = "off"
 }
 
-variable "LIVE_VOICE_GATE_MODEL" {
-  description = "Live voice gate model"
-  type        = string
-  default     = "gpt-5-mini"
-}
-
 variable "LIVE_VOICE_RESPONDER_MODEL" {
   description = "Live voice responder model"
   type        = string
@@ -1934,10 +1928,6 @@ resource "aws_ecs_task_definition" "app_task" {
         {
           name  = "LIVE_VOICE_MODE"
           value = var.LIVE_VOICE_MODE
-        },
-        {
-          name  = "LIVE_VOICE_GATE_MODEL"
-          value = var.LIVE_VOICE_GATE_MODEL
         },
         {
           name  = "LIVE_VOICE_RESPONDER_MODEL"
