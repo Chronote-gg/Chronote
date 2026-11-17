@@ -176,7 +176,7 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
   expect(call.temperature).toBeUndefined();
   expect(call.reasoning).toEqual({ effort: "low" });
   expect(call.text.format).toEqual({ type: "json_object" });
-  expect(call.max_output_tokens).toBe(160);
+  expect(call.max_output_tokens).toBe(1_000);
   expect(call.store).toBe(false);
   const userPrompt = call.input[1].content;
   expect(userPrompt).toContain(`Today is ${expectedDate}.`);

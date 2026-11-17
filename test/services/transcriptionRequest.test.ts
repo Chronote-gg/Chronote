@@ -75,6 +75,20 @@ test("a keyword rejection is retried once without keywords", async () => {
   );
 });
 
+test("a keyword rejection on the final attempt is not retried", async () => {
+  const f = await buildAsrFixture({
+    outcomes: [
+      ...Array.from({ length: 3 }, () => transientResponse),
+      { status: 400, code: "invalid_value" },
+    ],
+    keywords: ["Kwylt"],
+  });
+  await expect(f.run()).rejects.toMatchObject({ status: 400 });
+  expect(f.fetch).toHaveBeenCalledTimes(4);
+  expect(f.bodies[3]).toContain("Kwylt");
+  expect(await keywordsRejected()).toEqual([]);
+});
+
 test.each([
   [{ status: 400, code: "unsupported_format" }, ["Kwylt"]],
   [{ status: 400, code: "invalid_value" }, undefined],
