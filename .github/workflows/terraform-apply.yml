@@ -18,7 +18,7 @@ on:
         required: true
         type: string
       plan_sha256:
-        description: Encrypted plan SHA-256 from the reviewed plan's summary
+        description: Plan bundle SHA-256 from the reviewed plan's summary
         required: true
         type: string
 
@@ -67,25 +67,6 @@ jobs:
         if: inputs.environment == 'production'
         run: node scripts/deployment/terraform-runs.cjs assert-production-idle
 
-      - name: Download encrypted plan
-        uses: actions/download-artifact@v8
-        with:
-          name: terraform-plan-${{ inputs.environment }}
-          run-id: ${{ inputs.plan_run_id }}
-          github-token: ${{ github.token }}
-          path: ${{ runner.temp }}/plan
-
-      # The approval binds this digest; nothing is decrypted unless the
-      # downloaded file is exactly the one the reviewed summary named.
-      - name: Verify and decrypt plan
-        env:
-          TERRAFORM_PLAN_PASSPHRASE: ${{ secrets.TERRAFORM_PLAN_PASSPHRASE }}
-        run: |
-          set -o pipefail
-          [[ "$PLAN_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          echo "$PLAN_SHA256  $RUNNER_TEMP/plan/plan.tgz.enc" | sha256sum --check --quiet
-          openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass env:TERRAFORM_PLAN_PASSPHRASE -in "$RUNNER_TEMP/plan/plan.tgz.enc" | tar -xz -C _infra
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -93,9 +74,47 @@ jobs:
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: terraform-apply-${{ github.run_id }}-${{ github.run_attempt }}
-          role-duration-seconds: 3600
+          role-duration-seconds: 7200
           unset-current-credentials: true
           mask-aws-account-id: true
+
+      - name: Locate the plan
+        id: store
+        run: node scripts/deployment/terraform-runs.cjs plan-store "$ENVIRONMENT" "$PLAN_RUN_ID" 1 >> "$GITHUB_OUTPUT"
+
+      # The approval binds this digest; nothing is unpacked unless the stored
+      # bundle is exactly the one the reviewed summary named. HeadObject
+      # reports a missing key as 404; only the code is printed, though the CLI
+      # message names nothing but the operation and the error.
+      # The bundle may only supply the saved plan and top-level Lambda
+      # archives: names with a slash, `..` or anything else are refused before
+      # extraction, so it can never write Terraform configuration, the lock
+      # file or the provider cache.
+      - name: Download and verify plan
+        env:
+          BUCKET: ${{ steps.store.outputs.bucket }}
+          PREFIX: ${{ steps.store.outputs.prefix }}
+        run: |
+          set -o pipefail
+          [[ "$PLAN_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          if ! err=$(aws s3api head-object --bucket "$BUCKET" --key "$PREFIX/plan.tar.gz" 2>&1 > /dev/null); then
+            code=$(grep -oE '\([A-Za-z0-9]+\)' <<< "$err" | head -n 1 | tr -d '()' || true)
+            if [ "$code" = 404 ]; then
+              echo "::error::No stored plan for run $PLAN_RUN_ID: the plan had no changes or did not finish; there is nothing to apply"
+            else
+              echo "::error::Reading the stored plan failed (${code:-no error code}); check the Apply role's credentials and access"
+            fi
+            exit 1
+          fi
+          aws s3api get-object --bucket "$BUCKET" --key "$PREFIX/plan.tar.gz" "$RUNNER_TEMP/plan.tar.gz" > /dev/null
+          echo "$PLAN_SHA256  $RUNNER_TEMP/plan.tar.gz" | sha256sum --check --quiet
+          members=$(tar -tzf "$RUNNER_TEMP/plan.tar.gz")
+          if grep -qvE '^(tfplan|[A-Za-z0-9_-]+\.zip)$' <<< "$members"; then
+            echo "::error::The plan bundle holds a file other than the plan and its Lambda archives; refusing it"
+            exit 1
+          fi
+          grep -qx tfplan <<< "$members" || { echo "::error::The bundle contains no saved plan"; exit 1; }
+          tar -xzf "$RUNNER_TEMP/plan.tar.gz" -C _infra --no-same-owner $members
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
@@ -105,36 +124,27 @@ jobs:
 
       # A saved plan carries its own variables and refuses to apply against
       # state that changed since it was made, so there is no replan here.
-      # Output goes only to the encrypted log, as in the plan.
+      # Output goes only to the log stored beside the plan.
       - name: Apply the saved plan
         run: |
           set +x
           unset TF_LOG TF_LOG_CORE TF_LOG_PROVIDER TF_LOG_PATH
           log="$RUNNER_TEMP/terraform.log"
-          fail() { echo "::error::terraform $1 failed with exit code $2; read the encrypted terraform log artifact"; exit 1; }
+          fail() { echo "::error::terraform $1 failed with exit code $2; read the apply log in the plan store"; exit 1; }
           terraform -chdir=_infra init -input=false -lockfile=readonly >> "$log" 2>&1 || fail init $?
           terraform -chdir=_infra apply -input=false -lock-timeout=5m tfplan >> "$log" 2>&1 || fail apply $?
 
-      - name: Encrypt log
+      - name: Store log
         if: always()
         env:
-          TERRAFORM_PLAN_PASSPHRASE: ${{ secrets.TERRAFORM_PLAN_PASSPHRASE }}
+          BUCKET: ${{ steps.store.outputs.bucket }}
+          PREFIX: ${{ steps.store.outputs.prefix }}
         run: |
           log="$RUNNER_TEMP/terraform.log"
-          if [ -f "$log" ] && [ -n "$TERRAFORM_PLAN_PASSPHRASE" ]; then
-            openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -pass env:TERRAFORM_PLAN_PASSPHRASE -in "$log" -out "$log.enc"
+          if [ -f "$log" ] && [ -n "$PREFIX" ]; then
+            aws s3api put-object --bucket "$BUCKET" --key "$PREFIX/apply-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log" --body "$log" --if-none-match "*" > /dev/null || echo "::warning::Storing the apply log failed; the Apply result above stands"
           fi
-          rm -f "$log"
-
-      - name: Upload encrypted log
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: terraform-apply-log-${{ inputs.environment }}
-          path: ${{ runner.temp }}/terraform.log.enc
-          retention-days: 1
-          if-no-files-found: ignore
 
       - name: Remove plaintext plan
         if: always()
-        run: rm -rf _infra/tfplan "$RUNNER_TEMP/plan" "$RUNNER_TEMP/terraform.log"
+        run: rm -rf _infra/tfplan "$RUNNER_TEMP/plan.tar.gz" "$RUNNER_TEMP/terraform.log"

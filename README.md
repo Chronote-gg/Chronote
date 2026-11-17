@@ -110,7 +110,7 @@ These checks run before PR merge and deployment. Use `yarn run check` for the fu
 - Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`.
 - LLM connection sync (Langfuse) keeps LLM connection YAML aligned with Langfuse. Command: `yarn llm-connections:check`.
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Command: `yarn checkov`. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
-- Terraform drift visibility and reconciliation are manual through `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`. Apply uses a reviewed saved plan artifact and GitHub environment approval.
+- Terraform drift visibility and reconciliation are manual through `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`. Apply uses a reviewed saved plan in the state bucket, a run-owned digest and GitHub environment approval.
 
 CI covers the local checks in `yarn run check:ci`. The separate PR quality workflow may accept an explicitly reviewed exception; local quality commands remain strict. See [code quality checks](docs/engineering/code-quality.md).
 

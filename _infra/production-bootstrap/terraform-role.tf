@@ -5,7 +5,7 @@ resource "aws_iam_role" "production_terraform" {
   count                = var.enable_production_terraform_role ? 1 : 0
   name                 = local.terraform_role_name
   path                 = "/"
-  max_session_duration = 3600
+  max_session_duration = 7200 # the Apply job may run up to 120 minutes
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -78,6 +78,9 @@ locals {
     "iam:CreatePolicy", "iam:DeletePolicy", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:SetDefaultPolicyVersion", "iam:TagPolicy", "iam:UntagPolicy",
   ]
   state_lock_keys = ["${local.state_bucket}/${local.state_key}", "${local.state_bucket}/${local.state_key}-md5"]
+  # Saved plans and Terraform logs (scripts/deployment/terraform-runs.cjs
+  # planStore). If-None-Match makes every key write-once.
+  plan_store_statement = { Effect = "Allow", Action = "s3:PutObject", Resource = "arn:aws:s3:::${local.state_bucket}/terraform-plans/production/*", Condition = { StringEquals = { "s3:if-none-match" = "*" } } }
   delivery_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -97,6 +100,7 @@ locals {
       # service-linked role.
       { Sid = "ServiceLinkedRoles", Effect = "Allow", Action = "iam:CreateServiceLinkedRole", Resource = "${local.iam_arn}:role/aws-service-role/*", Condition = { StringEquals = { "iam:AWSServiceName" = ["ecs.amazonaws.com", "elasticloadbalancing.amazonaws.com", "elasticache.amazonaws.com", "grafana.amazonaws.com"] } } },
       { Sid = "IamAttachments", Effect = "Allow", Action = ["iam:AttachRolePolicy", "iam:DetachRolePolicy"], Resource = local.iam_roles, Condition = { ArnLike = { "iam:PolicyARN" = local.attachable_policies } } },
+      merge({ Sid = "PlanStoreLogs" }, local.plan_store_statement),
       { Sid = "ApplicationState", Effect = "Allow", Action = "s3:PutObject", Resource = "arn:aws:s3:::${local.state_bucket}/${local.state_key}" },
       { Sid = "ApplicationStateLocks", Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"], Resource = "arn:aws:dynamodb:${local.region_account}:table/meeting-notes-terraform-state-locks", Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = local.state_lock_keys } } }
     ]
@@ -143,9 +147,8 @@ resource "aws_iam_role_policy" "production_terraform" {
   lifecycle { prevent_destroy = true }
 }
 
-# The Plan role: read-only apart from the state lock and the secret reads a
-# refresh needs. Only the Terraform Plan workflow in production can assume it,
-# so approving a plan never grants a write.
+# The Plan role may read refresh inputs, lock state and create write-once
+# plan-store objects. Only Terraform Plan in production can assume it.
 resource "aws_iam_role" "production_terraform_plan" {
   count                = var.enable_production_terraform_role ? 1 : 0
   name                 = "${local.terraform_role_name}-plan"
@@ -180,6 +183,7 @@ resource "aws_iam_role_policy" "production_terraform_plan" {
     Version = "2012-10-17"
     Statement = [
       { Sid = "StateLock", Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:DeleteItem"], Resource = "arn:aws:dynamodb:${local.region_account}:table/meeting-notes-terraform-state-locks", Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = local.state_lock_keys } } },
+      merge({ Sid = "PlanStore" }, local.plan_store_statement),
       { Sid = "SecretRefresh", Effect = "Allow", Action = "secretsmanager:GetSecretValue", Resource = "arn:aws:secretsmanager:${local.region_account}:secret:meeting-notes-prod/*" },
       { Sid = "SecretDecrypt", Effect = "Allow", Action = "kms:Decrypt", Resource = "arn:aws:kms:${local.region_account}:key/*", Condition = { StringEquals = { "kms:ViaService" = "secretsmanager.us-east-1.amazonaws.com", "aws:ResourceTag/Environment" = "prod" } } },
       { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:Export*", "s3:GetObject*", "s3vectors:QueryVectors", "s3vectors:GetVectors", "s3vectors:ListVectors"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-prod-*", "arn:aws:s3:::meeting-notes-prod-*/*", "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-prod-*/index/*"] }

@@ -27,22 +27,26 @@ test("only an enabled projection builds a package before the saved plan", () => 
   }
 });
 
-test("the search zip travels inside the encrypted reviewed plan and is never rebuilt by Apply", () => {
+test("the search zip travels inside the stored reviewed plan and is never rebuilt by Apply", () => {
   const steps = workflow("plan").jobs.plan.steps;
   const archive = readFileSync("_infra/search.tf", "utf8");
   expect(archive).toContain(
     'output_path = "${path.module}/search_projection.zip"',
   );
-  const encrypt = steps.find((step) => step.name === "Encrypt plan").run;
-  expect(encrypt).toContain(
-    'tar -czf "$RUNNER_TEMP/plan.tgz" tfplan $(ls *.zip 2>/dev/null)',
+  const store = steps.find((step) => step.name === "Store plan").run;
+  expect(store).toContain(
+    'tar -czf "$RUNNER_TEMP/plan.tar.gz" tfplan $(ls *.zip 2>/dev/null)',
   );
-  expect(encrypt).toContain("openssl enc -aes-256-cbc");
+  expect(store).toContain(
+    '--body "$RUNNER_TEMP/plan.tar.gz" --if-none-match "*"',
+  );
   const apply = workflow("apply").jobs.apply.steps;
   expect(
     apply.some((step) => /build-projection|yarn|npm/.test(step.run ?? "")),
   ).toBe(false);
   expect(
-    apply.find((step) => step.name === "Verify and decrypt plan").run,
-  ).toContain("tar -xz -C _infra");
+    apply.find((step) => step.name === "Download and verify plan").run,
+  ).toContain(
+    'tar -xzf "$RUNNER_TEMP/plan.tar.gz" -C _infra --no-same-owner $members',
+  );
 });
