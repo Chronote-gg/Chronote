@@ -9,6 +9,10 @@ import type {
   ResolvedConfigValue,
 } from "../config/types";
 import { coerceConfigValue } from "../config/validation";
+import {
+  buildModelSelectionKey,
+  RETIRED_TRANSCRIPTION_MODELS,
+} from "../config/modelChoices";
 import { getGlobalConfigValues } from "./appConfigService";
 import { listConfigOverridesForScope } from "./configOverridesService";
 
@@ -32,6 +36,25 @@ type OverrideMaps = {
 };
 
 const EMPTY_MAP = new Map<string, unknown>();
+
+const warnedRetired = new Set<unknown>();
+
+// A stored retired model resolves to the default instead of failing the snapshot.
+function coerceStoredValue(entry: ConfigEntry, value: unknown): unknown {
+  const coerced = coerceConfigValue(entry, value);
+  if (coerced.valid) return coerced.value;
+  const retired =
+    entry.key === buildModelSelectionKey("transcription") &&
+    RETIRED_TRANSCRIPTION_MODELS.some((model) => model === value);
+  if (!retired) throw new Error(`Invalid value for ${entry.key}.`);
+  if (!warnedRetired.has(value))
+    console.warn("Stored config value is retired; using the default.", {
+      key: entry.key,
+      value,
+    });
+  warnedRetired.add(value);
+  return entry.defaultValue;
+}
 
 export type ConfigResolveContext = {
   guildId?: string;
@@ -225,13 +248,7 @@ export async function resolveConfigSnapshot(
     let source: ResolvedConfigValue["source"] = fallbackSource;
     let gated = false;
 
-    if (value !== undefined) {
-      const coerced = coerceConfigValue(entry, value);
-      if (!coerced.valid) {
-        throw new Error(`Invalid value for ${entry.key}.`);
-      }
-      value = coerced.value;
-    }
+    if (value !== undefined) value = coerceStoredValue(entry, value);
 
     if (
       experimentalEnabled &&
@@ -410,13 +427,9 @@ export async function resolveGlobalConfigValues(): Promise<
     }
 
     const rawValue = (globalValues as Record<string, unknown>)[entry.key];
-    const coerced = coerceConfigValue(entry, rawValue);
-    if (!coerced.valid) {
-      throw new Error(`Invalid value for ${entry.key}.`);
-    }
     resolved.push({
       key: entry.key,
-      value: coerced.value,
+      value: coerceStoredValue(entry, rawValue),
       source: "appconfig",
     });
   });

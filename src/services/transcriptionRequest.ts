@@ -154,44 +154,49 @@ async function runAttempt(input: RequestInput): Promise<Transcription> {
   }
 }
 
-/**
- * Dictionary terms are user text, so a term the provider refuses would fail
- * every snippet in the server. A 400 on a request with keywords is retried
- * once without them, trading dictionary spelling for the transcript.
- */
+// A bad keyword gets HTTP 400 `invalid_value` with no `param` (observed
+// 2026-11-17); without this one term fails every snippet in the server.
+function keywordsRejected(error: unknown, request: RequestInput["request"]) {
+  return (
+    Boolean(request.keywords?.length) &&
+    error instanceof OpenAI.BadRequestError &&
+    error.code === "invalid_value" &&
+    error.param == null
+  );
+}
+
 export async function runTranscriptionRequest(
   input: RequestInput,
 ): Promise<Transcription> {
-  const { keywords, ...withoutKeywords } = input.request;
-  try {
-    return await runWithRetries(input);
-  } catch (error) {
-    if (!keywords?.length || !(error instanceof OpenAI.BadRequestError)) {
-      throw error;
-    }
-    input.signal.throwIfAborted();
-    recordTranscriptionKeywordsRejected(input.request.model);
-    console.warn("Transcription keywords rejected; retrying without them.", {
-      model: input.request.model,
-      keywordCount: keywords.length,
-    });
-    return await runWithRetries({ ...input, request: withoutKeywords });
-  }
-}
-
-async function runWithRetries(input: RequestInput): Promise<Transcription> {
   const generator = new ExponentialBackoff({
     initialDelay: TRANSCRIPTION_RETRY_INITIAL_DELAY_MS,
     exponent: TRANSCRIPTION_RETRY_EXPONENT,
     maxDelay: TRANSCRIPTION_RETRY_MAX_DELAY_MS,
   });
   let backoff: IBackoff<unknown> | undefined;
+  let request = input.request;
   for (let retryCount = 0; ; retryCount += 1) {
     input.signal.throwIfAborted();
     try {
-      return await runAttempt(input);
+      return await runAttempt({ ...input, request });
     } catch (error) {
       input.signal.throwIfAborted();
+      if (
+        retryCount < TRANSCRIPTION_MAX_RETRIES &&
+        keywordsRejected(error, request)
+      ) {
+        const { keywords, ...withoutKeywords } = request;
+        recordTranscriptionKeywordsRejected(request.model);
+        console.warn(
+          "Transcription keywords rejected; retrying without them.",
+          {
+            model: request.model,
+            keywordCount: keywords?.length,
+          },
+        );
+        request = withoutKeywords;
+        continue;
+      }
       const transient = isTransientTranscriptionFailure(error);
       if (!transient || retryCount === TRANSCRIPTION_MAX_RETRIES) {
         if (transient && error instanceof Error) {
@@ -213,6 +218,7 @@ type TranscriptionModelCapabilities = {
 
 // Verified against the API: gpt-transcribe takes `keywords` and a `languages`
 // list that replaces `language`; the older models reject both with HTTP 400.
+// Only gpt-transcribe is selectable; the other rows serve the eval's --model.
 const TRANSCRIPTION_MODEL_CAPABILITIES: Record<
   string,
   TranscriptionModelCapabilities

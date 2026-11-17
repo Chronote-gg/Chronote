@@ -11,6 +11,7 @@
 - OpenAI org/project IDs are optional (defaults empty).
 - Text generation uses the Responses API through `services/openaiTextService.ts`; keep one request path and remove superseded transports when migrating callers. Audio transcription, speech and image generation use their dedicated endpoints. Preserve saved model/parameter/prompt snapshots, cancellation, mention guards and per-caller fallbacks. See `docs/superpowers/specs/2026-10-21-responses-meeting-evaluation-design.md`.
 - `NOTES_MODEL` defaults to `gpt-6.1-sol` and controls notes generation only. `models.notes` can override it. Meeting summary, notes correction, transcription cleanup and image prompt roles keep independent `gpt-5.2` defaults through their existing `models.*` settings. Frozen DynamoDB v1 model, parameter and prompt snapshots remain authoritative for saved recordings.
+- Exception: recovery re-runs a frozen retired transcription model (`gpt-4o-transcribe`, `gpt-4o-mini-transcribe`) on the current default; the snapshot keeps the original model.
 - Notes default to low reasoning without temperature; honor compatible explicit
   `modelParams.notes.*` overrides. Notes requests using supported model profiles,
   including GPT-6.1 Sol, request explicit 30-minute cache control without

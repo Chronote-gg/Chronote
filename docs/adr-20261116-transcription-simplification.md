@@ -32,8 +32,9 @@ hurting transcripts:
 ## Decision
 
 1. Live snippet ASR sends one request per snippet to `models.transcription`
-   with no prompt. The default model is `gpt-transcribe`
-   (options `gpt-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`).
+   with no prompt. `gpt-transcribe` is the only selectable model; a stored
+   `gpt-4o-transcribe` or `gpt-4o-mini-transcribe` choice resolves to it with
+   one warning instead of invalidating the config.
    Requests keep `temperature: 0`, JSON output and logprobs for the guards.
    The per-server `transcription.language` setting stays, with its default
    changed from `en` to `auto`: auto sends no language hint, and a pinned
@@ -48,9 +49,10 @@ hurting transcripts:
    first). They go out on fast and slow passes unless speech detection in
    `enforce` mode assessed the snippet `uncertain` or was unavailable and
    admitted it anyway; with detection `off`, in `shadow` or on forced
-   admission every admitted snippet carries them. A request whose keywords
-   the provider rejects with HTTP 400 is retried once without them, so a bad
-   term costs dictionary spelling, not the snippet. A per-model capability
+   admission every admitted snippet carries them. A keyword rejection
+   (HTTP 400 `invalid_value` with no `param`) is retried once without them,
+   inside the request's four attempts, so a bad term costs dictionary
+   spelling, not the snippet. A per-model capability
    table decides the keyword and language fields; an unknown
    model throws.
 3. Delete the prompt echo gate, the vote and its second call, the ASR prompt
@@ -66,7 +68,8 @@ hurting transcripts:
    bytes.
 6. Saved recordings keep parsing: removed settings, prompts and processing
    fields are accepted and ignored. Recovery re-transcribes uncovered audio
-   with the frozen model and language, no prompt, and keywords rebuilt from
+   with the frozen model and language (a frozen retired model runs on
+   `gpt-transcribe`; the saved settings keep it), no prompt, and keywords rebuilt from
    the saved dictionary entries and saved budget, so the keywords themselves
    are not frozen. Stored config values for removed keys are ignored.
 
@@ -108,12 +111,11 @@ Negative:
   wrong-language runs. Servers that mostly speak one language other than
   English should pin it.
 
-- Rollback to `gpt-4o-transcribe` is one setting, `models.transcription`, but
-  that model without a language hint returned another language on 4 of 33
-  short private English clips (12%). It and `gpt-4o-mini-transcribe` reject
-  `keywords` with HTTP 400, so a rollback also loses dictionary spelling, and
-  both are deprecated with shutdown on 2027-02-26. It is a weaker rollback
-  than it looks.
+- Rolling the model back is no longer a setting; rollback means reverting
+  this change. Unprompted, `gpt-4o-transcribe` returned another language on
+  4 of 33 short private English clips (12%), and it and
+  `gpt-4o-mini-transcribe` reject `keywords` and are deprecated with shutdown
+  on 2027-02-26, so neither stays selectable.
 - Keywords in a language other than the speech can cost accuracy: the public
   Japanese clip sent with the English public dictionary was exact in 3 of 8
   runs, against 8 of 8 without keywords.
@@ -191,3 +193,6 @@ stored transcript has the term and an unprompted local model hears it.
 
 - Eval details and commands: `docs/transcription-eval.md`.
 - Pipeline description: `docs/audio-transcription.md`.
+- After deploy, audit stored `transcription.language` and
+  `models.transcription` values in server overrides and global AppConfig: a
+  stored `en` keeps forcing English.

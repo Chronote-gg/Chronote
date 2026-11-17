@@ -50,10 +50,12 @@ const CHAT_MODEL_OPTIONS = [
   "gpt-4o-mini",
 ];
 
-const TRANSCRIPTION_MODEL_OPTIONS = [
-  "gpt-transcribe",
-  "gpt-4o-mini-transcribe",
+const TRANSCRIPTION_MODEL_OPTIONS = ["gpt-transcribe"];
+// Unprompted these hallucinate on non-speech (ADR-20261116); stored or frozen
+// choices run on the default.
+export const RETIRED_TRANSCRIPTION_MODELS = [
   "gpt-4o-transcribe",
+  "gpt-4o-mini-transcribe",
 ];
 const IMAGE_MODEL_OPTIONS = ["dall-e-3"];
 const TTS_MODEL_OPTIONS = ["gpt-4o-mini-tts"];

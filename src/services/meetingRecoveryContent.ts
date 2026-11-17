@@ -29,6 +29,10 @@ import { createRecordingCheckpointService } from "./recordingCheckpointService";
 import { compileSavedChatPrompt } from "./savedRecordingPrompt";
 import { getTranscriptionTextQuality } from "../utils/transcriptionText";
 import { buildDictionaryPromptLines } from "../utils/dictionary";
+import {
+  MODEL_SELECTION_DEFAULTS,
+  RETIRED_TRANSCRIPTION_MODELS,
+} from "../config/modelChoices";
 import { chatContextVariables } from "./notesPromptService";
 import {
   transcribeContentSnippet,
@@ -176,6 +180,15 @@ export function transcriptionInput(
       "Original transcription inputs unavailable",
     );
   const settings = context.settings.value;
+  const frozenModel = settings.models.transcription.model;
+  // The saved settings keep the frozen model.
+  const superseded = RETIRED_TRANSCRIPTION_MODELS.includes(frozenModel);
+  if (superseded)
+    console.warn("Recovery transcription model superseded.", {
+      meetingId: context.capture.meetingId,
+      frozenModel,
+      model: MODEL_SELECTION_DEFAULTS.transcription,
+    });
   return {
     tempDirectory: artifacts?.directory,
     meetingId: context.capture.meetingId,
@@ -190,7 +203,11 @@ export function transcriptionInput(
     ).transcriptionKeywords,
     runtimeConfig: {
       transcription: settings.transcription,
-      modelChoices: { transcription: settings.models.transcription.model },
+      modelChoices: {
+        transcription: superseded
+          ? MODEL_SELECTION_DEFAULTS.transcription
+          : frozenModel,
+      },
     },
   };
 }

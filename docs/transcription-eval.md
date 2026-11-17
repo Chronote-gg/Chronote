@@ -4,7 +4,7 @@ This CLI runs repeated transcription passes against labeled audio and measures u
 
 ## Production pipeline corpus runs
 
-Use `--manifest` to compare the raw provider with the same audio gate, conversion, speech admission and transcript guards used by the bot. Pipeline mode sends one unprompted request per run with no language hint, as production does on the default `auto` setting, and grades it through the exported production `guardTranscription`. A manifest `dictionary` (or a case-level one for a case from another server) is turned into keywords by the production budget and sent through the production request builder unless enforced production speech admission assesses the clip as uncertain or unavailable. `--no-keywords` reproduces the path without them. No Langfuse dataset is required. Corpus tracing stays disabled and results stay in an ignored artifact directory.
+Use `--manifest` to compare the raw provider with the same audio gate, conversion, speech admission and transcript guards used by the bot. Pipeline mode sends one unprompted request per run through the production request builder and `guardTranscription`, with no language hint (the `auto` default). A manifest or case `dictionary` becomes keywords under the production budget and admission rule; `--no-keywords` omits them. No Langfuse dataset is required. Corpus tracing stays disabled and results stay in an ignored artifact directory.
 
 ```powershell
 npm run eval:transcription:corpus -- --speech
@@ -33,49 +33,9 @@ npm run eval:transcription -- --manifest test/fixtures/transcription-public/mani
 
 The corpus has 43 cases, so run both batches; each report's `complete` covers its own batch. Non-speech metrics exist only in batch 1, and the Japanese case should be read from `byTag["non-english"]`. It is a public `tune` set, never holdout evidence.
 
-Vary one thing at a time to compare variants: `--prompt-file test/fixtures/transcription-public/glossary-prompt.txt` (the former production prompt) or `terms-prompt.txt` (dictionary terms only), `--language en` (force a language hint; the default omits it), `--mode provider` (raw ASR with every gate off) and `--model`. Logprobs are requested from every `gpt-*` model; `whisper-1` runs without them. `--max-clip-seconds` allows up to 180 s.
+The summary adds `cer` for CJK references (kept out of `wer`), `speechMostlyDroppedRate`, `unwantedWordsPerSilenceRun`, and term scores `termMentions`, `termHits`, `termRecall` (exact spelling), `termInsertions` and `keywordRequests`.
 
-The summary adds `cer` for CJK references (kept out of `wer`), `speechMostlyDroppedRate` (under half the reference words), `unwantedWordsPerSilenceRun`, and dictionary term scores: `termMentions`, `termHits`, `termRecall` (exact spelling, case and punctuation ignored), `termInsertions` (a term in the output more often than in the reference) and `keywordRequests`.
-
-### New pipeline results, 2026-11-16
-
-Two runs per case, slow pass, speech detector enforced. Baseline A is the former path (`gpt-4o-transcribe`, glossary prompt, forced `en`, echo gate and vote). The new path sends no prompt and no language hint.
-
-| set                                               | A                      | `gpt-transcribe` | `gpt-4o-mini-transcribe` |
-| ------------------------------------------------- | ---------------------- | ---------------- | ------------------------ |
-| Public, original 25 cases, WER                    | 0.071                  | 0.036            | 0.052                    |
-| Public, 38 cases with short cuts, WER             | not run                | 0.048            | 0.068                    |
-| Public long segment, WER                          | 0.005                  | 0.005            | 0.005                    |
-| Public nonspeech hallucination                    | 0                      | 0                | 0                        |
-| Public term recall                                | 1.00                   | 0.55             | 0.46                     |
-| Private English meeting 1 (references agree), WER | 0.144                  | 0.073            | 0.077                    |
-| Private English meeting 2 (references agree), WER | 0.105                  | 0.068            | 0.090                    |
-| Private Japanese meeting, CER                     | 0.109                  | 0.106            | 0.106                    |
-| Private nonspeech hallucination rate              | 0 to 0.67              | 0                | 0                        |
-| Empty output on speech                            | 0                      | 0                | 0                        |
-| List price per audio minute                       | $0.006 plus vote calls | $0.0045          | $0.003                   |
-
-Public references are exact LibriSpeech and FLEURS text. Private references are local faster-whisper `large-v3` and `large-v3-turbo` drafts, not human checked. On the public human-referenced cases the ranking is `whisper-1` 0.033, new `gpt-transcribe` 0.036, new `gpt-4o-mini-transcribe` 0.052, baseline A 0.071, unprompted `gpt-4o-transcribe` 0.090 to 0.100. Term recall in this table dropped because the glossary was no longer sent; dictionary keywords below restore it.
-
-### Dictionary keywords, 2026-11-16
-
-Final code, `gpt-transcribe`, two runs per case, slow pass, speech detector enforced, both batches of the public corpus as it then stood (46 cases; three synthetic cases whose terms matched real names were removed afterwards). Before is `--no-keywords`.
-
-| set                                                  | before (no keywords) | after (keywords) |
-| ---------------------------------------------------- | -------------------- | ---------------- |
-| Public, 46 cases, WER                                | 0.070                | 0.014            |
-| Public, 8 synthetic dictionary-term sentences, WER   | 0.109                | 0.010            |
-| Public term recall, all cases                        | 20/50                | 48/50            |
-| Public term recall, synthetic sentences              | 8/28                 | 26/28            |
-| Public nonspeech hallucination                       | 0/14                 | 0/14             |
-| Public term insertions                               | 0                    | 2                |
-| Public Japanese CER                                  | 0                    | 0.071            |
-| Private meeting with a 4-term dictionary, WER        | 0.092                | 0.096            |
-| Private meeting nonspeech hallucination, 4-term dict | 0/24                 | 0/24             |
-
-Both insertions are one 1.2 s cut that starts on the tail of a preceding word: without keywords it reads "He replied", with them "Betsy replied". The Japanese case is FLEURS speech sent with the English public dictionary; repeated eight times outside the runner it was exact 8 of 8 without keywords and 3 of 8 with them, so keywords in another language than the speech can cost accuracy. Private meetings without a dictionary send identical requests before and after (English meeting WER 0.071, Japanese meeting CER 0.105, nonspeech hallucination 0). The measurement behind the 20-keyword cap and the speech-only admission is in [ADR-20261116](adr-20261116-transcription-simplification.md).
-
-On 19 public and 11 private short English clips (1 to 3 s), auto language produced no non-English output for `gpt-transcribe` or `gpt-4o-mini-transcribe` (0 of 90 pipeline runs). `gpt-4o-transcribe` without a language hint returned another language on 4 of 33 private runs, which matters for a rollback to that model.
+Results of the 2026-11-16 runs, including dictionary keywords, are in [ADR-20261116](adr-20261116-transcription-simplification.md).
 
 See [the October 13 findings and run instructions](analysis/2026-10-13-transcription-quality-evals.md) for the corpus format, optional speech detector, observed results, and release limits.
 

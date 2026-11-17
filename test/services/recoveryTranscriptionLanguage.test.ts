@@ -64,16 +64,23 @@ test.each([
   expect(request).not.toHaveProperty("language");
 });
 
-test("recovery with a frozen older model sends the singular language and no keywords", async () => {
-  const request = await recoveryRequest({
-    frozenLanguage: "ja",
-    model: "gpt-4o-transcribe",
-    dictionaryEntries: [{ term: "Kwylt" }],
-  });
-  expect(request.language).toBe("ja");
-  expect(request).not.toHaveProperty("languages");
-  expect(request).not.toHaveProperty("keywords");
-});
+test.each(["gpt-4o-transcribe", "gpt-4o-mini-transcribe"])(
+  "recovery frozen on retired %s runs on the default with saved language and keywords",
+  async (model) => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    const request = await recoveryRequest({
+      frozenLanguage: "ja",
+      model,
+      dictionaryEntries: [{ term: "Kwylt" }],
+    });
+    expect(request).toMatchObject({
+      model: "gpt-transcribe",
+      languages: ["ja"],
+      keywords: ["Kwylt"],
+    });
+    expect(request).not.toHaveProperty("language");
+  },
+);
 
 test("recovery sends the saved dictionary terms as keywords", async () => {
   const request = await recoveryRequest({

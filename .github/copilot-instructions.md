@@ -69,6 +69,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - OpenAI org/project IDs are optional (defaults empty).
 - Text generation uses the Responses API through `openaiTextService.ts`. Migrate callers together and delete superseded request paths. Preserve frozen recording settings, cancellation, mention checks and caller fallbacks; audio and image generation keep their dedicated endpoints.
 - `NOTES_MODEL` defaults to `gpt-6.1-sol` for notes only; other previously coupled roles retain independent `gpt-5.2` defaults. Existing `models.*` and compatible `modelParams.*` overrides still apply. Frozen DynamoDB v1 snapshots remain authoritative.
+- Exception: recovery re-runs a frozen retired transcription model on the current default.
 - Notes use low reasoning by default and omit temperature. Notes requests using
   supported model profiles, including GPT-6.1 Sol, request explicit 30-minute
   cache control without breakpoints, including continuations. Older overrides

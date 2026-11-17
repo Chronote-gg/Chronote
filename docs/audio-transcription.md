@@ -20,7 +20,7 @@ Chronote records voice audio, builds per speaker snippets, and runs transcriptio
 - A settled slow result is authoritative, including an empty one a guard suppressed. An earlier fast result never resurfaces for that snippet, so the compiled notes input, `transcript.json` segments and the live timeline agree.
 - Interjection splitting checks for a validated interjection snippet before finalizing other paused snippets.
 - Noise gate checks peak levels in short windows and skips snippets that are very quiet and lack speech-like peaks.
-- The ASR model is `models.transcription` (default `gpt-transcribe`; options `gpt-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`). Personal uploads use the same key. Requests send `temperature: 0`, `response_format: "json"` and `include: ["logprobs"]`, with no `prompt`, so the provider has no glossary text to echo back. Personal uploads send no keywords and no language hint.
+- The ASR model is `models.transcription` (only option `gpt-transcribe`; a stored retired `gpt-4o-transcribe` or `gpt-4o-mini-transcribe` resolves to it with one warning). Personal uploads use the same key. Requests send `temperature: 0`, `response_format: "json"` and `include: ["logprobs"]`, with no `prompt`, so the provider has no glossary text to echo back. Personal uploads send no keywords and no language hint.
 - What each model accepts comes from the capability table in `services/transcriptionRequest.ts`, never from guessing: `gpt-transcribe` takes `keywords` and a `languages` list (the API refuses `language` and `languages` together), while `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` reject both `keywords` and `languages` with HTTP 400 and take the singular `language`. An unknown model id throws.
 - Dictionary terms steer recognition as `keywords`: terms only, no definitions, chosen by `buildDictionaryPromptLines` (newest `updatedAt` first, then alphabetical) within `dictionary.maxEntries` and `dictionary.maxChars.transcription`, capped at 20 per request (`TRANSCRIPTION_KEYWORD_LIMIT`). Terms are whitespace-normalized, and a term containing `<` or `>` is skipped, because one such keyword makes the API reject the whole request. Fast and slow passes both send them. Definitions feed notes, cleanup, ask and other text prompts.
 - Keywords are sent when speech detection assessed the snippet as `speech` or enforced no decision (`off`, `shadow`, forced admission). They are withheld only when `enforce` mode ran and assessed the snippet `uncertain` or the detector was unavailable and the snippet was admitted anyway, because uncertain noise sent with keywords came back as a lone keyword. With detection off every admitted snippet carries them.
@@ -32,8 +32,9 @@ Each snippet request owns at most four ASR attempts, including
 the first. Only connection failures, timeouts and HTTP 408, 409, 429 or 5xx
 responses can retry. Cancellation, local input failures, other 4xx responses,
 quota exhaustion and an explicit `x-should-retry: false` are terminal.
-An HTTP 400 on a request that carried keywords is retried once without them,
-with a warning and `chronote_transcription_keywords_rejected_total`.
+A keyword rejection (HTTP 400 `invalid_value` with no `param`) is retried
+once without keywords, as one of the four attempts, with a warning and
+`chronote_transcription_keywords_rejected_total`. Other 400s stay terminal.
 Guards and attachment failures do not retry ASR.
 
 Each attempt opens and closes a fresh upload stream and disables SDK retries
@@ -168,7 +169,8 @@ All values are set via the config system. For the noise gate, only `enabled`, `a
 Stored values for removed keys (`transcription.promptEcho.enabled`, `transcription.vote.enabled`,
 `transcription.finalPass.enabled` and `models.transcriptionCoalesce`) are
 ignored. Saved recordings that carry them still parse and recover; recovery
-re-transcribes uncovered audio with the frozen model and language, no prompt,
+re-transcribes uncovered audio with the frozen model (a retired one runs on
+`gpt-transcribe`, logged once) and language, no prompt,
 and keywords rebuilt from the saved dictionary entries and saved
 `dictionary.maxChars.transcription` budget when the frozen model accepts them.
 

@@ -298,6 +298,7 @@ async function transcribeInternal(
     getMeetingModelOverrides(meeting),
   );
   const keywords = admittedKeywords(meeting.keywords, context.speechAdmission);
+  const language = meetingTranscriptionLanguage(meeting.runtimeConfig);
   const traceMetadata = {
     transcriptionQueueWaitMs: queueWaitMs,
     guildId: meeting.guild.id,
@@ -310,6 +311,8 @@ async function transcribeInternal(
     noiseGateEnabled: context.noiseGateEnabled,
     noiseGateMode: passMode,
     keywordCount: keywords.length,
+    transcriptionLanguage: language,
+    transcriptionLanguageHintSent: language !== "auto",
     ...speechAdmissionMetadata(context.speechAdmission),
   };
   const ledger = createTranscriptionAttemptLedger(traceMetadata.audioSeconds);
@@ -332,11 +335,7 @@ async function transcribeInternal(
           phase: context.speechPhase,
           audioSeconds: context.audioSeconds,
         }),
-      request: buildTranscriptionRequest(
-        modelChoice.model,
-        meetingTranscriptionLanguage(meeting.runtimeConfig),
-        keywords,
-      ),
+      request: buildTranscriptionRequest(modelChoice.model, language, keywords),
     });
     if (transcription.text.trim() && !transcription.logprobs?.length) {
       recordTranscriptionMissingLogprobs(modelChoice.model);
@@ -384,9 +383,10 @@ async function transcribeInternal(
       startActiveObservation(
         "transcription",
         async () => {
+          const observationInput = { transcriptionLanguage: language };
           updateActiveObservation(
             {
-              input: {},
+              input: observationInput,
               model: modelChoice.model,
               modelParameters: {
                 temperature: 0,
@@ -409,7 +409,10 @@ async function transcribeInternal(
                   if (!audioAttachment || meeting.signal.aborted) return;
                   updateActiveObservation(
                     {
-                      input: { audio: audioAttachment.media },
+                      input: {
+                        ...observationInput,
+                        audio: audioAttachment.media,
+                      },
                       metadata: {
                         audioAttachmentBytes: audioAttachment.byteLength,
                         audioAttachmentContentType: audioAttachment.contentType,

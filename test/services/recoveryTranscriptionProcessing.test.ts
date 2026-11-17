@@ -219,12 +219,20 @@ test("a recording saved by the previous version recovers without its removed sta
   });
   f.content.context = legacyContext;
   f.content.entries = [];
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   await recoverTranscript(f.content, f.reader, f.signal, (run) => run());
   const [input] = jest.mocked(transcribeContentSnippet).mock.calls[0];
   expect(input).not.toHaveProperty("prompt");
   expect(input.runtimeConfig?.modelChoices).toEqual({
-    transcription: "gpt-4o-transcribe",
+    transcription: "gpt-transcribe",
   });
+  expect(input.runtimeConfig?.transcription.language).toBe("en");
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(
+    "Recovery transcription model superseded.",
+    expect.objectContaining({ frozenModel: "gpt-4o-transcribe" }),
+  );
+  warn.mockRestore();
   expect(renderMixedPcmTracks).not.toHaveBeenCalled();
   expect(f.content.processing).toEqual({
     cleanup: "acknowledged",

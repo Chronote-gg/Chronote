@@ -1,5 +1,10 @@
 import { CONFIG_KEYS } from "../../src/config/keys";
-import { resolveConfigSnapshot } from "../../src/services/unifiedConfigService";
+import {
+  resolveGlobalConfigValues,
+  resolveConfigSnapshot,
+} from "../../src/services/unifiedConfigService";
+import * as appConfigService from "../../src/services/appConfigService";
+import { resolveModelChoicesByRole } from "../../src/services/modelChoiceService";
 import { resetMockStore } from "../../src/repositories/mockStore";
 import { setConfigOverrideForScope } from "../../src/services/configOverridesService";
 
@@ -66,5 +71,27 @@ describe("unifiedConfigService", () => {
     const premium = snapshot.values[CONFIG_KEYS.transcription.premiumEnabled];
     expect(premium.value).toBe(true);
     expect(premium.gated).toBeFalsy();
+  });
+
+  test("a retired transcription model stored anywhere resolves to the default", async () => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    jest.spyOn(appConfigService, "getGlobalConfigValues").mockResolvedValue({
+      "models.transcription": "gpt-4o-mini-transcribe",
+    });
+    expect(await resolveGlobalConfigValues()).toContainEqual(
+      expect.objectContaining({ value: "gpt-transcribe" }),
+    );
+    await setConfigOverrideForScope(
+      { scope: "server", guildId: "guild-1" },
+      "models.transcription",
+      "gpt-4o-transcribe",
+      "user-1",
+    );
+    const snapshot = await resolveConfigSnapshot({ guildId: "guild-1" });
+    expect(resolveModelChoicesByRole(snapshot).transcription).toBe(
+      "gpt-transcribe",
+    );
+    expect(console.warn).toHaveBeenCalledTimes(2);
+    jest.restoreAllMocks();
   });
 });

@@ -41,7 +41,7 @@ function expectPreservedTrace(f: TracingFixture) {
     { signal: f.signal, maxRetries: 0 },
   ]);
   expect(f.state).toMatchObject({
-    input: { audio: expect.anything() },
+    input: { transcriptionLanguage: "auto", audio: expect.anything() },
     model: "gpt-transcribe",
     modelParameters: {
       temperature: 0,
@@ -61,10 +61,11 @@ function expectPreservedTrace(f: TracingFixture) {
       transcriptionRequestCount: requests,
       transcriptionPricedRequestCount: requests,
       transcriptionUnpricedRequestCount: 0,
+      transcriptionLanguage: "auto",
+      transcriptionLanguageHintSent: false,
     },
   });
   expect(f.state.input).not.toHaveProperty("prompt");
-  expect(f.state.input).not.toHaveProperty("language");
   expect(f.inputClosed).toHaveBeenCalledTimes(requests);
   expect(f.mp3Deleted).toHaveBeenCalledTimes(1);
   expect(f.events.indexOf("mp3-deleted")).toBeLessThan(
