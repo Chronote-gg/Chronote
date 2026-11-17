@@ -53,6 +53,17 @@ run "delivery_parity" {
     error_message = "ReadOnlyAccess must never expose production resources, shared production state or another environment's saved plans."
   }
   assert {
+    condition = alltrue([for policy in [local.delivery_guardrails, aws_iam_role_policy.sandbox_terraform_plan[0].policy] :
+      one([for s in jsondecode(policy).Statement : s if s.Sid == "ProductionResources"]).NotAction == "iam:GetOpenIDConnectProvider" &&
+      one([for s in jsondecode(policy).Statement : s if s.Sid == "ProductionResources"]).Resource == "*" &&
+      one([for s in jsondecode(policy).Statement : s if s.Sid == "ProductionOidcMetadata"]).Effect == "Deny" &&
+      one([for s in jsondecode(policy).Statement : s if s.Sid == "ProductionOidcMetadata"]).Action == "iam:GetOpenIDConnectProvider" &&
+      one([for s in jsondecode(policy).Statement : s if s.Sid == "ProductionOidcMetadata"]).NotResource == "arn:aws:iam::${var.sandbox_account_id}:oidc-provider/token.actions.githubusercontent.com" &&
+      one([for s in jsondecode(policy).Statement : s if s.Sid == "ProductionOidcMetadata"]).Condition.StringEquals["aws:ResourceTag/Environment"] == "prod"
+    ])
+    error_message = "Only the exact shared GitHub OIDC metadata read bypasses the production tag deny; other reads and all writes remain denied."
+  }
+  assert {
     condition     = contains(one([for s in jsondecode(local.delivery_guardrails).Statement : s if s.Sid == "OwnIdentity"]).Resource, "arn:aws:iam::123456789012:policy/meeting-notes-sandbox-terraform*") && one([for s in jsondecode(local.delivery_guardrails).Statement : s if s.Sid == "OwnIdentity"]).Effect == "Deny" && alltrue([for s in jsondecode(local.delivery_policy).Statement : !can(regex("iam:", jsonencode(s.Action))) || s.Resource != "*"])
     error_message = "Apply cannot edit its own policies, Plan identity or OIDC trust, and IAM writes never target a wildcard resource."
   }
