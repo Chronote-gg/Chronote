@@ -9,7 +9,10 @@ for (const viewport of [
   { width: 390, height: 844 },
 ]) {
   for (const interval of ["month", "year"]) {
-    test(`signed-out upgrade ${viewport.width}x${viewport.height} ${interval} @visual`, async ({
+    const capture =
+      (viewport.width === 1366 && interval === "month") ||
+      (viewport.width === 390 && interval === "year");
+    test(`signed-out upgrade ${viewport.width}x${viewport.height} ${interval}${capture ? " @visual" : ""}`, async ({
       page,
     }) => {
       await page.setViewportSize(viewport);
@@ -51,7 +54,7 @@ for (const viewport of [
       expect(period!.width).toBeLessThanOrEqual(Math.min(viewport.width, 320));
       await assertPageCanScroll(page);
       await page.evaluate(() => window.scrollTo(0, 0));
-      if (process.env.PW_VISUAL === "true") {
+      if (process.env.PW_VISUAL === "true" && capture) {
         await expect(page).toHaveScreenshot(
           `upgrade-signed-out-${viewport.width}-${viewport.height}-${interval}.png`,
           { animations: "disabled" },

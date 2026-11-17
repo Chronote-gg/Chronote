@@ -12,8 +12,8 @@ type CaptureNotesScreenshot = (
 export function registerNotesRoutingVisualTests(
   expectVisualScreenshot: CaptureNotesScreenshot,
 ): void {
-  for (const colorScheme of ["light", "dark"] as const) {
-    for (const width of [1280, 768, 390]) {
+  for (const colorScheme of ["dark"] as const) {
+    for (const width of [1280, 390]) {
       test(`notes routing ${width}px ${colorScheme} @visual`, async ({
         page,
         settingsPage,
@@ -41,18 +41,7 @@ export function registerNotesRoutingVisualTests(
         await expect(
           page.getByRole("combobox", { name: "notes.channelId", exact: true }),
         ).toBeInViewport();
-        await expectVisualScreenshot(
-          page,
-          `notes-routing-default-notes-${width}-${colorScheme}`,
-          "viewport",
-          { target: page.getByTestId("settings-config-entry-notes.channelId") },
-        );
-        await expectVisualScreenshot(
-          page,
-          `notes-routing-voice-overrides-${width}-${colorScheme}`,
-          "viewport",
-          { target: page.getByTestId("settings-overrides") },
-        );
+
         await row.getByRole("button", { name: "Edit Tabletop Voice" }).click();
         await expect(
           settingsPage

@@ -51,6 +51,7 @@ const server=http.createServer(async (req,res)=>{
     readTranscriptPassageForUser:async()=>transcript,
   });
   const {executeAskAgent}=require('./src/services/askAgentService');
+  let clock=Date.UTC(2026,10,17,12,0); Date.now=()=>clock;
   const deltas=[],activities=[];
   const first=await executeAskAgent({principal:{userId:'user-a',serverIds:['server-a']},conversationId:'conversation-a',question:'What was decided?',selectedMeetings:[ref],onTextDelta:x=>deltas.push(x),onToolActivity:x=>activities.push(x)});
   assert.equal(requests,3); assert.deepEqual(activities,['search_transcripts','read_transcript_passage']);
@@ -77,8 +78,18 @@ const server=http.createServer(async (req,res)=>{
   assert.deepEqual(run.attributes['langfuse.trace.tags'],['feature:ask']);
   assert(!JSON.stringify(run.attributes).includes('What was decided?'));
   assert(!JSON.stringify(run.attributes).includes('PRIVATE_'));
-  revoked=true;
-  await executeAskAgent({principal:{userId:'user-a',serverIds:['server-a']},question:'Continue',history:first.history,provenance:first.provenance});
+  revoked=true; clock+=2*60_000;
+  const followup=await executeAskAgent({principal:{userId:'user-a',serverIds:['server-a']},question:'Continue',history:first.history,provenance:first.provenance});
+  const userText=body=>{const m=body.input.filter(m=>m.role==='user').at(-1);return typeof m.content==='string'?m.content:m.content.map(p=>p.text).join('');};
+  assert(!captured[0].input[0].content.includes('Current UTC time:'));
+  assert.equal(captured[0].input[0].content,captured[3].input[0].content);
+  assert.equal(userText(captured[3]),'Continue');
+  assert(first.history.some(m=>m.chronoteTimeContextAt===Date.UTC(2026,10,17,12,0)));
+  clock+=4*60_000;
+  await executeAskAgent({principal:{userId:'user-a',serverIds:['server-a']},question:'What about today?',history:followup.history,provenance:followup.provenance});
+  assert.equal(captured[0].input[0].content,captured[4].input[0].content);
+  assert(userText(captured[4]).includes('Current UTC time: 2026-11-17T12:06:00.000Z.'));
+  assert(userText(captured[4]).endsWith('What about today?'));
   assert(!JSON.stringify(captured[3].input).includes('PRIVATE_'));
   assert(!captured[3].input.some(x=>x.type==='function_call_output'));
   stopMode=true;
