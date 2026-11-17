@@ -66,14 +66,18 @@ test("resolves the configured notes default to Sol with low reasoning", async ()
   expect(resolved.params.notes?.samplingMode).toBe("reasoning");
   expect(resolved.getModelChoice("notes")).toEqual(resolved.notes);
   expect(resolved.choices).toMatchObject({
-    meetingSummary: "gpt-5.2",
-    notesCorrection: "gpt-5.2",
-    transcriptionCleanup: "gpt-5.2",
-    imagePrompt: "gpt-5.2",
+    meetingSummary: "gpt-6.1-sol",
+    notesCorrection: "gpt-6.1-sol",
+    transcriptionCleanup: "gpt-6.1-sol",
+    imagePrompt: "gpt-6.1-sol",
+    dictionaryTeaching: "gpt-6.1-terra",
+    liveVoiceGate: "gpt-6.1-terra",
     transcription: "gpt-transcribe",
   });
-  expect(resolved.getModelChoice("meetingSummary").model).toBe("gpt-5.2");
-  expect(resolved.getModelChoice("transcriptionCleanup").model).toBe("gpt-5.2");
+  expect(resolved.getModelChoice("meetingSummary").model).toBe("gpt-6.1-sol");
+  expect(resolved.getModelChoice("transcriptionCleanup").model).toBe(
+    "gpt-6.1-sol",
+  );
 });
 
 test("limits an explicit NOTES_MODEL override to notes generation", async () => {
@@ -82,10 +86,10 @@ test("limits an explicit NOTES_MODEL override to notes generation", async () => 
 
   expect(resolved.notes.model).toBe("gpt-6-luna");
   expect(resolved.getModelChoice("notes").model).toBe("gpt-6-luna");
-  expect(resolved.choices.meetingSummary).toBe("gpt-5.2");
-  expect(resolved.choices.notesCorrection).toBe("gpt-5.2");
-  expect(resolved.choices.transcriptionCleanup).toBe("gpt-5.2");
-  expect(resolved.choices.imagePrompt).toBe("gpt-5.2");
+  expect(resolved.choices.meetingSummary).toBe("gpt-6.1-sol");
+  expect(resolved.choices.notesCorrection).toBe("gpt-6.1-sol");
+  expect(resolved.choices.transcriptionCleanup).toBe("gpt-6.1-sol");
+  expect(resolved.choices.imagePrompt).toBe("gpt-6.1-sol");
 });
 
 test("preserves a saved server model and temperature profile over global defaults", async () => {

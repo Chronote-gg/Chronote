@@ -217,7 +217,7 @@ Portal sign-in reconnects expired sessions and returns to the requested page. It
 - Transcription flow and tuning: `docs/audio-transcription.md`.
 - Snippet ASR sends no prompt, and a language hint only when a server pins one; deterministic guards suppress hallucinated text on quiet or non-speech audio.
 - Feature toggle evaluation checklist: `docs/feature-toggles.md`.
-- OpenAI: gpt-transcribe for ASR (`models.transcription`), gpt-6.1-sol for notes, gpt-5.2 for summaries, cleanup, corrections and image prompts, gpt-5-mini for live gate, DALL-E 3 for images. `NOTES_MODEL` overrides notes generation only; other roles use their existing per-role settings.
+- OpenAI: gpt-transcribe for ASR (`models.transcription`), gpt-6.1-sol for notes, summaries, cleanup, corrections and image prompts, gpt-6.1-terra for dictionary teaching and the live gate, DALL-E 3 for images. `NOTES_MODEL` overrides notes generation only; other roles use their existing per-role settings.
 - Text generation uses OpenAI's Responses API through one shared service for notes, corrections, Ask, live-voice text decisions, captions and dictionary suggestions. See the [Responses and model evaluation design](docs/superpowers/specs/2026-10-21-responses-meeting-evaluation-design.md) for request contracts and model comparisons.
 - Prompt management and tracing: Langfuse for prompt versioning, tracing, and prompt sync scripts.
 - Langfuse transcription traces attach compressed MP3 snippets (mono 16 kHz VBR, 8 MB cap) for observability.

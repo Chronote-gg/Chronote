@@ -4,7 +4,7 @@
 
 - Runtime: Node.js 24.22.2, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
-- AI: openai SDK; gpt-transcribe for transcription (`models.transcription`); gpt-6.1-sol for notes; gpt-5.2 for summaries, cleanup, corrections and image prompts; gpt-5-mini for live gate; DALL-E 3 for images.
+- AI: openai SDK; gpt-transcribe for transcription (`models.transcription`); gpt-6.1-sol for notes, summaries, cleanup, corrections and image prompts; gpt-6.1-terra for dictionary teaching, the live gate and auto-record cancellation; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts. AMG (Grafana) service account token is auto-rotated via EventBridge + Lambda (see `_infra/grafana.tf` and `_infra/README.md`). Critical alerts (ECS down, ALB 5xx, unhealthy hosts, rotation failures, OpenAI quota or rate-limit rejections, processing retry worker failures) are sent via SNS email and optionally to a Discord channel via a separate Node.js Lambda (see `_infra/notifications.tf` and `_infra/README.md`).
 - Storage: AWS DynamoDB (tables: GuildSubscription, PaymentTransaction, StripeWebhookEvent, InteractionReceipt, ActiveMeeting, DeploymentControl, MeetingControlCommand, AccessLogs, RecordingTranscript, AutoRecordSettings, ServerContext, ChannelContext, DictionaryTable, MeetingHistory, MeetingUserIndex, PersonalMediaUploadJob, PersonalRecordingSegment, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.

@@ -172,8 +172,9 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
   expect(mockCreate).toHaveBeenCalledTimes(1);
   const call = mockCreate.mock.calls[0][0];
   expect(call.model).toBe(MODEL_SELECTION_DEFAULTS.meetingSummary);
-  expect(call.temperature).toBe(0);
-  expect(call.reasoning).toEqual({ effort: "none" });
+  expect(call.model).toBe("gpt-6.1-sol");
+  expect(call.temperature).toBeUndefined();
+  expect(call.reasoning).toEqual({ effort: "low" });
   expect(call.text.format).toEqual({ type: "json_object" });
   expect(call.max_output_tokens).toBe(160);
   expect(call.store).toBe(false);
@@ -188,6 +189,44 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
   expect(userPrompt).toContain("Previous summary label: Old label");
   expect(userPrompt).toContain("Notes:");
   expect(userPrompt).toContain("These are the notes.");
+});
+
+test("generateMeetingSummaries keeps a recording frozen on gpt-5.2", async () => {
+  const mockCreate = jest
+    .fn()
+    .mockResolvedValue(
+      completedTextResponse(
+        '{"summarySentence":"One sentence.","summaryLabel":"Weekly sync"}',
+      ),
+    );
+  mockResponsesClient(mockCreate);
+  jest.doMock("../../src/services/langfusePromptService", () => ({
+    __esModule: true,
+    getLangfuseChatPrompt: jest.fn().mockResolvedValue({
+      messages: [{ role: "system", content: "Summarize." }],
+      source: "langfuse",
+      langfusePrompt: { name: "summary", version: 1, isFallback: true },
+    }),
+  }));
+
+  const { generateMeetingSummaries } =
+    await import("../../src/services/meetingSummaryService");
+  await generateMeetingSummaries({
+    notes: "Notes",
+    serverName: "Chronote",
+    channelName: "general",
+    recentMeetingNames: "",
+    frozenModel: {
+      provider: "openai",
+      model: "gpt-5.2",
+      params: { temperature: 0, reasoning_effort: "none" },
+    },
+  });
+
+  const call = mockCreate.mock.calls[0][0];
+  expect(call.model).toBe("gpt-5.2");
+  expect(call.temperature).toBe(0);
+  expect(call.reasoning).toEqual({ effort: "none" });
 });
 
 test("generateMeetingSummaries returns empty object on error", async () => {

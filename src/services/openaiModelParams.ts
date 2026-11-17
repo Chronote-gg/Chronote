@@ -120,7 +120,7 @@ const resolveGpt6Capabilities = (
   const required = ["gpt-6.1-sol", "gpt-6-astra"].some((prefix) =>
     normalized.startsWith(prefix),
   );
-  const optional = ["gpt-6-sol", "gpt-6-luna"].some((prefix) =>
+  const optional = ["gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"].some((prefix) =>
     normalized.startsWith(prefix),
   );
   if (!required && !optional) return undefined;

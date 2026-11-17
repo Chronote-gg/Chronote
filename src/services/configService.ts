@@ -134,7 +134,7 @@ class ConfigService {
   // Live voice configuration
   readonly liveVoice = {
     mode: process.env.LIVE_VOICE_MODE || "off",
-    gateModel: process.env.LIVE_VOICE_GATE_MODEL || "gpt-5-mini",
+    gateModel: process.env.LIVE_VOICE_GATE_MODEL || "gpt-6.1-terra",
     responderModel: process.env.LIVE_VOICE_RESPONDER_MODEL || "gpt-4o-mini",
     ttsModel: process.env.LIVE_VOICE_TTS_MODEL || "gpt-4o-mini-tts",
     ttsVoice: process.env.LIVE_VOICE_TTS_VOICE || "alloy",

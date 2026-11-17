@@ -10,6 +10,7 @@ const EXPLICIT_CACHE_MODELS = [
   "gpt-6-luna",
   "gpt-6-astra",
   "gpt-6.1-sol",
+  "gpt-6.1-terra",
 ];
 const MODEL_SNAPSHOT_DATE = /^\d{4}-\d{2}-\d{2}$/;
 

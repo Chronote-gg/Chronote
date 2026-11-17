@@ -15,7 +15,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 
 - Runtime: Node.js 24.22.2, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
-- AI: openai SDK; gpt-transcribe for transcription; gpt-6.1-sol for notes; gpt-5.2 for summaries, cleanup, corrections and image prompts; gpt-5-mini for live gate; DALL-E 3 for images.
+- AI: openai SDK; gpt-transcribe for transcription; gpt-6.1-sol for notes, summaries, cleanup, corrections and image prompts; gpt-6.1-terra for dictionary teaching, the live gate and auto-record cancellation; DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts.
 - Storage: AWS DynamoDB (tables include MeetingHistory, MeetingUserIndex, PersonalMediaUploadJob, PersonalRecordingSegment, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
@@ -68,7 +68,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Remote MCP: `ENABLE_MCP` defaults true only when Discord OAuth is enabled, requires `OAUTH_SECRET`, and exposes `/mcp` on the API server. Use `MCP_PUBLIC_BASE_URL` for the external API origin so OAuth tokens are resource-bound to the public MCP endpoint.
 - OpenAI org/project IDs are optional (defaults empty).
 - Text generation uses the Responses API through `openaiTextService.ts`. Migrate callers together and delete superseded request paths. Preserve frozen recording settings, cancellation, mention checks and caller fallbacks; audio and image generation keep their dedicated endpoints.
-- `NOTES_MODEL` defaults to `gpt-6.1-sol` for notes only; other previously coupled roles retain independent `gpt-5.2` defaults. Existing `models.*` and compatible `modelParams.*` overrides still apply. Frozen DynamoDB v1 snapshots remain authoritative.
+- `NOTES_MODEL` defaults to `gpt-6.1-sol` for notes only; the other text roles have their own `models.*` defaults (`gpt-6.1-sol` or `gpt-6.1-terra`). Existing `models.*` and compatible `modelParams.*` overrides still apply. Frozen DynamoDB v1 snapshots remain authoritative.
 - Exception: recovery re-runs a frozen retired transcription model on the current default.
 - Notes use low reasoning by default and omit temperature. Notes requests using
   supported model profiles, including GPT-6.1 Sol, request explicit 30-minute

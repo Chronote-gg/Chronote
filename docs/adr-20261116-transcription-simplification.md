@@ -170,6 +170,21 @@ stored transcript has the term and an unprompted local model hears it.
   dictionary terms (984 of 29,698 stored segments in the four servers with a
   dictionary are exactly one term), so none is used.
 
+### Model defaults
+
+Default text models moved off the 5 series: meeting summary, notes
+correction, transcription cleanup and image prompt from `gpt-5.2` to
+`gpt-6.1-sol` (low reasoning, no temperature); dictionary teaching, the live
+voice gate and auto-record cancellation from `gpt-5-mini` to `gpt-6.1-terra`
+(dictionary teaching at temperature 0 with reasoning `none`, the others at
+low reasoning). The 5-series models stay selectable, and frozen recording
+snapshots keep their model and parameters. The meeting summary eval scored
+the same on both defaults; the other roles had a smoke check (3 synthetic
+calls per model for request acceptance and parsing), not a quality
+evaluation. Production sets `LIVE_VOICE_GATE_MODEL` through Terraform, so the
+gate and auto-record cancellation keep `gpt-5-mini` until that variable
+changes.
+
 ## Alternatives Considered
 
 - Keep the final pass with a stronger judge: re-run with `gpt-6.1-sol` and
