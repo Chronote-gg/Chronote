@@ -175,7 +175,7 @@ export function ConversationListPanel(props: ConversationListPanelProps) {
                       ? "No shared conversations yet."
                       : listMode === "archived"
                         ? "No archived conversations yet."
-                        : "Start by asking about a recent meeting."}
+                        : "Start by asking about a meeting."}
                   </Text>
                   {listMode === "shared" ? (
                     <Text size="xs" c="dimmed">

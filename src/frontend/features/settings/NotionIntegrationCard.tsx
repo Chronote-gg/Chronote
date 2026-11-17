@@ -302,6 +302,13 @@ function NotionStatusAlerts({
   automation,
   personal,
 }: NotionStatusAlertsProps) {
+  if (status?.configured && !status.userConnected && !automation) {
+    return (
+      <Text size="sm" c="dimmed">
+        Connect Notion to automatically export meeting notes. This is optional.
+      </Text>
+    );
+  }
   const alert = getStatusAlertState({ status, automation, personal });
   return (
     <Alert

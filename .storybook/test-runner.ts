@@ -8,11 +8,13 @@ const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const screenshotsDir = resolve(rootDir, "test", "storybook", "screenshots");
 
 const screenshotViewport = (id: string) =>
-  id.endsWith("-mobile")
-    ? { width: 390, height: 844 }
-    : id.endsWith("-tablet")
-      ? { width: 768, height: 900 }
-      : { width: 1280, height: 720 };
+  id.endsWith("-short")
+    ? { width: 1366, height: 600 }
+    : id.endsWith("-mobile")
+      ? { width: 390, height: 844 }
+      : id.endsWith("-tablet")
+        ? { width: 768, height: 900 }
+        : { width: 1280, height: 720 };
 const config: TestRunnerConfig = {
   async preVisit(page, context) {
     await page.setViewportSize(screenshotViewport(context.id));
@@ -21,6 +23,22 @@ const config: TestRunnerConfig = {
     await page.setViewportSize(screenshotViewport(context.id));
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(150);
+    if (context.id.startsWith("pages-upgradeplans--signed-out-upgrade-")) {
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const action = page
+        .getByTestId("upgrade-plan-basic")
+        .getByRole("button", { name: "Continue with Basic" });
+      await action.waitFor({ state: "visible", timeout: 5000 });
+      const box = await action.boundingBox();
+      assert.ok(
+        await action.isEnabled(),
+        "The plan action must allow Discord sign-in",
+      );
+      assert.ok(
+        box && box.y >= 0 && box.y + box.height <= page.viewportSize()!.height,
+        "The initial viewport must show the Basic action",
+      );
+    }
     if (
       [
         "meetings-unified--mobile",
@@ -70,7 +88,9 @@ const config: TestRunnerConfig = {
     await mkdir(screenshotsDir, { recursive: true });
     await page.screenshot({
       path: resolve(screenshotsDir, `${context.id}.png`),
-      fullPage: !context.id.startsWith("settings-notesdestination--"),
+      fullPage:
+        !context.id.startsWith("settings-notesdestination--") &&
+        !context.id.startsWith("pages-upgradeplans--signed-out-upgrade-"),
     });
   },
 };

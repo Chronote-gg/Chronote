@@ -146,6 +146,16 @@ run "policy_limits" {
     error_message = "The managed policy must fit the IAM 6,144 character limit and the inline policy the 10,240 limit."
   }
   assert {
+    condition = alltrue([
+      for arn in ["arn:aws:s3vectors:us-east-1:123456789012:bucket/meeting-notes-prod-*", "arn:aws:sqs:us-east-1:123456789012:meeting-notes-prod-*"] : contains(one([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : s if s.Sid == "NamedResources"]).Resource, arn)
+    ]) && one([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : s if s.Sid == "SearchProjectionMapping"]).Condition.ArnEquals["lambda:FunctionArn"] == "arn:aws:lambda:us-east-1:123456789012:function:meeting-notes-prod-search-projection"
+    error_message = "Search infrastructure grants stay on production names and mappings stay bound to the projection function."
+  }
+  assert {
+    condition     = alltrue([for policy in [aws_iam_role_policy.production_terraform[0].policy, aws_iam_role_policy.production_terraform_plan[0].policy] : contains(one([for s in jsondecode(policy).Statement : s if s.Sid == "CustomerData"]).Action, "s3vectors:QueryVectors") && contains(one([for s in jsondecode(policy).Statement : s if s.Sid == "CustomerData"]).Resource, "arn:aws:s3vectors:us-east-1:123456789012:bucket/meeting-notes-prod-*/index/*")])
+    error_message = "Neither Terraform role may read derived meeting content from vector indexes."
+  }
+  assert {
     condition = alltrue([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : alltrue([
       for r in flatten([s.Resource]) : startswith(r, "arn:aws:iam::123456789012:role/meeting-notes-prod-") || startswith(r, "arn:aws:iam::123456789012:policy/meeting-notes-prod-") || r == "arn:aws:iam::123456789012:role/vpc_flow_logs_role" || r == "arn:aws:iam::123456789012:role/aws-service-role/*"
     ]) if anytrue([for a in flatten([s.Action]) : startswith(a, "iam:")])])

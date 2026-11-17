@@ -1774,7 +1774,7 @@ resource "aws_ecs_task_definition" "app_task" {
           "awslogs-stream-prefix" = "ecs"
         }
       }
-      environment = [
+      environment = concat(local.search_runtime_environment, [
         {
           name  = "DISCORD_CLIENT_ID"
           value = var.DISCORD_CLIENT_ID
@@ -2067,7 +2067,7 @@ resource "aws_ecs_task_definition" "app_task" {
           name  = "POSTHOG_KEY"
           value = var.POSTHOG_KEY
         },
-      ]
+      ])
       secrets = [
         {
           name      = "DISCORD_BOT_TOKEN"
@@ -2972,10 +2972,12 @@ resource "aws_dynamodb_table" "chat_tts_usage_table" {
 
 # Meeting History Table
 resource "aws_dynamodb_table" "meeting_history_table" {
-  name         = "${local.name_prefix}-MeetingHistoryTable"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "guildId"
-  range_key    = "channelId_timestamp"
+  name             = "${local.name_prefix}-MeetingHistoryTable"
+  billing_mode     = "PAY_PER_REQUEST"
+  hash_key         = "guildId"
+  range_key        = "channelId_timestamp"
+  stream_enabled   = var.ENABLE_SEARCH_PROJECTION
+  stream_view_type = var.ENABLE_SEARCH_PROJECTION ? "NEW_AND_OLD_IMAGES" : null
 
   attribute {
     name = "guildId"

@@ -177,7 +177,7 @@ export const renderAskAnswer = (options: {
     if (!citation) return `[${parsed.index}]`;
     const url = buildPortalMeetingUrl({
       baseUrl: options.portalBaseUrl,
-      guildId: options.guildId,
+      guildId: citation.serverId ?? options.guildId,
       meetingId: citation.meetingId,
       eventId: citation.eventId,
     });

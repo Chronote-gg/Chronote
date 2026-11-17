@@ -49,6 +49,8 @@ locals {
     "arn:aws:ecs:${local.region_account}:*/meeting-notes-prod-*",
     "arn:aws:elasticloadbalancing:${local.region_account}:*/meeting-notes-prod-*",
     "arn:aws:secretsmanager:${local.region_account}:secret:meeting-notes-prod/*",
+    "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-prod-*",
+    "arn:aws:sqs:${local.region_account}:meeting-notes-prod-*",
   ]
   # The flow log role keeps its legacy unprefixed name in production.
   iam_roles = ["${local.iam_arn}:role/meeting-notes-prod-*", "${local.iam_arn}:role/vpc_flow_logs_role"]
@@ -79,7 +81,10 @@ locals {
   delivery_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      { Sid = "NamedResources", Effect = "Allow", Action = ["dynamodb:*", "s3:*", "logs:*", "cloudwatch:*", "sns:*", "lambda:*", "events:*", "ecr:*", "ecs:*", "elasticloadbalancing:*", "secretsmanager:*"], Resource = local.named_resources },
+      { Sid = "NamedResources", Effect = "Allow", Action = ["dynamodb:*", "s3:*", "s3vectors:*", "sqs:*", "logs:*", "cloudwatch:*", "sns:*", "lambda:*", "events:*", "ecr:*", "ecs:*", "elasticloadbalancing:*", "secretsmanager:*"], Resource = local.named_resources },
+      { Sid = "SearchProjectionMapping", Effect = "Allow", Action = ["lambda:CreateEventSourceMapping", "lambda:UpdateEventSourceMapping", "lambda:DeleteEventSourceMapping"], Resource = "arn:aws:lambda:${local.region_account}:event-source-mapping:*", Condition = { ArnEquals = { "lambda:FunctionArn" = "arn:aws:lambda:${local.region_account}:function:meeting-notes-prod-search-projection" } } },
+      { Sid = "SearchMappingTags", Effect = "Allow", Action = "lambda:TagResource", Resource = "arn:aws:lambda:${local.region_account}:event-source-mapping:*", Condition = { StringEquals = { "aws:RequestTag/Environment" = "prod" }, StringEqualsIfExists = { "aws:ResourceTag/Environment" = "prod" } } },
+      { Sid = "SearchMappingUntag", Effect = "Allow", Action = "lambda:UntagResource", Resource = "arn:aws:lambda:${local.region_account}:event-source-mapping:*", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "prod" } } },
       # These ARNs carry generated IDs, not names. Sandbox resources of these
       # types are protected by the inline SandboxResources deny instead.
       { Sid = "GeneratedIdResources", Effect = "Allow", Action = local.generated_id_actions, Resource = "*" },
@@ -131,7 +136,7 @@ resource "aws_iam_role_policy" "production_terraform" {
       { Sid = "PrivilegedPolicies", Effect = "Deny", Action = ["iam:AttachRolePolicy", "iam:AttachUserPolicy", "iam:AttachGroupPolicy"], Resource = "*", Condition = { ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::aws:policy/AdministratorAccess", "arn:aws:iam::aws:policy/IAMFullAccess", "arn:aws:iam::aws:policy/PowerUserAccess"] } } },
       { Sid = "BootstrapState", Effect = "Deny", Action = ["s3:PutObject", "s3:DeleteObject*"], Resource = "arn:aws:s3:::${local.state_bucket}/meeting-notes-terraform/*-bootstrap/*" },
       # ReadOnlyAccess would otherwise read meeting data, which Terraform never needs.
-      { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:Export*", "s3:GetObject*"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-prod-*", "arn:aws:s3:::meeting-notes-prod-*/*"] },
+      { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:Export*", "s3:GetObject*", "s3vectors:QueryVectors", "s3vectors:GetVectors", "s3vectors:ListVectors"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-prod-*", "arn:aws:s3:::meeting-notes-prod-*/*", "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-prod-*/index/*"] },
       { Sid = "SandboxResources", Effect = "Deny", Action = "*", Resource = "*", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "sandbox" } } }
     ]
   })
@@ -177,7 +182,7 @@ resource "aws_iam_role_policy" "production_terraform_plan" {
       { Sid = "StateLock", Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:DeleteItem"], Resource = "arn:aws:dynamodb:${local.region_account}:table/meeting-notes-terraform-state-locks", Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = local.state_lock_keys } } },
       { Sid = "SecretRefresh", Effect = "Allow", Action = "secretsmanager:GetSecretValue", Resource = "arn:aws:secretsmanager:${local.region_account}:secret:meeting-notes-prod/*" },
       { Sid = "SecretDecrypt", Effect = "Allow", Action = "kms:Decrypt", Resource = "arn:aws:kms:${local.region_account}:key/*", Condition = { StringEquals = { "kms:ViaService" = "secretsmanager.us-east-1.amazonaws.com", "aws:ResourceTag/Environment" = "prod" } } },
-      { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:Export*", "s3:GetObject*"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-prod-*", "arn:aws:s3:::meeting-notes-prod-*/*"] }
+      { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:Export*", "s3:GetObject*", "s3vectors:QueryVectors", "s3vectors:GetVectors", "s3vectors:ListVectors"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-prod-*", "arn:aws:s3:::meeting-notes-prod-*/*", "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-prod-*/index/*"] }
     ]
   })
 }

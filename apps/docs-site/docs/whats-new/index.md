@@ -7,6 +7,11 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Meeting search privacy notice (November 17)
+
+- We are preparing Ask search across accessible retained history on every plan. Search uses a private derived copy of titles, summaries, meeting identifiers and dates, tags, archive status, current notes and transcript passages in Amazon S3 Vectors, with embeddings produced by OpenAI. This notice must be published before the new indexing or embedding processing begins. It does not mean full-library indexing is complete.
+- Current access checks still apply. A partial-coverage notice means some meetings may be missing while indexing catches up. See the updated [Privacy Policy](/legal/privacy/#meeting-search).
+
 ### Smoother portal sign-in (November 12)
 
 - Expired sessions reconnect through Discord and return to the requested page. Returning users can skip another approval click when Discord recognizes their existing grant. The portal warns before leaving unfinished edits or an upload. See [Sign in to the portal](/getting-started/#sign-in-to-the-portal).

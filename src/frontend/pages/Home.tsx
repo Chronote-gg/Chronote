@@ -3,7 +3,6 @@ import { useMemo, useState } from "react";
 import { useIntroOfferExposure } from "../hooks/useIntroOfferExposure";
 import {
   Alert,
-  Badge,
   Button,
   Container,
   Group,
@@ -79,9 +78,9 @@ const PRICING_ROWS: PricingRow[] = [
   },
   {
     label: "Ask searches",
-    free: "Last 5 meetings",
-    basic: "Last 25 meetings",
-    pro: "Last 100 meetings",
+    free: "All accessible meetings",
+    basic: "All accessible meetings",
+    pro: "All accessible meetings",
   },
   {
     label: "Text to speech",
@@ -308,14 +307,7 @@ export default function Home() {
                     <Table.Tr>
                       <Table.Th />
                       <Table.Th>Free</Table.Th>
-                      <Table.Th style={recommendedCell}>
-                        <Group gap="xs" wrap="nowrap">
-                          <span>Basic</span>
-                          <Badge size="xs" variant="light">
-                            Best value
-                          </Badge>
-                        </Group>
-                      </Table.Th>
+                      <Table.Th style={recommendedCell}>Basic</Table.Th>
                       <Table.Th>Pro</Table.Th>
                     </Table.Tr>
                   </Table.Thead>
