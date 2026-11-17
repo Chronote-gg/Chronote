@@ -48,7 +48,7 @@ export const SearchContext: Story = {
     await userEvent.click(
       await canvas.findByRole("button", { name: "Add meeting context" }),
     );
-    const dialog = within(document.body).getByRole("dialog");
+    const dialog = await within(document.body).findByRole("dialog");
     await userEvent.type(
       within(dialog).getByRole("textbox", { name: "Find meeting context" }),
       "earlier",

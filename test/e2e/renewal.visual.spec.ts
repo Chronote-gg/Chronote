@@ -1,10 +1,8 @@
 import { test, expect } from "./fixtures";
 import { useIntroBilling } from "./billingMocks";
 import { annualSubscriber } from "../../src/frontend/pages/basicIntroFixtures";
-import { createRenewalFixture } from "../../src/frontend/pages/renewalFixtures";
 import { mockGuilds } from "./mockData";
 import { applyVisualDefaults, waitForVisualReady } from "./visualUtils";
-import type { RenewalView } from "../../src/types/renewal";
 import type { Page } from "@playwright/test";
 
 async function openBilling(page: Page) {
@@ -29,14 +27,9 @@ for (const viewport of views) {
       test.skip(!runVisual, "Visual regression disabled");
       await page.setViewportSize(viewport);
       await applyVisualDefaults(page);
-      const renewal = createRenewalFixture({
-        details: annualSubscriber,
-        cancellationAt: annualSubscriber.renewalAt,
-      });
       await useIntroBilling(page, {
         details: annualSubscriber,
         cancellationAt: annualSubscriber.renewalAt,
-        renewal,
       });
       await openBilling(page);
       await expect(page.getByTestId("billing-current-plan")).toBeVisible();
@@ -57,14 +50,9 @@ test("short billing page scrolls to its history and comparison actions", async (
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 480 });
-  const renewal: RenewalView = createRenewalFixture({
-    details: annualSubscriber,
-    cancellationAt: annualSubscriber.renewalAt,
-  });
   await useIntroBilling(page, {
     details: annualSubscriber,
     cancellationAt: annualSubscriber.renewalAt,
-    renewal,
   });
   await openBilling(page);
   await expect(page.getByTestId("renewal-off")).toBeVisible();
