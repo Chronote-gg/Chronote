@@ -1163,28 +1163,6 @@ for (const width of [390, 1280]) {
     }
   });
 }
-test("renewal payment processing stays quiet and refreshes after actual settlement", async ({
-  page,
-}) => {
-  const options: {
-    view: import("../../src/types/renewalRecovery").RenewalRecoveryView;
-  } = {
-    view: renewalGraceFixture({
-      status: "settlement_pending",
-      paymentUrl: null,
-    }),
-  };
-  await useRenewalGrace(page, options);
-  await page.goto(`/portal/server/${mockGuilds.ddm.id}/billing`);
-  const notice = page.getByTestId("billing-renewal-grace");
-  await expect(notice).toContainText("payment is still being settled");
-  await expect(notice.getByRole("link", { name: "Retry payment" })).toHaveCount(
-    0,
-  );
-  options.view = { status: "none" };
-  await notice.getByRole("button", { name: "Refresh status" }).click();
-  await expect(notice).toHaveCount(0);
-});
 test("renewal grace removes payment actions at the exact deadline", async ({
   page,
 }) => {

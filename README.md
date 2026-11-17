@@ -212,7 +212,7 @@ Portal sign-in reconnects expired sessions and returns to the requested page. It
 
 ## Backend / services
 
-- Bot + API: Node 24.22.2, Express 5. API routes are modularized under `src/api/` (billing, guilds). New typed API surface is tRPC at `/trpc` (routers in `src/trpc/`).
+- Bot + API: Node 24.22.3, Express 5. API routes are modularized under `src/api/` (billing, guilds). New typed API surface is tRPC at `/trpc` (routers in `src/trpc/`).
 - Voice capture: discord.js v14, @discordjs/voice/opus, prism-media.
 - Transcription flow and tuning: `docs/audio-transcription.md`.
 - Snippet ASR sends no prompt, and a language hint only when a server pins one; deterministic guards suppress hallucinated text on quiet or non-speech audio.

@@ -72,7 +72,7 @@ Close #527 in favour of this branch. Its unincorporated proposals are the ones
 already tracked above, so it adds no decision that #520 does not already hold
 open.
 
-## Remaining advisories assessed on 2026-11-02
+## Historical advisory assessment on 2026-11-02
 
 | Dependency      | Advisory and upstream limit                                                                                                                                  | Current exposure and follow-up                                                                                                                                                                                                                                     |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -84,3 +84,179 @@ open.
 These entries are tracked limitations, not dismissed or fixed alerts. Recheck the advisory database and actual dependency paths on each maintenance run. Do not infer that GitHub's alert count has cleared from a successful build or from this document.
 
 Cargo audit also reports `proc-macro-error` 1.0.4 as unmaintained ([RUSTSEC-2024-0370](https://rustsec.org/advisories/RUSTSEC-2024-0370.html)). It is inherited through the Linux GTK chain and is absent from the locked Windows target. Reassess it with that framework migration.
+
+## Maintenance assessment on 2026-11-11
+
+Historical assessment, superseded by the 2026-11-16 entry below.
+
+This refresh starts from current `master` and incorporates the compatible changes
+from [#585](https://github.com/Chronote-gg/Chronote/pull/585). Keep that PR open:
+its ONNX, Stripe, proxy middleware, Webpack Dev Server and protobufjs proposals
+still require the compatibility work described above. Node 24.22.2, TypeScript
+6, the speech engine inventory, Stripe API and patched DAVE JavaScript binding
+remain intentional pins.
+
+Refresh the coordinated AWS SDK 3.1166, Langfuse 6.1.1, Mantine 9.8 and tRPC
+11.28 packages, plus OpenAI 7.55, PostHog, Playwright 1.65, Storybook 10.6.7,
+Vite 8.3.8 and compatible transitive dependencies. All three tRPC packages now
+exist in the registry at the matching release. Preserve the Langfuse token
+accounting patch under its new versioned filename. AWS retry defaults remain
+three attempts in standard mode. The SDK normalizes aborted retry handling to
+`AbortError`; cancellation tests assert that stable error name and retain their
+actual transport-settlement, watchdog and request-count checks. Update the
+qualified quality-tool patch to v1.1.1 without changing scanner policy. Existing upload-artifact inputs retain
+archive behavior under v7.
+
+Refresh AWS provider locks to 6.72 and Grafana to 4.54. The audited AWS resource
+source files are byte-identical to 6.71 for the source-model review. Update the
+exact provider identity and model digest without broadening permission or plan
+allowances. Sandbox bootstrap retains its separate exact provider pin. No live
+Terraform operation is part of dependency maintenance.
+
+[#610](https://github.com/Chronote-gg/Chronote/pull/610) proposes Rand 0.10 for
+native DAVE. That literal change does not compile because `rand::rngs::OsRng`
+was removed. Retire the redundant direct Rand dependency and import the OS RNG
+through P256's existing `rand_core` re-export instead. This preserves the
+signing API, 32-byte private keys and 65-byte uncompressed public keys. Rust
+1.88 tests cover key parsing, signature verification and independent generation.
+Keep the patched DAVE fork and JavaScript binding at their qualified versions.
+Refresh its compatible Rust lockfile, the desktop lockfile and Boto3 1.44.
+
+### Current security limits
+
+The npm audit reports two low findings, Quill and deepmerge, with the limitations
+above. Fast XML Parser 5.12 fixes
+[GHSA-474x-hrwr-fgx4](https://github.com/advisories/GHSA-474x-hrwr-fgx4).
+The desktop npm audit reports no findings. The current Minimatch advisory
+[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+affects versions from 7 up to 11.0.1, so the historical 3.1.5 assessment above
+no longer matches its published affected range. Preserve legacy callers' API;
+modern copies resolve to a fixed release.
+
+The native DAVE Cargo audit decreases from twelve findings to eleven after the
+compatible crossbeam-epoch fix. Four findings involve packages in the Node
+binding's normal dependency tree:
+
+| Package               | Advisory                                                                                                                                               | Required fixed family |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------- |
+| crypto-bigint 0.5.5   | [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387.html)                                                                             | 0.7.6 or newer        |
+| libcrux-secrets 0.0.5 | [RUSTSEC-2026-0212](https://rustsec.org/advisories/RUSTSEC-2026-0212.html)                                                                             | 0.0.6 or newer        |
+| libcrux-sha3 0.0.8    | [RUSTSEC-2026-0207](https://rustsec.org/advisories/RUSTSEC-2026-0207.html), [RUSTSEC-2026-0208](https://rustsec.org/advisories/RUSTSEC-2026-0208.html) | 0.0.10 or newer       |
+
+Presence in the dependency tree does not establish execution of the affected
+operations. It also does not establish safety. These fixes cross the current
+cryptography dependencies' supported version ranges. Qualify a separate
+P256/OpenMLS/DAVE migration with wire interoperability and key compatibility
+before replacing these families.
+
+The other seven lockfile findings are in optional or other workspace paths:
+libcrux-aesgcm, RUSTSEC-2026-0209 and RUSTSEC-2026-0211;
+libcrux-chacha20poly1305, RUSTSEC-2026-0124;
+libcrux-kem, RUSTSEC-2026-0330 and RUSTSEC-2026-0331;
+and Pyo3, RUSTSEC-2026-0176 and RUSTSEC-2026-0177.
+All eleven predate this refresh. Compatible lockfile updates do not fix them.
+The desktop Cargo audit has no vulnerabilities but retains the Linux GLib
+unsoundness and unmaintained GTK-chain warnings described above. Native Cargo
+also reports unmaintained-package warnings; do not describe either audit as
+warning-free.
+
+GitHub's Dependabot-alert API returned HTTP 403 for this integration. Local
+package audits cannot verify or dismiss the repository's alert dashboard.
+Recheck these findings on each maintenance run and report them separately from
+build and CI results.
+
+Release references: [AWS SDK](https://github.com/aws/aws-sdk-js-v3/releases/tag/v3.1166.0),
+[Langfuse](https://github.com/langfuse/langfuse-js/releases/tag/v6.1.1),
+[tRPC](https://github.com/trpc/trpc/releases/tag/v11.28.0),
+[Playwright](https://github.com/microsoft/playwright/releases/tag/v1.65.0),
+[AWS provider](https://github.com/hashicorp/terraform-provider-aws/releases/tag/v6.72.0),
+and [quality tool](https://github.com/BASIC-BIT/quality-ratchet/releases/tag/v1.1.1).
+
+## Maintenance assessment on 2026-11-16
+
+Refresh the existing consolidation PR against current master. Use Node 24.22.3,
+including the Docker base, engine floor and speech acceptance runtime pin, for
+its HTTP/2 and TLS security fixes. The native ABI remains 137. Preserve the
+qualified ONNX 1.30 runtime and Rust 1.88 DAVE build route. Runtime evidence from
+24.22.2 is no longer accepted as current qualification.
+
+Compatible updates include AWS SDK 3.1169, Mantine 9.8.1, tRPC 11.28.3, OpenAI
+7.57, PostHog browser 1.450 and Node 5.74, Fast XML Parser 5.12.1, ESLint 10.15,
+Playwright 1.65.1, Prettier 3.10.1 and the matching tooling cohorts. Fast XML
+Parser incorporates dependency PR [#617](https://github.com/Chronote-gg/Chronote/pull/617),
+including its updated builder, entities, strnum and unsafe-property helpers.
+Retain the Langfuse 6.1.1 numeric-token accounting patch. Preserve current
+master's deployment simplification; obsolete artifact-upload steps are not
+restored for a dependency version bump.
+
+PostHog now represents unavailable flags as undefined rather than false. The
+application has no feature-flag getter or flag-hook callers, so its current
+capture consumers need no migration. Stripe, TypeScript, OpenTelemetry, ONNX,
+DAVE's patched JavaScript loader, KaTeX and the five outstanding upgrades in
+[#585](https://github.com/Chronote-gg/Chronote/pull/585) retain their documented
+compatibility constraints. Keep that PR open for its unincorporated changes.
+
+Refresh native and desktop Cargo locks within their supported dependency
+ranges, including Tauri 2.12.6 and CLI 2.12.5. Python uses Lizard 1.26.1 and
+Boto3 1.44.3; the known-bad Lizard 1.24.2 and 1.24.3 releases remain excluded.
+The newer parser handles TS/JS generic and callback syntax and Rust comments.
+Its full repository scan and thirteen offline Python tests pass.
+
+AWS provider 6.73 and Grafana 4.55 locks are refreshed. The twenty reviewed AWS
+resource implementations are unchanged from 6.72; the WAF breaking change
+applies to no configured resource. Recompute the source model over current
+master and the new lock, and require the exact installed provider without
+broadening any plan allowance. Sandbox retains AWS 6.69.1. See the
+[source-model audit](../terraform-meeting-source-model.md).
+
+Fresh npm audits report four low-severity occurrences across two advisories,
+Quill and deepmerge, with no published fix; desktop npm has none. Native Cargo
+still reports the same eleven vulnerabilities described above, including the
+four findings in normal Node binding dependencies. Desktop Cargo reports zero
+vulnerabilities. Both Rust audits retain informational maintenance warnings.
+No advisory is dismissed or suppressed. Passing build and CI checks do not
+establish that these outstanding security findings are resolved.
+
+Release references: [Node security release](https://github.com/nodejs/node/releases/tag/v24.22.3),
+[AWS SDK](https://github.com/aws/aws-sdk-js-v3/releases/tag/v3.1169.0),
+[Mantine](https://github.com/mantinedev/mantine/releases/tag/9.8.1),
+[tRPC](https://github.com/trpc/trpc/releases/tag/v11.28.3),
+[OpenAI](https://github.com/openai/openai-node/releases/tag/v7.57.0),
+[Playwright](https://github.com/microsoft/playwright/releases/tag/v1.65.1),
+[AWS provider](https://github.com/hashicorp/terraform-provider-aws/releases/tag/v6.73.0),
+and [Grafana provider](https://github.com/grafana/terraform-provider-grafana/releases/tag/v4.55.0).
+
+### Opus qualification and review follow-up
+
+The refresh includes `@discordjs/opus` 0.11.0 from dependency PR #585, crossing
+the previous 0.10 minor family. Voice 0.19.2 declares no Opus peer range; its
+dependency report resolves the installed codec alongside prism-media 1.3.5. A
+Node 24.22.3 Linux check loads the native `OpusEncoder` and performs a synthetic
+48 kHz stereo, 960-frame (20 ms) encode/decode round trip, both directly and
+through prism-media's capture encoder/decoder streams. The streamed round trip
+produces one packet and 3,840 nonzero PCM bytes. The 167 audio tests also pass.
+These offline checks establish loader and codec API compatibility, not live
+Discord interoperability or production acceptance.
+
+Bootstrap permission-source links now cite the installed application provider
+6.73.0. Preserve the sandbox root's independent 6.69.1 pin. The refreshed
+application provider lock retains hashes for Linux amd64/arm64, macOS
+amd64/arm64 and Windows amd64, including explicit platform `h1:` hashes.
+
+Smithy's retry abort race creates a fresh `AbortError` with message
+`Request aborted` and no cause; it does not preserve the injected transport
+message. Cancellation tests therefore assert that stable error name while
+retaining the actual transport-settlement, watchdog and exact request-count
+checks that establish provenance. Requiring the removed message would reject
+the SDK's supported behavior.
+
+### Minimatch fixed-version floor
+
+Raise all five scoped modern Minimatch resolution floors to 11.0.8. The former
+11.0.1 floor could admit the published vulnerable range on a future lock refresh;
+the previous lock also forced 11.0.4 onto a caller requesting 11.0.5. The 11.0.7
+release fixes quadratic wildcard compilation ([GHSA-cf2h-pxjq-68xw](https://github.com/isaacs/minimatch/security/advisories/GHSA-cf2h-pxjq-68xw));
+11.0.8 also bounds compiled-pattern cache weight ([GHSA-hqmv-qgp3-jx75](https://github.com/isaacs/minimatch/security/advisories/GHSA-hqmv-qgp3-jx75))
+and fixes literal escaping ([GHSA-c859-jr93-m5j4](https://github.com/isaacs/minimatch/security/advisories/GHSA-c859-jr93-m5j4))
+within the same supported API family. Preserve legacy
+3.1.5 consumers rather than forcing a new API across all callers.

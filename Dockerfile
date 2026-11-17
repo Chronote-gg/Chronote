@@ -4,7 +4,7 @@ COPY native/davey ./
 RUN npm_package_version=0.1.12 cargo build --locked --release -p snazzah_davey
 
 # Use an official Node.js runtime as a parent image
-FROM node:24.22.2-bookworm-slim
+FROM node:24.22.3-bookworm-slim
 
 # Install build tools necessary for node-gyp
 RUN apt-get update && apt-get install -y --no-install-recommends \

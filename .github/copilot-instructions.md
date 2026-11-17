@@ -13,7 +13,7 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 
 ## Tech stack
 
-- Runtime: Node.js 24.22.2, TypeScript.
+- Runtime: Node.js 24.22.3, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
 - AI: openai SDK; gpt-transcribe for transcription; gpt-6.1-sol for notes, summaries, cleanup, corrections and image prompts; gpt-6.1-terra for dictionary teaching, the live gate and auto-record cancellation (production pins the last two to gpt-5-mini through `LIVE_VOICE_GATE_MODEL` in Terraform); DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts.

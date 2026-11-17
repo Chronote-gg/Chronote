@@ -76,11 +76,11 @@ governs a shared-tool comparison.
 
 ## Local tool setup
 
-Use Node 24.22.2 or a newer Node 24 release. CI reads the exact version from `.nvmrc`; keep the Docker base and application engine floor aligned when changing it. Keep the tool separate from the application checkout. For example, in PowerShell:
+Use Node 24.22.3 or a newer Node 24 release. CI reads the exact version from `.nvmrc`; keep the Docker base and application engine floor aligned when changing it. Keep the tool separate from the application checkout. For example, in PowerShell:
 
 ```powershell
 git clone https://github.com/BASIC-BIT/quality-ratchet.git D:/tools/quality-ratchet
-git -C D:/tools/quality-ratchet checkout --detach a0dfcca184fd83f0a23762f29353c7772c17906f
+git -C D:/tools/quality-ratchet checkout --detach 394f47ae323e18291ba5a3136e2e28c0e5b035fb
 Push-Location D:/tools/quality-ratchet
 npm ci --ignore-scripts --omit=dev --include=optional
 Pop-Location
