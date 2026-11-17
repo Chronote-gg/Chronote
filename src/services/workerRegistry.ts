@@ -1,3 +1,4 @@
+import { emitMetric, LIFECYCLE_METRICS } from "../lifecycleMetrics";
 import {
   LEGACY_STANDBY_UNREADABLE_LOG,
   WORKER_ELIGIBLE_LOG,
@@ -92,6 +93,7 @@ export function createWorkerRegistry(deps: WorkerRegistryDeps) {
         instanceId: identity?.instanceId,
         release: identity?.release,
       });
+      emitMetric(LIFECYCLE_METRICS.workerEligible);
       lastEligibleLogMs = nowMs;
     }
     if (everEligible) return;

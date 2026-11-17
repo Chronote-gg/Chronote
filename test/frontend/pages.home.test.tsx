@@ -106,6 +106,7 @@ describe.each(["cards", "table"])("Home unavailable offer in %s", (layout) => {
         },
       });
       renderWithMantine(<Home />);
+      expect(screen.getAllByText(/All accessible meetings/)).toHaveLength(3);
       if (interval === "year")
         await userEvent.click(screen.getByText("Annual", { exact: true }));
       expect(screen.getByTestId("home-cta-basic")).toBeDisabled();

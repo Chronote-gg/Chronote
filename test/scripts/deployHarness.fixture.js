@@ -46,6 +46,7 @@ export function taskDefinition(revision, image) {
     registeredAt: "2030-01-01T00:00:00Z",
     registeredBy: "arn:aws:iam::000000000000:role/example",
     cpu: "512",
+    ephemeralStorage: { sizeInGiB: 60 },
     containerDefinitions: [
       {
         name: "bot",

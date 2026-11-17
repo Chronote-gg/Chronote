@@ -125,7 +125,6 @@ mock_provider "archive" {}
 
 variables {
   GITHUB_TOKEN       = "mock"
-  AWS_TOKEN_KEY      = "mock"
   DISCORD_CLIENT_ID  = "mock"
   ENABLE_ELASTICACHE = false
   ENABLE_API_ALB     = true
@@ -136,7 +135,7 @@ variables {
 run "production_identity_and_permissions" {
   command = plan
   plan_options {
-    target = [aws_iam_role_policy.production_deploy, aws_iam_role_policy.production_exec_channels, aws_iam_role_policy_attachment.production_deploy_routing, github_actions_environment_variable.production_deploy_role, github_actions_environment_variable.production_deploy_account]
+    target = [aws_iam_role_policy.production_deploy, aws_iam_role_policy.production_exec_channels, aws_iam_role_policy_attachment.production_deploy_routing, github_actions_environment_variable.production_deploy_role, github_actions_environment_variable.production_deploy_account, github_repository_environment_deployment_policy.production_deploy_master, github_actions_environment_variable.production_deploy]
   }
   variables {
     environment        = "prod"
@@ -147,17 +146,29 @@ run "production_identity_and_permissions" {
     error_message = "Trust must bind the provider in the deployment account."
   }
   assert {
-    condition = tomap(jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals) == tomap({
-      "token.actions.githubusercontent.com:aud"                 = "sts.amazonaws.com"
-      "token.actions.githubusercontent.com:sub"                 = "repo:Chronote-gg/Chronote:environment:production"
-      "token.actions.githubusercontent.com:repository_id"       = "12345"
-      "token.actions.githubusercontent.com:repository_owner_id" = "67890"
-      "token.actions.githubusercontent.com:ref"                 = "refs/heads/master"
-    })
-    error_message = "Only the exact production repository, owner, environment and master ref may assume."
+    condition = sort(keys(jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals)) == sort([
+      "token.actions.githubusercontent.com:aud",
+      "token.actions.githubusercontent.com:sub",
+      "token.actions.githubusercontent.com:repository_id",
+      "token.actions.githubusercontent.com:repository_owner_id",
+      "token.actions.githubusercontent.com:ref",
+      "token.actions.githubusercontent.com:workflow",
+      ]) && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == [
+      "repo:Chronote-gg/Chronote:environment:production",
+      "repo:Chronote-gg/Chronote:environment:production-deploy",
+    ] && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_id"] == "12345" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:repository_owner_id"] == "67890" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"] == "refs/heads/master" && jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:workflow"] == "Meeting Notes Bot Deploy"
+    error_message = "Only the exact repository, owner, deploy workflow, production or production-deploy environment and master ref may assume."
   }
   assert {
-    condition     = alltrue([for claim in ["repo:Chronote-gg/Chronote:environment:sandbox", "repo:foreign/Chronote:environment:production", "repo:Chronote-gg/Chronote:ref:refs/heads/master"] : claim != jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"]]) && alltrue([for ref in ["refs/heads/codex/repair", "refs/tags/master", "refs/heads/main"] : ref != jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"]])
+    condition     = github_repository_environment.production_deploy[0].environment == "production-deploy" && github_repository_environment.production_deploy[0].can_admins_bypass == false && length(github_repository_environment.production_deploy[0].reviewers) == 0 && github_repository_environment.production_deploy[0].deployment_branch_policy[0].custom_branch_policies && !github_repository_environment.production_deploy[0].deployment_branch_policy[0].protected_branches && github_repository_environment_deployment_policy.production_deploy_master[0].branch_pattern == "master"
+    error_message = "production-deploy must have no reviewers, no admin bypass and only master."
+  }
+  assert {
+    condition     = sort(keys(github_actions_environment_variable.production_deploy)) == sort(["AWS_REGION", "AWS_ACCOUNT_ID", "ECR_REPOSITORY", "ECS_CLUSTER", "ECS_SERVICE", "ECS_TASK_FAMILY", "SECRETS_PREFIX", "FRONTEND_BUCKET", "FRONTEND_DISTRIBUTION_ID", "DOCS_BUCKET", "DOCS_DISTRIBUTION_ID", "VITE_API_BASE_URL", "ECS_LOG_GROUP", "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN"]) && alltrue([for v in values(github_actions_environment_variable.production_deploy) : v.environment == "production-deploy"]) && github_actions_environment_variable.production_deploy["ECS_SERVICE"].value == "meeting-notes-prod-bot-service"
+    error_message = "production-deploy must carry the Terraform-managed deploy variables."
+  }
+  assert {
+    condition     = alltrue([for claim in ["repo:Chronote-gg/Chronote:environment:sandbox", "repo:foreign/Chronote:environment:production", "repo:Chronote-gg/Chronote:ref:refs/heads/master"] : !contains(jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"], claim)]) && alltrue([for ref in ["refs/heads/codex/repair", "refs/tags/master", "refs/heads/main"] : ref != jsondecode(aws_iam_role.production_deploy[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:ref"]])
     error_message = "Foreign environments, repositories, topic branches and tags must fail exact trust."
   }
   assert {
@@ -169,20 +180,12 @@ run "production_identity_and_permissions" {
     error_message = "Service writes must bind only the existing service."
   }
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "RuntimeAdmissionFence"]) == aws_iam_role.ecs_task_app_role.arn
-    error_message = "Fence writes must bind only the existing runtime role."
-  }
-  assert {
     condition     = toset(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "PassOnlyProductionRuntimeRoles"])) == toset([aws_iam_role.ecs_task_app_role.arn, "arn:aws:iam::123456789012:role/meeting-notes-prod-ecs-task-exec-role"]) && one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Condition.StringEquals["iam:PassedToService"] if s.Sid == "PassOnlyProductionRuntimeRoles"]) == "ecs-tasks.amazonaws.com"
     error_message = "PassRole must bind only the two existing ECS roles and ECS tasks."
   }
   assert {
     condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "DeploymentControlProtocol"]) == aws_dynamodb_table.deployment_control_table.arn
     error_message = "Receipts must reuse the existing deployment control table."
-  }
-  assert {
-    condition     = toset(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "ProductionObservationAndPreflight"])) == toset([aws_dynamodb_table.active_meeting_table.arn, aws_dynamodb_table.meeting_history_table.arn, aws_dynamodb_table.meeting_control_command_table.arn, aws_dynamodb_table.personal_media_upload_job_table.arn, aws_dynamodb_table.personal_recording_segment_table.arn, aws_dynamodb_table.guild_subscription_table.arn, aws_dynamodb_table.stripe_webhook_event_table.arn, aws_dynamodb_table.payment_transaction_table.arn])
-    error_message = "Observation must bind the eight reviewed existing tables."
   }
   assert {
     condition     = jsondecode(aws_iam_policy.deployment_routing[0].policy).Statement[0].Resource == [aws_lb_listener.api_https[0].arn] && aws_iam_role_policy_attachment.production_deploy_routing[0].policy_arn == aws_iam_policy.deployment_routing[0].arn
@@ -212,12 +215,12 @@ run "constructed_runtime_names_match_serving_resources" {
     error_message = "Constructed service and task family ARNs must name the serving resources."
   }
   assert {
-    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Condition.StringEquals["ecs:container-name"] if s.Sid == "RuntimePrincipalProbe"]) == jsondecode(aws_ecs_task_definition.app_task.container_definitions)[0].name && one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "ProductionImagePublish"]) == "arn:aws:ecr:us-east-1:123456789012:repository/${aws_ecr_repository.app_ecr_repo.name}"
-    error_message = "Constructed container and repository names must match the serving definitions."
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "ProductionImagePublish"]) == "arn:aws:ecr:us-east-1:123456789012:repository/${aws_ecr_repository.app_ecr_repo.name}"
+    error_message = "The constructed repository name must match the serving repository."
   }
   assert {
-    condition     = contains(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "PassOnlyProductionRuntimeRoles"]), "arn:aws:iam::123456789012:role/${aws_iam_role.ecs_task_execution_role.name}") && toset(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "RuntimeManagedPolicyReadback"])) == toset(concat([aws_iam_policy.dynamodb_access_policy.arn], [for p in [aws_iam_policy.kms_app_policy, aws_iam_policy.transcripts_s3_policy, aws_iam_policy.appconfig_access_policy, aws_iam_policy.bedrock_data_automation_policy, aws_iam_policy.bedrock_s3_policy] : "arn:aws:iam::123456789012:policy/${p.name}"]))
-    error_message = "Constructed execution role and managed policy ARNs must name the existing resources."
+    condition     = contains(one([for s in jsondecode(aws_iam_role_policy.production_deploy[0].policy).Statement : s.Resource if s.Sid == "PassOnlyProductionRuntimeRoles"]), "arn:aws:iam::123456789012:role/${aws_iam_role.ecs_task_execution_role.name}")
+    error_message = "The constructed execution role ARN must name the existing role."
   }
 }
 run "runtime_scope_never_reads_serving_service_or_task_definition" {
@@ -235,7 +238,10 @@ run "runtime_scope_never_reads_serving_service_or_task_definition" {
       aws_iam_role.production_introduction["prompt-guard"],
       aws_iam_role_policy.production_prompt_guard[0],
       aws_lb_target_group.api_tg[0],
-      aws_lb_target_group.api_spare_tg[0]
+      aws_lb_target_group.api_spare_tg[0],
+      github_repository_environment.production_deploy[0],
+      github_repository_environment_deployment_policy.production_deploy_master[0],
+      github_actions_environment_variable.production_deploy
     ]
   }
   variables {
@@ -288,6 +294,10 @@ run "runtime_scope_never_reads_serving_service_or_task_definition" {
   assert {
     condition     = alltrue([for document in [aws_iam_role_policy.production_deploy[0].policy, aws_iam_role_policy.production_prompt_guard[0].policy, aws_iam_role.production_introduction["prompt-guard"].assume_role_policy, aws_iam_role.production_deploy[0].assume_role_policy] : !strcontains(document, "should-not-be-read")])
     error_message = "Runtime targets must not depend on the serving service or task definition."
+  }
+  assert {
+    condition     = alltrue([for v in values(github_actions_environment_variable.production_deploy) : !strcontains(v.value, "should-not-be-read")]) && github_actions_environment_variable.production_deploy["FRONTEND_DISTRIBUTION_ID"].value == "EPRODFRONTEND"
+    error_message = "Deploy variables must not read the serving service, task definition or distributions."
   }
   # A planned distribution would fail its ID postcondition against these overrides.
   assert {
@@ -412,5 +422,80 @@ run "sandbox_deploy_retire_grants_stop_task_on_cluster_tasks_only" {
   assert {
     condition     = one([for s in jsondecode(aws_iam_role_policy.sandbox_deploy[0].policy).Statement : s.Resource if s.Sid == "RetireOlderTasks"]) == "arn:aws:ecs:us-east-1:123456789012:task/${aws_ecs_cluster.main.name}/*"
     error_message = "StopTask must bind only this cluster's tasks."
+  }
+}
+run "production_deploy_mirrors_production_variables" {
+  command = plan
+  plan_options {
+    target = [
+      github_actions_environment_variable.production_deploy,
+      github_actions_environment_variable.envvar_aws_region,
+      github_actions_environment_variable.envvar_ecr_repository,
+      github_actions_environment_variable.envvar_frontend_bucket,
+      github_actions_environment_variable.envvar_frontend_distribution_id,
+      github_actions_environment_variable.envvar_docs_bucket,
+      github_actions_environment_variable.envvar_docs_distribution_id,
+      github_actions_environment_variable.envvar_docs_site_url,
+      github_actions_environment_variable.envvar_docs_algolia_app_id,
+      github_actions_environment_variable.envvar_docs_algolia_api_key,
+      github_actions_environment_variable.envvar_docs_algolia_index_name,
+      github_actions_environment_variable.envvar_vite_api_base_url,
+      github_actions_environment_variable.envvar_ecs_cluster,
+      github_actions_environment_variable.envvar_ecs_service,
+      github_actions_environment_variable.envvar_ecs_task_family,
+      github_actions_environment_variable.envvar_ecs_log_group,
+      github_actions_environment_variable.envvar_secrets_prefix,
+      github_actions_environment_variable.production_deploy_role,
+      github_actions_environment_variable.production_deploy_account,
+    ]
+  }
+  variables {
+    environment              = "prod"
+    github_environment       = "production"
+    frontend_distribution_id = "EPRODFRONTEND"
+    docs_distribution_id     = "EPRODDOCS"
+    DOCS_SITE_URL            = "https://docs.example.test"
+    DOCS_ALGOLIA_APP_ID      = "APPID"
+    DOCS_ALGOLIA_API_KEY     = "x"
+    DOCS_ALGOLIA_INDEX_NAME  = "docs"
+  }
+  override_resource {
+    target          = aws_cloudfront_distribution.frontend
+    override_during = plan
+    values          = { id = "EPRODFRONTEND" }
+  }
+  override_resource {
+    target          = aws_cloudfront_distribution.docs
+    override_during = plan
+    values          = { id = "EPRODDOCS" }
+  }
+  assert {
+    condition = {
+      for v in values(github_actions_environment_variable.production_deploy) : v.variable_name => v.value
+      } == {
+      for v in concat(
+        [
+          github_actions_environment_variable.envvar_aws_region,
+          github_actions_environment_variable.envvar_ecr_repository,
+          github_actions_environment_variable.envvar_frontend_bucket,
+          github_actions_environment_variable.envvar_frontend_distribution_id,
+          github_actions_environment_variable.envvar_docs_bucket,
+          github_actions_environment_variable.envvar_docs_distribution_id,
+          github_actions_environment_variable.envvar_vite_api_base_url,
+          github_actions_environment_variable.envvar_ecs_cluster,
+          github_actions_environment_variable.envvar_ecs_service,
+          github_actions_environment_variable.envvar_ecs_task_family,
+          github_actions_environment_variable.envvar_ecs_log_group,
+          github_actions_environment_variable.envvar_secrets_prefix,
+        ],
+        github_actions_environment_variable.envvar_docs_site_url,
+        github_actions_environment_variable.envvar_docs_algolia_app_id,
+        github_actions_environment_variable.envvar_docs_algolia_api_key,
+        github_actions_environment_variable.envvar_docs_algolia_index_name,
+        github_actions_environment_variable.production_deploy_role,
+        github_actions_environment_variable.production_deploy_account,
+      ) : v.variable_name => v.value
+    }
+    error_message = "production-deploy must carry exactly the production Terraform variables and values."
   }
 }

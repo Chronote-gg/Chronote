@@ -29,7 +29,11 @@ import { claimSummaryUpgrade } from "../../src/services/summaryUpgradeService";
 import type { MeetingData } from "../../src/types/meeting-data";
 import type { MeetingHistory } from "../../src/types/db";
 import { listAllMeetingsForGuildService } from "../../src/services/meetingHistoryService";
-import { buildSummaryUpgradeBody } from "../../src/utils/summaryUpgrade";
+import {
+  buildSummaryUpgradeBody,
+  isSummaryUpgradeField,
+  SUMMARY_UPGRADE,
+} from "../../src/utils/summaryUpgrade";
 
 const mockGetSubscription = jest.fn();
 const claim = jest.mocked(tryCreateInteractionReceipt);
@@ -279,7 +283,19 @@ test.each([
   "formats %s seconds without minutes after the first hour",
   (seconds, duration) => {
     expect(buildSummaryUpgradeBody(seconds as number)).toBe(
-      `Your server has recorded ${duration} across its saved meetings. Upgrade for more recording time and answers from more past meetings. Your subscription also helps keep Chronote running.`,
+      `Your server has recorded ${duration} across its saved meetings. Upgrade for more recording time. Your subscription also helps keep Chronote running.`,
     );
   },
 );
+
+test("recognizes an existing upgrade footer after removing the old Ask reward", () => {
+  expect(
+    isSummaryUpgradeField({
+      name: SUMMARY_UPGRADE.heading,
+      value: buildSummaryUpgradeBody(60).replace(
+        "Upgrade for more recording time.",
+        "Upgrade for more recording time and answers from more past meetings.",
+      ),
+    }),
+  ).toBe(true);
+});

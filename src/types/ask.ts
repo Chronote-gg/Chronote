@@ -1,6 +1,7 @@
 export type AskMessageRole = "user" | "chronote";
 export type AskConversationVisibility = "private" | "server" | "public";
 export type AskCitation = {
+  serverId?: string;
   index: number;
   meetingId: string;
   eventId?: string;

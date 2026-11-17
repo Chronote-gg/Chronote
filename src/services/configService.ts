@@ -33,6 +33,7 @@ class ConfigService {
   };
 
   readonly runtime = {
+    role: process.env.RUNTIME_ROLE || "",
     ecs: Boolean(
       process.env.ECS_CONTAINER_METADATA_URI_V4 ||
       process.env.ECS_AGENT_URI ||
@@ -195,9 +196,26 @@ class ConfigService {
     ),
   };
 
+  // Derived search is enabled only after resource configuration and backfill.
+  readonly search = {
+    enabled: process.env.SEARCH_ENABLED === "true",
+    generation: process.env.SEARCH_GENERATION || "v1",
+    meetingIndexArn: process.env.SEARCH_MEETING_INDEX_ARN || "",
+    transcriptIndexArn: process.env.SEARCH_TRANSCRIPT_INDEX_ARN || "",
+    stateTableName: process.env.SEARCH_STATE_TABLE_NAME || "",
+    historyTableName:
+      process.env.SEARCH_HISTORY_TABLE_NAME ||
+      `${process.env.DDB_TABLE_PREFIX || ""}MeetingHistoryTable`,
+    openaiSecretArn: process.env.OPENAI_API_KEY_SECRET_ARN || "",
+    langfusePublicKeySecretArn:
+      process.env.LANGFUSE_PUBLIC_KEY_SECRET_ARN || "",
+    langfuseSecretKeySecretArn:
+      process.env.LANGFUSE_SECRET_KEY_SECRET_ARN || "",
+  };
+
   // Ask/Recall configuration
   readonly ask = {
-    maxMeetings: parseInt(process.env.ASK_MAX_MEETINGS || "25", 10),
+    agentEnabled: process.env.ASK_AGENT_ENABLED === "true",
   };
 
   // Subscription / tier overrides
@@ -432,6 +450,32 @@ class ConfigService {
   }
 
   private validateConfig() {
+    if (this.runtime.role === "search-projection") {
+      const required = [
+        ["SEARCH_GENERATION", this.search.generation],
+        ["SEARCH_MEETING_INDEX_ARN", this.search.meetingIndexArn],
+        ["SEARCH_TRANSCRIPT_INDEX_ARN", this.search.transcriptIndexArn],
+        ["SEARCH_STATE_TABLE_NAME", this.search.stateTableName],
+        ["SEARCH_HISTORY_TABLE_NAME", this.search.historyTableName],
+        ["TRANSCRIPTS_BUCKET", this.storage.transcriptBucket],
+        [
+          "OPENAI_API_KEY or OPENAI_API_KEY_SECRET_ARN",
+          this.openai.apiKey || this.search.openaiSecretArn,
+        ],
+      ];
+      const missing = required
+        .filter(([, value]) => !value)
+        .map(([name]) => name);
+      if (missing.length)
+        throw new Error(
+          `Missing required projection configuration: ${missing.join(", ")}`,
+        );
+      if (Boolean(this.langfuse.publicKey) !== Boolean(this.langfuse.secretKey))
+        throw new Error(
+          "Both Langfuse keys are required when tracing is configured.",
+        );
+      return;
+    }
     const required = this.mock.enabled
       ? []
       : [

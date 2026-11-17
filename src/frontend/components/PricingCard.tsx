@@ -52,9 +52,6 @@ type PricingCardProps = {
   introOffer?: BasicIntroOffer;
 };
 
-const resolveBadgeLabel = (highlighted: boolean, badge?: string) =>
-  highlighted ? (badge ?? "Best value") : badge;
-
 const resolveButtonVariant = (
   highlighted: boolean,
   ctaProps?: PricingCtaProps,
@@ -104,7 +101,6 @@ export function PricingCard({
   terms,
   introOffer,
 }: PricingCardProps) {
-  const badgeLabel = resolveBadgeLabel(highlighted, badge);
   const buttonVariant = resolveButtonVariant(highlighted, ctaProps);
   const buttonGradient = resolveButtonGradient(highlighted, ctaProps);
   const buttonDisabled = resolveButtonDisabled(ctaProps, ctaDisabled);
@@ -129,15 +125,15 @@ export function PricingCard({
     >
       <Stack gap="md" style={{ flex: 1 }}>
         <Stack gap={6}>
-          <Badge
-            variant={highlighted ? "filled" : "light"}
-            color={badgeColor}
-            w="fit-content"
-            style={{ visibility: badgeLabel ? "visible" : "hidden" }}
-            aria-hidden={!badgeLabel}
-          >
-            {badgeLabel ?? "placeholder"}
-          </Badge>
+          {badge ? (
+            <Badge
+              variant={highlighted ? "filled" : "light"}
+              color={badgeColor}
+              w="fit-content"
+            >
+              {badge}
+            </Badge>
+          ) : null}
           <Title order={3}>{name}</Title>
           <Text c="dimmed">{description}</Text>
         </Stack>
@@ -150,21 +146,7 @@ export function PricingCard({
             {billingLabel ?? "Billed monthly"}
           </Text>
         </Stack>
-        <List
-          spacing="xs"
-          size="sm"
-          styles={{ item: { display: "block" } }}
-          icon={
-            <ThemeIcon color={highlighted ? "brand" : "gray"} size={20}>
-              <IconCheck size={12} />
-            </ThemeIcon>
-          }
-        >
-          {features.map((feature) => (
-            <List.Item key={feature}>{feature}</List.Item>
-          ))}
-        </List>
-        <Box mt="auto">
+        <Box>
           {terms ? <Box mb="sm">{terms}</Box> : null}
           {cta ? (
             <Button
@@ -185,6 +167,20 @@ export function PricingCard({
             </Text>
           ) : null}
         </Box>
+        <List
+          spacing="xs"
+          size="sm"
+          styles={{ item: { display: "block" } }}
+          icon={
+            <ThemeIcon color={highlighted ? "brand" : "gray"} size={20}>
+              <IconCheck size={12} />
+            </ThemeIcon>
+          }
+        >
+          {features.map((feature) => (
+            <List.Item key={feature}>{feature}</List.Item>
+          ))}
+        </List>
       </Stack>
     </Surface>
   );

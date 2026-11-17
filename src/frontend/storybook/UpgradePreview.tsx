@@ -29,6 +29,7 @@ import {
 import Upgrade from "../pages/Upgrade";
 import UpgradeServerSelect from "../pages/UpgradeServerSelect";
 import Billing from "../pages/Billing";
+import { useGuildContext } from "../contexts/GuildContext";
 import Join from "../pages/Join";
 import LibraryPage from "../pages/library/LibraryPage";
 import PromoLanding from "../pages/PromoLanding";
@@ -42,6 +43,15 @@ import {
   monthlyIntroOffer,
   annualIntroOffer,
 } from "../pages/basicIntroFixtures";
+
+function BillingPreview() {
+  const { guilds, selectedGuildId, setSelectedGuildId } = useGuildContext();
+  useEffect(() => {
+    if (guilds.length && selectedGuildId !== "example")
+      setSelectedGuildId("example");
+  }, [guilds, selectedGuildId, setSelectedGuildId]);
+  return <Billing />;
+}
 
 function UnifiedMeetingsPreview() {
   const search = meetingBrowseSearchSchema.parse(useSearch({ strict: false }));
@@ -452,7 +462,7 @@ export function UpgradePreview({
       createRoute({
         getParentRoute: () => root,
         path: "/portal/server/$serverId/billing",
-        component: Billing,
+        component: BillingPreview,
         validateSearch: (search) => search,
       }),
     ];

@@ -160,29 +160,9 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
       {
         Sid    = "DeploymentControlProtocol",
         Effect = "Allow",
-        Action = [
-          "dynamodb:GetItem",
-          "dynamodb:Query",
-          "dynamodb:Scan",
-          "dynamodb:PutItem",
-          "dynamodb:UpdateItem",
-          "dynamodb:ConditionCheckItem"
-        ],
+        # deploy.cjs reads the worker registry and nothing else.
+        Action   = ["dynamodb:Query"],
         Resource = aws_dynamodb_table.deployment_control_table.arn
-      },
-      {
-        Sid    = "SandboxObservationAndPreflight",
-        Effect = "Allow",
-        Action = [
-          "dynamodb:Scan"
-        ],
-        Resource = [
-          aws_dynamodb_table.active_meeting_table.arn,
-          aws_dynamodb_table.meeting_history_table.arn,
-          aws_dynamodb_table.meeting_control_command_table.arn,
-          aws_dynamodb_table.personal_media_upload_job_table.arn,
-          aws_dynamodb_table.personal_recording_segment_table.arn
-        ]
       },
       {
         Sid    = "ExistingTableKeysThroughDynamoDB",
@@ -196,14 +176,7 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
             "kms:ViaService"                                  = "dynamodb.${var.aws_region}.amazonaws.com",
             "kms:CallerAccount"                               = data.aws_caller_identity.current.account_id,
             "kms:EncryptionContext:aws:dynamodb:subscriberId" = data.aws_caller_identity.current.account_id,
-            "kms:EncryptionContext:aws:dynamodb:tableName" = [
-              aws_dynamodb_table.deployment_control_table.name,
-              aws_dynamodb_table.active_meeting_table.name,
-              aws_dynamodb_table.meeting_history_table.name,
-              aws_dynamodb_table.meeting_control_command_table.name,
-              aws_dynamodb_table.personal_media_upload_job_table.name,
-              aws_dynamodb_table.personal_recording_segment_table.name
-            ]
+            "kms:EncryptionContext:aws:dynamodb:tableName"    = aws_dynamodb_table.deployment_control_table.name
           }
         }
       },

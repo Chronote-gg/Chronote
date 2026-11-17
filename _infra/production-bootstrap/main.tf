@@ -92,22 +92,6 @@ variable "github_owner_id" {
     error_message = "Supply the independently verified immutable GitHub owner ID."
   }
 }
-variable "production_certificate_arn" {
-  type    = string
-  default = ""
-  validation {
-    condition     = !var.enable_production_terraform_role || can(regex("^arn:aws:acm:us-east-1:${var.production_account_id}:certificate/[a-f0-9-]{36}$", var.production_certificate_arn))
-    error_message = "Supply the exact production API certificate ARN."
-  }
-}
-variable "production_hosted_zone_id" {
-  type    = string
-  default = ""
-  validation {
-    condition     = !var.enable_production_terraform_role || can(regex("^Z[A-Z0-9]+$", var.production_hosted_zone_id))
-    error_message = "Supply the exact production hosted zone ID."
-  }
-}
 data "aws_caller_identity" "current" {
   count = var.enable_private_evidence_store ? 1 : 0
 }
@@ -127,7 +111,6 @@ locals {
   terraform_role_name = "meeting-notes-prod-github-terraform"
   terraform_role_arn  = "arn:aws:iam::${var.production_account_id}:role/${local.terraform_role_name}"
   app_role_arn        = "arn:aws:iam::${var.production_account_id}:role/meeting-notes-prod-ecs-task-app-role"
-  control_table_arn   = "arn:aws:dynamodb:us-east-1:${var.production_account_id}:table/meeting-notes-prod-DeploymentControlTable"
   state_bucket        = "meeting-notes-terraform-state-bucket"
   state_key           = "meeting-notes-terraform/state"
   capture_reads = [
@@ -140,6 +123,15 @@ output "bucket_policy" {
 }
 output "terraform_role_policy" {
   value = var.enable_production_terraform_role ? aws_iam_role_policy.production_terraform[0].policy : null
+}
+output "terraform_delivery_policy" {
+  value = var.enable_production_terraform_role ? aws_iam_policy.production_terraform_delivery[0].policy : null
+}
+output "terraform_apply_role_arn" {
+  value = var.enable_production_terraform_role ? aws_iam_role.production_terraform[0].arn : null
+}
+output "terraform_plan_role_arn" {
+  value = var.enable_production_terraform_role ? aws_iam_role.production_terraform_plan[0].arn : null
 }
 output "terraform_role_trust_policy" {
   value = var.enable_production_terraform_role ? aws_iam_role.production_terraform[0].assume_role_policy : null

@@ -1,6 +1,5 @@
 import { ChatInputCommandInteraction } from "discord.js";
 import { normalizeTags, parseTags } from "../utils/tags";
-import { getGuildLimits } from "../services/subscriptionService";
 import { answerQuestionService } from "../services/askService";
 import { config } from "../services/configService";
 import { renderAskAnswer } from "../services/askCitations";
@@ -23,19 +22,15 @@ export async function handleAskCommand(
     return;
   }
 
-  await interaction.deferReply();
+  await interaction.deferReply({ ephemeral: true });
 
   try {
-    const { limits } = await getGuildLimits(interaction.guildId);
-    const maxMeetings = limits.maxAskMeetings ?? config.ask.maxMeetings;
-
     const { answer, citations } = await answerQuestionService({
       guildId: interaction.guildId!,
       channelId: interaction.channelId!,
       question,
       tags: normalizeTags(parseTags(tagsInput)),
       scope,
-      maxMeetings,
       viewerUserId: interaction.user.id,
     });
     const portalBaseUrl = config.frontend.siteUrl.trim().replace(/\/$/, "");

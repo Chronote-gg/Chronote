@@ -10,12 +10,14 @@ import { parse } from "yaml";
 
 type Job = {
   needs?: string | string[];
+  environment?: string;
   concurrency?: { group: string; "cancel-in-progress": boolean | string };
 };
+type Workflow = { concurrency?: unknown; jobs: Record<string, Job> };
 
-const deployment = parse(
-  readFileSync(".github/workflows/deploy.yml", "utf8"),
-) as { concurrency?: unknown; jobs: Record<string, Job> };
+const readWorkflow = (name: string) =>
+  parse(readFileSync(`.github/workflows/${name}`, "utf8")) as Workflow;
+const deployment = readWorkflow("deploy.yml");
 
 const CI_JOB = "ci";
 const deployJobs = Object.entries(deployment.jobs).filter(
@@ -85,4 +87,38 @@ test("every deploy job depends on CI, directly or transitively", () => {
   for (const [id] of deployJobs) {
     expect(`${id} reaches ci: ${reachesCi(id)}`).toBe(`${id} reaches ci: true`);
   }
+});
+
+// Deploy jobs run under the repository variable DEPLOY_ENVIRONMENT (set to the
+// unreviewed production-deploy environment once it is provisioned) and fall
+// back to the reviewed production environment while the variable is unset.
+// retire_older_tasks is a boolean input (absent on push), so the gate is true
+// only for a dispatch that asked to retire. Every deploy job shares it, so such
+// a dispatch publishes nothing, docs included, without a human approval.
+const DEPLOY_ENVIRONMENT_EXPRESSION =
+  "${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}";
+test("a dispatch that retires older tasks runs every deploy job in production", () => {
+  expect(deployJobs.length).toBe(5);
+  for (const [id, job] of deployJobs)
+    expect(`${id}: ${job.environment}`).toBe(
+      `${id}: ${DEPLOY_ENVIRONMENT_EXPRESSION}`,
+    );
+  const input = (
+    deployment as unknown as {
+      on: {
+        workflow_dispatch: {
+          inputs: { retire_older_tasks: { type: string; default: boolean } };
+        };
+      };
+    }
+  ).on.workflow_dispatch.inputs.retire_older_tasks;
+  expect(input).toMatchObject({ type: "boolean", default: false });
+});
+
+// A pending Apply and a pending deploy in one group would displace each other,
+// so Apply keeps only its own group and the deploy waits for it instead.
+test("Terraform Apply does not take the backend rollout lock", () => {
+  expect(
+    readWorkflow("terraform-apply.yml").jobs.apply.concurrency,
+  ).toBeUndefined();
 });

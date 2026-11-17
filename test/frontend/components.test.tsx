@@ -162,7 +162,7 @@ describe("frontend components", () => {
         note="Best choice"
       />,
     );
-    expect(screen.getByText("Best value")).toBeInTheDocument();
+    expect(screen.queryByText(/Best value/i)).not.toBeInTheDocument();
     expect(screen.getByText("Upgrade")).toBeInTheDocument();
     expect(screen.getByText("Best choice")).toBeInTheDocument();
   });

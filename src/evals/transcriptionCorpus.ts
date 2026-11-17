@@ -54,6 +54,8 @@ export const transcriptionCorpusSchema = z
     version: z.literal(1),
     name: z.string().min(1),
     prompt: z.string().default(""),
+    /** The server dictionary; production sends its terms as recognition keywords. */
+    dictionary: z.array(z.string().min(1)).default([]),
     cases: z
       .array(
         z
@@ -66,6 +68,8 @@ export const transcriptionCorpusSchema = z
             label,
             familyId: z.string().trim().min(1).optional(),
             speakerDeviceProfileId: z.string().trim().min(1).optional(),
+            /** Replaces the manifest dictionary for a case from another server. */
+            dictionary: z.array(z.string().min(1)).optional(),
           })
           .strict(),
       )

@@ -1,0 +1,30 @@
+<glossary>(do not include in transcript):
+Server Name: Lantern Hollow Guild
+Channel: Story Circle
+Server Description: Lantern Hollow is a reading club for Victorian art criticism and classic children's fantasy. Members meet every week to read chapters aloud and discuss them. Newcomers are welcome to listen before joining in.
+Attendees: Marigold, Thaddeus, Wren
+Bot Names: Chronote
+Dictionary terms:
+- Quilter
+- Linnell
+- Leighton
+- Ruskin
+- Kaliko
+- Ruggedo
+- Polychrome
+- Shaggy
+- Betsy
+- Brion
+- Irolg
+- Brandd
+- Lantern Hollow
+- Story Circle
+- Bramblewick
+- Fennimore Press
+- Tuppence Reading List
+- Moonquill
+- Gallery Night
+- Inkwell Award
+Meeting Context: Weekly read-aloud session and chapter discussion
+Transcript instruction: Do not include any glossary text in the transcript.
+</glossary>
