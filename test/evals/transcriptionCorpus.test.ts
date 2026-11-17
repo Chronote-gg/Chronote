@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   referenceForCase,
   transcriptionCorpusSchema,
@@ -35,4 +38,20 @@ test("requires provenance and content hashes and rejects duplicate case IDs", ()
         .success,
     ).toBe(false);
   }
+});
+test("the public corpus manifest parses and pins every audio file", () => {
+  const dir = path.resolve(__dirname, "../fixtures/transcription-public");
+  const corpus = transcriptionCorpusSchema.parse(
+    JSON.parse(readFileSync(path.join(dir, "manifest.json"), "utf8")),
+  );
+  for (const item of corpus.cases)
+    expect([
+      item.id,
+      createHash("sha256")
+        .update(readFileSync(path.join(dir, item.file)))
+        .digest("hex"),
+    ]).toEqual([item.id, item.sha256]);
+  // glossary-prompt.txt is committed with CRLF line endings; the manifest stores LF.
+  const glossary = readFileSync(path.join(dir, "glossary-prompt.txt"), "utf8");
+  expect(corpus.prompt).toBe(glossary.replace(/\r\n/g, "\n"));
 });

@@ -22,6 +22,17 @@ Each manifest case requires an audio SHA-256, split, tags, and explicit speech/n
 
 Keep real recordings, references, and results in the private ops workspace. Use `--artifact-dir D:/bench/chronote-ops/.cache/transcription-eval`, with any explicit `--output` inside that directory. Production recording replay retains the private ops authorization requirement.
 
+### Public corpus and variant comparison
+
+`test/fixtures/transcription-public/` holds a committed public corpus (LibriSpeech and FLEURS speech under CC BY 4.0, generated non-speech, quiet, short, long-pause and Japanese cases) with a made-up server glossary as its grading prompt. Its README records provenance. Run it after `yarn build` with the same environment the other evals need (`scripts/mock.env.example` plus a real `OPENAI_API_KEY`):
+
+```powershell
+npm run eval:transcription -- --manifest test/fixtures/transcription-public/manifest.json --mode pipeline --pass-mode slow --speech-detector production --speech-mode enforce --runs 2 --max-requests 200 --batch-index 0
+npm run eval:transcription -- --manifest test/fixtures/transcription-public/manifest.json --mode pipeline --pass-mode slow --speech-detector production --speech-mode enforce --runs 2 --max-requests 200 --batch-index 1
+```
+
+The corpus has 43 cases, so run both batches; each report's `complete` covers its own batch. Non-speech metrics exist only in batch 1, and the Japanese case should be read from `byTag["non-english"]`. It is a public `tune` set, never holdout evidence.
+
 See [the October 13 findings and run instructions](analysis/2026-10-13-transcription-quality-evals.md) for the corpus format, optional speech detector, observed results, and release limits.
 
 ## Bundled speech detection and packaging proof
