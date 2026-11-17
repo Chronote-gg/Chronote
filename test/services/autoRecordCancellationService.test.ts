@@ -3,6 +3,7 @@ import { completedTextResponse } from "../../src/testSupport/openaiResponse";
 import type { ChatEntry } from "../../src/types/chat";
 import type { MeetingRuntimeConfig } from "../../src/config/types";
 import type { MeetingData } from "../../src/types/meeting-data";
+import { DEFAULT_NOISE_GATE_CONFIG } from "../../src/utils/audioNoiseGate";
 
 type LoadOptions = {
   mockEnabled?: boolean;
@@ -92,15 +93,7 @@ const buildRuntimeConfig = (
       fastFinalizationEnabled: false,
       interjectionEnabled: false,
       interjectionMinSpeakerSeconds: 1,
-      noiseGate: {
-        enabled: true,
-        windowMs: 20,
-        peakDbfs: -45,
-        minActiveWindows: 2,
-        minPeakAboveNoiseDb: 15,
-        applyToFast: true,
-        applyToSlow: true,
-      },
+      noiseGate: { ...DEFAULT_NOISE_GATE_CONFIG, enabled: true },
     },
     premiumTranscription: {
       enabled: false,
