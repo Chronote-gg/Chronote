@@ -388,10 +388,7 @@ async function queryEntitlementGrantsByGuild(params: {
     const result = await dynamoDbClient.send(command);
     items.push(...unmarshallEntitlementGrantItems(result.Items));
     exclusiveStartKey = result.LastEvaluatedKey;
-  } while (
-    exclusiveStartKey &&
-    remainingEntitlementGrantLimit(items, params.limit)
-  );
+  } while (exclusiveStartKey && (!params.limit || items.length < params.limit));
   return applyEntitlementGrantLimit(items, params.limit);
 }
 
@@ -425,7 +422,7 @@ async function scanEntitlementGrants(params?: {
     exclusiveStartKey = result.LastEvaluatedKey;
   } while (
     exclusiveStartKey &&
-    remainingEntitlementGrantLimit(items, params?.limit)
+    (!params?.limit || items.length < params.limit)
   );
   return applyEntitlementGrantLimit(items, params?.limit);
 }

@@ -448,11 +448,12 @@ export async function weeklyLimitNoticeAfterMeeting(input: {
 }): Promise<RecordingLimitInput | undefined> {
   const { signal } = input;
   signal?.throwIfAborted();
-  const resolved = await getGuildLimits(input.guildId);
+  const at = new Date();
+  const resolved = await getGuildLimits(input.guildId, at);
   signal?.throwIfAborted();
   const limitMinutes = resolved.limits.maxMeetingMinutesRolling;
   if (!limitMinutes) return undefined;
-  const usage = await getRollingUsageForGuild(input.guildId);
+  const usage = await getRollingUsageForGuild(input.guildId, at);
   signal?.throwIfAborted();
   const limitSeconds = limitMinutes * SECONDS_PER_MINUTE;
   const remainingMinutes = Math.max(
@@ -485,6 +486,7 @@ export async function weeklyLimitNoticeAfterMeeting(input: {
     Date.parse(usage.windowStartIso),
     getRollingWindowMs(),
     limitSeconds,
+    usage.nextUsageResetAtIso,
   );
   const nextLabel = nextAvailableAt
     ? `You can record again after <t:${Math.floor(Date.parse(nextAvailableAt) / MS_PER_SECOND)}:R>.`

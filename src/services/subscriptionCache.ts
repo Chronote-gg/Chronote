@@ -2,10 +2,13 @@ type CacheEntry = { value: unknown; expiresAt: number };
 
 const cache = new Map<string, CacheEntry>();
 
-export function getCachedGuildSubscription<T>(guildId: string): T | undefined {
+export function getCachedGuildSubscription<T>(
+  guildId: string,
+  at = Date.now(),
+): T | undefined {
   const entry = cache.get(guildId);
   if (!entry) return undefined;
-  if (entry.expiresAt <= Date.now()) {
+  if (entry.expiresAt <= at) {
     cache.delete(guildId);
     return undefined;
   }

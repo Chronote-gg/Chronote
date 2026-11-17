@@ -90,13 +90,14 @@ export function isGrantCurrentlyActive(
 
 export function toPublicEntitlementGrant(
   grant: EntitlementGrant | null | undefined,
+  at = new Date(),
 ): PublicEntitlementGrant | null {
   if (!grant) return null;
   return {
     grantId: grant.grantId,
     guildId: grant.guildId,
     tier: grant.tier,
-    status: getGrantEffectiveStatus(grant),
+    status: getGrantEffectiveStatus(grant, at),
     source: grant.source,
     startsAt: grant.startsAt,
     expiresAt: grant.expiresAt,
@@ -187,9 +188,10 @@ export async function revokeManualEntitlementGrant(input: {
 
 export async function getBestActiveEntitlementGrantForGuild(
   guildId: string,
+  at = new Date(),
 ): Promise<EntitlementGrant | null> {
   const grants = await listActiveGrantsForGuildOrEmpty(guildId);
-  const active = grants.filter((grant) => isGrantCurrentlyActive(grant));
+  const active = grants.filter((grant) => isGrantCurrentlyActive(grant, at));
   active.sort((a, b) => {
     const tierDiff = tierRank[b.tier] - tierRank[a.tier];
     if (tierDiff !== 0) return tierDiff;
