@@ -1,8 +1,10 @@
 import { config } from "../configService";
+import { z } from "zod";
 /** @jest-environment node */
 import {
   searchTranscriptsForUser,
   searchMeetingsForUser,
+  listMeetingsForUser,
   readMeetingNotesForUser,
   readTranscriptPassageForUser,
 } from "../meetingSearchService";
@@ -125,6 +127,39 @@ test("returns complete canonical old notes without tier or age truncation", asyn
     expect.objectContaining({ meetingIds: [ref] }),
   );
   expect(result.coverage.status).toBe("partial");
+});
+test.each([searchMeetingsForUser, listMeetingsForUser])(
+  "%p continues past a history row that fails canonical validation",
+  async (browse) => {
+    const incomplete = { ...ref, id: "incomplete" };
+    jest.mocked(listMcpMyMeetings).mockResolvedValue({
+      meetings: [incomplete, ref],
+      nextCursor: null,
+    } as Awaited<ReturnType<typeof listMcpMyMeetings>>);
+    getStrong.mockImplementation(async (key) =>
+      key.channelId_timestamp === incomplete.id
+        ? z.object({ participants: z.array(z.unknown()) }).parse({})
+        : record,
+    );
+
+    const page = await browse(principal, { query: "test" });
+    const meetings = "hits" in page ? page.hits : page.meetings;
+    expect(meetings.map((meeting) => meeting.meeting)).toEqual([ref]);
+    await expect(
+      readMeetingNotesForUser(principal, { meeting: incomplete }),
+    ).rejects.toMatchObject({ code: "not_available" });
+    expect(ensureMcpMeetingAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ meeting: record }),
+    );
+  },
+);
+test("propagates canonical storage failures", async () => {
+  const outage = new Error("Synthetic storage outage");
+  getStrong.mockRejectedValueOnce(outage);
+
+  await expect(
+    searchMeetingsForUser(principal, { query: "test" }),
+  ).rejects.toBe(outage);
 });
 test("query embedding outage preserves BM25 retrieval", async () => {
   jest.mocked(embedSearchText).mockRejectedValue(Error("synthetic outage"));

@@ -177,10 +177,18 @@ async function canonical(
   signal?.throwIfAborted();
   if (principal.restriction && ref.serverId !== principal.restriction.guildId)
     throw new MeetingSearchError("not_available", "Meeting is unavailable.");
-  const meeting = await getMeetingHistoryRepository().getStrong(
-    { guildId: ref.serverId, channelId_timestamp: ref.id },
-    signal,
-  );
+  let meeting: MeetingHistory | undefined;
+  try {
+    meeting = await getMeetingHistoryRepository().getStrong(
+      { guildId: ref.serverId, channelId_timestamp: ref.id },
+      signal,
+    );
+  } catch (error) {
+    // One incomplete history row must not block access to other meetings.
+    if (error instanceof z.ZodError)
+      throw new MeetingSearchError("not_available", "Meeting is unavailable.");
+    throw error;
+  }
   if (
     !meeting ||
     meeting.status === "cancelled" ||
