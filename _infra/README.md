@@ -27,7 +27,10 @@ which follows the same three steps.
 
 The standalone `_infra_state_mgmt` stack provisions the remote state bucket and
 lock table used by `_infra/main.tf`. The state bucket is private, versioned,
-encrypted with a dedicated KMS key, and has S3 public access blocking enabled.
+encrypted with SSE-S3 and has S3 public access blocking enabled. The stack's
+source also declares a dedicated KMS key for it, but its committed local state is
+stale and production uses SSE-S3 (checked 2026-11-17), so treat that source as
+unapplied.
 
 Apply this bootstrap stack before initializing the main infrastructure backend.
 

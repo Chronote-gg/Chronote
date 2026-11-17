@@ -12,7 +12,7 @@ Sandbox keeps one role and runs both workflows in the `sandbox` environment: it 
 
 ## Plan, review, apply
 
-1. **Plan.** Run `Terraform Plan` on `master` with the environment (`production` or `sandbox`; the workspace follows: `default` or `sandbox`). It runs one full `terraform plan -out` of `_infra`. If there are changes, it writes the saved plan and the Lambda archives as one bundle to the Terraform state bucket at `terraform-plans/<environment>/<run id>-<attempt>/plan.tar.gz`. The state bucket is private and already holds every secret the plan carries (in state), so storing the plan there adds no exposure and no secret to manage. Each key is written once (`If-None-Match`) and never replaced. A plan with no changes stores nothing and cannot be applied.
+1. **Plan.** Run `Terraform Plan` on `master` with the environment (`production` or `sandbox`; the workspace follows: `default` or `sandbox`). It runs one full `terraform plan -out` of `_infra`. If there are changes, it writes the saved plan and the Lambda archives as one bundle to the Terraform state bucket at `terraform-plans/<environment>/<run id>-<attempt>/plan.tar.gz`. The state bucket is private and already holds the credentials in state; the plan adds no secret to manage, but see [who can read stored plans](#who-can-read-stored-plans). Each key is written once (`If-None-Match`) and never replaced. A plan with no changes stores nothing and cannot be applied.
 2. **Review.** The run summary gives the commit SHA, the run attempt, the bundle's S3 key and SHA-256 (`plan_sha256`), and the counts to add, change, replace and destroy. Security-sensitive changes (IAM, KMS, bucket policies and public access blocks, security groups, Secrets Manager, GitHub environments and secrets) and every replace or destroy are flagged first, then every change. It shows addresses and actions only, never values. To read the full plan, see [Reading a plan locally](#reading-a-plan-locally).
 3. **Apply.** Run `Terraform Apply` on `master` with the environment, the plan's run ID and its `plan_sha256`, then approve it in `production-terraform`. Apply checks that the run is a successful first-attempt `Terraform Plan` of the same environment on `master` in this repository, at the Apply's own commit, so a merge between plan and apply means planning again. In production it refuses while any `deploy.yml` run is open. It downloads the bundle from the state bucket, refuses unless its SHA-256 equals `plan_sha256`, then unpacks and applies it.
 
@@ -26,13 +26,38 @@ Settings per environment:
 - `production-terraform` (Apply): variables `TERRAFORM_AWS_ROLE_ARN` (the Apply role) and `AWS_ACCOUNT_ID`. No secret: the saved plan carries every variable value.
 - `sandbox`: as `production`, with the Sandbox role for both workflows.
 
-Retention: nothing deletes old plans. To expire them after 30 days, an administrator can run once (versioning is on, so the rule also removes old versions):
+## Who can read stored plans
+
+Anyone who can read the state bucket could already read every credential in state. A saved plan also holds every input variable value, including ones no resource stores, so it additionally exposes those to the same readers for as long as the object exists: the GitHub provider token (`GITHUB_TOKEN`, which only configures the provider), and `REDIS_AUTH_TOKEN` when ElastiCache is off (it then feeds nothing). Those readers are the two Terraform roles (through `ReadOnlyAccess`), the account administrators, and any other principal in this AWS account with S3 read on the bucket; the account is shared with other products, so the repository cannot list them.
+
+**Expire stored plans after 30 days**, which bounds that exposure. Nothing deletes them otherwise. An administrator runs once (versioning is on, so the rule also removes old versions; it replaces any lifecycle configuration the bucket has, so check `aws s3api get-bucket-lifecycle-configuration` first):
 
 ```sh
 aws s3api put-bucket-lifecycle-configuration --bucket meeting-notes-terraform-state-bucket --lifecycle-configuration '{"Rules":[{"ID":"expire-terraform-plans","Filter":{"Prefix":"terraform-plans/"},"Status":"Enabled","Expiration":{"Days":30},"NoncurrentVersionExpiration":{"NoncurrentDays":1}}]}'
 ```
 
-That replaces any lifecycle configuration the bucket has; check `aws s3api get-bucket-lifecycle-configuration` first. The bucket is managed by `_infra_state_mgmt`, whose committed local state is stale, so this is not added there.
+The bucket is managed by `_infra_state_mgmt`, whose committed local state is stale, so this is not added there.
+
+Optional hardening: deny reading stored plans to everyone except the two Terraform roles and the administrator role. Merge this statement into the bucket policy (`put-bucket-policy` replaces the whole policy, so read the current one with `get-bucket-policy` first):
+
+```json
+{
+  "Sid": "PlansOnlyForTerraform",
+  "Effect": "Deny",
+  "Principal": "*",
+  "Action": "s3:GetObject",
+  "Resource": "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/*",
+  "Condition": {
+    "ArnNotLike": {
+      "aws:PrincipalArn": [
+        "arn:aws:iam::<account>:role/meeting-notes-prod-github-terraform",
+        "arn:aws:iam::<account>:role/meeting-notes-prod-github-terraform-plan",
+        "<administrator role ARN>"
+      ]
+    }
+  }
+}
+```
 
 ## Reading a plan locally
 
@@ -115,10 +140,10 @@ Nine steps. Five need the owner's own hands (**owner**, one of them optional): m
    done
    ```
 
-   Optionally add the 30-day plan retention rule above.
+   Add the 30-day plan expiry rule from [who can read stored plans](#who-can-read-stored-plans).
 
 4. **Agent: point `production` at the Plan role**: `gh variable set TERRAFORM_AWS_ROLE_ARN --env production --body <terraform_plan_role_arn>`.
-5. **Owner, optional cleanup at any time:** no workflow reads these, so they are safe to delete: in `production`, the secrets `TERRAFORM_PLAN_REFERENCE_JSON`, `BOOTSTRAP_VERIFICATION_STORAGE_JSON`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` and the variables `PRODUCTION_APPLY_ROLE_ARN` and `AWS_ACCESS_KEY_ID` (the first Apply deletes that variable anyway); in the repository settings, the repository-level secret `AWS_SECRET_ACCESS_KEY`. If the static access key behind them still exists in IAM, deactivate and delete it too. Keep `TERRAFORM_PRIVATE_STORAGE_JSON`: the site publishing jobs in `deploy.yml` read the account binding from it. `AWS_TOKEN_KEY` can be dropped from the tfvars secret whenever it is next edited; the renderer already ignores it.
+5. **Owner, optional cleanup at any time:** no workflow reads these, so they are safe to delete: in `production`, the secrets `TERRAFORM_PLAN_REFERENCE_JSON`, `BOOTSTRAP_VERIFICATION_STORAGE_JSON`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` and the variables `PRODUCTION_APPLY_ROLE_ARN` and `AWS_ACCESS_KEY_ID` (the first Apply deletes that variable anyway); the secret `TERRAFORM_PLAN_PASSPHRASE` in `production`, `production-terraform` or `sandbox` if it was ever set; in the repository settings, the repository-level secret `AWS_SECRET_ACCESS_KEY`. If the static access key behind them still exists in IAM, deactivate and delete it too. Keep `TERRAFORM_PRIVATE_STORAGE_JSON`: the site publishing jobs in `deploy.yml` read the account binding from it. `AWS_TOKEN_KEY` can be dropped from the tfvars secret whenever it is next edited; the renderer already ignores it.
 6. **Agent: run the first full production plan**: `gh workflow run terraform-plan.yml --ref master -f environment=production`, and approve its job. Production has only ever received scoped plans, so expect pending changes that never shipped through them: CloudFront routing, the history table's retry index (and its delivery index if still missing), the lifecycle alarms, alarms and ALB access logs, the deploy and prompt guard roles, a new task definition revision with `METRICS_NAMESPACE` and 60 GiB of ephemeral storage (the running task gets both only at the deploy in step 8), the disk alarms' thresholds moving to 75 and 95 percent of the larger disk, `production-deploy` variables and similar. GitHub variables Terraform writes but `production` may hold only by hand (today `VITE_API_BASE_URL` and `ECS_LOG_GROUP` exist there; the Algolia variables only if their tfvars are set) show as `create` if they are not in state, and creating a variable that already exists fails the Apply. Before applying, compare each such value with the existing one (`gh variable get <name> --env production`); if it matches, delete the hand-set variable just before the Apply so Terraform recreates it. `VITE_API_BASE_URL` becomes `https://<API_DOMAIN>` from the tfvars, and the next frontend build bakes in whatever the variable holds, so it changes the frontend only if that differs from today's value. Destroys to expect: the `AWS_ACCESS_KEY_ID` GitHub variable (`github_actions_environment_variable.envvar_aws_access_key_id`), which nothing reads. Lifecycle `aws_cloudwatch_log_metric_filter` destroys: none expected; if any appear, they are the six lifecycle filters and are fine.
 7. **Owner: read the plan and approve the Apply.** Read every flagged line in the plan summary; a replace of a table, bucket, distribution, the load balancer, the KMS key or a GitHub environment, or any change to the `production` environment's protection, is a stop. An agent may dispatch `gh workflow run terraform-apply.yml --ref master -f environment=production -f plan_run_id=<run id> -f plan_sha256=<digest>`; only the owner approves it in `production-terraform`.
 8. **Agent: deploy the backend straight after**: once the Apply job is running (past its idle check), dispatch `deploy.yml`. The deploy waits for the Apply to finish, then rolls out a task that has `METRICS_NAMESPACE`. The Apply creates the lifecycle alarms, and the running task publishes no lifecycle metric until it is replaced, so `no_eligible_worker` and `finisher_scan_missing` go to ALARM within five and ten minutes of the Apply and back to OK once the new task's heartbeats arrive. Expect those two ALARM and two OK emails.
