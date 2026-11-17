@@ -455,8 +455,8 @@ If you prefer separate variable files, use:
 ## Terraform plan and apply workflows
 
 `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`
-are manual and run on `master` only. Plan makes one full encrypted saved plan and
-summarizes its resource changes; Apply applies that exact plan after the
+are manual and run on `master` only. Plan makes one full saved plan, stores it in
+the state bucket and summarizes its resource changes; Apply applies that exact plan after the
 environment reviewer approves it. See [Terraform delivery](../docs/terraform-delivery.md).
 
 Production plans in the `production` GitHub environment and applies in
@@ -592,19 +592,11 @@ environments should just leave protection off permanently.
 validation: `api_base_url` falls back to the ALB's DNS name, and with no ALB and
 no domain there is nothing left for it to resolve to.
 
-Recommended apply flow:
-
-1. Run **Terraform Plan** for the target GitHub environment and Terraform
-   workspace.
-2. Review the plan log and workflow summary.
-3. If the plan is acceptable, run **Terraform Apply** with the plan run ID,
-   artifact name, and SHA-256 from the plan summary.
-4. Type `apply` in the confirmation input.
-5. Approve the GitHub environment gate for production-like environments.
-
-Plan artifacts contain a binary Terraform plan and can include sensitive values.
-They are retained for one day. Do not download or share them outside the
-maintainer workflow.
+Apply flow: run **Terraform Plan**, read its summary, then run **Terraform
+Apply** with the plan run ID and the bundle SHA-256 from that summary and approve
+it ([Terraform delivery](../docs/terraform-delivery.md)). Saved plans contain
+every variable value, credentials included; they stay in the state bucket under
+`terraform-plans/`.
 
 Merges do not reconcile Terraform drift. The deploy workflows update ECS task
 definitions, S3 objects, and CloudFront invalidations directly, while Terraform
