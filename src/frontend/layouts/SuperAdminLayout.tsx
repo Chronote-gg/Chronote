@@ -1,11 +1,8 @@
+import { ProtectedSessionBoundary } from "../components/ProtectedSessionBoundary";
 import {
   AppShell,
   Box,
-  Button,
-  Center,
   Container,
-  Loader,
-  Stack,
   Text,
   type AppShellStylesNames,
   useComputedColorScheme,
@@ -34,7 +31,7 @@ export default function SuperAdminLayout() {
   const colorScheme = useComputedColorScheme("dark");
   const isDark = colorScheme === "dark";
   const visualMode = useVisualMode();
-  const { state: authState, loading: authLoading, loginUrl, user } = useAuth();
+  const { user } = useAuth();
   const isSuperAdmin = Boolean(user?.isSuperAdmin);
 
   const baseHeaderStyles = {
@@ -73,44 +70,15 @@ export default function SuperAdminLayout() {
         },
   };
 
-  const content =
-    authState === "unauthenticated" ? (
-      <Center py="xl">
-        <Stack gap="sm" align="center">
-          <Text fw={600}>Connect Discord to access the admin console.</Text>
-          <Text size="sm" c="dimmed" ta="center">
-            You need super admin access to manage global settings.
-          </Text>
-          <Button
-            component="a"
-            href={loginUrl}
-            loading={authLoading}
-            variant="filled"
-            color="brand"
-          >
-            Connect Discord
-          </Button>
-        </Stack>
-      </Center>
-    ) : authState === "unknown" || authLoading ? (
-      <Center py="xl">
-        <Stack gap="xs" align="center">
-          <Loader color="brand" />
-          <Text c="dimmed">Loading admin console...</Text>
-        </Stack>
-      </Center>
-    ) : !isSuperAdmin ? (
-      <Center py="xl">
-        <Stack gap="sm" align="center">
-          <Text fw={600}>Super admin access required.</Text>
-          <Text size="sm" c="dimmed" ta="center">
-            Contact an administrator if you believe this is an error.
-          </Text>
-        </Stack>
-      </Center>
-    ) : (
-      <Outlet />
-    );
+  const content = (
+    <ProtectedSessionBoundary>
+      {!isSuperAdmin ? (
+        <Text fw={600}>Super admin access required.</Text>
+      ) : (
+        <Outlet />
+      )}
+    </ProtectedSessionBoundary>
+  );
 
   return (
     <AppShell

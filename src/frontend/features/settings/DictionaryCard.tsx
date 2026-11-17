@@ -1,3 +1,4 @@
+import { useAuthNavigationBlocker } from "../../hooks/useAuthNavigationBlocker";
 import { useMemo, useState } from "react";
 import {
   ActionIcon,
@@ -50,6 +51,7 @@ export function DictionaryCard({
   const [term, setTerm] = useState("");
   const [definition, setDefinition] = useState("");
   const [showDefinition, setShowDefinition] = useState(false);
+  useAuthNavigationBlocker(modalOpen && Boolean(term || definition));
 
   const usage = useMemo(
     () => buildDictionaryPromptLines(entries, budgets).usage,

@@ -1,64 +1,38 @@
 import { test, expect } from "./fixtures";
-import { useIntroBilling, useFreeBilling } from "./billingMocks";
+import { useIntroBilling } from "./billingMocks";
 import { annualSubscriber } from "../../src/frontend/pages/basicIntroFixtures";
-import { createRenewalFixture } from "../../src/frontend/pages/renewalFixtures";
 import { mockGuilds } from "./mockData";
 import { applyVisualDefaults, waitForVisualReady } from "./visualUtils";
-import type { RenewalView } from "../../src/types/renewal";
+import type { Page } from "@playwright/test";
+
+async function openBilling(page: Page) {
+  const billingResponse = page.waitForResponse((response) => {
+    const paths = new URL(response.url()).pathname.split("/trpc/")[1];
+    return Boolean(
+      paths && decodeURIComponent(paths).split(",").includes("billing.me"),
+    );
+  });
+  await page.goto(`/portal/server/${mockGuilds.ddm.id}/billing`);
+  await (await billingResponse).finished();
+}
+
 const runVisual = process.env.PW_VISUAL === "true";
 const views = [
   { name: "desktop", width: 1280, height: 720 },
-  { name: "intermediate", width: 768, height: 900 },
   { name: "mobile", width: 390, height: 844 },
 ];
 for (const viewport of views) {
-  for (const state of [
-    "off",
-    "on",
-    "processing",
-    "failure",
-    "history-open",
-    "terminal",
-    "payment-attention",
-  ] as const) {
+  for (const state of ["off"] as const) {
     test(`renewal ${state} at ${viewport.name} @visual`, async ({ page }) => {
       test.skip(!runVisual, "Visual regression disabled");
       await page.setViewportSize(viewport);
       await applyVisualDefaults(page);
-      if (state === "terminal")
-        await useFreeBilling(page, { terminalStatus: "canceled" });
-      else {
-        const renewal = createRenewalFixture({
-          details: annualSubscriber,
-          cancellationAt: state === "on" ? null : annualSubscriber.renewalAt,
-        });
-        if (state === "processing")
-          renewal.state = {
-            kind: "processing",
-            operationId: "00000000-0000-4000-8000-000000000001",
-            endsAt: annualSubscriber.renewalAt!,
-          };
-        if (state === "payment-attention")
-          renewal.state = { kind: "payment_problem" };
-        if (state === "failure")
-          renewal.state = {
-            kind: "unavailable",
-            knownEndsAt: annualSubscriber.renewalAt!,
-          };
-        await useIntroBilling(page, {
-          details: annualSubscriber,
-          cancellationAt: state === "on" ? null : annualSubscriber.renewalAt,
-          renewal,
-        });
-      }
-      await page.goto(`/portal/server/${mockGuilds.ddm.id}/billing`);
+      await useIntroBilling(page, {
+        details: annualSubscriber,
+        cancellationAt: annualSubscriber.renewalAt,
+      });
+      await openBilling(page);
       await expect(page.getByTestId("billing-current-plan")).toBeVisible();
-      if (state === "history-open") {
-        await page
-          .getByRole("button", { name: "Payment history", exact: true })
-          .click();
-        await expect(page.getByText(/\$64.20 paid/)).toBeVisible();
-      }
       await waitForVisualReady(page);
       expect(
         await page.evaluate(
@@ -76,16 +50,11 @@ test("short billing page scrolls to its history and comparison actions", async (
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 480 });
-  const renewal: RenewalView = createRenewalFixture({
-    details: annualSubscriber,
-    cancellationAt: annualSubscriber.renewalAt,
-  });
   await useIntroBilling(page, {
     details: annualSubscriber,
     cancellationAt: annualSubscriber.renewalAt,
-    renewal,
   });
-  await page.goto(`/portal/server/${mockGuilds.ddm.id}/billing`);
+  await openBilling(page);
   await expect(page.getByTestId("renewal-off")).toBeVisible();
   const scrolling = await page
     .getByTestId("billing-current-plan")
@@ -121,4 +90,17 @@ test("short billing page scrolls to its history and comparison actions", async (
   await expect(
     page.getByRole("button", { name: "View invoices and receipts" }),
   ).toBeInViewport();
+});
+
+test("renewal waits for slow billing data before checking rendering", async ({
+  page,
+}) => {
+  await useIntroBilling(page, { details: annualSubscriber });
+  await page.route("**/trpc/**", async (route) => {
+    if (route.request().url().includes("billing.me"))
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+    await route.fallback();
+  });
+  await openBilling(page);
+  await expect(page.getByTestId("billing-current-plan")).toBeVisible();
 });

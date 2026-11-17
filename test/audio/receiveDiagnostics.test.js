@@ -32,7 +32,8 @@ test.each([
     dave.session = {
       ready,
       canPassthrough: () => passthrough,
-      decrypt: () => (passthrough ? Buffer.from(input) : plaintext),
+      decrypt: () =>
+        !ready ? input : passthrough ? Buffer.from(input) : plaintext,
     };
     const connection = new EventEmitter();
     connection.state = { status, networking: { state: { code, dave } } };
@@ -148,7 +149,7 @@ test("ships the same receiver decision in the ESM distribution", () => {
     import { EventEmitter } from 'node:events';
     import { DAVESession, VoiceReceiver } from '@discordjs/voice';
     const dave = new DAVESession(1, 'synthetic-user', 'synthetic-channel', {});
-    dave.session = { reinit() {}, getSerializedKeyPackage() { return Buffer.alloc(0); } };
+    dave.session = { reinit() {}, getSerializedKeyPackage() { return Buffer.alloc(0); }, decrypt(user, media, packet) { return packet; } };
     Date.now = () => 100;
     dave.reinit('epoch-1');
     Date.now = () => 145;
@@ -384,7 +385,7 @@ test("CJS and ESM retain equivalent native recovery episodes and reply gates", (
 
 test("reports receive-time state when a real Opus decode fails after state changes", async () => {
   const dave = new DAVESession(1, "synthetic-user", "synthetic-channel", {});
-  dave.session = { ready: false };
+  dave.session = { ready: false, decrypt: () => Buffer.alloc(32, 0xff) };
   const connection = new EventEmitter();
   connection.state = {
     status: "ready",

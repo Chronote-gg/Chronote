@@ -31,12 +31,18 @@ import {
   validateMcpServiceAccountToken,
 } from "../services/mcpServiceAccountService";
 import type { MeetingControlCommandSnapshot } from "../services/meetingControlQueueService";
-import type {
-  McpAccessTokenInfo,
-  McpScope,
-  McpTokenRestriction,
-} from "../types/mcpOAuth";
+import type { McpAccessTokenInfo, McpScope } from "../types/mcpOAuth";
 import { myMeetingsInputFields } from "../types/myMeetingsInput";
+import {
+  mcpMeetingSearchDefinitions,
+  callMcpMeetingSearchTool,
+} from "./mcpMeetingSearch";
+import {
+  assertTokenGuildId,
+  resolveTokenServerIds,
+  McpTokenScopeError,
+} from "./mcpTokenScope";
+import { MeetingSearchError } from "../types/meetingSearch";
 
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const JSON_RPC_VERSION = "2.0";
@@ -49,7 +55,7 @@ type JsonRpcRequest = {
   params?: unknown;
 };
 
-type McpToolDefinition = {
+export type McpToolDefinition = {
   name: string;
   title: string;
   description: string;
@@ -167,6 +173,7 @@ const meetingControlRequestSchema = z.object({
 });
 
 const toolDefinitions: McpToolDefinition[] = [
+  ...mcpMeetingSearchDefinitions,
   {
     name: "list_servers",
     title: "List Chronote Servers",
@@ -424,6 +431,8 @@ const toolDefinitions: McpToolDefinition[] = [
 ];
 
 const toolScopes = new Map<string, McpScope[]>([
+  ["search_meetings", ["meetings:read"]],
+  ["search_transcripts", ["meetings:read", "transcripts:read"]],
   ["list_servers", ["meetings:read"]],
   ["list_meetings", ["meetings:read"]],
   ["list_my_meetings", ["meetings:read"]],
@@ -437,33 +446,8 @@ const toolScopes = new Map<string, McpScope[]>([
   ["get_meeting_control_request", []],
 ]);
 
-const TOKEN_SERVER_SCOPE_ERROR =
-  "This token is scoped to a different Discord server.";
 const TOKEN_CONTROL_UNAVAILABLE_ERROR =
   "Service account tokens are read-only. Live meeting and meeting control tools require an interactive Discord sign-in.";
-
-/** A service account token asked for something outside its own bounds. */
-class McpTokenScopeError extends Error {}
-
-const assertTokenGuildId = (
-  restriction: McpTokenRestriction | undefined,
-  serverId?: string,
-) => {
-  if (restriction && serverId && serverId !== restriction.guildId) {
-    throw new McpTokenScopeError(TOKEN_SERVER_SCOPE_ERROR);
-  }
-};
-
-const resolveTokenServerIds = (
-  restriction: McpTokenRestriction | undefined,
-  serverIds?: string[],
-) => {
-  if (!restriction) return serverIds;
-  if (serverIds?.some((serverId) => serverId !== restriction.guildId)) {
-    throw new McpTokenScopeError(TOKEN_SERVER_SCOPE_ERROR);
-  }
-  return [restriction.guildId];
-};
 
 const isJsonRpcRequest = (value: unknown): value is JsonRpcRequest => {
   if (!value || typeof value !== "object") return false;
@@ -785,6 +769,8 @@ async function callMeetingControlTool(
 
 async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
   try {
+    const search = await callMcpMeetingSearchTool(auth, name, args);
+    if (search) return toolResult(search);
     const result =
       (await callMeetingTool(auth, name, args)) ??
       (await callMeetingControlTool(auth, name, args));
@@ -792,6 +778,16 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
   } catch (error) {
     if (error instanceof z.ZodError)
       return toolError(formatZodToolError(error));
+    if (error instanceof MeetingSearchError) {
+      const failure = {
+        error: {
+          code: error.code,
+          message: error.message,
+          retryable: error.retryable,
+        },
+      };
+      return { ...toolResult(failure), isError: true };
+    }
     if (error instanceof McpTokenScopeError) return toolError(error.message);
     const meetingError = mapMeetingError(error);
     if (meetingError) return meetingError;

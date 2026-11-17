@@ -1,9 +1,5 @@
 import { getDeploymentControlRepository } from "../db";
-import type {
-  SuppressionRecord,
-  WorkAdmissionAuthority,
-} from "../types/deploymentControl";
-import { getRuntimeAdmissionContext } from "./runtimeLifecycleService";
+import type { SuppressionRecord } from "../types/deploymentControl";
 
 export type AutoRecordJoinSuppressionReason =
   "explicit_end" | "forced_disconnect";
@@ -14,8 +10,6 @@ const buildChannelKey = (guildId: string, channelId: string): ChannelKey =>
   `${guildId}#${channelId}`;
 
 export class AutoRecordJoinSuppressionService {
-  constructor(private readonly authority?: WorkAdmissionAuthority) {}
-
   async read(
     guildId: string,
     channelId: string,
@@ -35,10 +29,15 @@ export class AutoRecordJoinSuppressionService {
 
   private nonBotMemberIdsByChannel = new Map<ChannelKey, Set<string>>();
 
+  /** Writes still in flight per channel, so this worker admits no auto-join before one commits. */
+  private pendingWrites = new Map<ChannelKey, number>();
+
   async shouldSuppressAutoJoin(
     guildId: string,
     channelId: string,
   ): Promise<boolean> {
+    if (this.pendingWrites.has(buildChannelKey(guildId, channelId)))
+      return true;
     return Boolean((await this.read(guildId, channelId))?.suppressed);
   }
 
@@ -48,7 +47,6 @@ export class AutoRecordJoinSuppressionService {
     nonBotMemberIds: string[];
     reason: AutoRecordJoinSuppressionReason;
     meetingId: string;
-    authority?: WorkAdmissionAuthority;
   }): Promise<boolean> {
     const key = buildChannelKey(options.guildId, options.channelId);
 
@@ -57,11 +55,29 @@ export class AutoRecordJoinSuppressionService {
     );
     if (members.size === 0) return false;
 
-    const authority = options.authority ??
-      this.authority ?? {
-        kind: "serving",
-        context: await getRuntimeAdmissionContext(),
-      };
+    this.pendingWrites.set(key, (this.pendingWrites.get(key) ?? 0) + 1);
+    try {
+      await this.persistSuppression(options);
+    } finally {
+      const remaining = (this.pendingWrites.get(key) ?? 1) - 1;
+      if (remaining > 0) this.pendingWrites.set(key, remaining);
+      else this.pendingWrites.delete(key);
+    }
+
+    this.suppressedChannels.set(key, {
+      reason: options.reason,
+      createdAt: new Date().toISOString(),
+    });
+    this.nonBotMemberIdsByChannel.set(key, members);
+    return true;
+  }
+
+  private async persistSuppression(options: {
+    guildId: string;
+    channelId: string;
+    reason: AutoRecordJoinSuppressionReason;
+    meetingId: string;
+  }): Promise<void> {
     let persisted = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       const previous = await this.read(options.guildId, options.channelId);
@@ -82,7 +98,6 @@ export class AutoRecordJoinSuppressionService {
         (await getDeploymentControlRepository().writeSuppression({
           record,
           expectedVersion: previous?.version,
-          authority,
         })) === "applied"
       ) {
         persisted = true;
@@ -91,13 +106,6 @@ export class AutoRecordJoinSuppressionService {
     }
     if (!persisted)
       throw new Error("Could not persist auto-record suppression");
-
-    this.suppressedChannels.set(key, {
-      reason: options.reason,
-      createdAt: new Date().toISOString(),
-    });
-    this.nonBotMemberIdsByChannel.set(key, members);
-    return true;
   }
 
   async handleVoiceStateChange(options: {
@@ -166,13 +174,7 @@ export class AutoRecordJoinSuppressionService {
     guildId: string;
     channelId: string;
     nonBotMemberIds: () => string[];
-    authority?: WorkAdmissionAuthority;
   }): Promise<boolean> {
-    const authority = options.authority ??
-      this.authority ?? {
-        kind: "serving",
-        context: await getRuntimeAdmissionContext(),
-      };
     const previous = await this.read(options.guildId, options.channelId);
     if (!previous?.suppressed || options.nonBotMemberIds().length) return false;
     return (
@@ -183,7 +185,6 @@ export class AutoRecordJoinSuppressionService {
           version: previous.version + 1,
         },
         expectedVersion: previous.version,
-        authority,
       })) === "applied"
     );
   }

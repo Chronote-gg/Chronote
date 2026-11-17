@@ -1,10 +1,7 @@
 /** @jest-environment node */
 import { buildPausedDesktopDraftMarker } from "../../src/testSupport/personalMediaUploadFixtures";
-import {
-  seedServingRuntime,
-  stopServingRuntime,
-} from "../fixtures/servingRuntime";
 import crypto from "node:crypto";
+import { MAXIMUM_MEETING_DURATION } from "../../src/constants";
 import * as db from "../../src/db";
 import { getMockStore, resetMockStore } from "../../src/repositories/mockStore";
 import { getPersonalMediaUploadRepository } from "../../src/repositories/personalMediaUploadRepository";
@@ -132,10 +129,9 @@ async function expectPausedSegmentCompletion(
   ).rejects.toMatchObject(pausedError);
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   resetMockStore();
   config.mock.enabled = true;
-  await seedServingRuntime();
   jest
     .mocked(getSignedUploadPost)
     .mockResolvedValue({ url: "https://synthetic.invalid", fields: {} });
@@ -455,4 +451,77 @@ test("pause during concurrent segment read refuses a successful uploaded result"
   await expectPausedSegmentCompletion(intent);
 });
 
-afterAll(stopServingRuntime);
+test("an upload intent is accepted with no deployment control record present", async () => {
+  expect(getMockStore().deploymentControlRecords.size).toBe(0);
+  const intent = await createPersonalMediaUploadIntent({
+    userId: owner.userId,
+    contentType: "audio/wav",
+    fileSize: 10,
+  });
+  expect(getSignedUploadPost).toHaveBeenCalledTimes(1);
+  expect(
+    getMockStore().personalMediaUploadsById.get(intent.uploadId),
+  ).toMatchObject({ status: "pending_upload", ownerUserId: owner.userId });
+  await expect(
+    markPersonalMediaUploadComplete({
+      uploadId: intent.uploadId,
+      userId: owner.userId,
+      key: intent.key,
+      uploadToken: intent.uploadToken,
+    }),
+  ).resolves.toMatchObject({ status: "queued" });
+});
+test("a paused desktop draft still refuses", async () => {
+  putJob();
+  pause();
+  expect(getMockStore().deploymentControlRecords.size).toBe(1);
+  await expect(
+    createPersonalRecordingSegmentUploadIntent(input),
+  ).rejects.toMatchObject(pausedError);
+  await expect(submitPersonalRecordingUpload(owner)).rejects.toMatchObject(
+    pausedError,
+  );
+  expect(getSignedUploadPost).not.toHaveBeenCalled();
+  expect(getMockStore().personalMediaUploadsById.get(owner.uploadId)).toEqual(
+    job(),
+  );
+});
+test("the duration cap still refuses before a signed upload is issued", async () => {
+  putJob();
+  putSegment({
+    ...segment("uploaded"),
+    durationMillis: MAXIMUM_MEETING_DURATION,
+  });
+  await expect(
+    createPersonalRecordingSegmentUploadIntent({ ...input, sequence: 1 }),
+  ).rejects.toMatchObject({ code: "too_large" });
+  expect(getSignedUploadPost).not.toHaveBeenCalled();
+  expect(
+    await getPersonalRecordingSegmentRepository().listByUpload(owner.uploadId),
+  ).toHaveLength(1);
+});
+test("two concurrent claims of one upload: exactly one wins", async () => {
+  putJob(job("queued"));
+  const repository = getPersonalMediaUploadRepository();
+  const claim = (instanceId: string) =>
+    repository.claim({
+      uploadId: owner.uploadId,
+      instanceId,
+      nowEpochSeconds: 100,
+      claimExpiresAt: 160,
+      updatedAt: "2026-01-01T00:01:40.000Z",
+      maxAttempts: 3,
+      claimId: `claim-${instanceId}`,
+      expectedAttempts: 0,
+    });
+  const results = await Promise.all([
+    claim("synthetic-worker-a"),
+    claim("synthetic-worker-b"),
+  ]);
+  const winners = results.filter((result) => result !== undefined);
+  expect(winners).toHaveLength(1);
+  expect(getMockStore().personalMediaUploadsById.get(owner.uploadId)).toEqual(
+    winners[0],
+  );
+  expect(winners[0]).toMatchObject({ status: "processing", attempts: 1 });
+});

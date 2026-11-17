@@ -11,16 +11,11 @@ import { key } from "../types/meetingUpdateDelivery.fixture";
 
 describe("mock meeting update persistence", () => {
   let histories: Map<string, MeetingHistory[]>;
-  let allowed: boolean;
   beforeEach(() => {
     histories = new Map();
-    allowed = true;
   });
   const harness = (): Harness => ({
-    repository: createMockMeetingUpdateDeliveryRepository(
-      histories,
-      () => allowed,
-    ),
+    repository: createMockMeetingUpdateDeliveryRepository(histories),
     async seed(row) {
       const rows = histories.get(row.guildId) ?? [];
       const index = rows.findIndex(
@@ -36,9 +31,6 @@ describe("mock meeting update persistence", () => {
           .get(key.guildId)
           ?.find((row) => row.channelId_timestamp === key.channelId_timestamp),
       );
-    },
-    async admit(value) {
-      allowed = value;
     },
   });
   deliveryContract(harness);

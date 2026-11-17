@@ -24,7 +24,9 @@ Remote MCP requires Discord OAuth and `OAUTH_SECRET` to be configured. Set `MCP_
 ## Available Tools
 
 - `list_servers`: Lists Discord servers where the authenticated user can access Chronote data.
-- `list_meetings`: Lists recent meetings in a server, with optional channel, date, tag, and archived filters.
+- `search_meetings`: Searches accessible retained meeting titles, summaries and complete current notes. Results include the complete meeting notes and search-coverage status.
+- `search_transcripts`: Searches passages only within a required, nonempty set of selected meetings. Requires both `meetings:read` and `transcripts:read`.
+- `list_meetings`: Lists meetings in a server, with optional channel, date, tag, and archived filters.
 - `list_my_meetings`: Lists meetings across servers for the authenticated user. It defaults to meetings the user attended in the past 7 days and can also list meetings the user can access. Use `all`, `today`, or `past_7_days` without `startDate` or `endDate`. Use `range: "custom"` when you need explicit date bounds. If the response includes `nextCursor`, pass it as `cursor` to fetch the next page.
 - `get_meeting_summary`: Returns notes and metadata for one accessible meeting.
 - `get_meeting_transcript`: Returns transcript text for one accessible meeting when that server allows transcript access. Use `offset` and `maxChars` to page through long transcripts.
@@ -47,6 +49,16 @@ For long transcripts, request a window at a time:
 1. Call `get_meeting_transcript` with `id`, optionally adding `maxChars`.
 2. If the response includes `truncated: true`, call it again with `offset` set to `nextOffset`.
 
+## Search meeting history
+
+When search is enabled, every plan can search the same accessible retained history. There is no last-5, last-25 or last-100 meeting entitlement. A partial or unavailable coverage status means results cannot establish that the library has been fully searched. Semantic readiness is reported separately from text coverage.
+
+1. Call `search_meetings` with a nonempty `query`. Optional filters narrow servers, dates, voice or text channel, tags and archive state. Read the returned title and complete notes before investigating a transcript.
+2. Pass the returned canonical references in `search_transcripts.meetingIds`, for example `[{ "serverId": "<server-id>", "id": "<canonical-meeting-id>" }]`, along with your transcript `query`. An empty meeting set is invalid. Transcript search never searches the whole library without a selected meeting set.
+3. Follow `nextCursor` with the same query and filters to load another page. `pageSize` defaults to 10 and permits up to 25 records per page, independently of plan. Use the existing transcript read tool to inspect more of an accessible transcript.
+
+Search applies current meeting access, transcript settings, OAuth scopes and service-account server/channel restrictions. A meeting reference identifies a record; it does not grant access.
+
 ## Live Control Tips
 
 - Join the Discord voice channel before calling `start_meeting` without explicit IDs.
@@ -63,8 +75,8 @@ For long transcripts, request a window at a time:
 
 ## OAuth Scopes
 
-- `meetings:read`: Required for server lists, meeting lists, and meeting summaries.
-- `transcripts:read`: Required in addition to `meetings:read` for transcript text.
+- `meetings:read`: Required for server lists, meeting lists, meeting search and meeting summaries.
+- `transcripts:read`: Required in addition to `meetings:read` for transcript text and transcript search.
 - `meetings:start`: Required to start recordings through MCP.
 - `meetings:stop`: Required to stop recordings through MCP.
 - `get_meeting_control_request` requires a valid MCP token and only returns requests created by the authenticated user.

@@ -106,14 +106,14 @@ describe("apiClient", () => {
     await expect(apiFetch("/boom")).rejects.toBeInstanceOf(ApiError);
   });
 
-  test("apiFetch throws AuthNeededError on non-JSON responses", async () => {
-    const { apiFetch, AuthNeededError } = await loadClient("");
+  test("apiFetch reports malformed responses without treating them as sign-out", async () => {
+    const { apiFetch, ApiError } = await loadClient("");
     setMockFetchResolved({
       ok: true,
       status: 200,
       text: async () => "not-json",
     });
 
-    await expect(apiFetch("/bad")).rejects.toBeInstanceOf(AuthNeededError);
+    await expect(apiFetch("/bad")).rejects.toBeInstanceOf(ApiError);
   });
 });

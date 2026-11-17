@@ -15,12 +15,10 @@ Make sure the PR is truly stable before reporting merge readiness.
 3. Fix, reply, and resolve all actionable AI comments.
 4. Re-run relevant local checks for the latest changes.
 5. Push updates.
-6. Wait at least 5 minutes after the latest push.
-7. Re-run the review and checks audit.
-8. Only mark merge-ready if:
+6. Wait for checks to finish, then re-run the review and checks audit.
+7. Only mark merge-ready if:
    - Required checks are green
    - No unresolved actionable AI feedback remains
-   - No new AI comments arrived during the wait window
 
 ## Command Hints
 

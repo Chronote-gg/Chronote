@@ -12,6 +12,7 @@ import {
 
 const WORK_BUDGET = 1000;
 const STORAGE_PAGE_LIMIT = 100;
+const STORAGE_READ_CONCURRENCY = 4;
 const identity = (key: MeetingBrowseLookup) =>
   `${key.guildId}#${key.channelId_timestamp}`;
 const compare = (a: MeetingBrowseLookup, b: MeetingBrowseLookup) =>
@@ -24,7 +25,7 @@ const lookup = (record: MeetingBrowseLookup): MeetingBrowseLookup => ({
 });
 
 /** Merge complete timestamp frontiers. No projected content is retained in cursor state.
- * Reads are deliberately sequential (one in flight, below the four-read ceiling).
+ * Independent source frontiers load with at most four storage reads in flight.
  * A large tie retains only its best page and restarts from the tie's checkpoints
  * after emission, using the identity watermark to recover every lower-ranked row.
  */
@@ -78,27 +79,40 @@ class MeetingBrowseCollector {
     key.timestamp < this.state.watermark.timestamp ||
     (key.timestamp === this.state.watermark.timestamp &&
       identity(key).localeCompare(this.state.watermark.identity) < 0);
+  private async loadFront(index: number) {
+    const source = this.state.sources[index];
+    while (!source.exhausted && !this.pages.get(index)?.items.length) {
+      if (this.reads >= WORK_BUDGET) return false;
+      this.reads++;
+      const page = await this.input.read(source, {
+        startTimestamp: this.state.startTimestamp,
+        endTimestamp: this.state.endTimestamp,
+        limit: STORAGE_PAGE_LIMIT,
+        cursor: source.checkpoint,
+      });
+      this.pages.set(index, page);
+      if (page.items.length) break;
+      if (!page.nextCursor) source.exhausted = true;
+      else
+        source.checkpoint = meetingBrowseSourceSchema.parse({
+          ...source,
+          checkpoint: page.nextCursor,
+        }).checkpoint;
+    }
+    return true;
+  }
   private async fronts() {
-    for (let index = 0; index < this.state.sources.length; index++) {
-      const source = this.state.sources[index];
-      while (!source.exhausted && !this.pages.get(index)?.items.length) {
-        if (this.reads >= WORK_BUDGET) return false;
-        this.reads++;
-        const page = await this.input.read(source, {
-          startTimestamp: this.state.startTimestamp,
-          endTimestamp: this.state.endTimestamp,
-          limit: STORAGE_PAGE_LIMIT,
-          cursor: source.checkpoint,
-        });
-        this.pages.set(index, page);
-        if (page.items.length) break;
-        if (!page.nextCursor) source.exhausted = true;
-        else
-          source.checkpoint = meetingBrowseSourceSchema.parse({
-            ...source,
-            checkpoint: page.nextCursor,
-          }).checkpoint;
-      }
+    for (
+      let index = 0;
+      index < this.state.sources.length;
+      index += STORAGE_READ_CONCURRENCY
+    ) {
+      const ready = await Promise.all(
+        this.state.sources
+          .slice(index, index + STORAGE_READ_CONCURRENCY)
+          .map((_, offset) => this.loadFront(index + offset)),
+      );
+      if (ready.includes(false)) return false;
     }
     return true;
   }

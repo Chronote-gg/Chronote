@@ -1,5 +1,7 @@
 # Recover valid voice acknowledgments without leaving servers stuck
 
+Status: Superseded by adr-20261111-lifecycle-simplification
+
 ## Review brief
 
 Fix the cases where Chronote receives a valid disconnect acknowledgment but still keeps the server occupied. Accept harmless status updates during disconnect, and finish the original meeting's cleanup when a matching acknowledgment arrives after the initial timeout. Existing recording, preservation, ownership and delivery protections stay in place.
@@ -83,4 +85,4 @@ Expected change surface: `guildVoiceOperationService`, `ownedMeetingInterruption
 
 Authoritative starting point: deployed commit `c5d5f0212bdf663065911fd4539b9b67565c3533`, tree `12823c423b96ed36c48a26eb722760e9a279e1e2`. It contains the emergency recording/capacity repairs and subsequent recovered-history/embed fixes. The repair branch must retain that ancestry and limit its diff to this repair, tests and relevant technical documentation. Unrelated changes in the older checkpoint worktree are outside scope.
 
-Relevant contracts: [deployment handoff](../../deployment-handoff.md), [drain and interruption design](2026-10-12-deployment-drain-and-interruption-design.md), [Discord gateway events](https://github.com/discord/discord-api-docs/blob/main/developers/events/gateway-events.mdx), and the repository's pinned discord.js / @discordjs/voice source. The stricter ownership and stale-operation guards are Chronote contracts; do not infer extra ordering guarantees from the Discord documentation.
+Relevant contracts: deployment handoff, [drain and interruption design](2026-10-12-deployment-drain-and-interruption-design.md), [Discord gateway events](https://github.com/discord/discord-api-docs/blob/main/developers/events/gateway-events.mdx), and the repository's pinned discord.js / @discordjs/voice source. The stricter ownership and stale-operation guards are Chronote contracts; do not infer extra ordering guarantees from the Discord documentation.

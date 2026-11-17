@@ -57,14 +57,13 @@ After a subscription ends, **Get Basic again** starts a new purchase using the
 selected monthly or annual period. It does not reset a used introductory offer.
 Returning from Stripe takes you back to the same server's Billing page.
 
-| Limit                             | Free       | Basic    | Pro             |
-| --------------------------------- | ---------- | -------- | --------------- |
-| Recording time per rolling 7 days | 4 hours    | 20 hours | No weekly limit |
-| Maximum meeting length            | 90 minutes | 2 hours  | 2 hours         |
-| Meetings included in Ask scope    | Up to 5    | Up to 25 | Up to 100       |
+| Limit                             | Free                        | Basic                       | Pro                         |
+| --------------------------------- | --------------------------- | --------------------------- | --------------------------- |
+| Recording time per rolling 7 days | 4 hours                     | 20 hours                    | No weekly limit             |
+| Maximum meeting length            | 90 minutes                  | 2 hours                     | 2 hours                     |
+| Meetings eligible for Ask         | Accessible retained history | Accessible retained history | Accessible retained history |
 
-Ask scope is the number of meetings available to a question, not a storage
-retention period. Pro's lack of a weekly recording limit does not remove the
+Ask uses the same accessible retained history on every plan when search is enabled. Pro's lack of a weekly recording limit does not remove the
 two-hour limit on each meeting. Review available billing changes before
 confirming payment.
 
@@ -77,8 +76,8 @@ After seven days, the usual rolling-week calculation applies.
 
 After a successful meeting, eligible Free servers may see an **Upgrade** button
 beside **Open in Chronote** and below the final notes embed. The reminder shows
-recorded time across saved meetings and invites you to get more recording time,
-search more past meetings, and help keep Chronote running. Totals display in
+recorded time across saved meetings and invites you to get more recording time
+and help keep Chronote running. Totals display in
 minutes through 60 minutes, then in hours. It opens plans with that server and Basic selected;
 sign in with an account that can manage the server to buy. These reminders appear
 no more than once every seven days per server. Paid and complimentary servers,
@@ -168,7 +167,7 @@ Ask natural-language questions about past meetings.
 | `tags`     | No       | Filter by tags                                             |
 | `scope`    | No       | "Guild" (default, searches all channels) or "Channel only" |
 
-Chronote searches your meeting history and generates an answer with citations linking to specific meetings. The number of meetings searched depends on your plan tier.
+Chronote searches your meeting history and generates an answer with citations linking to specific meetings. Every plan can search the same accessible retained history when search is enabled. Coverage notices identify indexing that is still catching up. During rollout, a **Recent history mode** notice means Ask uses up to 25 recent meeting candidates plus any meetings you explicitly selected; full-history search is not enabled yet.
 
 ### `/tts`
 
@@ -350,6 +349,20 @@ The Chronote web portal provides a browser-based interface for:
 - Managing server settings (context, dictionary, auto-record, Notion automation).
 
 Access the portal from the **Open in Chronote** button on any meeting summary, or open the portal directly to start from **My Meetings**. The sidebar separates **Personal** flows from **Server** flows: use **My Meetings**, **Upload Media**, and **Personal Settings** for account-owned work, then choose a server in the **Server** section before opening Library, Ask, Billing, or Server Settings. Use **Support** in the portal sidebar to email Chronote support.
+
+### Starting a question in Ask
+
+Choose a server and open **Ask**. A new chat shows meetings available
+to Ask and example questions you can edit before sending. Choose **Add to
+context** on a meeting card to include it with your next question without leaving
+the page. Remove its chip above the input to leave it out. Choose **Add meeting
+context** to search titles, summaries and notes in the meeting picker. Ask reads
+complete current notes and can investigate transcripts within selected meetings,
+subject to your current access and server transcript settings.
+
+Ask searches accessible retained history on every plan when search is enabled.
+Search can show a partial-coverage notice while indexing catches up. Missing
+results during that time do not prove that a meeting does not exist.
 
 ## Personal media uploads
 

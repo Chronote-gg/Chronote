@@ -1,4 +1,3 @@
-import type { GenerationObserver } from "../../src/types/fixtureEvidence";
 import type { LangfusePromptMeta } from "../../src/services/langfusePromptService";
 import { Readable } from "node:stream";
 import type { ClientOptions } from "openai";
@@ -18,7 +17,6 @@ type FixtureOptions = {
   multipartError?: Error;
   holdFetch?: Promise<void>;
   defaultTransport?: boolean;
-  observeGeneration?: GenerationObserver;
   generationPrompt?: LangfusePromptMeta;
 };
 
@@ -104,7 +102,6 @@ export async function buildAsrFixture(options: FixtureOptions) {
         prompt: options.prompt ?? "Project terminology.",
       },
       ledger,
-      observeGeneration: options.observeGeneration,
       clientOptions: {
         disableTracing: true,
         langfusePrompt: options.generationPrompt,

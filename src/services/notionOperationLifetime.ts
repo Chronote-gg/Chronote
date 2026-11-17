@@ -1,4 +1,3 @@
-import type { RuntimeWorkClaim } from "./runtimeWorkAdmissionService";
 import { RuntimeAdmissionUnavailable } from "./runtimeAdmissionError";
 type MutationTracker = <T>(run: () => Promise<T>) => Promise<T>;
 const mutationTrackers = new WeakMap<AbortSignal, MutationTracker>();
@@ -89,15 +88,4 @@ export async function runNotionReceiptChain<T>(
   });
   if (outcome.kind === "cancelled") throw outcome.error;
   return outcome.value;
-}
-
-export function registerRuntimeNotionOwner(
-  work: Pick<RuntimeWorkClaim, "signal" | "trackEffect" | "fence">,
-): () => void {
-  return registerNotionMutationTracker(work.signal, (run) =>
-    work.trackEffect(run).catch((error) => {
-      work.fence();
-      throw error;
-    }),
-  );
 }

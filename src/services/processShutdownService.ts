@@ -1,10 +1,10 @@
 import type { EventEmitter } from "node:events";
+import { LIFECYCLE } from "./lifecycleTiming";
 import {
   createPreservationBudget,
   type PreservationBudget,
 } from "./preservationBudget";
 
-export const PROCESS_PRESERVATION_MS = 100_000;
 type ShutdownReason = "signal" | "startup_failure" | "protection_loss";
 type Outcome = { kind: "settled" } | { kind: "unresolved" };
 type Dependencies = {
@@ -57,7 +57,7 @@ export function createProcessShutdownOwner(dependencies: Dependencies) {
       maybeExit();
       return result;
     }
-    budget = createPreservationBudget(Date.now() + PROCESS_PRESERVATION_MS);
+    budget = createPreservationBudget(Date.now() + LIFECYCLE.shutdownBudgetMs);
     let resolve!: (value: Outcome) => void;
     result = new Promise<Outcome>((done) => {
       resolve = done;

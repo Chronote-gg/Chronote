@@ -6,10 +6,15 @@ import { getGuildMemberCached } from "./discordCacheService";
 import { isDiscordApiError } from "./discordService";
 import { McpMeetingAccessError } from "./mcpMeetingErrors";
 import { listMcpServersForUser } from "./mcpMeetingServers";
-import { checkUserMeetingAccess } from "./meetingAccessService";
+import {
+  checkUserMeetingAccess,
+  type MeetingAccessContext,
+} from "./meetingAccessService";
 
 export type McpMeetingAccessContext = {
   attendeeOverrideEnabled: boolean;
+  guildAuthorityOverrideEnabled: boolean;
+  accessContext: MeetingAccessContext;
   sharedGuildIds?: string[];
 };
 
@@ -45,6 +50,8 @@ export const resolveMcpMeetingAccessContext = async (
     await assertMcpGuildMembership(guildId, userId);
   }
   return {
+    guildAuthorityOverrideEnabled: !options.restricted,
+    accessContext: new Map(),
     // Attendee access is a permanent grant recorded at meeting time, and the
     // participant snapshot in `meetings.ts` does not filter bots out of a voice
     // channel. A bot that once sat in a private channel would therefore keep
@@ -72,37 +79,46 @@ export const ensureMcpMeetingAccess = async (options: {
   restricted?: boolean;
 }) => {
   const personal = isPersonalMeeting(options.meeting);
-  const accessContext =
+  const accessContext: McpMeetingAccessContext =
     options.accessContext ??
     (personal
-      ? { attendeeOverrideEnabled: false }
+      ? {
+          attendeeOverrideEnabled: false,
+          guildAuthorityOverrideEnabled: false,
+          accessContext: new Map(),
+        }
       : await resolveMcpMeetingAccessContext(options.guildId, options.userId, {
           requireGuildMembership: false,
           restricted: options.restricted,
         }));
   if (
-    !options.accessContext &&
+    (!options.accessContext || options.restricted) &&
     !personal &&
     !(
+      !options.restricted &&
       accessContext.attendeeOverrideEnabled &&
       isRecordedMeetingAttendee(options.meeting, options.userId)
     )
   ) {
     await assertMcpGuildMembership(options.guildId, options.userId);
   }
-  let decision = await checkUserMeetingAccess({
+  const accessParams = {
     guildId: options.guildId,
     meeting: options.meeting,
     userId: options.userId,
-    attendeeOverrideEnabled: accessContext.attendeeOverrideEnabled,
+    attendeeOverrideEnabled:
+      !options.restricted && accessContext.attendeeOverrideEnabled,
+    guildAuthorityOverrideEnabled:
+      !options.restricted && accessContext.guildAuthorityOverrideEnabled,
+    accessContext: accessContext.accessContext,
+  };
+  let decision = await checkUserMeetingAccess({
+    ...accessParams,
     sharedGuildIds: accessContext.sharedGuildIds,
   });
   if (decision.allowed === false && hasPersonalGuildGrants(options.meeting)) {
     decision = await checkUserMeetingAccess({
-      guildId: options.guildId,
-      meeting: options.meeting,
-      userId: options.userId,
-      attendeeOverrideEnabled: accessContext.attendeeOverrideEnabled,
+      ...accessParams,
       sharedGuildIds: await resolveMcpSharedGuildIds(options.userId),
     });
   }

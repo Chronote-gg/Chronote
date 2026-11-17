@@ -27,7 +27,7 @@ export const NewBuyer: Story = {
         canvas.getByRole("button", { name: "Continue with Basic" }),
       ).toBeEnabled(),
     );
-    await expect(canvas.getByText("Recommended")).toBeVisible();
+    await expect(canvas.queryByText(/Best value/i)).toBeNull();
     await expect(canvas.getByRole("radio", { name: "Monthly" })).toBeChecked();
     await expect(canvas.queryByText(/months free/)).toBeNull();
   },
@@ -161,9 +161,11 @@ export const BillingCanceledSubscription: Story = {
     await expect(currentPlan).toHaveTextContent("Free");
     await expect(currentPlan).not.toHaveTextContent("Canceled");
     await expect(currentPlan).not.toHaveTextContent("No subscription needed");
-    await expect(
-      canvas.getByRole("button", { name: "Get Basic again" }),
-    ).toBeEnabled();
+    await waitFor(() =>
+      expect(
+        canvas.getByRole("button", { name: "Get Basic again" }),
+      ).toBeEnabled(),
+    );
     await expect(
       canvas.getByRole("button", { name: "Upgrade to Pro" }),
     ).toBeEnabled();
@@ -558,7 +560,7 @@ export const IntroSubscriberCanceled: Story = {
       await within(canvasElement).findByTestId("billing-current-plan"),
     );
     await expect(
-      current.getByText("Renewal off", { exact: true }),
+      await current.findByText("Renewal off", { exact: true }),
     ).toBeVisible();
     await expect(current.queryByText(/next billing/)).toBeNull();
     await expect(
@@ -754,8 +756,12 @@ export const BillingPlanChangeReview: Story = {
     await userEvent.click(
       await canvas.findByRole("button", { name: "Review Pro" }),
     );
-    await waitFor(() => expect(root.scrollTop).toBeLessThan(before));
     const review = await canvas.findByTestId("billing-change-review");
+    await waitFor(() => {
+      const bounds = review.getBoundingClientRect();
+      expect(bounds.top).toBeGreaterThanOrEqual(0);
+      expect(bounds.bottom).toBeLessThanOrEqual(window.innerHeight);
+    });
     await expect(review).toHaveTextContent("Change to Pro");
     await expect(review).toHaveTextContent("$9");
     await expect(canvas.getByTestId("billing-current-plan")).toHaveTextContent(
@@ -943,4 +949,46 @@ export const RenewalGraceProcessing: Story = {
     }),
   },
   tags: ["renewal-grace"],
+};
+
+export const SignedOutUpgradeShort: Story = {
+  args: {
+    signedIn: false,
+    path: "/upgrade/select-server?serverId=example&source=discord_limit&interval=year",
+  },
+  tags: ["upgrade-viewport"],
+};
+export const SignedOutUpgradeMobile: Story = {
+  ...SignedOutUpgradeShort,
+  tags: ["upgrade-viewport"],
+};
+
+export const SignedOutUpgradeMonthlyShort: Story = {
+  ...SignedOutUpgradeShort,
+  args: {
+    signedIn: false,
+    path: "/upgrade/select-server?serverId=example&source=discord_limit&interval=month",
+  },
+  tags: ["upgrade-viewport"],
+};
+export const SignedOutUpgradeMonthlyMobile: Story = {
+  ...SignedOutUpgradeMonthlyShort,
+  tags: ["upgrade-viewport"],
+};
+export const BillingAskHistoryShort: Story = {
+  ...BillingFree,
+  tags: ["upgrade-viewport"],
+  play: async ({ canvasElement }) => {
+    const rewards = await within(canvasElement).findAllByText(
+      "Ask across accessible meeting history",
+    );
+    await expect(rewards).toHaveLength(3);
+    await expect(
+      within(canvasElement).queryByText(/wider Ask history|deeper recall/i),
+    ).toBeNull();
+  },
+};
+export const BillingAskHistoryMobile: Story = {
+  ...BillingAskHistoryShort,
+  tags: ["upgrade-viewport"],
 };

@@ -12,7 +12,7 @@ Supported meeting edits, imports, approved corrections and renames save the meet
 - `/autorecord`: Configure auto-recording for a server/channel.
 - `/context`: Manage prompt context.
 - `/dictionary`: Manage dictionary terms used in prompts.
-- `/ask`: Ask questions over recent meeting history (guild scope by default).
+- `/ask`: Ask questions over accessible meeting history (guild scope by default).
 
 ## Recording outcomes
 
@@ -34,7 +34,7 @@ of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts
 
 ## Run locally
 
-1. `yarn install`
+1. Set up the [native voice build prerequisites](#native-voice-build-prerequisites), then run `yarn install`.
 2. Install FFMPEG (e.g., `choco install ffmpeg` on Windows).
 3. Copy `.env.example` to `.env`; set required keys: `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `OPENAI_API_KEY`. Optional: Stripe keys to enable checkout/portal endpoints; `USE_LOCAL_DYNAMODB=true` for local tables. For Langfuse prompt sync or tracing, set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Optional: `LANGFUSE_BASE_URL`, `LANGFUSE_PROMPT_LABEL`, `LANGFUSE_PROMPT_TRANSCRIPTION`, `LANGFUSE_PROMPT_DICTIONARY_TEACHING`. For Notion export, set `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and `NOTION_REDIRECT_URI`.
    - For mock portal data + OAuth bypass, set `MOCK_MODE=true` (no Discord/Dynamo required), or run `yarn start:mock` / `yarn dev:mock` to toggle mock mode without editing `.env`.
@@ -50,6 +50,24 @@ of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts
 - `yarn docker:up` / `yarn docker:down` – start/stop local Dynamo + admin UI
 - `yarn db:init` – create tables locally
 - `yarn dev:clean` – wipe local Dynamo data and restart
+
+### Integration tests
+
+`yarn test:integration` runs every `*.integration.test.ts` against DynamoDB Local. Start it with `yarn docker:up`, then run `TEST_DYNAMODB_ENDPOINT=http://127.0.0.1:8000 yarn test:integration`. The endpoint must be a loopback HTTP address; the suite refuses anything else and never uses your AWS credentials.
+
+#### Checkpoint finish/storage acceptance
+
+The checkpoint finish/storage suite tests compiled capture and checkpoint code against isolated DynamoDB and MinIO services. It verifies that finish waits for a pending storage retry, reads saved audio back byte-for-byte, and retains local audio when retries are exhausted. It does not exercise Discord commands, voice capture, notes generation, AWS IAM or production routing.
+
+Build both images before running the suite, as CI does. MinIO is built from pinned official source because its prebuilt community images are no longer available.
+
+```sh
+docker build -t chronote-deployment-test:local .
+docker build -f test/deployment/fixtures/Minio.Dockerfile -t chronote-minio-test:source .
+DEPLOYMENT_TEST_IMAGE=chronote-deployment-test:local TEST_DYNAMODB_ENDPOINT=http://127.0.0.1:8000 yarn test:integration --runTestsByPath test/deployment/checkpointFinishStorage.integration.test.ts
+```
+
+This targeted test creates and removes its own internal Docker network and generated-data containers without exposing ports or using host credentials. The complete deployment suite additionally needs DynamoDB Local at the configured loopback endpoint. Sandbox unit-test failures block deployment.
 
 ### Langfuse prompt sync
 
@@ -69,6 +87,14 @@ of meeting completion; see [meeting lifecycle](apps/docs-site/docs/core-concepts
 - Production automatically syncs only the OpenAI connection after backend deployment. Staging shares Langfuse and checks drift without pushing; other providers remain explicitly managed.
 - Details and schema: `docs/langfuse-llm-connections.md`.
 
+### Native voice build prerequisites
+
+Install [rustup](https://rustup.rs/) and the native linker/build tools for your host before `yarn install` (MSVC C++ build tools on Windows, Xcode Command Line Tools on macOS, or a C/C++ toolchain on Linux). A cold install needs network access: postinstall installs Rust 1.88.0 with its minimal profile and builds Chronote's pinned Davey source with `Cargo.lock`. Later builds reuse the local Cargo target cache.
+
+The source and MIT license live in [`native/davey`](native/davey/UPSTREAM.md). `scripts/build-native-davey.mjs` installs the rebuilt N-API binding into the pinned JavaScript package; its loader requires that artifact instead of an unpatched prebuilt fallback. The build targets the host OS and architecture through Cargo. Native execution is verified on Windows x64 and glibc Linux x64; other upstream native targets, including macOS and arm64, are not qualified by those results.
+
+Docker compiles the same source in a Rust builder stage and installs the artifact during Node postinstall. CI's dependency installer builds it even with `--ignore-scripts`, and the unit-test job checks the native parser before Jest. Keep this build path when changing installation or CI settings.
+
 ## Checks
 
 These checks run before PR merge and deployment. Use `yarn run check` for the full local gate with auto-fix. Use `yarn run check:ci` to mirror CI, including prompt sync, e2e, and IaC scans.
@@ -79,12 +105,12 @@ These checks run before PR merge and deployment. Use `yarn run check` for the fu
 - Build (TypeScript + Vite) validates type safety and production bundles. Commands: `yarn build` (tsc), `yarn build:web` (vite build), and `yarn build:all` (both). Docs: https://www.typescriptlang.org/docs/handbook/compiler-options.html and https://vite.dev/guide/
 - Docs build (Docusaurus) validates docs compilation and links. Command: `yarn docs:check`.
 - E2E tests (Playwright) validate critical user flows. Command: `yarn test:e2e`. Docs: https://playwright.dev/docs/running-tests
-- Visual regression (Playwright screenshots) fails its PR check on visual test failures. Upgrade and post-install welcome pages include desktop, phone and wide-screen baselines. Review screenshots before updating them. Commands: `yarn test:visual` and `yarn test:visual:update`. Details: `docs/visual-regression.md`.
+- Visual regression keeps representative desktop and phone page baselines. Storybook covers component edge states and interactions without capturing every permutation. Review screenshots before updating them. Commands: `yarn test:visual` and `yarn test:visual:update`. Details: `docs/visual-regression.md`.
 - Code stats and complexity (scc + lizard) keep size and complexity visible. Command: `yarn code:stats`. Use `.sccignore` to exclude paths from scc output. Lizard reports all warnings without suppressing or blocking on legacy debt. Use `yarn check:quality` for enforced limits. Docs: https://github.com/boyter/scc and https://github.com/terryyin/lizard
 - Prompt sync (Langfuse) keeps repo prompt files aligned with Langfuse. Command: `yarn prompts:check`.
 - LLM connection sync (Langfuse) keeps LLM connection YAML aligned with Langfuse. Command: `yarn llm-connections:check`.
 - IaC scan (Checkov via uvx) catches Terraform misconfigurations. Command: `yarn checkov`. Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html and https://docs.astral.sh/uv/concepts/tools/
-- Terraform drift visibility and reconciliation are manual through `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`. Apply uses a reviewed saved plan artifact and GitHub environment approval.
+- Terraform drift visibility and reconciliation are manual through `.github/workflows/terraform-plan.yml` and `.github/workflows/terraform-apply.yml`. Apply uses a reviewed saved plan in the state bucket, a run-owned digest and GitHub environment approval.
 
 CI covers the local checks in `yarn run check:ci`. The separate PR quality workflow may accept an explicitly reviewed exception; local quality commands remain strict. See [code quality checks](docs/engineering/code-quality.md).
 
@@ -142,19 +168,21 @@ flowchart LR
   C --> Z["CI complete"]
   D --> Z
   Z --> K["deploy-docs: publish docs"]
-  K --> L["deploybackend: prepare, promote, retire"]
+  K --> L["deploybackend: wait for drain, roll out, wait for ready"]
   L --> J["deploy-frontend: publish frontend"]
 ```
 
-Production backend deployment waits for CI and docs publication. Frontend publication waits for backend success; docs publication can finish even if the backend later fails. Normal backend deployments protect the serving runtime, warm and promote a compatible candidate, then wait for runtime-owned retirement. See [recording handoff and recovery](docs/deployment-handoff.md). The one-time [first production introduction](docs/production-introduction.md) is a cold cutover that runs only when no work is in flight.
+Production backend deployment waits for CI and docs publication. Frontend publication waits for backend success; docs publication can finish even if the backend later fails. The backend job waits for any older task that is still recording a meeting (bounded), rolls out a new task definition revision, waits for a ready worker on it and rolls back on failure. Meetings can start throughout. See [deployment](docs/deployment.md).
 
-Sandbox deployment uses its own preflight, skips Checkov and allows unit test failures to continue. Its frontend, docs and backend jobs depend on that preflight, without the production backend-before-frontend dependency. All three jobs use the Sandbox OIDC deployment role; site jobs restrict each session to its own publishing targets. Install the existing site policy before enabling them, as described in [Sandbox site publishing](_infra/README.md#sandbox-site-publishing). Sandbox bootstrap and approval rules remain separate.
+Sandbox deployment uses its own preflight, skips Checkov and allows unit test failures to continue. Its frontend, docs and backend jobs depend on that preflight, and frontend publication waits for the backend as in production. All three jobs use the Sandbox OIDC deployment role; site jobs restrict each session to its own publishing targets. Install the existing site policy before enabling them, as described in [Sandbox site publishing](_infra/README.md#sandbox-site-publishing). The Sandbox backend job runs the same deploy script as production.
 
 Coverage update rule:
 
 - After coverage improvements or coverage scope changes, round each threshold down to the nearest 10 and keep it in sync with `jest.config.ts`. Do not lower a threshold below its pre-PR value unless the coverage scope meaningfully expands, in which case reset to the new rounded baseline and call it out in the PR.
 
 ## Frontend
+
+Portal sign-in reconnects expired sessions and returns to the requested page. It warns before leaving unfinished work. See [sign-in help](https://docs.chronote.gg/getting-started/#sign-in-to-the-portal).
 
 - Vite + React 19 + Mantine 8 UI under `src/frontend/`, builds to `build/frontend/`.
 - Public product docs use Docusaurus under `apps/docs-site`, builds to `build/docs-site/`.
@@ -167,7 +195,7 @@ Coverage update rule:
   - `/portal/select-server`
   - `/portal/server/:serverId/{library|ask|billing|settings}`
 - Upgrade flow entry points live under `/upgrade`, `/promo/:code`, and `/upgrade/select-server` with a success page at `/upgrade/success`. See `docs/upgrade-flow.md` for details and planned short-link support.
-- Successful Free-server meeting summaries and final notes can include a weekly Upgrade reminder with recorded time across saved meetings, more recording time, deeper meeting search, and support for Chronote's operation, preserving the server and Basic plan selection.
+- Successful Free-server meeting summaries and final notes can include a weekly Upgrade reminder with recorded time across saved meetings, more recording time and support for Chronote's operation, preserving the server and Basic plan selection.
 - Deployed via GitHub Actions to S3 + CloudFront (see `_infra/` and `.github/workflows/deploy.yml`).
 - Static hosting variables (frontend): `FRONTEND_BUCKET`, `FRONTEND_DOMAIN` (optional), `FRONTEND_CERT_ARN` (when custom domain is set).
 - Static hosting variables (docs): `DOCS_BUCKET`, `DOCS_DOMAIN` (optional), `DOCS_CERT_ARN` (when custom domain is set).

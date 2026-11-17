@@ -1,6 +1,6 @@
 # ADR-20261103: Always Send the Voice Leave While the Guild Is Owned
 
-Status: Accepted  
+Status: Superseded by adr-20261111-lifecycle-simplification  
 Date: 2026-11-03  
 Owners: Meeting lifecycle
 
@@ -59,4 +59,4 @@ Negative:
 
 - Existing `uncertain` rows from before this change need operator
   reconciliation; this change does not clear them.
-- See `docs/deployment-handoff.md` (Delayed voice acknowledgment).
+- The voice leave on close survives in [ADR-20261111](adr-20261111-lifecycle-simplification.md); the durable voice row, settlement and `uncertain` state it fenced do not exist there.

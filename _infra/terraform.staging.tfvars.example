@@ -1,6 +1,5 @@
 DISCORD_CLIENT_ID="your-staging-discord-client-id"
 GITHUB_TOKEN="your-github-token"
-AWS_TOKEN_KEY="your-aws-token-key"
 
 # Environment setup
 environment="staging"

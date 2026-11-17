@@ -7,6 +7,9 @@ import {
   resolveRemoteLeaseStatus,
 } from "../../src/api/liveMeetings";
 import { getMeeting } from "../../src/meetings";
+import { closeMeeting } from "../../src/services/meetingClose";
+import { updateMeetingProcessingMessage } from "../../src/embed";
+import { autoRecordJoinSuppressionService } from "../../src/services/autoRecordJoinSuppressionService";
 import {
   ensureManageGuildWithUserToken,
   ensureUserInGuild,
@@ -30,10 +33,9 @@ import {
   getActiveMeetingLeaseForGuild,
   isLeaseActive,
   requestMeetingEndViaLease,
-} from "../../src/services/activeMeetingLeaseService";
+} from "../../src/services/meetingLease";
 
 jest.mock("../../src/meetings", () => ({
-  getPendingMeetingInitializations: () => [],
   getMeeting: jest.fn(),
 }));
 jest.mock("../../src/services/guildAccessService", () => ({
@@ -50,14 +52,27 @@ jest.mock("../../src/services/liveMeetingService", () => ({
 jest.mock("../../src/services/meetingTimelineService", () => ({
   buildLiveMeetingTimelineEvents: jest.fn(),
 }));
-jest.mock("../../src/services/activeMeetingLeaseService", () => ({
+jest.mock("../../src/services/meetingLease", () => ({
   getActiveMeetingLeaseForGuild: jest.fn(),
   isLeaseActive: jest.fn(),
   requestMeetingEndViaLease: jest.fn(),
 }));
+jest.mock("../../src/services/meetingClose", () => ({
+  closeMeeting: jest.fn(async () => undefined),
+}));
 jest.mock("../../src/services/meetingArtifactAccessService", () => ({
   resolveServerMeetingArtifactAccess: jest.fn(),
 }));
+jest.mock(
+  "../../src/embed",
+  () =>
+    jest.requireActual("../fixtures/meetingEndModuleMocks")
+      .processingMessageEmbed,
+);
+jest.mock(
+  "../../src/services/autoRecordJoinSuppressionService",
+  () => jest.requireActual("../fixtures/meetingEndModuleMocks").joinSuppression,
+);
 
 const mockedGetMeeting = getMeeting as jest.MockedFunction<typeof getMeeting>;
 const mockedEnsureUserInGuild = ensureUserInGuild as jest.MockedFunction<
@@ -268,6 +283,12 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  jest
+    .mocked(updateMeetingProcessingMessage)
+    .mockResolvedValue(
+      {} as Awaited<ReturnType<typeof updateMeetingProcessingMessage>>,
+    );
+  jest.mocked(closeMeeting).mockResolvedValue(undefined);
   mockedResolveServerMeetingArtifactAccess.mockResolvedValue({
     transcriptAccessEnabled: true,
     audioAccessEnabled: true,
@@ -575,27 +596,61 @@ test("known local interruption overrides finished flag and detection end time", 
   }
 });
 
-test("ends meeting via api endpoint", async () => {
-  const onEndMeeting = jest
-    .fn<(meeting: MeetingData) => Promise<void>>()
-    .mockResolvedValue(undefined);
-  const meeting = makeMeeting({ onEndMeeting });
-  mockedGetMeeting.mockReturnValue(meeting);
-  mockedEnsureManageGuildWithUserToken.mockResolvedValue(true);
-
+/** Posts the portal's end request for the synthetic meeting. */
+const postMeetingEnd = async () => {
   const { server, baseUrl } = createServer(true);
   try {
-    const response = await requestJsonPost(
-      `${baseUrl}/api/live/guild-1/meeting-1/end`,
-    );
-    expect(response.statusCode).toBe(200);
+    return await requestJsonPost(`${baseUrl}/api/live/guild-1/meeting-1/end`);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+};
 
-  expect(onEndMeeting).toHaveBeenCalled();
-  expect(meeting.endReason).toBe(MEETING_END_REASONS.WEB_UI);
-  expect(meeting.endTriggeredByUserId).toBe("user-1");
+const expectClosedFromPortal = (meeting: MeetingData) =>
+  expect(closeMeeting).toHaveBeenCalledWith(meeting, {
+    endReason: MEETING_END_REASONS.WEB_UI,
+    endTriggeredByUserId: "user-1",
+  });
+
+test("ends meeting via api endpoint", async () => {
+  const meeting = makeMeeting();
+  mockedGetMeeting.mockReturnValue(meeting);
+  mockedEnsureManageGuildWithUserToken.mockResolvedValue(true);
+
+  expect((await postMeetingEnd()).statusCode).toBe(200);
+
+  expectClosedFromPortal(meeting);
+});
+
+test("a portal stop shows the processing state and saves the suppression once, before close", async () => {
+  const order: string[] = [];
+  const meeting = makeMeeting({
+    sessionMode: "meeting",
+    isAutoRecording: true,
+    voiceChannel: {
+      id: "voice-1",
+      name: "General",
+      // Read only through filter and map, which an array offers like a Collection.
+      members: [{ id: "member-1", user: { bot: false } }],
+    } as unknown as MeetingData["voiceChannel"],
+  });
+  mockedGetMeeting.mockReturnValue(meeting);
+  mockedEnsureManageGuildWithUserToken.mockResolvedValue(true);
+  jest
+    .mocked(autoRecordJoinSuppressionService.suppressUntilEmpty)
+    .mockImplementation(async () => {
+      order.push("suppress");
+      return true;
+    });
+  jest.mocked(closeMeeting).mockImplementation(async () => {
+    order.push("close");
+  });
+
+  expect((await postMeetingEnd()).statusCode).toBe(200);
+
+  expect(updateMeetingProcessingMessage).toHaveBeenCalledWith(meeting);
+  expect(order).toEqual(["suppress", "close"]);
+  expectClosedFromPortal(meeting);
 });
 
 test("queues remote meeting end request via active lease", async () => {
@@ -617,17 +672,10 @@ test("queues remote meeting end request via active lease", async () => {
   mockedIsLeaseActive.mockReturnValue(true);
   mockedRequestMeetingEndViaLease.mockResolvedValue(true);
 
-  const { server, baseUrl } = createServer(true);
-  try {
-    const response = await requestJsonPost(
-      `${baseUrl}/api/live/guild-1/meeting-1/end`,
-    );
-    expect(response.statusCode).toBe(200);
-    const payload = JSON.parse(response.body) as { status?: string };
-    expect(payload.status).toBe("accepted");
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
+  const response = await postMeetingEnd();
+  expect(response.statusCode).toBe(200);
+  const payload = JSON.parse(response.body) as { status?: string };
+  expect(payload.status).toBe("accepted");
 
   expect(mockedRequestMeetingEndViaLease).toHaveBeenCalledWith(
     "guild-1",

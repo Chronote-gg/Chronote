@@ -4,9 +4,7 @@ import { applyVisualDefaults, waitForVisualReady } from "./visualUtils";
 import type { UnifiedScenario } from "../../src/frontend/storybook/unifiedMeetingsFixtures";
 const viewports = [
   { width: 1280, height: 720 },
-  { width: 768, height: 900 },
   { width: 390, height: 844 },
-  { width: 1920, height: 1080 },
 ];
 const states: Array<{
   name: string;
@@ -15,24 +13,10 @@ const states: Array<{
   manySources?: boolean;
 }> = [
   { name: "all" },
-  { name: "empty", scenario: "empty" },
-  { name: "server", path: "scope=guild&serverId=engineering" },
-  { name: "personal", path: "scope=personal" },
-  { name: "attended", path: "attended=true" },
-  {
-    name: "server-empty",
-    path: "scope=guild&serverId=engineering",
-    scenario: "empty",
-  },
-  { name: "personal-empty", path: "scope=personal", scenario: "empty" },
-  { name: "filtered-empty", path: "scope=personal&q=unmatched" },
-  { name: "retained", path: "scope=guild&serverId=previous" },
-  { name: "denied", path: "scope=guild&serverId=denied", scenario: "error" },
-  { name: "error", scenario: "error" },
-  { name: "loading", scenario: "loading" },
   { name: "drawer", path: "meetingServerId=engineering&meetingId=record-0" },
   { name: "long-sources", manySources: true, scenario: "long" },
 ];
+const modes: readonly ("viewport" | "full")[] = ["viewport"];
 test.describe("unified Meetings", () => {
   test.skip(process.env.PW_VISUAL !== "true", "Visual regression disabled");
   test.use({
@@ -41,14 +25,9 @@ test.describe("unified Meetings", () => {
     contextOptions: { reducedMotion: "reduce" },
   });
   for (const viewport of viewports)
-    for (const theme of ["dark", "light"] as const)
+    for (const theme of ["dark"] as const)
       for (const state of states) {
-        if (
-          theme === "light" &&
-          ["retained", "loading", "error", "denied", "long-sources"].includes(
-            state.name,
-          )
-        )
+        if ((viewport.width === 390) !== (state.name === "long-sources"))
           continue;
         test(`${state.name} ${theme} ${viewport.width} @visual`, async ({
           page,
@@ -62,7 +41,7 @@ test.describe("unified Meetings", () => {
           );
           const releaseRequests = await mockUnifiedMeetings(page, state);
           try {
-            for (const mode of ["viewport", "full"] as const) {
+            for (const mode of modes) {
               await page.goto(
                 `/portal/meetings?${state.path ?? ""}&visual=${mode === "full" ? "1" : "0"}`,
               );

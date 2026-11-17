@@ -1,330 +1,79 @@
-import { resolveAttendeeAccessEnabled } from "./attendeeAccessSetting";
-import { listRecentMeetingsForGuildService } from "./meetingHistoryService";
-import { config } from "./configService";
-import { captureEvent } from "./analyticsService";
-import { listDictionaryEntriesService } from "./dictionaryService";
-import { normalizeTags, parseTags } from "../utils/tags";
-import { buildUpgradeTextOnly } from "../utils/upgradePrompt";
-import { ensureUserCanAccessMeeting } from "./meetingAccessService";
-import { generateOpenAIText } from "./openaiTextService";
-import { buildModelOverrides, getModelChoice } from "./modelFactory";
-import { getLangfuseChatPrompt } from "./langfusePromptService";
-import { resolveModelChoicesForContext } from "./modelChoiceService";
-import {
-  resolveChatParamsForRole,
-  resolveModelParamsForContext,
-} from "./openaiModelParams";
-import { resolveConfigSnapshot } from "./unifiedConfigService";
-import { resolveGuildSubscription } from "./subscriptionService";
-import {
-  buildDictionaryPromptLines,
-  resolveDictionaryBudgets,
-} from "../utils/dictionary";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AskCitation } from "../types/ask";
-import { buildAskCitations, stripCitationTags } from "./askCitations";
-import { DiscordRateLimitedError } from "./discordRateLimitError";
+import type { AskAgentProvenance } from "./askAgentTools";
+import { executeAskAgent } from "./askAgentService";
+import { captureEvent } from "./analyticsService";
+import { config } from "./configService";
+import { answerLegacyAskQuestion } from "./legacyAskService";
 
 export type AskScope = "guild" | "channel";
-
-export type AskHistoryMessage = {
-  role: "user" | "chronote";
-  text: string;
-};
-
 export interface AskRequest {
   guildId: string;
   channelId: string;
   question: string;
-  tags?: string[];
-  scope?: AskScope;
-  maxMeetings?: number;
-  history?: AskHistoryMessage[];
   viewerUserId?: string;
+  scope?: AskScope;
+  tags?: string[];
+  contextMeetingIds?: string[];
+  history?: { role: "user" | "chronote"; text: string }[];
+  agentHistory?: AgentMessage[];
+  provenance?: AskAgentProvenance;
+  timezone?: string;
+  conversationId?: string;
+  signal?: AbortSignal;
+  onTextDelta?: (delta: string) => void;
+  onToolActivity?: (tool: string) => void;
 }
-
 export interface AskResponse {
   answer: string;
   sourceMeetingIds?: string[];
   citations?: AskCitation[];
+  history?: AgentMessage[];
+  provenance?: AskAgentProvenance;
 }
-
-function truncate(text: string, maxLen: number): string {
-  return text.length > maxLen ? text.slice(0, maxLen) + "..." : text;
-}
-
-type MeetingSummary = Awaited<
-  ReturnType<typeof listRecentMeetingsForGuildService>
->[number];
-
-const scrubInternalIds = (text: string) =>
-  text
-    .replace(/\(id [0-9a-f-]{8,}\)/gi, "")
-    .replace(/\bid [0-9a-f-]{8,}\b/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-
-const ASK_MAX_OUTPUT_TOKENS = 800;
-const ASK_MEETING_DELIMITER = "---";
-
-const buildDictionaryBlock = async (guildId: string): Promise<string> => {
-  try {
-    const [entries, subscription] = await Promise.all([
-      listDictionaryEntriesService(guildId),
-      resolveGuildSubscription(guildId),
-    ]);
-    const snapshot = await resolveConfigSnapshot({
-      guildId,
-      tier: subscription.tier,
-    });
-    if (!entries.length) return "None.";
-    const valuesByKey: Record<string, unknown> = {};
-    Object.entries(snapshot.values).forEach(([key, entry]) => {
-      valuesByKey[key] = entry.value;
-    });
-    const budgets = resolveDictionaryBudgets(valuesByKey, snapshot.tier);
-    const { contextLines } = buildDictionaryPromptLines(entries, budgets);
-    return contextLines.length > 0 ? contextLines.join("\n") : "None.";
-  } catch (error) {
-    console.warn("Failed to build dictionary block for Ask:", error);
-    return "None.";
-  }
-};
-
-export const buildAskContextBlocks = (meetings: MeetingSummary[]) =>
-  meetings.map((m, index) => {
-    const meetingIndex = index + 1;
-    const date = new Date(m.timestamp).toLocaleDateString();
-    const tagLine = m.tags?.length
-      ? `Tags: ${m.tags.join(", ")}`
-      : "Tags: None";
-    const statusLine = `Status: ${m.archivedAt ? "Archived" : "Active"}`;
-    const notes = m.notes
-      ? truncate(scrubInternalIds(m.notes), 900)
-      : "(no notes)";
-    return [
-      `<meeting index="${meetingIndex}">`,
-      `Date: ${date}`,
-      tagLine,
-      statusLine,
-      `Notes: ${notes}`,
-      `</meeting>`,
-    ].join("\n");
-  });
-
-const resolveMeetingVoiceChannelId = (meeting: {
-  channelId?: string | null;
-  channelId_timestamp?: string | null;
-}): string | null => {
-  const direct = meeting.channelId?.trim();
-  if (direct) return direct;
-  const key = meeting.channelId_timestamp?.trim();
-  if (!key) return null;
-  const [channelId] = key.split("#");
-  return channelId?.trim() ? channelId.trim() : null;
-};
-
-const filterMeetings = (
-  meetings: MeetingSummary[],
-  channelId: string,
-  scope: AskScope,
-  tags?: string[],
-) => {
-  let filtered = meetings;
-  if (tags?.length) {
-    filtered = filtered.filter(
-      (m) => m.tags && m.tags.some((t) => tags.includes(t)),
-    );
-  }
-  if (scope === "channel") {
-    filtered = filtered.filter(
-      (m) => resolveMeetingVoiceChannelId(m) === channelId,
-    );
-  }
-  return filtered;
-};
-
-const filterMeetingsByChannelAccess = async (
-  meetings: MeetingSummary[],
-  guildId: string,
-  userId: string,
-  attendeeOverrideEnabled: boolean,
-) => {
-  const visible: MeetingSummary[] = [];
-  for (const meeting of meetings) {
-    const allowed = await ensureUserCanAccessMeeting({
-      guildId,
-      meeting,
-      userId,
-      attendeeOverrideEnabled,
-    });
-    if (allowed === null) {
-      throw new DiscordRateLimitedError();
-    }
-    if (allowed) {
-      visible.push(meeting);
-    }
-  }
-  return visible;
-};
-
-const buildNoMeetingsResponse = (
-  allMeetings: MeetingSummary[],
-  maxMeetings: number,
-): AskResponse => {
-  if (!allMeetings.length) {
-    return {
-      answer:
-        "I don't have any meetings yet. Start one with `/startmeeting` in Discord or enable auto-recording in Settings.",
-      sourceMeetingIds: [],
-      citations: [],
-    };
-  }
-  const note =
-    maxMeetings < config.ask.maxMeetings
-      ? buildUpgradeTextOnly(
-          "No relevant meetings found. Upgrade for deeper history.",
-        )
-      : "No relevant meetings found.";
-  return { answer: note, sourceMeetingIds: [], citations: [] };
-};
-
-const buildMockResponse = (
-  question: string,
-  meetings: MeetingSummary[],
-): AskResponse => {
-  if (!meetings.length) {
-    return {
-      answer:
-        "Mock mode: no meetings found yet. Start one with `/startmeeting` in Discord or enable auto-recording in Settings.",
-      sourceMeetingIds: [],
-      citations: [],
-    };
-  }
-  const sourceMeetingIds = meetings.map(
-    (meeting) => meeting.channelId_timestamp,
-  );
-  return {
-    answer: `Mock answer for "${question}".`,
-    sourceMeetingIds,
-    citations: [],
-  };
-};
-
+/** Both portal runs and Discord use this identity-bound entry point. */
 export async function answerQuestionService(
   req: AskRequest,
 ): Promise<AskResponse> {
-  const { guildId, channelId, question } = req;
-  const scope = req.scope ?? "guild";
-  const tags = req.tags
-    ? normalizeTags(parseTags(req.tags.join(",")))
-    : undefined;
-
-  // The question text is user content, so only its shape and scope are sent.
+  if (!req.viewerUserId) throw new Error("Ask requires a signed-in user.");
+  if (!req.question.trim()) throw new Error("Ask requires a question.");
+  if (req.scope === "channel" && !req.channelId)
+    throw new Error("Channel scope requires a channel.");
+  req.signal?.throwIfAborted();
   captureEvent("ask_question_asked", {
     userId: req.viewerUserId,
-    guildId,
+    guildId: req.guildId,
     properties: {
-      scope,
-      has_tag_filter: Boolean(tags?.length),
-      question_length: question.length,
+      scope: req.scope ?? "guild",
+      has_tag_filter: Boolean(req.tags?.length),
+      question_length: req.question.length,
     },
   });
-
-  const maxMeetings = req.maxMeetings ?? config.ask.maxMeetings;
-  let attendeeOverrideEnabled = true;
-  if (!config.mock.enabled && req.viewerUserId) {
-    attendeeOverrideEnabled = await resolveAttendeeAccessEnabled(guildId);
-  }
-  const allMeetings = await listRecentMeetingsForGuildService(
-    guildId,
-    maxMeetings,
-    { includeArchived: true },
-  );
-  const scopedMeetings = filterMeetings(allMeetings, channelId, scope, tags);
-  const meetings = req.viewerUserId
-    ? await filterMeetingsByChannelAccess(
-        scopedMeetings,
-        guildId,
-        req.viewerUserId,
-        attendeeOverrideEnabled,
-      )
-    : scopedMeetings;
-
-  if (config.mock.enabled) {
-    return buildMockResponse(question, meetings);
-  }
-
-  if (!meetings.length) {
-    return buildNoMeetingsResponse(allMeetings, maxMeetings);
-  }
-
-  const dictionaryBlock = await buildDictionaryBlock(guildId);
-
-  const sourceMeetingIds = meetings.map(
-    (meeting) => meeting.channelId_timestamp,
-  );
-  const contextBlocks = buildAskContextBlocks(meetings);
-
-  const history = (req.history ?? []).slice(-10);
-  const historyBlock =
-    history.length > 0
-      ? history
-          .map((msg) => {
-            const label = msg.role === "chronote" ? "Chronote" : "User";
-            return `${label}: ${stripCitationTags(msg.text)}`;
-          })
-          .join("\n")
-      : "None.";
-
-  const { messages, langfusePrompt } = await getLangfuseChatPrompt({
-    name: config.langfuse.askPromptName,
-    variables: {
-      question,
-      contextBlocks: contextBlocks.join(`\n\n${ASK_MEETING_DELIMITER}\n\n`),
-      historyBlock,
-      dictionaryBlock,
-      maxAnswerTokens: String(ASK_MAX_OUTPUT_TOKENS),
-    },
+  if (config.mock.enabled)
+    return {
+      answer: `Mock answer for "${req.question}".`,
+      citations: [],
+      sourceMeetingIds: [],
+    };
+  if (!config.ask.agentEnabled) return answerLegacyAskQuestion(req);
+  return executeAskAgent({
+    principal: { userId: req.viewerUserId, serverIds: [req.guildId] },
+    question: req.question,
+    guildId: req.guildId,
+    channelId: req.channelId,
+    scope: req.scope,
+    tags: req.tags,
+    conversationId: req.conversationId,
+    timezone: req.timezone,
+    selectedMeetings: req.contextMeetingIds?.map((id) => ({
+      serverId: req.guildId,
+      id,
+    })),
+    // Legacy answers have no source provenance. Reconstruct context through tools instead.
+    history: req.agentHistory,
+    provenance: req.provenance,
+    signal: req.signal,
+    onTextDelta: req.onTextDelta,
+    onToolActivity: req.onToolActivity,
   });
-
-  const modelChoices = await resolveModelChoicesForContext({
-    guildId,
-    channelId,
-    userId: req.viewerUserId,
-  });
-  const modelChoice = getModelChoice("ask", buildModelOverrides(modelChoices));
-  const modelParams = await resolveModelParamsForContext({
-    guildId,
-    channelId,
-    userId: req.viewerUserId,
-  });
-  const chatParams = resolveChatParamsForRole({
-    role: "ask",
-    model: modelChoice.model,
-    config: modelParams.ask,
-  });
-  const answer = await generateOpenAIText({
-    model: modelChoice.model,
-    input: messages,
-    modelParams: chatParams,
-    maxOutputTokens: ASK_MAX_OUTPUT_TOKENS,
-    tracing: {
-      traceName: "ask",
-      generationName: "ask",
-      tags: ["feature:ask"],
-      metadata: {
-        guildId,
-        channelId,
-        scope,
-      },
-      langfusePrompt,
-    },
-  });
-  const citations = buildAskCitations({ text: answer, meetings });
-
-  return {
-    answer,
-    sourceMeetingIds,
-    citations,
-  };
 }

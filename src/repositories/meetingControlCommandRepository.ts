@@ -1,11 +1,5 @@
-import { assertFixtureCommandMatches } from "../services/productionFixtureCommandService";
-import type { AdmissionContext } from "../types/deploymentControl";
-import { buildRuntimeAdmissionChecks } from "../services/deploymentControlTransactions";
-import { RuntimeAdmissionUnavailable } from "../services/runtimeAdmissionError";
-import type { NewWorkScope } from "../types/productionIntroduction";
 import {
   GetItemCommand,
-  PutItemCommand,
   QueryCommand,
   UpdateItemCommand,
   DynamoDBClient,
@@ -18,16 +12,9 @@ import type {
   MeetingControlCommand,
   MeetingControlCommandResult,
 } from "../types/meetingControl";
-import type {
-  WorkAdmissionAuthority,
-  ControlTableNames,
-} from "../types/deploymentControl";
-import { buildWorkAdmissionChecks } from "../services/deploymentControlTransactions";
-import {
-  classifyDeploymentTransactionError,
-  mockWorkAdmissionAllowed,
-} from "./deploymentControlRepository";
-import { getMockStore } from "./mockStore";
+import { getRuntimeInstanceId } from "../services/runtimeInstanceService";
+import { classifyDeploymentTransactionError } from "./deploymentControlRepository";
+import { dynamoRequestHandler } from "./dynamoClient";
 
 const PENDING_STATUS = "pending";
 const STATUS_CREATED_AT_INDEX = "StatusCreatedAtIndex";
@@ -39,8 +26,8 @@ export type ClaimMeetingControlCommandInput = {
   claimExpiresAt: number;
   updatedAt: string;
   claimId: string;
-  authority: WorkAdmissionAuthority;
-  scope?: NewWorkScope;
+  /** The gone worker a command was addressed to, claimed on its behalf to answer from the lease. */
+  takeOverFrom?: string;
 };
 
 export type CompleteMeetingControlCommandInput = {
@@ -62,13 +49,8 @@ export type FailMeetingControlCommandInput = {
 };
 
 export type MeetingControlCommandRepository = {
-  renewCommand: (
-    input: Omit<ClaimMeetingControlCommandInput, "authority">,
-  ) => Promise<boolean>;
-  writeCommand: (
-    command: MeetingControlCommand,
-    context?: AdmissionContext,
-  ) => Promise<void>;
+  renewCommand: (input: ClaimMeetingControlCommandInput) => Promise<boolean>;
+  writeCommand: (command: MeetingControlCommand) => Promise<void>;
   getCommand: (requestId: string) => Promise<MeetingControlCommand | undefined>;
   listClaimablePendingCommands: (options: {
     instanceId: string;
@@ -89,8 +71,10 @@ export type MeetingControlCommandRepository = {
 
 const tableName = `${config.database.tablePrefix ?? ""}MeetingControlCommandTable`;
 
-const dynamoDbClient = new DynamoDBClient(
-  config.database.useLocalDynamoDB
+// Its own client because it takes the configured region; worker command claims share the request bound.
+const dynamoDbClient = new DynamoDBClient({
+  requestHandler: dynamoRequestHandler(),
+  ...(config.database.useLocalDynamoDB
     ? {
         endpoint: "http://localhost:8000",
         region: "local",
@@ -99,69 +83,46 @@ const dynamoDbClient = new DynamoDBClient(
           secretAccessKey: "dummy",
         },
       }
-    : { region: config.storage.awsRegion },
-);
+    : { region: config.storage.awsRegion }),
+});
 
 const commandKey = (requestId: string) => ({ requestId });
 
 const isConditionalFailure = (error: unknown) =>
   error instanceof Error && error.name === "ConditionalCheckFailedException";
 
+/** A worker claims only as itself, and a command addressed to a meeting owner only on that owner or on its behalf. */
 function validClaimAuthority(
   command: MeetingControlCommand,
   input: ClaimMeetingControlCommandInput,
 ): boolean {
-  if (input.scope?.kind === "fixture") {
-    if (input.authority.kind !== "serving") return false;
-    try {
-      assertFixtureCommandMatches(command, input.scope);
-    } catch {
-      return false;
-    }
-  }
-  if (input.authority.kind === "serving")
-    return (
-      input.instanceId === input.authority.context.instanceId &&
-      !command.targetOwnerInstanceId
-    );
-  const owner = input.authority.ownership;
+  const worker = getRuntimeInstanceId();
   return (
-    command.commandType !== "start_meeting" &&
-    input.instanceId === owner.ownerInstanceId &&
-    command.input.serverId === owner.guildId &&
+    input.instanceId === worker &&
     (!command.targetOwnerInstanceId ||
-      command.targetOwnerInstanceId === owner.ownerInstanceId) &&
-    (!("meetingId" in command.input) ||
-      !command.input.meetingId ||
-      command.input.meetingId === owner.meetingId)
+      command.targetOwnerInstanceId === worker ||
+      command.targetOwnerInstanceId === input.takeOverFrom)
   );
 }
 export function createDynamoMeetingControlCommandRepository(
   dynamoDbClient: DynamoDBClient,
   tableName: string,
-  tables: ControlTableNames,
 ): MeetingControlCommandRepository {
   const repository: MeetingControlCommandRepository = {
-    async writeCommand(command, context) {
-      const put = {
-        TableName: tableName,
-        Item: marshall(command, { removeUndefinedValues: true }),
-        ConditionExpression: "attribute_not_exists(#requestId)",
-        ExpressionAttributeNames: { "#requestId": "requestId" },
-      };
-      if (command.commandType !== "start_meeting") {
-        await dynamoDbClient.send(new PutItemCommand(put));
-        return;
-      }
-      if (!context)
-        throw new RuntimeAdmissionUnavailable(
-          "Start enqueue requires runtime admission",
-        );
+    async writeCommand(command) {
+      // A one-item transaction so the request id doubles as the idempotency token: an SDK retry after a lost response succeeds instead of reporting a duplicate.
       await dynamoDbClient.send(
         new TransactWriteItemsCommand({
+          ClientRequestToken: command.requestId,
           TransactItems: [
-            ...buildRuntimeAdmissionChecks(context, tables),
-            { Put: put },
+            {
+              Put: {
+                TableName: tableName,
+                Item: marshall(command, { removeUndefinedValues: true }),
+                ConditionExpression: "attribute_not_exists(#requestId)",
+                ExpressionAttributeNames: { "#requestId": "requestId" },
+              },
+            },
           ],
         }),
       );
@@ -189,11 +150,10 @@ export function createDynamoMeetingControlCommandRepository(
             IndexName: STATUS_CREATED_AT_INDEX,
             KeyConditionExpression: "#queueStatus = :pending",
             FilterExpression:
-              "#expiresAt > :nowEpochSeconds AND (attribute_not_exists(#targetOwnerInstanceId) OR #targetOwnerInstanceId = :instanceId) AND (attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #claimedByInstanceId = :instanceId)",
+              "#expiresAt > :nowEpochSeconds AND (attribute_not_exists(#claimExpiresAt) OR #claimExpiresAt < :nowEpochSeconds OR #claimedByInstanceId = :instanceId)",
             ExpressionAttributeNames: {
               "#queueStatus": "queueStatus",
               "#expiresAt": "expiresAt",
-              "#targetOwnerInstanceId": "targetOwnerInstanceId",
               "#claimExpiresAt": "claimExpiresAt",
               "#claimedByInstanceId": "claimedByInstanceId",
             },
@@ -240,13 +200,6 @@ export function createDynamoMeetingControlCommandRepository(
           new TransactWriteItemsCommand({
             ClientRequestToken: input.claimId,
             TransactItems: [
-              ...(input.authority.kind === "serving"
-                ? buildRuntimeAdmissionChecks(
-                    input.authority.context,
-                    tables,
-                    input.scope,
-                  )
-                : buildWorkAdmissionChecks(input.authority, tables)),
               {
                 Put: {
                   TableName: tableName,
@@ -377,11 +330,6 @@ export function createDynamoMeetingControlCommandRepository(
 const realRepository = createDynamoMeetingControlCommandRepository(
   dynamoDbClient,
   tableName,
-  {
-    deploymentControl: `${config.database.tablePrefix ?? ""}DeploymentControlTable`,
-    meetingHistory: `${config.database.tablePrefix ?? ""}MeetingHistoryTable`,
-    activeMeeting: `${config.database.tablePrefix ?? ""}ActiveMeetingTable`,
-  },
 );
 const memoryCommands = new Map<string, MeetingControlCommand>();
 
@@ -403,20 +351,7 @@ const memoryRepository: MeetingControlCommandRepository = {
     command.updatedAt = input.updatedAt;
     return true;
   },
-  async writeCommand(command, context) {
-    const store = getMockStore();
-    if (
-      command.commandType === "start_meeting" &&
-      (!context ||
-        !mockWorkAdmissionAllowed(
-          { kind: "serving", context },
-          store.deploymentControlRecords,
-          store.activeMeetingLeases,
-        ))
-    )
-      throw new RuntimeAdmissionUnavailable(
-        "Start enqueue requires runtime admission",
-      );
+  async writeCommand(command) {
     if (memoryCommands.has(command.requestId)) {
       throw new Error("Meeting control command already exists.");
     }
@@ -430,11 +365,6 @@ const memoryRepository: MeetingControlCommandRepository = {
     return Array.from(memoryCommands.values())
       .filter((command) => command.queueStatus === PENDING_STATUS)
       .filter((command) => command.expiresAt > nowEpochSeconds)
-      .filter(
-        (command) =>
-          !command.targetOwnerInstanceId ||
-          command.targetOwnerInstanceId === instanceId,
-      )
       .filter(
         (command) =>
           !command.claimExpiresAt ||
@@ -455,23 +385,7 @@ const memoryRepository: MeetingControlCommandRepository = {
       (command.claimExpiresAt ?? 0) >= input.nowEpochSeconds
     )
       return cloneCommand(command);
-    const store = getMockStore();
-    if (
-      !mockWorkAdmissionAllowed(
-        input.authority,
-        store.deploymentControlRecords,
-        store.activeMeetingLeases,
-        input.scope,
-      )
-    )
-      return undefined;
     if (command.expiresAt <= input.nowEpochSeconds) return undefined;
-    if (
-      command.targetOwnerInstanceId &&
-      command.targetOwnerInstanceId !== input.instanceId
-    ) {
-      return undefined;
-    }
     const claimExpired =
       !command.claimExpiresAt || command.claimExpiresAt < input.nowEpochSeconds;
     if (!claimExpired) return undefined;

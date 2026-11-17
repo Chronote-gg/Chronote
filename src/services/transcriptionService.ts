@@ -308,8 +308,6 @@ async function transcribeInternal(
           candidate,
           audioSeconds: context.audioSeconds,
         }),
-      observeGeneration: meeting.observeGeneration,
-      generationOperation: `transcription-audio-${passMode}`,
       request: {
         model: modelChoice.model,
         ...transcriptionLanguageParam(language),
@@ -890,7 +888,6 @@ export async function transcribeContentSnippet(
     return await withPreparedTranscriptionInput<SnippetTranscriptionResult>(
       {
         pcm: buffer,
-        beginArtifactWrite: meeting.beginArtifactWrite,
         ...tempFiles,
         mode,
         phase,

@@ -1,3 +1,8 @@
+FROM rust:1.88-bookworm AS davey-native
+WORKDIR /native
+COPY native/davey ./
+RUN npm_package_version=0.1.12 cargo build --locked --release -p snazzah_davey
+
 # Use an official Node.js runtime as a parent image
 FROM node:24.22.2-bookworm-slim
 
@@ -18,6 +23,9 @@ WORKDIR /app
 COPY package*.json ./
 COPY yarn.lock ./
 COPY patches ./patches
+COPY scripts/build-native-davey.mjs ./scripts/build-native-davey.mjs
+COPY --from=davey-native /native/target/release/libsnazzah_davey.so /tmp/davey.node
+ENV DAVEY_NATIVE_ARTIFACT=/tmp/davey.node
 
 # CPU binaries are bundled; do not download optional CUDA libraries.
 ENV ONNXRUNTIME_NODE_INSTALL=skip

@@ -8,13 +8,11 @@ import {
 } from "../../src/services/meetingUpdateDeliveryWorkerService";
 import { createMeetingUpdateDeliveryService } from "../../src/services/meetingUpdateDeliveryService";
 import { createDiscordMeetingUpdateTransport } from "../../src/services/discordMeetingUpdateTransport";
-import { beginRuntimeWorkClaim } from "../../src/services/runtimeWorkAdmissionService";
 import {
   deliveryFixture,
   deferred,
 } from "../services/meetingUpdateDelivery.fixture";
 import { key, now } from "../types/meetingUpdateDelivery.fixture";
-import { control, context, runtime } from "./controlFixtures";
 
 const { tables, client, repository, put, createTestTable, dispose } =
   meetingUpdateDynamoFixture("delivery-worker");
@@ -24,37 +22,14 @@ beforeAll(async () => {
     ["guildId", "channelId_timestamp"],
     true,
   );
-  await createTestTable(tables.deploymentControl, ["pk", "sk"]);
 });
-beforeEach(async () => {
+// No deployment control record exists: the claim write alone separates the two workers.
+beforeEach(() => {
   jest.spyOn(Date, "now").mockReturnValue(now * 1000);
-  const members = Object.fromEntries(
-    ["old", "second"].map((id) => [id, runtime(id).identity]),
-  );
-  await put(tables.deploymentControl, {
-    ...control,
-    servingMembers: members,
-    coordinatorExpiresAt: now + 600,
-  });
-  for (const id of ["old", "second"]) {
-    const row = runtime(id);
-    row.heartbeatAt = now;
-    Object.assign(row.readiness, { provenAt: now - 1, expiresAt: now + 600 });
-    row.protection = {
-      identity: row.identity,
-      provenAt: now - 1,
-      expiresAt: now + 600,
-    };
-    await put(tables.deploymentControl, row);
-  }
 });
 afterEach(() => jest.restoreAllMocks());
 afterAll(dispose);
-function setup(
-  owner: string,
-  f: ReturnType<typeof deliveryFixture>,
-  completed: () => void,
-) {
+function setup(f: ReturnType<typeof deliveryFixture>, completed: () => void) {
   const service = createMeetingUpdateDeliveryService({
     repository,
     discord: createDiscordMeetingUpdateTransport({
@@ -67,19 +42,7 @@ function setup(
   return createMeetingUpdateDeliveryWorker({
     repository,
     now: () => now,
-    begin: (domain, id) => {
-      const work = beginRuntimeWorkClaim(domain, owner + ":" + id);
-      work.authority = async () => ({
-        kind: "serving",
-        context: {
-          ...context,
-          instanceId: owner,
-          identity: runtime(owner).identity,
-          now,
-        },
-      });
-      return work;
-    },
+    isEligible: () => true,
     deliver: async (input) => {
       try {
         return await service.deliverMeetingUpdate(input);
@@ -90,7 +53,7 @@ function setup(
     reconcile: service.reconcileMeetingUpdate,
   });
 }
-test("actual KEYS_ONLY discovery selects one transactional owner and removes completed due work", async () => {
+test("two workers claim the same delivery through actual KEYS_ONLY discovery: exactly one delivers", async () => {
   const f = deliveryFixture();
   await put(
     tables.meetingHistory,
@@ -114,8 +77,8 @@ test("actual KEYS_ONLY discovery selects one transactional owner and removes com
     await gate.promise;
     return claim(input);
   });
-  const workers = ["old", "second"].map((owner) =>
-    setup(owner, f, () => {
+  const workers = [1, 2].map(() =>
+    setup(f, () => {
       if (++completed === 2) done.resolve();
     }),
   );
@@ -131,33 +94,5 @@ test("actual KEYS_ONLY discovery selects one transactional owner and removes com
   } finally {
     gate.resolve();
     await Promise.all(workers.map((w) => w.stop()));
-  }
-});
-test("serving denial preserves discoverability and a fresh worker retries without a wakeup", async () => {
-  const f = deliveryFixture();
-  await put(
-    tables.meetingHistory,
-    withDelivery(f.input.history, f.input.history.updateDelivery),
-  );
-  await put(tables.deploymentControl, { ...control, servingMembers: {} });
-  const firstDone = deferred<void>(),
-    first = setup("old", f, () => firstDone.resolve());
-  await first.poll();
-  await firstDone.promise;
-  await first.stop();
-  expect(f.requests).toEqual([]);
-  expect((await repository.listDue({ now, limit: 25 })).keys).toEqual([key]);
-  await put(tables.deploymentControl, {
-    ...control,
-    coordinatorExpiresAt: now + 600,
-  });
-  const restartedDone = deferred<void>(),
-    restarted = setup("old", f, () => restartedDone.resolve());
-  try {
-    await restarted.poll();
-    await restartedDone.promise;
-    expect(f.requests.map((r) => r.method)).toEqual(["PATCH"]);
-  } finally {
-    await restarted.stop();
   }
 });

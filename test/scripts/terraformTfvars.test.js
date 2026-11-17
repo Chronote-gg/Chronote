@@ -2,12 +2,6 @@
 import process from "node:process";
 import { test, expect } from "@jest/globals";
 import { spawnSync } from "node:child_process";
-import { verifyMeetingUpdatePlan } from "../../scripts/deployment/terraform-meeting-update.cjs";
-import {
-  nativeMeetingPlan,
-  nativeEvidence,
-} from "../fixtures/deployment/terraformMeetingNative.js";
-import { identity } from "../fixtures/deployment/terraformMeetingUpdate.js";
 import {
   mkdtempSync,
   mkdirSync,
@@ -76,7 +70,6 @@ test("moved tfvars normalizes one string and preserves approved credential overl
     },
   );
   expect(values).toMatchObject({
-    AWS_TOKEN_KEY: "new",
     DISCORD_CLIENT_ID: "123",
     SUPER_ADMIN_USER_IDS: "456",
     ENABLE_ONBOARDING: "true",
@@ -84,6 +77,32 @@ test("moved tfvars normalizes one string and preserves approved credential overl
     REDIS_URL: "rediss://synthetic.invalid",
   });
   expect(values).not.toHaveProperty("OTHER");
+});
+// A session key ID written into a GitHub variable would drift on every Apply.
+// Retired inputs left in the write-only secret would otherwise make Terraform
+// warn about an undeclared variable on every plan.
+test("retired model overrides warn without exposing values", () => {
+  const result = render(
+    { ...valid, LIVE_VOICE_GATE_MODEL: "private-model" },
+    { TFVAR_LIVE_VOICE_GATE_MODEL: "private-variable" },
+  );
+  expect(result.status).toBe(0);
+  expect(result.values).not.toHaveProperty("LIVE_VOICE_GATE_MODEL");
+  expect(result.stdout).toContain(
+    "::warning::Ignoring retired tfvars key LIVE_VOICE_GATE_MODEL",
+  );
+  expect(result.stdout).not.toContain("private-");
+});
+
+test("the retired LIVE_VOICE_GATE_MODEL is dropped", () => {
+  expect(
+    run({ ...valid, LIVE_VOICE_GATE_MODEL: "gpt-5-mini" }),
+  ).not.toHaveProperty("LIVE_VOICE_GATE_MODEL");
+});
+test("the AWS session key and the retired AWS_TOKEN_KEY never reach Terraform", () => {
+  const values = run(valid, {}, { AWS_ACCESS_KEY_ID: "session-key" });
+  expect(values).not.toHaveProperty("AWS_TOKEN_KEY");
+  expect(JSON.stringify(values)).not.toContain("session-key");
 });
 test.each([
   ["false", false],
@@ -138,19 +157,8 @@ test.each([
   );
 });
 
-test("rendered retry opt-out passes the full native delivery verifier", () => {
-  const values = run(valid, { TFVAR_ENABLE_PROCESSING_RETRY_INDEX: "false" });
-  const plan = nativeMeetingPlan();
-  plan.variables.ENABLE_PROCESSING_RETRY_INDEX.value =
-    values.ENABLE_PROCESSING_RETRY_INDEX;
-  expect(() =>
-    verifyMeetingUpdatePlan(plan, identity, nativeEvidence(plan)),
-  ).not.toThrow();
-});
-
 test.each([
   "GITHUB_TOKEN",
-  "AWS_TOKEN_KEY",
   "LANGFUSE_SECRET_KEY",
   "DOCS_ALGOLIA_API_KEY",
   "REDIS_AUTH_TOKEN",

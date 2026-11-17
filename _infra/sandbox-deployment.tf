@@ -54,7 +54,7 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
   role  = aws_iam_role.sandbox_deploy[0].id
   policy = jsonencode({
     Version = "2012-10-17",
-    Statement = [
+    Statement = concat([
       {
         Sid    = "SandboxService",
         Effect = "Allow",
@@ -160,35 +160,9 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
       {
         Sid    = "DeploymentControlProtocol",
         Effect = "Allow",
-        Action = [
-          "dynamodb:GetItem",
-          "dynamodb:Query",
-          "dynamodb:Scan",
-          "dynamodb:PutItem",
-          "dynamodb:UpdateItem",
-          "dynamodb:ConditionCheckItem"
-        ],
+        # deploy.cjs reads the worker registry and nothing else.
+        Action   = ["dynamodb:Query"],
         Resource = aws_dynamodb_table.deployment_control_table.arn
-      },
-      {
-        Sid      = "ArtifactAuthorityChecks",
-        Effect   = "Allow",
-        Action   = ["dynamodb:ConditionCheckItem"],
-        Resource = aws_dynamodb_table.meeting_history_table.arn
-      },
-      {
-        Sid    = "SandboxObservationAndPreflight",
-        Effect = "Allow",
-        Action = [
-          "dynamodb:Scan"
-        ],
-        Resource = [
-          aws_dynamodb_table.active_meeting_table.arn,
-          aws_dynamodb_table.meeting_history_table.arn,
-          aws_dynamodb_table.meeting_control_command_table.arn,
-          aws_dynamodb_table.personal_media_upload_job_table.arn,
-          aws_dynamodb_table.personal_recording_segment_table.arn
-        ]
       },
       {
         Sid    = "ExistingTableKeysThroughDynamoDB",
@@ -202,14 +176,7 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
             "kms:ViaService"                                  = "dynamodb.${var.aws_region}.amazonaws.com",
             "kms:CallerAccount"                               = data.aws_caller_identity.current.account_id,
             "kms:EncryptionContext:aws:dynamodb:subscriberId" = data.aws_caller_identity.current.account_id,
-            "kms:EncryptionContext:aws:dynamodb:tableName" = [
-              aws_dynamodb_table.deployment_control_table.name,
-              aws_dynamodb_table.active_meeting_table.name,
-              aws_dynamodb_table.meeting_history_table.name,
-              aws_dynamodb_table.meeting_control_command_table.name,
-              aws_dynamodb_table.personal_media_upload_job_table.name,
-              aws_dynamodb_table.personal_recording_segment_table.name
-            ]
+            "kms:EncryptionContext:aws:dynamodb:tableName"    = aws_dynamodb_table.deployment_control_table.name
           }
         }
       },
@@ -229,8 +196,27 @@ resource "aws_iam_role_policy" "sandbox_deploy" {
           aws_secretsmanager_secret.stripe_secret_key.arn,
           aws_secretsmanager_secret.stripe_webhook_secret.arn
         ]
+      },
+      {
+        # PutMetricData supports no resource ARNs; the namespace condition scopes it.
+        Sid      = "DeployDrainTimeoutMetric",
+        Effect   = "Allow",
+        Action   = ["cloudwatch:PutMetricData"],
+        Resource = "*",
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "${local.name_prefix}/Deploy"
+          }
+        }
       }
-    ]
+      ], var.ENABLE_DEPLOY_RETIRE ? [
+      {
+        Sid      = "RetireOlderTasks",
+        Effect   = "Allow",
+        Action   = ["ecs:StopTask"],
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/*"
+      }
+    ] : [])
   })
 }
 

@@ -12,17 +12,19 @@ Use this page to diagnose and fix common Chronote issues. Each section describes
 **Causes and fixes**:
 
 1. **Missing permissions.** Chronote needs **Connect** and **Speak** permissions in the voice channel. Check the channel's permission overrides and make sure the Chronote bot role is not denied these permissions.
-2. **Another meeting is active.** Only one meeting can run per server at a time. End the current meeting first.
+2. **Another meeting is recording.** Only one meeting can record per server at a time. End the current meeting first. A meeting whose recording has stopped does not block a new one, even while its notes are processing.
 3. **Weekly minutes exhausted.** Your plan's weekly meeting minutes are used up. Wait for the next billing cycle or upgrade your plan.
 4. **You are not in a voice channel.** You must be in the voice channel you want to record before running `/startmeeting`.
 
 ## Server still reports an active meeting after recording stops
 
-If Chronote has left voice but `/startmeeting` still says a meeting is active, the previous session may be waiting for confirmation that it ended safely. A delayed disconnect confirmation can let Chronote finish cleanup automatically. This cleanup does not create another recording or rewrite saved notes.
+If an end or leave control says the meeting is already finishing, it has not started another stop attempt. This response does not confirm that transcription, notes or delivery have finished. Check the meeting's processing status before relying on its output.
 
-If processing fails after you use the meeting's end button, `/leave confirm:true`, or **Stop recording**, Chronote can finish cleanup automatically once it confirms that the available recording data is preserved and the session has ended. Cleanup does not retry transcription or generate missing notes.
+Once a recording stops, the server can start a new meeting right away, even while the previous meeting's notes are still processing. If `/startmeeting` says a meeting is active, a recording is still running in that server. End it with the meeting's end button, `/leave confirm:true`, or **Stop recording**.
 
-Try `/startmeeting` again after a short wait. If the active-meeting message persists, use **Support** in the portal sidebar and include the server name and approximate recording end time. Chronote keeps the server unavailable when it cannot confirm that the previous session ended safely.
+If Chronote stopped unexpectedly while recording, the server becomes available again within about a minute, and Chronote finishes the interrupted meeting automatically. See [Interrupted recordings](/core-concepts/meeting-lifecycle/#interrupted-recordings).
+
+If the active-meeting message persists after a few minutes, use **Support** in the portal sidebar and include the server name and approximate recording end time.
 
 ## Auto-record does not start
 
@@ -69,6 +71,8 @@ Try `/startmeeting` again after a short wait. If the active-meeting message pers
 "No usable speech was found, so no notes were generated" means Chronote finished processing but had no usable speech to summarize. Check that the intended audio source was available and that participants were audible.
 
 If you see "Some audio could not be transcribed. These notes may be incomplete," Chronote generated notes from the text it could recover. Review them for missing discussion before relying on them.
+
+Later audio does not fill an earlier recording gap. If part of the capture was unavailable, the meeting remains partial even when later speech is recorded successfully. Retrying saved audio can process what was recorded; it cannot reconstruct speech that was never captured.
 
 A processing-failure message is different from an empty recording. Any existing upload retries run before Chronote reports a terminal upload failure.
 
@@ -131,7 +135,7 @@ Keep the saved files if you want to preserve the draft. You can start a separate
 
 1. Run `/billing` to check your current plan status.
 2. Verify the payment method is valid in the Stripe portal.
-3. Some features (image generation, extended `/ask` history) require specific plan tiers.
+3. Some features, such as image generation, require specific plan tiers. Ask has the same accessible retained history on every plan when search is enabled.
 
 ### A renewal payment failed
 

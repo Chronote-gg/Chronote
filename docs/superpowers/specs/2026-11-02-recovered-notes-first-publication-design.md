@@ -1,5 +1,7 @@
 # Repeatable Discord publication of recovered notes
 
+Status: Superseded by adr-20261111-lifecycle-simplification
+
 ## Review brief
 
 Build a reusable operator workflow: **preview, approve, apply**, with read-only

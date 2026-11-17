@@ -2,6 +2,7 @@
 jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 import { PassThrough } from "node:stream";
 import { createCheckpointObjectStore } from "../fixtures/recordingCheckpointEnvironment";
+import { loadCheckpointCapture } from "../fixtures/checkpointCaptureModules";
 import { createCheckpointPlaybackTap } from "../../src/services/recordingCheckpointPlayback";
 import { getCheckpointPcmBudget } from "../../src/services/recordingCheckpointCapture";
 
@@ -48,19 +49,16 @@ test("silence packets cannot consume prefetched PCM", () => {
 });
 
 test("actual playback prefix and producer retain byte duration across boundary jitter without changing physical end", async () => {
-  const { mkdtempSync, rmSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const path = await import("node:path");
-  const { createRecordingCheckpointCapture } =
-    await import("../../src/services/recordingCheckpointCapture");
-  const { createRecordingCheckpointService } =
-    await import("../../src/services/recordingCheckpointService");
-  const { createMockDeploymentControlRepository } =
-    await import("../../src/repositories/deploymentControlRepository");
-  const { history } = await import("../deployment/controlFixtures");
+  const {
+    directory,
+    removeDirectory,
+    createRecordingCheckpointCapture,
+    createRecordingCheckpointService,
+    createMockMeetingHistoryTransitionRepository,
+    history,
+  } = await loadCheckpointCapture("playback-clock-");
   const start = Date.parse(history.timestamp);
   const clock = jest.spyOn(Date, "now").mockReturnValue(start);
-  const directory = mkdtempSync(path.join(tmpdir(), "playback-clock-"));
   const owner = {
     guildId: history.guildId,
     meetingId: history.meetingId,
@@ -69,8 +67,7 @@ test("actual playback prefix and producer retain byte duration across boundary j
     voiceOperationAttemptId: "voice",
     sessionMode: "meeting" as const,
   };
-  const repository = createMockDeploymentControlRepository(
-    new Map(),
+  const repository = createMockMeetingHistoryTransitionRepository(
     new Map([[history.guildId, [{ ...history }]]]),
     new Map([
       [
@@ -188,7 +185,7 @@ test("actual playback prefix and producer retain byte duration across boundary j
     await recording.settled();
     recording.releaseSettledBuffers();
     clock.mockRestore();
-    rmSync(directory, { recursive: true, force: true });
+    removeDirectory();
   }
   expect(getCheckpointPcmBudget().reservedBytes).toBe(0);
 });

@@ -91,6 +91,25 @@ export function canonicalFieldsSupersededAfter(
   return fields;
 }
 
+/**
+ * The patch without the canonical fields an edit acknowledged after
+ * `baseline` changed. When the row cannot say which fields changed, every
+ * canonical field it holds is kept, since any of them may be the edit.
+ */
+export function withoutSupersededCanonicalFields(
+  fresh: MeetingHistory,
+  patch: Partial<MeetingHistory>,
+  baseline: number,
+): Partial<MeetingHistory> {
+  const superseded = canonicalFieldsSupersededAfter(fresh, baseline);
+  const kept = { ...patch };
+  for (const fields of Object.values(canonicalGroups))
+    for (const field of fields)
+      if (superseded ? superseded.has(field) : fresh[field] !== undefined)
+        delete kept[field];
+  return kept;
+}
+
 /** Keep the caller's original completion authority; replace only acknowledged canonical content. */
 export function originalCompletionExportView(
   original: MeetingHistory,

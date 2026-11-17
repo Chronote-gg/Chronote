@@ -1,6 +1,11 @@
 /** @jest-environment node */
 import { randomUUID } from "node:crypto";
-import { createMockProcessingRetryRepository } from "../../src/repositories/processingRetryRepository";
+import { DynamoDBClient, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
+import { marshall } from "@aws-sdk/util-dynamodb";
+import {
+  createDynamoProcessingRetryRepository,
+  createMockProcessingRetryRepository,
+} from "../../src/repositories/processingRetryRepository";
 import type { MeetingHistory } from "../../src/types/db";
 import {
   PROCESSING_RETRY_QUEUE,
@@ -8,7 +13,6 @@ import {
 } from "../../src/types/meetingProcessingRetry";
 import type { MeetingUpdateKey } from "../../src/types/meetingUpdateDelivery";
 import { key, now } from "../types/meetingUpdateDelivery.fixture";
-import { authority } from "./meetingUpdateDeliveryContract";
 import {
   expectedOf,
   failedJob,
@@ -19,9 +23,7 @@ import {
 } from "./processingRetryRepository.fixture";
 
 let histories: Map<string, MeetingHistory[]>;
-let allowed: boolean;
-const repository = () =>
-  createMockProcessingRetryRepository(histories, () => allowed);
+const repository = () => createMockProcessingRetryRepository(histories);
 function seed(...rows: MeetingHistory[]) {
   for (const row of rows)
     histories.set(row.guildId, [
@@ -43,12 +45,10 @@ const claim = (at: number, ownerInstanceId = "instance-a", jobId = "job-1") =>
     ownerInstanceId,
     now: at,
     leaseExpiresAt: at + 300,
-    authority,
   });
 
 beforeEach(() => {
   histories = new Map();
-  allowed = true;
 });
 
 describe("queue", () => {
@@ -169,12 +169,15 @@ describe("claim", () => {
     },
   );
 
-  it("claim is refused without work admission", async () => {
-    const row = queuedRow();
-    seed(row);
-    allowed = false;
-    expect(await claim(now)).toBeUndefined();
-    expect(read()).toEqual(row);
+  it("two workers claiming the same job at once: exactly one claim lands", async () => {
+    seed(queuedRow());
+    const results = await Promise.all([
+      claim(now, "instance-a"),
+      claim(now, "instance-b"),
+    ]);
+    const won = results.filter((job) => job !== undefined);
+    expect(won).toHaveLength(1);
+    expect(read()?.processingRetry?.claim).toEqual(won[0]?.claim);
   });
 });
 
@@ -332,4 +335,55 @@ it("scan filters by window and guild", async () => {
     [inside, otherGuild].map((row) => row.channelId_timestamp).sort(),
   );
   expect(await ids(key.guildId)).toEqual([inside.channelId_timestamp]);
+});
+
+describe("a refused write whose read-back fails", () => {
+  /** Reads the row, refuses the write, then fails the read-back. */
+  function failingReadBack(row: MeetingHistory) {
+    const client = new DynamoDBClient({ region: "local" });
+    let reads = 0;
+    jest.spyOn(client, "send").mockImplementation(async (command) => {
+      if (command instanceof UpdateItemCommand)
+        throw Object.assign(new Error("condition failed"), {
+          name: "ConditionalCheckFailedException",
+        });
+      if (++reads > 1) throw new Error("read unavailable");
+      return { Item: marshall(row, { removeUndefinedValues: true }) };
+    });
+    return createDynamoProcessingRetryRepository(client, {
+      meetingHistory: "synthetic-history",
+      deploymentControl: "synthetic-control",
+    });
+  }
+  afterEach(() => jest.restoreAllMocks());
+
+  it("claim treats it as lost and warns instead of throwing", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const repository = failingReadBack(queuedRow());
+    await expect(
+      repository.claim({
+        key,
+        jobId: "job-1",
+        claimId: "claim-a",
+        ownerInstanceId: "instance-a",
+        now,
+        leaseExpiresAt: now + 300,
+      }),
+    ).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("queue reports a conflict instead of throwing", async () => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    const row = failedRow();
+    const repository = failingReadBack(row);
+    await expect(
+      repository.queue({
+        key,
+        expected: expectedOf(row),
+        job: queuedJob,
+        dueAt: now,
+      }),
+    ).resolves.toBe("conflict");
+  });
 });

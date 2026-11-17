@@ -4,9 +4,12 @@ from pathlib import Path
 
 path = Path("_infra/terraform.auto.tfvars.json")
 data = json.loads(os.environ["TERRAFORM_TFVARS_JSON"])
-aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
-if aws_access_key_id:
-    data["AWS_TOKEN_KEY"] = aws_access_key_id
+# Retired inputs: the secret may still carry them, and Terraform warns on them.
+for retired in ["AWS_TOKEN_KEY", "LIVE_VOICE_GATE_MODEL"]:
+    if retired in data:
+        if retired == "LIVE_VOICE_GATE_MODEL":
+            print(f"::warning::Ignoring retired tfvars key {retired}")
+        del data[retired]
 
 for name in ["REDIS_AUTH_TOKEN", "REDIS_URL"]:
     value = os.environ.get(name, "").strip()
@@ -21,7 +24,6 @@ for name in ["REDIS_AUTH_TOKEN", "REDIS_URL"]:
 # Any variable named TFVAR_<KEY> overrides <KEY>.
 credential_tfvars = {
     "GITHUB_TOKEN",
-    "AWS_TOKEN_KEY",
     "LANGFUSE_SECRET_KEY",
     "DOCS_ALGOLIA_API_KEY",
     "REDIS_AUTH_TOKEN",
@@ -89,6 +91,9 @@ seen = set()
 for name, value in github_vars.items():
     if not name.startswith("TFVAR_"):
         continue
+    if name[6:] in ["AWS_TOKEN_KEY", "LIVE_VOICE_GATE_MODEL"]:
+        print(f"::warning::Ignoring retired tfvars key {name[6:]}")
+        continue
     key = name[len("TFVAR_") :]
     if key.lower() in canonical_keys:
         key = key.lower()
@@ -106,7 +111,7 @@ for name, value in github_vars.items():
         else:
             data[key] = value
 
-required = ["GITHUB_TOKEN", "AWS_TOKEN_KEY", "DISCORD_CLIENT_ID"]
+required = ["GITHUB_TOKEN", "DISCORD_CLIENT_ID"]
 string_fields = required + [
     "SUPER_ADMIN_USER_IDS",
     "grafana_api_key",

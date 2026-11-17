@@ -265,3 +265,21 @@ export const resolveNextConversationId = (options: {
   }
   return pickExistingOrFirst(activeId, activeConversations, (conv) => conv.id);
 };
+
+export function resolveAskFocusReady(options: {
+  ready: boolean;
+  listError: unknown;
+  shareModalOpen: boolean;
+  archiveModalOpen: boolean;
+  feedbackModalOpen: boolean;
+  pickerOpen: boolean;
+}) {
+  return Boolean(
+    options.ready &&
+    !options.listError &&
+    !options.shareModalOpen &&
+    !options.archiveModalOpen &&
+    !options.feedbackModalOpen &&
+    !options.pickerOpen,
+  );
+}

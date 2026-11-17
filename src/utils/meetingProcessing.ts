@@ -9,8 +9,16 @@ import type {
 
 export const EMPTY_RECORDING_NOTICE =
   "No usable speech was found, so no notes were generated.";
+export const PROCESSING_FAILED_NOTICE =
+  "Chronote could not finish processing this meeting. The saved audio is kept and processing can be retried from the portal.";
 export const PARTIAL_TRANSCRIPT_NOTICE =
   "Some audio could not be transcribed. These notes may be incomplete.";
+/** What a meeting that failed before notes records, so the portal offers a retry. */
+export const TRANSCRIPTION_FAILED: MeetingProcessingOutcome = {
+  transcription: "failed",
+  notes: "skipped",
+  summary: "skipped",
+};
 
 /**
  * Failed per-turn snippets below this count do not demote a Discord recording that has
@@ -90,14 +98,15 @@ export function getMeetingProcessingNotice(
   return undefined;
 }
 
-/** Empty/suppressed speech is successful processing; known lost capture/provider work is not. */
+/** Usable incomplete capture can finish as partial; failed or pending processing cannot. */
 export function assertMeetingProcessingSucceeded(meeting: MeetingData): void {
   const facts = getAudioTranscriptionFacts(meeting.audioData);
   if (
-    facts.captureIncomplete ||
+    (facts.captureIncomplete && facts.usableSegments === 0) ||
     hasTranscriptionLoss(facts, FAILED_SEGMENT_PARTIAL_THRESHOLD) ||
     Object.values(meeting.processing ?? {}).includes("failed") ||
-    meeting.processing?.transcription === "partial"
+    (meeting.processing?.transcription === "partial" &&
+      !facts.captureIncomplete)
   )
     throw new Error("Meeting processing failed or remains incomplete");
   if (

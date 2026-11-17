@@ -1,0 +1,16 @@
+diff --git a/node_modules/@snazzah/davey/index.js b/node_modules/@snazzah/davey/index.js
+--- a/node_modules/@snazzah/davey/index.js
++++ b/node_modules/@snazzah/davey/index.js
+@@ -474,9 +474,9 @@
+   }
+ }
+
+-nativeBinding = requireNative()
+-
+-if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
++nativeBinding = require('./chronote-native.node')
++
++if (!nativeBinding) {
+   try {
+     nativeBinding = require('./davey.wasi.cjs')
+   } catch (err) {

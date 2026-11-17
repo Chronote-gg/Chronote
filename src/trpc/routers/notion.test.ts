@@ -18,6 +18,7 @@ import {
   NotionApiError,
   saveNotionAutomationConfig,
   setNotionAutomationEnabled,
+  syncMeetingToNotion,
 } from "../../services/notionService";
 import { retryNotionAutomationExport } from "../../services/notionAutomationService";
 
@@ -202,6 +203,28 @@ describe("notionRouter", () => {
       message: "Connect Notion first.",
     });
   });
+
+  it.each<"exportMeeting" | "syncMeeting">(["exportMeeting", "syncMeeting"])(
+    "%s keeps expired Notion credentials distinct from portal authentication",
+    async (action) => {
+      const error = new NotionApiError(
+        401,
+        "unauthorized",
+        "Notion token expired",
+      );
+      jest.mocked(exportMeetingToNotion).mockRejectedValue(error);
+      jest.mocked(syncMeetingToNotion).mockRejectedValue(error);
+      await expect(
+        createCaller()[action]({
+          serverId: "guild-1",
+          meetingId: meetingHistoryKey,
+        }),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+        message: "Reconnect Notion and try again.",
+      });
+    },
+  );
 
   it("lists Notion destination pages for server managers", async () => {
     jest.mocked(listNotionDestinationPages).mockResolvedValue([

@@ -1,3 +1,4 @@
+import { useAuthNavigationBlocker } from "../../hooks/useAuthNavigationBlocker";
 import { useState } from "react";
 import {
   ActionIcon,
@@ -192,6 +193,9 @@ export function ServiceAccountsCard({
   const [channelIds, setChannelIds] = useState<string[]>([]);
   const [expiresInDays, setExpiresInDays] = useState<number | undefined>(90);
   const [token, setToken] = useState<string | undefined>();
+  useAuthNavigationBlocker(
+    modalOpen && Boolean(botUserId || name || channelIds.length || token),
+  );
 
   const channelLabels = new Map(
     voiceChannels.map((channel) => [channel.value, channel.label]),

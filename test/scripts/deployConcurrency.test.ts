@@ -10,19 +10,18 @@ import { parse } from "yaml";
 
 type Job = {
   needs?: string | string[];
+  environment?: string;
   concurrency?: { group: string; "cancel-in-progress": boolean | string };
 };
+type Workflow = { concurrency?: unknown; jobs: Record<string, Job> };
 
-const deployment = parse(
-  readFileSync(".github/workflows/deploy.yml", "utf8"),
-) as { concurrency?: unknown; jobs: Record<string, Job> };
+const readWorkflow = (name: string) =>
+  parse(readFileSync(`.github/workflows/${name}`, "utf8")) as Workflow;
+const deployment = readWorkflow("deploy.yml");
 
 const CI_JOB = "ci";
-// The break-glass gate is CI's alternative, not a deploy job: it holds no
-// production credentials and is pinned by deployBreakGlass.test.ts.
-const GATE_JOBS = [CI_JOB, "break-glass"];
 const deployJobs = Object.entries(deployment.jobs).filter(
-  ([id]) => !GATE_JOBS.includes(id),
+  ([id]) => id !== CI_JOB,
 );
 
 // A workflow-level group holds a newer run entirely pending, so its CI never
@@ -63,12 +62,11 @@ test("every deploy job has a group of its own", () => {
   for (const group of groups) expect(group).toBeTruthy();
 });
 
-// The backend swap is the dangerous mutation, and the two production
-// introduction workflows share this exact group name, so it has to stay shared
-// rather than becoming job-scoped like the others.
-test("the backend deploy keeps the shared production group", () => {
+// The backend holds the drain wait and the rollout under one lock, so no run
+// can roll out while another run's older task is still draining.
+test("the backend deploy holds the production rollout lock", () => {
   expect(deployment.jobs.deploybackend.concurrency?.group).toBe(
-    "chronote-deploy-production",
+    "backend-rollout-production",
   );
 });
 
@@ -89,4 +87,38 @@ test("every deploy job depends on CI, directly or transitively", () => {
   for (const [id] of deployJobs) {
     expect(`${id} reaches ci: ${reachesCi(id)}`).toBe(`${id} reaches ci: true`);
   }
+});
+
+// Deploy jobs run under the repository variable DEPLOY_ENVIRONMENT (set to the
+// unreviewed production-deploy environment once it is provisioned) and fall
+// back to the reviewed production environment while the variable is unset.
+// retire_older_tasks is a boolean input (absent on push), so the gate is true
+// only for a dispatch that asked to retire. Every deploy job shares it, so such
+// a dispatch publishes nothing, docs included, without a human approval.
+const DEPLOY_ENVIRONMENT_EXPRESSION =
+  "${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}";
+test("a dispatch that retires older tasks runs every deploy job in production", () => {
+  expect(deployJobs.length).toBe(5);
+  for (const [id, job] of deployJobs)
+    expect(`${id}: ${job.environment}`).toBe(
+      `${id}: ${DEPLOY_ENVIRONMENT_EXPRESSION}`,
+    );
+  const input = (
+    deployment as unknown as {
+      on: {
+        workflow_dispatch: {
+          inputs: { retire_older_tasks: { type: string; default: boolean } };
+        };
+      };
+    }
+  ).on.workflow_dispatch.inputs.retire_older_tasks;
+  expect(input).toMatchObject({ type: "boolean", default: false });
+});
+
+// A pending Apply and a pending deploy in one group would displace each other,
+// so Apply keeps only its own group and the deploy waits for it instead.
+test("Terraform Apply does not take the backend rollout lock", () => {
+  expect(
+    readWorkflow("terraform-apply.yml").jobs.apply.concurrency,
+  ).toBeUndefined();
 });

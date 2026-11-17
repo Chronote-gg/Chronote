@@ -127,7 +127,7 @@ test("mobile Home stacks complete plans and keeps direct purchase actions", asyn
       "$0",
       "4 hours a week",
       "90 minutes",
-      "Last 5 meetings",
+      "All accessible meetings",
       "50 a month",
       "No",
     ],
@@ -137,7 +137,7 @@ test("mobile Home stacks complete plans and keeps direct purchase actions", asyn
       "$6 / mo",
       "20 hours a week",
       "2 hours",
-      "Last 25 meetings",
+      "All accessible meetings",
       "1,000 a month",
       "Yes",
     ],
@@ -147,7 +147,7 @@ test("mobile Home stacks complete plans and keeps direct purchase actions", asyn
       "$24 / mo",
       "No weekly limit",
       "2 hours",
-      "Last 100 meetings",
+      "All accessible meetings",
       "Unlimited",
       "Yes",
     ],
@@ -964,9 +964,9 @@ for (const width of [320, 768, 993, 1199, 1201, 1280]) {
     ).toBe(true);
     await period.getByText("Monthly", { exact: true }).click();
     await expect(
-      page.getByText("Your subscription helps keep Chronote running.", {
-        exact: true,
-      }),
+      page.getByText(
+        /^One subscription covers everyone in a server you manage\.$/,
+      ),
     ).toBeVisible();
     await expect(page.getByText(/running for communities on Free/)).toHaveCount(
       0,

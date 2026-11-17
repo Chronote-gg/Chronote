@@ -1,6 +1,6 @@
-import { Button, Center, Loader, Stack, Text } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { Outlet, useRouterState, useSearch } from "@tanstack/react-router";
+import { ProtectedSessionBoundary } from "../components/ProtectedSessionBoundary";
 import { useAuth } from "../contexts/AuthContext";
 import { useGuildContext } from "../contexts/GuildContext";
 import { MeetingBrowseProvider } from "../contexts/MeetingBrowseContext";
@@ -16,7 +16,6 @@ export default function PortalLayout() {
     state: authState,
     loading: authLoading,
     protectedQueriesReady,
-    loginUrl,
   } = useAuth();
   const { loading: guildLoading } = useGuildContext();
   const visualMode = useVisualMode();
@@ -60,44 +59,17 @@ export default function PortalLayout() {
       onNavbarClose={navbarHandlers.close}
       headerContext={headerContext}
     >
-      {authState === "unauthenticated" ? (
-        <Center py="xl">
-          <Stack gap="sm" align="center">
-            <Text fw={600}>Connect Discord to open your portal.</Text>
-            <Text size="sm" c="dimmed" ta="center">
-              Sign in to open My Meetings and view meeting history.
-            </Text>
-            <Button
-              component="a"
-              href={loginUrl}
-              loading={authLoading}
-              variant="filled"
-              color="brand"
-            >
-              Connect Discord
-            </Button>
-          </Stack>
-        </Center>
-      ) : ready ? (
+      <ProtectedSessionBoundary loading={guildLoading}>
         <Outlet />
-      ) : (
-        <Center py="xl">
-          <Stack gap="xs" align="center">
-            <Loader color="brand" />
-            <Text c="dimmed">Loading your portal...</Text>
-          </Stack>
-        </Center>
-      )}
+      </ProtectedSessionBoundary>
     </PortalShell>
   );
-  return ready ? (
+  return (
     <MeetingBrowseProvider
       search={browseSearch}
-      enabled={pathname === "/portal/meetings"}
+      enabled={ready && pathname === "/portal/meetings"}
     >
       {shell}
     </MeetingBrowseProvider>
-  ) : (
-    shell
   );
 }

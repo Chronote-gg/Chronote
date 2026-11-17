@@ -40,6 +40,53 @@ test("a couple of lost snippets keep normal finalization", () => {
   ).toThrow("incomplete");
 });
 
+test.each([undefined, "partial"] as const)(
+  "usable incomplete capture can finalize with transcription=%s",
+  (transcription) => {
+    const meeting = meetingWithSnippets(316, 0);
+    meeting.audioData.captureIncomplete = true;
+    meeting.processing = { transcription };
+    expect(() => assertMeetingProcessingSucceeded(meeting)).not.toThrow();
+    expect(meeting.audioData.captureIncomplete).toBe(true);
+    expect(meeting.processing.transcription).toBe(transcription);
+  },
+);
+
+test.each([1, 2])(
+  "incomplete capture keeps the existing tolerance for %s failed snippets",
+  (failed) => {
+    const meeting = meetingWithSnippets(316, failed);
+    meeting.audioData.captureIncomplete = true;
+    meeting.processing = { transcription: "partial" };
+    expect(() => assertMeetingProcessingSucceeded(meeting)).not.toThrow();
+  },
+);
+
+test.each([
+  "no-usable-speech",
+  "provider-loss",
+  "pending",
+  "failed-transcription",
+  "failed-notes",
+  "failed-summary",
+  "unattributed-partial",
+] as const)("incomplete capture preserves the %s refusal", (failure) => {
+  const meeting = meetingWithSnippets(
+    failure === "no-usable-speech" ? 0 : 316,
+    failure === "provider-loss" ? 3 : 0,
+  );
+  meeting.audioData.captureIncomplete = failure !== "unattributed-partial";
+  meeting.processing = { transcription: "partial" };
+  if (failure === "pending") meeting.audioData.audioFiles[0].processing = true;
+  if (failure === "failed-transcription")
+    meeting.processing.transcription = "failed";
+  if (failure === "failed-notes") meeting.processing.notes = "failed";
+  if (failure === "failed-summary") meeting.processing.summary = "failed";
+  expect(() => assertMeetingProcessingSucceeded(meeting)).toThrow(
+    failure === "pending" ? "pending" : "incomplete",
+  );
+});
+
 // A wholly failed recording must not reach the accidental-recording classifier, which
 // runs before the transcription outcome is written and sees only an empty transcript.
 test("a recording whose only snippet failed is never treated as complete", () => {

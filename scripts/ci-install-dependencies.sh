@@ -11,6 +11,7 @@ for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
   if yarn install --frozen-lockfile --network-timeout 600000 "$@"; then
     # --ignore-scripts skips native builds, but the app still needs its patches.
     yarn patch-package --error-on-fail
+    node scripts/build-native-davey.mjs
     exit 0
   fi
 

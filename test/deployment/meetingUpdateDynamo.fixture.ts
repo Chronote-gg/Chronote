@@ -13,8 +13,7 @@ import { createDynamoMeetingUpdateDeliveryRepository } from "../../src/repositor
 import type { MeetingHistory } from "../../src/types/db";
 import { PROCESSING_RETRY_DUE_INDEX } from "../../src/types/meetingProcessingRetry";
 import type { MeetingUpdateKey } from "../../src/types/meetingUpdateDelivery";
-import { key, now } from "../types/meetingUpdateDelivery.fixture";
-import { control, runtime } from "./controlFixtures";
+import { key } from "../types/meetingUpdateDelivery.fixture";
 
 /** The sparse due indexes MeetingHistory carries in Terraform and init-dynamodb.js. */
 const historyDueIndexes = [
@@ -28,7 +27,7 @@ export function meetingUpdateDynamoFixture(label: string) {
     deploymentControl: prefix + "-control",
   };
   const client = new DynamoDBClient({
-    endpoint: process.env.DEPLOYMENT_TEST_DYNAMODB_ENDPOINT,
+    endpoint: process.env.TEST_DYNAMODB_ENDPOINT,
     region: "local",
     credentials: { accessKeyId: "dummy", secretAccessKey: "dummy" },
     maxAttempts: 1,
@@ -107,25 +106,6 @@ export function meetingUpdateDynamoFixture(label: string) {
       ? (unmarshall(result.Item) as MeetingHistory)
       : undefined;
   }
-  /** Seeds deployment control so the fixture's serving authority is admitted, or fenced. */
-  async function admit(allowed: boolean) {
-    await put(tables.deploymentControl, {
-      ...control,
-      servingMembers: allowed ? control.servingMembers : {},
-    });
-    const row = runtime("old");
-    await put(tables.deploymentControl, {
-      ...row,
-      heartbeatAt: now,
-      readiness: { ...row.readiness, provenAt: now - 1, expiresAt: now + 200 },
-      protection: {
-        ...row.protection!,
-        provenAt: now - 1,
-        expiresAt: now + 200,
-      },
-    });
-  }
-
   async function dispose() {
     for (const TableName of created)
       await client.send(new DeleteTableCommand({ TableName }));
@@ -140,7 +120,6 @@ export function meetingUpdateDynamoFixture(label: string) {
     createTestTable,
     createTables,
     read,
-    admit,
     dispose,
   };
 }

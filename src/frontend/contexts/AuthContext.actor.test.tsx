@@ -64,6 +64,11 @@ test("blocks immediately across A/B/A and ignores older reset completion, then g
   expect(screen.getByTestId("gate")).toHaveTextContent("blocked");
   await act(async () => finishes[2]());
   expect(screen.getByTestId("gate")).toHaveTextContent("ready");
+  sessionStorage.setItem(
+    "chronote-ask-run:a:server:conversation",
+    JSON.stringify({ runId: "run" }),
+  );
+  sessionStorage.setItem("unrelated", "keep");
   mockActor = null;
   view.rerender(
     <AuthProvider>
@@ -71,4 +76,8 @@ test("blocks immediately across A/B/A and ignores older reset completion, then g
     </AuthProvider>,
   );
   expect(screen.getByTestId("gate")).toHaveTextContent("blocked");
+  expect(
+    sessionStorage.getItem("chronote-ask-run:a:server:conversation"),
+  ).toBeNull();
+  expect(sessionStorage.getItem("unrelated")).toBe("keep");
 });

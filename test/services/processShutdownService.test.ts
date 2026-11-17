@@ -1,17 +1,13 @@
 /** @jest-environment node */
 import { EventEmitter } from "node:events";
 import { createProcessShutdownOwner } from "../../src/services/processShutdownService";
-function held<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+import { LIFECYCLE } from "../../src/services/lifecycleTiming";
+
+const START_MS = 1_000;
 function fixture() {
   const processSignals = new EventEmitter();
   const exit = jest.fn();
-  const pending = held<boolean>();
+  const pending = Promise.withResolvers<boolean>();
   const closeAdmission = jest.fn();
   const preserve = jest.fn(() => pending.promise);
   const flush = jest.fn(async () => {});
@@ -32,7 +28,7 @@ function fixture() {
     flush,
   };
 }
-beforeEach(() => jest.useFakeTimers({ now: 1_000 }));
+beforeEach(() => jest.useFakeTimers({ now: START_MS }));
 afterEach(() => jest.useRealTimers());
 test("shutdownStopsCaptureWithoutWaitingForNaturalEnd and registers before reentrant signals", async () => {
   const f = fixture();
@@ -52,11 +48,11 @@ test("oneDeadlineAcrossConcurrentMeetings and a later signal cannot renew protec
   const f = fixture();
   const original = f.owner.request("protection_loss");
   const budget = f.preserve.mock.calls[0][0];
-  expect(budget.deadline).toBe(101_000);
-  await jest.advanceTimersByTimeAsync(90_000);
+  expect(budget.deadline).toBe(START_MS + LIFECYCLE.shutdownBudgetMs);
+  await jest.advanceTimersByTimeAsync(LIFECYCLE.shutdownBudgetMs - 1);
   expect(f.owner.request("signal")).toBe(original);
   expect(f.preserve.mock.calls[0][0]).toBe(budget);
-  await jest.advanceTimersByTimeAsync(10_000);
+  await jest.advanceTimersByTimeAsync(1);
   expect(await original).toEqual({ kind: "unresolved" });
   expect(f.owner.checkpoint().actualSettled).toBe(false);
   expect(f.exit).toHaveBeenCalledTimes(1);
@@ -68,7 +64,7 @@ test("oneDeadlineAcrossConcurrentMeetings and a later signal cannot renew protec
 });
 test("pendingInitializationSettlesBeforeExit including a held startup operation", async () => {
   const f = fixture();
-  const startup = held<void>();
+  const startup = Promise.withResolvers<void>();
   const actualStartup = f.owner.runStartup(() => startup.promise);
   const stopping = f.owner.request("signal");
   f.pending.resolve(true);
@@ -84,7 +80,7 @@ test("pendingInitializationSettlesBeforeExit including a held startup operation"
 test("encoderNeverEndsStillMeetsDeadline while actual work remains unresolved", async () => {
   const f = fixture();
   const stopping = f.owner.request("signal");
-  await jest.advanceTimersByTimeAsync(100_000);
+  await jest.advanceTimersByTimeAsync(LIFECYCLE.shutdownBudgetMs);
   expect(await stopping).toEqual({ kind: "unresolved" });
   expect(f.owner.checkpoint().actualSettled).toBe(false);
   expect(f.flush).not.toHaveBeenCalled();
@@ -107,7 +103,7 @@ test("protection loss alone preserves without exit; later startup failure joins 
 });
 test("a held telemetry flush consumes the same budget and is retained after expiry", async () => {
   const f = fixture();
-  const telemetry = held<void>();
+  const telemetry = Promise.withResolvers<void>();
   f.flush.mockImplementation(() => telemetry.promise);
   const stopping = f.owner.request("signal");
   f.pending.resolve(true);

@@ -96,7 +96,9 @@ export default function UnifiedMeetingsPage() {
       />
       <Group justify="space-between">
         <Text size="sm" c="dimmed">
-          {browse.items.length} loaded meetings
+          {!browse.error && !browse.isLoading
+            ? `${browse.items.length} loaded meetings`
+            : ""}
           {browse.hasMore ? ", more available" : ""}
         </Text>
         <Group>

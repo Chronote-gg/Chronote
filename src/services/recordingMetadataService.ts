@@ -1,15 +1,6 @@
 import type { MeetingData } from "../types/meeting-data";
-import { isFixture, fixtureLabels } from "./fixtureInputService";
 import { resolveMeetingAttendees } from "../utils/meetingAttendees";
 export function recordingPromptLabels(meeting: MeetingData) {
-  if (isFixture(meeting))
-    return {
-      ...fixtureLabels,
-      serverDescription: "",
-      events: "",
-      channelNames: "",
-      cleanupRoleNames: "",
-    };
   return {
     serverName: meeting.guild.name,
     serverDescription: meeting.guild.description ?? "",

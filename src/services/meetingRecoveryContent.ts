@@ -1,9 +1,10 @@
 import {
-  reserveCheckpointPcm,
-  releaseCheckpointPcm,
+  createPcmBudget,
+  PCM_RESERVED_COPIES,
 } from "./recordingCheckpointCapture";
+import { LIFECYCLE } from "./lifecycleTiming";
+import { PROCESSING_RETRY_MAX_CONCURRENT } from "../constants";
 import { processRecoveryTranscript } from "./recoveryTranscriptionProcessing";
-import { artifactOwnerSchema } from "../types/artifactCleanup";
 import {
   createRecoveryArtifactScope,
   type RecoveryArtifactScope,
@@ -124,32 +125,21 @@ export async function readRecoveryContent(
     omitted = transcript.omitted;
   }
   signal.throwIfAborted();
-  const owner = artifactOwnerSchema.safeParse({
-    guildId: history.guildId,
-    meetingId: history.meetingId,
-    ownerInstanceId: history.ownerInstanceId,
-    executionVersion: history.executionVersion,
-  });
   return {
     ...verified,
     context,
     entries,
     processing,
     omitted,
-    ...(owner.success
-      ? {
-          cleanupBinding: {
-            owner: owner.data,
-            historyKey: history.channelId_timestamp,
-            checkpoint: pointer,
-          },
-        }
-      : {}),
   };
 }
 export type RecoveryContent = Awaited<ReturnType<typeof readRecoveryContent>>;
 export const INTERRUPTED_CAPTURE_NOTICE =
   "This recording ended abruptly. The interruption cause is unknown.";
+const NO_INVENTED_DISCUSSION =
+  "Saved content can contain gaps. Describe only confirmed conversation; never invent missing discussion, decisions, or an ending.";
+/** A completed capture whose saved content is still partial: gaps, but no interruption. */
+export const SAVED_CONTENT_GAP_NOTICE = `Some of this recording's saved audio could not be used. ${NO_INVENTED_DISCUSSION}`;
 export function recoveryCaptureNotice(
   content: RecoveryContent,
   interrupted: boolean,
@@ -163,7 +153,7 @@ export function recoveryCaptureNotice(
     interrupted
       ? INTERRUPTED_CAPTURE_NOTICE
       : "These notes were recovered after processing stopped.",
-    "Saved content can contain gaps. Describe only confirmed conversation; never invent missing discussion, decisions, or an ending.",
+    NO_INVENTED_DISCUSSION,
     content.missing.length
       ? `${content.missing.length} checkpoint artifacts could not be verified.`
       : "Only verified saved content is included.",
@@ -216,7 +206,6 @@ export function transcriptionInput(
   if (typeof compiled !== "string")
     throw new InvalidRecoveryContent("Transcription prompt type changed");
   return {
-    beginArtifactWrite: artifacts?.beginWrite,
     tempDirectory: artifacts?.directory,
     meetingId: context.capture.meetingId,
     creator: { id: context.creatorId },
@@ -240,6 +229,21 @@ export function transcriptionInput(
   };
 }
 const RECOVERY_CHUNK_FRAMES = 48000 * 30;
+const PCM_FRAME_BYTES = 4;
+// Each load holds one group at a time; the finisher and the processing retry
+// worker each run at most their own cap of loads on one worker.
+const RECOVERY_CONCURRENT_LOADS =
+  LIFECYCLE.maxConcurrentFinishes + PROCESSING_RETRY_MAX_CONCURRENT;
+/**
+ * Loading saved audio has its own allowance, apart from live capture, so a
+ * load can never refuse a live recording and a busy capture never fails a load.
+ */
+export const recoveryPcmBudget = createPcmBudget(
+  RECOVERY_CONCURRENT_LOADS *
+    RECOVERY_CHUNK_FRAMES *
+    PCM_FRAME_BYTES *
+    PCM_RESERVED_COPIES,
+);
 type RecoveryAudioSlice = {
   artifact: Extract<CheckpointArtifact, { kind: "audio" }>;
   startFrame: number;
@@ -390,8 +394,8 @@ async function transcribeAudioGroup(
   timestamp: number,
 ) {
   input.signal.throwIfAborted();
-  const length = (group.endFrame - group.startFrame) * 4;
-  if (!reserveCheckpointPcm(length))
+  const length = (group.endFrame - group.startFrame) * PCM_FRAME_BYTES;
+  if (!recoveryPcmBudget.reserve(length))
     throw new Error("Recovery PCM budget unavailable");
   try {
     // Silence is temporary alignment scratch, never newly claimed capture coverage.
@@ -415,7 +419,7 @@ async function transcribeAudioGroup(
     throw new Error("Recovery transcription failed");
   } finally {
     // Awaited conversion/provider lifetime has settled, including cancellation/error.
-    releaseCheckpointPcm(length);
+    recoveryPcmBudget.release(length);
   }
 }
 async function recoverAudioIntervals(
@@ -616,13 +620,9 @@ async function composeRecoveredTranscript(
   covered: readonly PcmSpan[],
   retry: boolean,
 ) {
-  const sources = content.verified
-    .filter((item) => item.kind === "audio")
-    .map((item) => item.object);
-  const artifacts =
-    content.cleanupBinding && sources.length
-      ? await createRecoveryArtifactScope(content.cleanupBinding, sources)
-      : undefined;
+  const artifacts = content.verified.some((item) => item.kind === "audio")
+    ? await createRecoveryArtifactScope(content.manifest.capture.meetingId)
+    : undefined;
   try {
     return await composeOwnedRecoveredTranscript(
       content,
@@ -634,11 +634,7 @@ async function composeRecoveredTranscript(
       artifacts,
     );
   } finally {
-    const cleanup = await artifacts?.close();
-    if (cleanup && cleanup.kind !== "cleaned")
-      console.warn("Recovery scratch retained for verified cleanup", {
-        kind: cleanup.kind,
-      });
+    await artifacts?.close();
   }
 }
 
@@ -728,6 +724,45 @@ async function composeOwnedRecoveredTranscript(
     retranscribedRanges,
   };
 }
+/** Saved content is partial when the capture or any of its pieces is incomplete. */
+export function recoveredTranscriptionOutcome(
+  content: RecoveryContent,
+  interrupted: boolean,
+): "partial" | "ready" {
+  return interrupted ||
+    content.missing.length ||
+    content.context.captureIncomplete
+    ? "partial"
+    : "ready";
+}
+/**
+ * Generation from saved content for a capture that is not being recovered as
+ * such: it is named like a live run. An interrupted capture keeps the recovery
+ * notice; a completed one keeps only a gap notice, when its content is partial.
+ */
+export function liveShapedNotesInput<
+  Input extends Pick<MeetingNotesInput, "captureNotice" | "processing">,
+>(
+  input: Input,
+  history: Pick<MeetingHistory, "meetingName">,
+  interrupted: boolean,
+): Input & Pick<MeetingNotesInput, "meetingName" | "recovered"> {
+  return {
+    ...input,
+    meetingName: history.meetingName,
+    recovered: undefined,
+    captureNotice: interrupted
+      ? input.captureNotice
+      : completedCaptureNotice(input),
+  };
+}
+function completedCaptureNotice(
+  input: Pick<MeetingNotesInput, "processing">,
+): string | undefined {
+  return input.processing?.transcription === "partial"
+    ? SAVED_CONTENT_GAP_NOTICE
+    : undefined;
+}
 export function recoveryNotesInput(
   history: MeetingHistory,
   content: RecoveryContent,
@@ -788,12 +823,7 @@ export function recoveryNotesInput(
         ? history.summaryLabel
         : undefined,
     processing: {
-      transcription:
-        interrupted ||
-        content.missing.length ||
-        content.context.captureIncomplete
-          ? "partial"
-          : "ready",
+      transcription: recoveredTranscriptionOutcome(content, interrupted),
       ...(history.processing?.notes === "generated"
         ? { notes: "generated" as const }
         : {}),

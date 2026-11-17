@@ -1,8 +1,4 @@
 /** @jest-environment node */
-import {
-  seedServingRuntime,
-  stopServingRuntime,
-} from "../fixtures/servingRuntime";
 import { buildPausedDesktopDraftMarker } from "../../src/testSupport/personalMediaUploadFixtures";
 
 import { afterEach, beforeEach, describe, expect, test } from "@jest/globals";
@@ -299,7 +295,6 @@ describe("desktop API", () => {
       get: () => true,
       configurable: true,
     });
-    await seedServingRuntime();
   });
 
   afterEach(() => {
@@ -911,4 +906,3 @@ describe("desktop API", () => {
     }
   });
 });
-afterAll(stopServingRuntime);

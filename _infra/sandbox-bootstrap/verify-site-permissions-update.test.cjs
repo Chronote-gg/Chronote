@@ -17,6 +17,26 @@ const {
 } = require("./verify-plan.cjs");
 const fixture = (name) =>
   JSON.parse(readFileSync(join(__dirname, "tests/fixtures", name), "utf8"));
+test("artifact executor contract contains only exact version/create/conditioned attachment grants", () => {
+  const input = fixture("reviewed-binding.json").variables;
+  const policy = require("./policy-contracts.cjs").expectedRolePolicy(input);
+  const artifact = policy.Statement.filter((s) => s.Sid.startsWith("Artifact"));
+  assert.equal(artifact.length, 3);
+  assert.deepEqual(
+    artifact.map((s) => s.Sid),
+    [
+      "ArtifactTranscriptVersion",
+      "ArtifactAuthorityCreate",
+      "ArtifactAuthorityAttachment",
+    ],
+  );
+  assert.ok(!artifact[1].Action.includes("iam:CreatePolicyVersion"));
+  assert.equal(
+    artifact[2].Condition.StringEquals["iam:PolicyARN"],
+    `arn:aws:iam::${input.sandbox_account_id}:policy/meeting-notes-sandbox-artifact-authority`,
+  );
+  assert.ok(JSON.stringify(policy).length < 10240);
+});
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 function candidate(noop = false) {
   const plan = fixture("create-plan.json");
@@ -766,3 +786,109 @@ test("CLI accepts reviewed cold-create and bounded-update documents", () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+function installedChannels() {
+  const c = candidate();
+  c.binding.variables.enable_sandbox_exec_channels = true;
+  c.plan.variables.enable_sandbox_exec_channels = { value: true };
+  const policy = {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Action: [
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel",
+        ],
+        Resource: "*",
+      },
+    ],
+  };
+  const value = {
+    id: "meeting-notes-sandbox-ecs-task-app-role:meeting-notes-sandbox-ecs-exec-channels",
+    name: "meeting-notes-sandbox-ecs-exec-channels",
+    name_prefix: "",
+    role: "meeting-notes-sandbox-ecs-task-app-role",
+    policy: JSON.stringify(policy),
+  };
+  c.plan.resource_changes.push({
+    address: "aws_iam_role_policy.sandbox_exec_channels[0]",
+    mode: "managed",
+    type: "aws_iam_role_policy",
+    name: "sandbox_exec_channels",
+    index: 0,
+    provider_name: "registry.terraform.io/hashicorp/aws",
+    change: {
+      actions: ["no-op"],
+      before: structuredClone(value),
+      after: structuredClone(value),
+      after_unknown: {},
+    },
+  });
+  c.plan.configuration.root_module.resources.push({
+    address: "aws_iam_role_policy.sandbox_exec_channels",
+    mode: "managed",
+    type: "aws_iam_role_policy",
+    name: "sandbox_exec_channels",
+    provider_config_key: "aws",
+    count_expression: { references: ["var.enable_sandbox_exec_channels"] },
+    expressions: {
+      name: { constant_value: value.name },
+      role: { constant_value: value.role },
+      policy: {},
+    },
+  });
+  return c;
+}
+test("bounded update preserves the exact installed channel policy under explicit protected inputs", () => {
+  const c = installedChannels();
+  assert.equal(inspect(c.plan, c.binding), true);
+});
+for (const [label, alter] of [
+  [
+    "omitted protected flag",
+    (c) => delete c.binding.variables.enable_sandbox_exec_channels,
+  ],
+  [
+    "false protected flag",
+    (c) => (c.binding.variables.enable_sandbox_exec_channels = false),
+  ],
+  ["missing policy", (c) => c.plan.resource_changes.pop()],
+  [
+    "deletion",
+    (c) => (c.plan.resource_changes.at(-1).change.actions = ["delete"]),
+  ],
+  [
+    "creation",
+    (c) => (c.plan.resource_changes.at(-1).change.actions = ["create"]),
+  ],
+  [
+    "policy mutation",
+    (c) => (c.plan.resource_changes.at(-1).change.after.policy = "{}"),
+  ],
+  [
+    "unapproved existing policy",
+    (c) => {
+      const r = c.plan.resource_changes.at(-1);
+      r.change.after.policy = "{}";
+      r.change.before.policy = "{}";
+    },
+  ],
+  [
+    "unknown policy",
+    (c) => (c.plan.resource_changes.at(-1).change.after_unknown.policy = true),
+  ],
+  [
+    "foreign provider",
+    (c) =>
+      (c.plan.configuration.root_module.resources.at(-1).provider_config_key =
+        "aws.foreign"),
+  ],
+])
+  test(`installed channel compatibility refuses ${label}`, () => {
+    const c = installedChannels();
+    alter(c);
+    assert.throws(() => inspect(c.plan, c.binding));
+  });

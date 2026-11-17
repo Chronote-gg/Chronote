@@ -34,10 +34,11 @@ resource "aws_iam_role" "production_deploy" {
         Condition = {
           StringEquals = {
             "token.actions.githubusercontent.com:aud"                 = "sts.amazonaws.com",
-            "token.actions.githubusercontent.com:sub"                 = "repo:${var.github_owner}/${var.github_repository}:environment:production",
+            "token.actions.githubusercontent.com:sub"                 = [for name in local.production_deploy_environments : "repo:${var.github_owner}/${var.github_repository}:environment:${name}"],
             "token.actions.githubusercontent.com:repository_id"       = tostring(data.github_repository.repo.repo_id),
             "token.actions.githubusercontent.com:repository_owner_id" = data.github_organization.production_deployment_owner[0].id,
-            "token.actions.githubusercontent.com:ref"                 = "refs/heads/master"
+            "token.actions.githubusercontent.com:ref"                 = "refs/heads/master",
+            "token.actions.githubusercontent.com:workflow"            = "Meeting Notes Bot Deploy"
           }
         }
       }
@@ -57,7 +58,7 @@ resource "aws_iam_role_policy" "production_deploy" {
   role  = aws_iam_role.production_deploy[0].id
   policy = jsonencode({
     Version = "2012-10-17",
-    Statement = [
+    Statement = concat([
       {
         Sid    = "ProductionService",
         Effect = "Allow",
@@ -163,38 +164,9 @@ resource "aws_iam_role_policy" "production_deploy" {
       {
         Sid    = "DeploymentControlProtocol",
         Effect = "Allow",
-        Action = [
-          "dynamodb:GetItem",
-          "dynamodb:Query",
-          "dynamodb:Scan",
-          "dynamodb:PutItem",
-          "dynamodb:UpdateItem",
-          "dynamodb:ConditionCheckItem"
-        ],
+        # deploy.cjs reads the worker registry and nothing else.
+        Action   = ["dynamodb:Query"],
         Resource = aws_dynamodb_table.deployment_control_table.arn
-      },
-      {
-        Sid      = "ArtifactAuthorityChecks",
-        Effect   = "Allow",
-        Action   = ["dynamodb:ConditionCheckItem"],
-        Resource = aws_dynamodb_table.meeting_history_table.arn
-      },
-      {
-        Sid    = "ProductionObservationAndPreflight",
-        Effect = "Allow",
-        Action = [
-          "dynamodb:Scan"
-        ],
-        Resource = [
-          aws_dynamodb_table.active_meeting_table.arn,
-          aws_dynamodb_table.meeting_history_table.arn,
-          aws_dynamodb_table.meeting_control_command_table.arn,
-          aws_dynamodb_table.personal_media_upload_job_table.arn,
-          aws_dynamodb_table.personal_recording_segment_table.arn,
-          aws_dynamodb_table.guild_subscription_table.arn,
-          aws_dynamodb_table.stripe_webhook_event_table.arn,
-          aws_dynamodb_table.payment_transaction_table.arn
-        ]
       },
       {
         Sid    = "ExistingTableKeysThroughDynamoDB",
@@ -208,64 +180,9 @@ resource "aws_iam_role_policy" "production_deploy" {
             "kms:ViaService"                                  = "dynamodb.${var.aws_region}.amazonaws.com",
             "kms:CallerAccount"                               = data.aws_caller_identity.current.account_id,
             "kms:EncryptionContext:aws:dynamodb:subscriberId" = data.aws_caller_identity.current.account_id,
-            "kms:EncryptionContext:aws:dynamodb:tableName" = [
-              aws_dynamodb_table.deployment_control_table.name,
-              aws_dynamodb_table.active_meeting_table.name,
-              aws_dynamodb_table.meeting_history_table.name,
-              aws_dynamodb_table.meeting_control_command_table.name,
-              aws_dynamodb_table.personal_media_upload_job_table.name,
-              aws_dynamodb_table.personal_recording_segment_table.name,
-              aws_dynamodb_table.guild_subscription_table.name,
-              aws_dynamodb_table.stripe_webhook_event_table.name,
-              aws_dynamodb_table.payment_transaction_table.name
-            ]
+            "kms:EncryptionContext:aws:dynamodb:tableName"    = aws_dynamodb_table.deployment_control_table.name
           }
         }
-      },
-      {
-        # IAM cannot constrain the inline policy name or document; the reviewed executor must.
-        Sid      = "RuntimeAdmissionFence",
-        Effect   = "Allow",
-        Action   = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:PutRolePolicy", "iam:DeleteRolePolicy"],
-        Resource = aws_iam_role.ecs_task_app_role.arn
-      },
-      {
-        Sid      = "RuntimeManagedPolicyReadback",
-        Effect   = "Allow",
-        Action   = ["iam:GetPolicy", "iam:GetPolicyVersion"],
-        Resource = concat([aws_iam_policy.dynamodb_access_policy.arn], [for name in ["bot-kms-policy", "bot-transcripts-s3-policy", "bot-appconfig-policy", "bedrock-data-automation", "bedrock-eval-s3"] : "${local.production_account_arn}:policy/${local.name_prefix}-${name}"])
-      },
-      {
-        # Session policy binds the exact task; executor binds the reviewed probe command.
-        Sid      = "RuntimePrincipalProbe",
-        Effect   = "Allow",
-        Action   = ["ecs:ExecuteCommand"],
-        Resource = [aws_ecs_cluster.main.arn, "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/*"],
-        Condition = {
-          StringEquals = {
-            "ecs:container-name" = "${local.name_prefix}-bot"
-          }
-        }
-      },
-      {
-        # These discovery APIs do not support resource-level permissions.
-        Sid       = "ProducerInventoryInRegion",
-        Effect    = "Allow",
-        Action    = ["application-autoscaling:DescribeScalableTargets", "application-autoscaling:DescribeScalingPolicies", "application-autoscaling:DescribeScheduledActions", "events:ListEventBuses", "events:ListRules", "scheduler:ListSchedules"],
-        Resource  = "*",
-        Condition = { StringEquals = { "aws:RequestedRegion" = var.aws_region } }
-      },
-      {
-        Sid      = "ProducerTargetsInAccount",
-        Effect   = "Allow",
-        Action   = ["events:DescribeRule", "events:ListTargetsByRule"],
-        Resource = "arn:aws:events:${var.aws_region}:${data.aws_caller_identity.current.account_id}:rule/*"
-      },
-      {
-        Sid      = "ScheduledProducerTargetsInAccount",
-        Effect   = "Allow",
-        Action   = ["scheduler:GetSchedule"],
-        Resource = "arn:aws:scheduler:${var.aws_region}:${data.aws_caller_identity.current.account_id}:schedule/*/*"
       },
       {
         Sid    = "SecretVersionMetadataOnly",
@@ -283,8 +200,27 @@ resource "aws_iam_role_policy" "production_deploy" {
           aws_secretsmanager_secret.stripe_secret_key.arn,
           aws_secretsmanager_secret.stripe_webhook_secret.arn
         ]
+      },
+      {
+        # PutMetricData supports no resource ARNs; the namespace condition scopes it.
+        Sid      = "DeployDrainTimeoutMetric",
+        Effect   = "Allow",
+        Action   = ["cloudwatch:PutMetricData"],
+        Resource = "*",
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "${local.name_prefix}/Deploy"
+          }
+        }
       }
-    ]
+      ], var.ENABLE_DEPLOY_RETIRE ? [
+      {
+        Sid      = "RetireOlderTasks",
+        Effect   = "Allow",
+        Action   = ["ecs:StopTask"],
+        Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/*"
+      }
+    ] : [])
   })
 }
 
@@ -308,6 +244,64 @@ resource "github_actions_environment_variable" "production_deploy_account" {
   environment   = github_repository_environment.repo_env.environment
   variable_name = "AWS_ACCOUNT_ID"
   value         = data.aws_caller_identity.current.account_id
+}
+
+# Deploy jobs may run under production-deploy, which has no required reviewer,
+# so merges deploy unattended. Terraform Apply runs in the hand-made
+# production-terraform environment. Both trust the deploy roles; see docs/deployment.md.
+locals {
+  production_deploy_environments = ["production", "production-deploy"]
+  production_deploy_optional_variables = {
+    DOCS_SITE_URL           = var.DOCS_SITE_URL
+    DOCS_ALGOLIA_APP_ID     = var.DOCS_ALGOLIA_APP_ID
+    DOCS_ALGOLIA_API_KEY    = var.DOCS_ALGOLIA_API_KEY
+    DOCS_ALGOLIA_INDEX_NAME = var.DOCS_ALGOLIA_INDEX_NAME
+  }
+  # The variables Terraform writes to production, with the same values. A
+  # tftest pins the match with the production resources.
+  production_deploy_variables = var.environment == "prod" ? merge({
+    AWS_REGION                         = "us-east-1"
+    AWS_ACCOUNT_ID                     = data.aws_caller_identity.current.account_id
+    ECR_REPOSITORY                     = "${local.name_prefix}-bot-repo"
+    ECS_CLUSTER                        = aws_ecs_cluster.main.name
+    ECS_SERVICE                        = "${local.name_prefix}-bot-service"
+    ECS_TASK_FAMILY                    = local.production_task_family
+    ECS_LOG_GROUP                      = local.app_log_group_name
+    SECRETS_PREFIX                     = local.name_prefix
+    FRONTEND_BUCKET                    = local.frontend_bucket_name
+    FRONTEND_DISTRIBUTION_ID           = var.frontend_distribution_id
+    DOCS_BUCKET                        = local.docs_bucket_name
+    DOCS_DISTRIBUTION_ID               = var.docs_distribution_id
+    VITE_API_BASE_URL                  = local.api_base_url
+    PRODUCTION_BACKEND_DEPLOY_ROLE_ARN = aws_iam_role.production_deploy[0].arn
+  }, { for name, value in local.production_deploy_optional_variables : name => value if value != "" }) : {}
+}
+
+resource "github_repository_environment" "production_deploy" {
+  count             = var.environment == "prod" ? 1 : 0
+  repository        = data.github_repository.repo.name
+  environment       = "production-deploy"
+  can_admins_bypass = false
+
+  deployment_branch_policy {
+    protected_branches     = false
+    custom_branch_policies = true
+  }
+}
+
+resource "github_repository_environment_deployment_policy" "production_deploy_master" {
+  count          = var.environment == "prod" ? 1 : 0
+  repository     = data.github_repository.repo.name
+  environment    = github_repository_environment.production_deploy[0].environment
+  branch_pattern = "master"
+}
+
+resource "github_actions_environment_variable" "production_deploy" {
+  for_each      = local.production_deploy_variables
+  repository    = data.github_repository.repo.name
+  environment   = github_repository_environment.production_deploy[0].environment
+  variable_name = each.key
+  value         = each.value
 }
 
 output "production_backend_deploy_role_arn" {

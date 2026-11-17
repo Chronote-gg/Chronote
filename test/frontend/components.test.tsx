@@ -162,7 +162,7 @@ describe("frontend components", () => {
         note="Best choice"
       />,
     );
-    expect(screen.getByText("Best value")).toBeInTheDocument();
+    expect(screen.queryByText(/Best value/i)).not.toBeInTheDocument();
     expect(screen.getByText("Upgrade")).toBeInTheDocument();
     expect(screen.getByText("Best choice")).toBeInTheDocument();
   });
@@ -220,7 +220,10 @@ describe("frontend components", () => {
     );
     expect(screen.getByLabelText("Close navigation")).toBeInTheDocument();
     const logoutButton = screen.getByTestId("logout-cta");
-    expect(logoutButton).toHaveAttribute("href", authState.logoutUrl);
+    expect(logoutButton).toHaveAttribute(
+      "href",
+      "https://example.com/logout?interaction=consent",
+    );
     expect(screen.getByText("Switch account")).toBeInTheDocument();
     unmount();
 

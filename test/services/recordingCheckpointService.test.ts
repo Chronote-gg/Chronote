@@ -4,7 +4,7 @@ jest.mock("dotenv", () => ({ config: () => ({ parsed: {} }) }));
 import { recoveryDispositionSchema } from "../../src/types/recordingCheckpoint";
 
 import { type RecordingCheckpointMeeting } from "../../src/services/recordingCheckpointService";
-import { history } from "../deployment/controlFixtures";
+import { history } from "../fixtures/meetingHistory";
 
 import {
   capture,
@@ -367,11 +367,6 @@ function meetingFixture(): RecordingCheckpointMeeting {
       historyKey: {
         guildId: history.guildId,
         channelId_timestamp: history.channelId_timestamp,
-      },
-      workHandle: {
-        settle: jest.fn(),
-        transition: jest.fn(),
-        beginOwnedControl: () => ({ settle: jest.fn() }),
       },
     },
   };
@@ -868,103 +863,6 @@ test("first live publication snapshots the original voice attempt before an asyn
     ).kind,
   ).toBe("stale_owner");
   expect(meeting.recordingCheckpoint).toBeUndefined();
-});
-
-function initialDispositionInput() {
-  return {
-    ...input,
-    status: "interrupted" as const,
-    captureState: {
-      kind: "interrupted" as const,
-      detectedAt: "2026-01-01T00:00:03.000Z",
-      startedAt: capture.captureStartedAt,
-      endedAt: "2026-01-01T00:00:03.000Z",
-    },
-    recovery: {
-      disposition: "pending" as const,
-      attempt: 0,
-      executionVersion: 1,
-      stage: "verification" as const,
-      retry: { maxAttempts: 3, nextAttemptAt: null },
-    },
-    preservation: {
-      ownership,
-      deadlineEpochMs: Date.now() + 20000,
-      signal: new AbortController().signal,
-      assertOwnership: async () => {},
-    },
-  };
-}
-test("initial interruption atomically publishes terminal history and verified checkpoint under original lease", async () => {
-  const f = fixture();
-  const result = await f.service.preserveInitialTerminalRecordingCheckpoint(
-    initialDispositionInput(),
-  );
-  expect(result.kind).toBe("committed");
-  expect(f.histories.get(history.guildId)![0]).toMatchObject({
-    status: "interrupted",
-    checkpoint: { revision: 1 },
-    recovery: { disposition: "pending" },
-    captureCoverage: {
-      kind: "verified",
-      savedDurationMs: 1000,
-      lastConfirmedCaptureAt: "2026-01-01T00:00:03.000Z",
-      stoppedAt: "2026-01-01T00:00:03.000Z",
-    },
-  });
-});
-test.each(["absent", "expired", "replaced"])(
-  "initial interruption rejects %s lease after object verification without changing history",
-  async (race) => {
-    const f = fixture();
-    f.upload.mockImplementationOnce(async (key, bytes) => {
-      f.objects.set(key, Buffer.from(bytes));
-      const lease = f.leases.get(history.guildId)!;
-      if (race === "absent") f.leases.delete(history.guildId);
-      if (race === "expired")
-        lease.leaseExpiresAt = Math.floor(Date.now() / 1000) - 1;
-      if (race === "replaced") lease.voiceOperationAttemptId = "other-attempt";
-      return key;
-    });
-    expect(
-      (
-        await f.service.preserveInitialTerminalRecordingCheckpoint(
-          initialDispositionInput(),
-        )
-      ).kind,
-    ).toBe("stale_owner");
-    expect(f.histories.get(history.guildId)![0]).toEqual(history);
-  },
-);
-test("initial failure preserves known complete capture and resolves lost ACK only through exact readback", async () => {
-  const f = fixture();
-  const state = {
-    kind: "complete" as const,
-    startedAt: capture.captureStartedAt!,
-    endedAt: "2026-01-01T00:00:03.000Z",
-  };
-  const first = await f.service.flush({ ...input, captureState: state });
-  if (first.kind !== "committed") throw new Error("synthetic fixture failed");
-  const apply = f.repository.transitionMeetingHistory.bind(f.repository);
-  jest
-    .spyOn(f.repository, "transitionMeetingHistory")
-    .mockImplementationOnce(async (request) => {
-      await apply(request);
-      throw new Error("synthetic lost ACK");
-    });
-  const result = await f.service.preserveInitialTerminalRecordingCheckpoint({
-    ...initialDispositionInput(),
-    status: "failed",
-    captureState: state,
-    previous: first.checkpoint,
-    artifacts: [],
-  });
-  expect(f.histories.get(history.guildId)![0]).toMatchObject({
-    status: "failed",
-    capture: state,
-    checkpoint: first.checkpoint,
-  });
-  expect(result.kind).toBe("committed");
 });
 
 test("live checkpoint producer uses voice identity while notes target remains separate", async () => {

@@ -30,6 +30,7 @@ import {
   CONTACT_FEEDBACK_MAX_MESSAGE_LENGTH,
 } from "../../constants";
 import { useAuth } from "../contexts/AuthContext";
+import { useAuthNavigationBlocker } from "../hooks/useAuthNavigationBlocker";
 import { executeRecaptcha, useRecaptchaScript } from "../hooks/useRecaptcha";
 
 const HONEYPOT_FIELD_NAME = "website_url";
@@ -138,6 +139,11 @@ export function ContactFeedbackForm({
   const [contactDiscord, setContactDiscord] = useState("");
   const [honeypot, setHoneypot] = useState("");
   const [images, setImages] = useState<PendingImage[]>([]);
+  useAuthNavigationBlocker(
+    Boolean(
+      message || contactEmail || contactDiscord || images.length || isPending,
+    ),
+  );
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 

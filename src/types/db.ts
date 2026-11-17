@@ -111,20 +111,10 @@ interface ActiveMeetingLeaseFields {
   endRequestedByUserId?: string;
 }
 
-export type ActiveMeetingLease = ActiveMeetingLeaseFields &
-  (
-    | {
-        sessionMode?: "meeting" | "tts_only";
-        voiceOperationAttemptId?: string;
-        recoveryAttemptId?: never;
-      }
-    | {
-        sessionMode: "recovery";
-        recoveryAttemptId: string;
-        executionVersion: number;
-        voiceOperationAttemptId?: never;
-      }
-  );
+export type ActiveMeetingLease = ActiveMeetingLeaseFields & {
+  sessionMode?: "meeting" | "tts_only";
+  voiceOperationAttemptId?: string;
+};
 
 // Access Logs Type
 export interface AccessLog {
@@ -450,8 +440,21 @@ export interface OnboardingState {
   ttl: number; // epoch seconds for Dynamo TTL
 }
 
+export type FinishState = {
+  owner?: string;
+  expiresAt?: number; // epoch seconds, present while claimed
+  attempts: number; // failed attempts in the current phase
+  nextAttemptAt?: number; // epoch seconds
+  startedAt?: number; // epoch seconds, start of the current attempt
+  phase: "process" | "deliver";
+  deliverSince?: number; // epoch seconds, first delivery failure
+};
+
 // Meeting History Type
 export interface MeetingHistory {
+  lifecycleVersion?: 2;
+  finish?: FinishState;
+  startMessageId?: string;
   fixtureInput?: import("./fixtureEvidence").FixtureInputEvidence;
   fixtureGeneration?: import("./fixtureEvidence").FixtureGenerationEvidence;
   fixtureTranscript?: import("./fixtureEvidence").FixtureTranscriptEvidence;

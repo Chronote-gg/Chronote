@@ -150,6 +150,21 @@ export function originalPublicationSettled(
     notesPublicationSettled(row)
   );
 }
+/**
+ * A lifecycle version 2 row is terminal before its notes reach Discord. While
+ * its finish marker remains and delivery has neither completed nor been given
+ * up, the original publication is still on its way, not absent.
+ */
+function lifecycleDeliveryPending(row: MeetingHistory): boolean {
+  return (
+    row.lifecycleVersion === 2 &&
+    row.finish !== undefined &&
+    row.textChannelId !== undefined &&
+    (row.status === "complete" || row.status === "interrupted") &&
+    row.recovery?.disposition !== "done" &&
+    row.delivery?.notes?.outcome !== "failed"
+  );
+}
 export function initialMeetingUpdatePolicy(
   row: MeetingHistory,
 ): MeetingUpdateDelivery["policy"] {
@@ -160,7 +175,10 @@ export function initialMeetingUpdatePolicy(
     !row.summaryMessageId
   )
     return { kind: "unpublished" };
-  if (originalPublicationUnsettled(publicationSnapshot(row)))
+  if (
+    originalPublicationUnsettled(publicationSnapshot(row)) ||
+    lifecycleDeliveryPending(row)
+  )
     return { kind: "held", reason: "initial_publication_unsettled" };
   if (row.operatorRecovery)
     return { kind: "held", reason: "legacy_publication_unknown" };
@@ -170,31 +188,87 @@ export function initialMeetingUpdatePolicy(
     ? { kind: "active" }
     : { kind: "held", reason: "legacy_publication_unknown" };
 }
-/** Only the original known settlement may release its lifecycle hold. Content holds survive. */
-export function settledLifecycleDelivery(
-  before: MeetingPublicationSnapshot,
-  patch: Partial<MeetingHistory>,
+/**
+ * A lifecycle version 2 row is terminal before its delivery finishes, so a
+ * correction made in between is held as unknown although the publication is in
+ * progress, not unknown. Its delivery settlement releases that hold too.
+ */
+function lifecycleHold(
+  before: MeetingPublicationSnapshot & Pick<MeetingHistory, "lifecycleVersion">,
+  reason: string,
+) {
+  return (
+    reason === "initial_publication_unsettled" ||
+    (reason === "legacy_publication_unknown" && before.lifecycleVersion === 2)
+  );
+}
+type LifecycleBefore = MeetingPublicationSnapshot &
+  Pick<MeetingHistory, "lifecycleVersion">;
+function releasedLifecycleHold(
+  before: LifecycleBefore,
+  released: boolean,
+  policy: MeetingUpdateDelivery["policy"],
+  revisionPrefix: string,
+  revisionInput: Partial<MeetingHistory>,
 ) {
   const delivery = before.updateDelivery;
   if (
+    !released ||
     !delivery ||
     delivery.policy.kind !== "held" ||
-    delivery.policy.reason !== "initial_publication_unsettled" ||
-    patch.recovery?.disposition !== "done" ||
-    !originalPublicationSettled({ ...before, ...patch }) ||
+    !lifecycleHold(before, delivery.policy.reason) ||
     "attempt" in delivery.progress
   )
     return undefined;
   const next: MeetingUpdateDelivery = {
     ...delivery,
     revision:
-      "settled-" +
+      revisionPrefix +
       createHash("sha256")
-        .update(stableJson({ before, recovery: patch.recovery }))
+        .update(stableJson({ before, ...revisionInput }))
         .digest("hex"),
-    policy: { kind: "active" },
+    policy,
   };
   return { delivery: next, dueAt: meetingUpdateDeliveryNextCheck(next) };
+}
+/** Only the original known settlement may release its lifecycle hold. Content holds survive. */
+export function settledLifecycleDelivery(
+  before: LifecycleBefore,
+  patch: Partial<MeetingHistory>,
+) {
+  return releasedLifecycleHold(
+    before,
+    patch.recovery?.disposition === "done" &&
+      originalPublicationSettled({ ...before, ...patch }),
+    { kind: "active" },
+    "settled-",
+    { recovery: patch.recovery },
+  );
+}
+/**
+ * Delivery given up means the original notes were never published, so a
+ * correction held for them is kept as unpublished instead of waiting forever.
+ */
+export function abandonedLifecycleDelivery(
+  before: LifecycleBefore,
+  patch: Partial<MeetingHistory>,
+) {
+  return patch.delivery?.notes?.outcome === "failed"
+    ? unpublishedLifecycleDelivery(before, { delivery: patch.delivery })
+    : undefined;
+}
+/** A finished meeting whose delivery will not run keeps its held correction as unpublished. */
+export function unpublishedLifecycleDelivery(
+  before: LifecycleBefore,
+  revisionInput: Partial<MeetingHistory>,
+) {
+  return releasedLifecycleHold(
+    before,
+    true,
+    { kind: "unpublished" },
+    "abandoned-",
+    revisionInput,
+  );
 }
 
 export class PublicationArchiveConflict extends Error {

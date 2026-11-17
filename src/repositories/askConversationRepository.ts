@@ -1,3 +1,9 @@
+import {
+  UpdateItemCommand,
+  TransactWriteItemsCommand,
+} from "@aws-sdk/client-dynamodb";
+import { marshall } from "@aws-sdk/util-dynamodb";
+import { dynamoDbClient, tableName } from "./dynamoClient";
 import { config } from "../services/configService";
 import {
   getAskConversation,
@@ -62,6 +68,12 @@ const toSharedConversation = (
 });
 
 export type AskConversationRepository = {
+  writeCompletedShare(record: AskConversationShareRecord): Promise<void>;
+  writeCompletedConversation(
+    userId: string,
+    guildId: string,
+    conversation: AskConversation,
+  ): Promise<void>;
   listConversations: (
     userId: string,
     guildId: string,
@@ -104,6 +116,96 @@ export type AskConversationRepository = {
 };
 
 const realRepository: AskConversationRepository = {
+  async writeCompletedShare(record) {
+    try {
+      await dynamoDbClient.send(
+        new TransactWriteItemsCommand({
+          TransactItems: [
+            {
+              ConditionCheck: {
+                TableName: tableName("AskConversationTable"),
+                Key: marshall({
+                  pk: buildPartitionKey(record.ownerUserId, record.guildId),
+                  sk: `CONV#${record.conversationId}`,
+                }),
+                ConditionExpression:
+                  "updatedAt = :completed AND (#visibility = :server OR #visibility = :public)",
+                ExpressionAttributeNames: { "#visibility": "visibility" },
+                ExpressionAttributeValues: marshall({
+                  ":completed": record.updatedAt,
+                  ":server": "server",
+                  ":public": "public",
+                }),
+              },
+            },
+            {
+              Put: {
+                TableName: tableName("AskConversationTable"),
+                Item: marshall(record, { removeUndefinedValues: true }),
+                ConditionExpression:
+                  "attribute_not_exists(updatedAt) OR updatedAt <= :completed",
+                ExpressionAttributeValues: marshall({
+                  ":completed": record.updatedAt,
+                }),
+              },
+            },
+          ],
+        }),
+      );
+    } catch (error) {
+      const failure = error as {
+        name?: string;
+        CancellationReasons?: { Code?: string }[];
+      };
+      if (
+        failure.name !== "TransactionCanceledException" ||
+        !failure.CancellationReasons?.some(
+          (reason) => reason.Code === "ConditionalCheckFailed",
+        )
+      )
+        throw error;
+    }
+  },
+  async writeCompletedConversation(userId, guildId, conversation) {
+    try {
+      await dynamoDbClient.send(
+        new UpdateItemCommand({
+          TableName: tableName("AskConversationTable"),
+          Key: marshall({
+            pk: buildPartitionKey(userId, guildId),
+            sk: `CONV#${conversation.id}`,
+          }),
+          // Completion owns answer metadata, never sharing or archive decisions.
+          UpdateExpression:
+            "SET #title = if_not_exists(#title, :title), summary = :summary, updatedAt = :completed, createdAt = if_not_exists(createdAt, :created), #type = if_not_exists(#type, :type), conversationId = if_not_exists(conversationId, :id), guildId = if_not_exists(guildId, :guild), userId = if_not_exists(userId, :user), #visibility = if_not_exists(#visibility, :private)",
+          ConditionExpression:
+            "attribute_not_exists(updatedAt) OR updatedAt <= :completed",
+          ExpressionAttributeNames: {
+            "#title": "title",
+            "#type": "type",
+            "#visibility": "visibility",
+          },
+          ExpressionAttributeValues: marshall({
+            ":title": conversation.title,
+            ":summary": conversation.summary,
+            ":completed": conversation.updatedAt,
+            ":created": conversation.createdAt,
+            ":type": "conversation",
+            ":id": conversation.id,
+            ":guild": guildId,
+            ":user": userId,
+            ":private": "private",
+          }),
+        }),
+      );
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.name !== "ConditionalCheckFailedException"
+      )
+        throw error;
+    }
+  },
   async listConversations(userId, guildId) {
     const records = await listAskConversations(userId, guildId);
     return records.map(toConversation);
@@ -169,6 +271,41 @@ const realRepository: AskConversationRepository = {
 };
 
 const mockRepository: AskConversationRepository = {
+  async writeCompletedShare(record) {
+    const canonical = getMockStore()
+      .askConversationsByKey.get(
+        buildPartitionKey(record.ownerUserId, record.guildId),
+      )
+      ?.find((item) => item.id === record.conversationId);
+    if (
+      !canonical ||
+      canonical.updatedAt !== record.updatedAt ||
+      (canonical.visibility !== "server" && canonical.visibility !== "public")
+    )
+      return;
+    const current = getMockStore()
+      .askSharesByGuild.get(record.guildId)
+      ?.find((item) => item.conversationId === record.conversationId);
+    if (!current || current.updatedAt <= record.updatedAt)
+      await mockRepository.writeSharedConversation(record);
+  },
+  async writeCompletedConversation(userId, guildId, conversation) {
+    const current = getMockStore()
+      .askConversationsByKey.get(buildPartitionKey(userId, guildId))
+      ?.find((item) => item.id === conversation.id);
+    if (!current || current.updatedAt <= conversation.updatedAt)
+      await mockRepository.writeConversation(
+        userId,
+        guildId,
+        current
+          ? {
+              ...current,
+              summary: conversation.summary,
+              updatedAt: conversation.updatedAt,
+            }
+          : { ...conversation, visibility: "private" },
+      );
+  },
   async listConversations(userId, guildId) {
     const key = buildPartitionKey(userId, guildId);
     return getMockStore().askConversationsByKey.get(key) ?? [];
@@ -201,7 +338,11 @@ const mockRepository: AskConversationRepository = {
     const store = getMockStore();
     const key = `${buildPartitionKey(userId, guildId)}#${conversationId}`;
     const messages = store.askMessagesByConversation.get(key) ?? [];
-    messages.push(message);
+    const existing = messages.findIndex(
+      (item) => item.id === message.id && item.role === message.role,
+    );
+    if (existing >= 0) messages[existing] = message;
+    else messages.push(message);
     store.askMessagesByConversation.set(key, messages);
   },
   async writeSharedConversation(record) {

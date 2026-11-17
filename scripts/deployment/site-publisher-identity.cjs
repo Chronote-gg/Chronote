@@ -2,13 +2,26 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { parse } = require("yaml");
-const { preparePlanIdentity } = require("./terraform-plan-identity.cjs");
+// TERRAFORM_PRIVATE_STORAGE_JSON names the production evidence bucket; it is
+// read here only for the account it binds and the values it must mask.
 function prepareSiteIdentity(text) {
-  const base = preparePlanIdentity(text, "{}").outputs;
   const binding = JSON.parse(text);
+  assert.match(binding.accountId, /^\d{12}$/);
+  assert.equal(binding.region, "us-east-1");
+  assert.equal(
+    binding.bucket,
+    `meeting-notes-prod-private-evidence-${binding.accountId}`,
+  );
+  assert.match(
+    binding.kmsKeyArn,
+    new RegExp(
+      `^arn:aws:kms:us-east-1:${binding.accountId}:key/[a-f0-9-]{36}$`,
+    ),
+  );
   const outputs = {
-    ...base,
-    role_arn: `arn:aws:iam::${base.account_id}:role/meeting-notes-prod-github-deploy`,
+    account_id: binding.accountId,
+    role_arn: `arn:aws:iam::${binding.accountId}:role/meeting-notes-prod-github-deploy`,
+    control_table: "meeting-notes-prod-DeploymentControlTable",
   };
   return {
     outputs,
@@ -16,8 +29,8 @@ function prepareSiteIdentity(text) {
       ...Object.values(outputs),
       binding.bucket,
       binding.kmsKeyArn,
-      `meeting-notes-prod-docs-${base.account_id}`,
-      `meeting-notes-prod-frontend-${base.account_id}`,
+      `meeting-notes-prod-docs-${binding.accountId}`,
+      `meeting-notes-prod-frontend-${binding.accountId}`,
     ],
   };
 }
@@ -27,7 +40,6 @@ function prepareSiteSession(text, variablesText, site, template) {
     variables = JSON.parse(variablesText);
   assert.equal(variables.AWS_ACCOUNT_ID, outputs.account_id);
   assert.equal(variables.PRODUCTION_BACKEND_DEPLOY_ROLE_ARN, outputs.role_arn);
-  assert.equal(variables.DEPLOYMENT_CONTROL_TABLE, outputs.control_table);
   assert.equal(variables.AWS_REGION, "us-east-1");
   const bucketName = site.toUpperCase() + "_BUCKET",
     distributionName = site.toUpperCase() + "_DISTRIBUTION_ID";
@@ -40,7 +52,6 @@ function prepareSiteSession(text, variablesText, site, template) {
   const allowed = new Set([
     "AWS_ACCOUNT_ID",
     "AWS_REGION",
-    "DEPLOYMENT_CONTROL_TABLE",
     bucketName,
     distributionName,
   ]);
@@ -79,7 +90,6 @@ if (require.main === module) {
       const names = [
         "AWS_ACCOUNT_ID",
         "PRODUCTION_BACKEND_DEPLOY_ROLE_ARN",
-        "DEPLOYMENT_CONTROL_TABLE",
         "AWS_REGION",
         site.toUpperCase() + "_BUCKET",
         site.toUpperCase() + "_DISTRIBUTION_ID",

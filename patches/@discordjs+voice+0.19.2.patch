@@ -1,8 +1,7 @@
 diff --git a/node_modules/@discordjs/voice/dist/index.d.mts b/node_modules/@discordjs/voice/dist/index.d.mts
-index 1d88f49..a79a8b8 100644
 --- a/node_modules/@discordjs/voice/dist/index.d.mts
 +++ b/node_modules/@discordjs/voice/dist/index.d.mts
-@@ -587,11 +587,26 @@ interface TransitionResult {
+@@ -587,11 +587,26 @@
  interface DAVESessionOptions {
      decryptionFailureTolerance?: number | undefined;
  }
@@ -31,7 +30,7 @@ index 1d88f49..a79a8b8 100644
  }
  /**
   * Manages the DAVE protocol group session.
-@@ -633,6 +648,8 @@ declare class DAVESession extends EventEmitter {
+@@ -633,6 +648,8 @@
       * Whether this session is currently re-initializing due to an invalid transition.
       */
      reinitializing: boolean;
@@ -40,7 +39,7 @@ index 1d88f49..a79a8b8 100644
      /**
       * The underlying DAVE Session of this wrapper.
       */
-@@ -651,7 +668,7 @@ declare class DAVESession extends EventEmitter {
+@@ -651,7 +668,7 @@
      /**
       * Re-initializes (or initializes) the underlying session.
       */
@@ -49,7 +48,7 @@ index 1d88f49..a79a8b8 100644
      /**
       * Set the external sender for this session.
       *
-@@ -682,7 +699,7 @@ declare class DAVESession extends EventEmitter {
+@@ -682,7 +699,7 @@
       *
       * @param transitionId - The transition id to invalidate
       */
@@ -58,7 +57,7 @@ index 1d88f49..a79a8b8 100644
      /**
       * Processes proposals from the MLS group.
       *
-@@ -1042,6 +1059,7 @@ interface NetworkingOptions {
+@@ -1042,6 +1059,7 @@
      decryptionFailureTolerance?: number | undefined;
  }
  interface Networking extends EventEmitter {
@@ -66,7 +65,7 @@ index 1d88f49..a79a8b8 100644
      /**
       * Debug event for Networking.
       *
-@@ -1343,6 +1361,21 @@ declare class SpeakingMap extends EventEmitter {
+@@ -1343,6 +1361,21 @@
   * @beta
   */
  declare class VoiceReceiver {
@@ -88,7 +87,7 @@ index 1d88f49..a79a8b8 100644
      /**
       * The attached connection of this receiver.
       */
-@@ -1568,6 +1601,7 @@ interface VoiceConnectionDestroyedState {
+@@ -1568,6 +1601,7 @@
   */
  type VoiceConnectionState = VoiceConnectionConnectingState | VoiceConnectionDestroyedState | VoiceConnectionDisconnectedState | VoiceConnectionReadyState | VoiceConnectionSignallingState;
  interface VoiceConnection extends EventEmitter {
@@ -97,10 +96,9 @@ index 1d88f49..a79a8b8 100644
       * Emitted when there is an error emitted from the voice connection
       *
 diff --git a/node_modules/@discordjs/voice/dist/index.d.ts b/node_modules/@discordjs/voice/dist/index.d.ts
-index 1d88f49..a79a8b8 100644
 --- a/node_modules/@discordjs/voice/dist/index.d.ts
 +++ b/node_modules/@discordjs/voice/dist/index.d.ts
-@@ -587,11 +587,26 @@ interface TransitionResult {
+@@ -587,11 +587,26 @@
  interface DAVESessionOptions {
      decryptionFailureTolerance?: number | undefined;
  }
@@ -129,7 +127,7 @@ index 1d88f49..a79a8b8 100644
  }
  /**
   * Manages the DAVE protocol group session.
-@@ -633,6 +648,8 @@ declare class DAVESession extends EventEmitter {
+@@ -633,6 +648,8 @@
       * Whether this session is currently re-initializing due to an invalid transition.
       */
      reinitializing: boolean;
@@ -138,7 +136,7 @@ index 1d88f49..a79a8b8 100644
      /**
       * The underlying DAVE Session of this wrapper.
       */
-@@ -651,7 +668,7 @@ declare class DAVESession extends EventEmitter {
+@@ -651,7 +668,7 @@
      /**
       * Re-initializes (or initializes) the underlying session.
       */
@@ -147,7 +145,7 @@ index 1d88f49..a79a8b8 100644
      /**
       * Set the external sender for this session.
       *
-@@ -682,7 +699,7 @@ declare class DAVESession extends EventEmitter {
+@@ -682,7 +699,7 @@
       *
       * @param transitionId - The transition id to invalidate
       */
@@ -156,7 +154,7 @@ index 1d88f49..a79a8b8 100644
      /**
       * Processes proposals from the MLS group.
       *
-@@ -1042,6 +1059,7 @@ interface NetworkingOptions {
+@@ -1042,6 +1059,7 @@
      decryptionFailureTolerance?: number | undefined;
  }
  interface Networking extends EventEmitter {
@@ -164,7 +162,7 @@ index 1d88f49..a79a8b8 100644
      /**
       * Debug event for Networking.
       *
-@@ -1343,6 +1361,21 @@ declare class SpeakingMap extends EventEmitter {
+@@ -1343,6 +1361,21 @@
   * @beta
   */
  declare class VoiceReceiver {
@@ -186,7 +184,7 @@ index 1d88f49..a79a8b8 100644
      /**
       * The attached connection of this receiver.
       */
-@@ -1568,6 +1601,7 @@ interface VoiceConnectionDestroyedState {
+@@ -1568,6 +1601,7 @@
   */
  type VoiceConnectionState = VoiceConnectionConnectingState | VoiceConnectionDestroyedState | VoiceConnectionDisconnectedState | VoiceConnectionReadyState | VoiceConnectionSignallingState;
  interface VoiceConnection extends EventEmitter {
@@ -195,10 +193,9 @@ index 1d88f49..a79a8b8 100644
       * Emitted when there is an error emitted from the voice connection
       *
 diff --git a/node_modules/@discordjs/voice/dist/index.js b/node_modules/@discordjs/voice/dist/index.js
-index 63c6dfb..ae29184 100644
 --- a/node_modules/@discordjs/voice/dist/index.js
 +++ b/node_modules/@discordjs/voice/dist/index.js
-@@ -733,6 +733,9 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+@@ -733,6 +733,9 @@
     * Whether this session is currently re-initializing due to an invalid transition.
     */
    reinitializing = false;
@@ -208,7 +205,7 @@ index 63c6dfb..ae29184 100644
    /**
     * The underlying DAVE Session of this wrapper.
     */
-@@ -762,10 +765,30 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+@@ -762,10 +765,30 @@
      if (!this.session) throw new Error("Session not available");
      return this.session.getVerificationCode(userId);
    }
@@ -240,7 +237,7 @@ index 63c6dfb..ae29184 100644
      if (this.protocolVersion > 0) {
        if (this.session) {
          this.session.reinit(this.protocolVersion, this.userId, this.channelId);
-@@ -774,7 +797,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+@@ -774,7 +797,7 @@
          this.session = new import_davey.default.DAVESession(this.protocolVersion, this.userId, this.channelId);
          this.emit("debug", `Session initialized for protocol version ${this.protocolVersion}`);
        }
@@ -249,7 +246,7 @@ index 63c6dfb..ae29184 100644
      } else if (this.session) {
        this.session.reset();
        this.session.setPassthroughMode(true, TRANSITION_EXPIRY);
-@@ -844,7 +867,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+@@ -844,7 +867,7 @@
      this.emit("debug", `Preparing for epoch (${data.epoch})`);
      if (data.epoch === 1) {
        this.protocolVersion = data.protocol_version;
@@ -258,7 +255,7 @@ index 63c6dfb..ae29184 100644
      }
    }
    /**
-@@ -852,13 +875,14 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+@@ -852,13 +875,14 @@
     *
     * @param transitionId - The transition id to invalidate
     */
@@ -276,7 +273,7 @@ index 63c6dfb..ae29184 100644
    }
    /**
     * Processes proposals from the MLS group.
-@@ -890,6 +914,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+@@ -890,6 +914,7 @@
      const transitionId = payload.readUInt16BE(0);
      try {
        this.session.processCommit(payload.subarray(2));
@@ -284,7 +281,7 @@ index 63c6dfb..ae29184 100644
        if (transitionId === 0) {
          this.reinitializing = false;
          this.lastTransitionId = transitionId;
-@@ -900,7 +925,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+@@ -900,7 +925,7 @@
        return { transitionId, success: true };
      } catch (error) {
        this.emit("debug", `MLS commit errored from transition ${transitionId}: ${error}`);
@@ -293,7 +290,7 @@ index 63c6dfb..ae29184 100644
        return { transitionId, success: false };
      }
    }
-@@ -915,6 +940,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+@@ -915,6 +940,7 @@
      const transitionId = payload.readUInt16BE(0);
      try {
        this.session.processWelcome(payload.subarray(2));
@@ -301,7 +298,7 @@ index 63c6dfb..ae29184 100644
        if (transitionId === 0) {
          this.reinitializing = false;
          this.lastTransitionId = transitionId;
-@@ -925,7 +951,7 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+@@ -925,7 +951,7 @@
        return { transitionId, success: true };
      } catch (error) {
        this.emit("debug", `MLS welcome errored from transition ${transitionId}: ${error}`);
@@ -310,12 +307,21 @@ index 63c6dfb..ae29184 100644
        return { transitionId, success: false };
      }
    }
-@@ -945,19 +971,23 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+@@ -945,19 +971,32 @@
     * @param userId - The user id that sent the packet
     * @returns The decrypted packet, or `null` if the decryption failed but should be ignored
     */
 -  decrypt(packet, userId) {
 +  decrypt(packet, userId, diagnostics) {
++    if (this.session && !this.session.ready && this.protocolVersion > 0) {
++      if (diagnostics) diagnostics.daveDecryptDecision = "not-ready";
++      try {
++        const plaintext = this.session.decrypt(userId, import_davey.default.MediaType.AUDIO, packet);
++        return plaintext.equals(packet) ? packet : plaintext;
++      } catch {
++        return null;
++      }
++    }
      const canDecrypt = this.session?.ready && (this.protocolVersion !== 0 || this.session?.canPassthrough(userId));
 -    if (packet.equals(SILENCE_FRAME) || !canDecrypt || !this.session) return packet;
 +    if (packet.equals(SILENCE_FRAME) || !canDecrypt || !this.session) {
@@ -337,7 +343,7 @@ index 63c6dfb..ae29184 100644
            else throw error;
          }
        } else if (this.reinitializing) {
-@@ -966,16 +996,25 @@ var DAVESession = class extends import_node_events2.EventEmitter {
+@@ -966,15 +1005,24 @@
          this.emit("debug", `Failed to decrypt a packet (${this.pendingTransitions.size} pending transition[s])`);
        }
      }
@@ -352,18 +358,17 @@ index 63c6dfb..ae29184 100644
      try {
        this.session?.reset();
      } catch {
-     }
++    }
 +    // shortcut: abrupt exits lose counters; add bounded flushing if that limits analysis.
 +    if (this.resetMeasurements.size) {
 +      const summary = Object.freeze(Array.from(this.resetMeasurements.values(), (row) => Object.freeze(row)));
 +      this.resetMeasurements.clear();
 +      // Observation must not interrupt native teardown or the transport state machine.
 +      try { this.emit("resetSummary", summary); } catch {}
-+    }
+     }
    }
  };
- 
-@@ -1348,6 +1387,7 @@ var Networking = class extends import_node_events5.EventEmitter {
+@@ -1348,6 +1396,7 @@
      this.onWsDebug = this.onWsDebug.bind(this);
      this.onUdpDebug = this.onUdpDebug.bind(this);
      this.onUdpClose = this.onUdpClose.bind(this);
@@ -371,7 +376,7 @@ index 63c6dfb..ae29184 100644
      this.onDaveDebug = this.onDaveDebug.bind(this);
      this.onDaveKeyPackage = this.onDaveKeyPackage.bind(this);
      this.onDaveInvalidateTransition = this.onDaveInvalidateTransition.bind(this);
-@@ -1406,6 +1446,7 @@ var Networking = class extends import_node_events5.EventEmitter {
+@@ -1406,6 +1455,7 @@
        oldDave.off("keyPackage", this.onDaveKeyPackage);
        oldDave.off("invalidateTransition", this.onDaveInvalidateTransition);
        oldDave.destroy();
@@ -379,7 +384,7 @@ index 63c6dfb..ae29184 100644
      }
      const oldState = this._state;
      this._state = newState;
-@@ -1452,9 +1493,10 @@ to ${stringifyState2(newState)}`);
+@@ -1452,9 +1502,10 @@
      );
      session.on("error", this.onChildError);
      session.on("debug", this.onDaveDebug);
@@ -391,7 +396,7 @@ index 63c6dfb..ae29184 100644
      return session;
    }
    /**
-@@ -1660,21 +1702,31 @@ to ${stringifyState2(newState)}`);
+@@ -1660,21 +1711,31 @@
     *
     * @param keyPackage - The new key package
     */
@@ -427,7 +432,7 @@ index 63c6dfb..ae29184 100644
    }
    /**
     * Propagates debug messages from the child WebSocket.
-@@ -1697,6 +1749,9 @@ to ${stringifyState2(newState)}`);
+@@ -1697,6 +1758,9 @@
     *
     * @param message - The emitted debug message
     */
@@ -437,7 +442,7 @@ index 63c6dfb..ae29184 100644
    onDaveDebug(message) {
      this.debug?.(`[DAVE] ${message}`);
    }
-@@ -2027,6 +2082,10 @@ var VoiceReceiver = class {
+@@ -2027,6 +2091,10 @@
    speaking;
    constructor(voiceConnection) {
      this.voiceConnection = voiceConnection;
@@ -448,13 +453,14 @@ index 63c6dfb..ae29184 100644
      this.ssrcMap = new SSRCMap();
      this.speaking = new SpeakingMap();
      this.subscriptions = /* @__PURE__ */ new Map();
-@@ -2104,10 +2163,30 @@ var VoiceReceiver = class {
+@@ -2104,10 +2172,33 @@
        const headerExtensionLength = buffer.subarray(14).readUInt16BE();
        packet = packet.subarray(4 * headerExtensionLength);
      }
 -    if (this.voiceConnection.state.status === "ready" /* Ready */ && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
 -      const daveSession = this.voiceConnection.state.networking.state.dave;
 -      if (daveSession) packet = daveSession.decrypt(packet, userId);
+-    }
 +    const connectionState = this.voiceConnection.state;
 +    const networkState = connectionState.networking?.state;
 +    const daveSession = networkState?.dave;
@@ -477,12 +483,15 @@ index 63c6dfb..ae29184 100644
 +    if ((this.voiceConnection.state.status === "ready" /* Ready */ || this.voiceConnection.state.status === "connecting" /* Connecting */) && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
 +      diagnostics.daveDecryptDecision = "no-session";
 +      if (daveSession) packet = daveSession.decrypt(packet, userId, diagnostics);
-     }
++    }
++    if (!packet && diagnostics.daveDecryptDecision === "not-ready" && diagnostics.daveProtocolVersion > 0) {
++      this.subscriptions.get(userId)?.emit("davePendingInput");
++    }
 +    if (packet) this.packetDiagnostics.set(packet, Object.freeze(diagnostics));
      return packet;
    }
    /**
-@@ -2155,7 +2234,9 @@ var VoiceReceiver = class {
+@@ -2155,7 +2246,9 @@
        ...createDefaultAudioReceiveStreamOptions(),
        ...options
      });
@@ -493,7 +502,7 @@ index 63c6dfb..ae29184 100644
      this.subscriptions.set(userId, stream);
      return stream;
    }
-@@ -2229,6 +2310,7 @@ var VoiceConnection = class extends import_node_events8.EventEmitter {
+@@ -2229,6 +2322,7 @@
      this.onNetworkingStateChange = this.onNetworkingStateChange.bind(this);
      this.onNetworkingError = this.onNetworkingError.bind(this);
      this.onNetworkingDebug = this.onNetworkingDebug.bind(this);
@@ -501,7 +510,7 @@ index 63c6dfb..ae29184 100644
      this.onNetworkingTransitioned = this.onNetworkingTransitioned.bind(this);
      const adapter = options.adapterCreator({
        onVoiceServerUpdate: /* @__PURE__ */ __name((data) => this.addServerPacket(data), "onVoiceServerUpdate"),
-@@ -2267,6 +2349,7 @@ var VoiceConnection = class extends import_node_events8.EventEmitter {
+@@ -2267,6 +2361,7 @@
          oldNetworking.off("stateChange", this.onNetworkingStateChange);
          oldNetworking.off("transitioned", this.onNetworkingTransitioned);
          oldNetworking.destroy();
@@ -509,7 +518,7 @@ index 63c6dfb..ae29184 100644
        }
        if (newNetworking) this.updateReceiveBindings(newNetworking.state, oldNetworking?.state);
      }
-@@ -2374,6 +2457,7 @@ var VoiceConnection = class extends import_node_events8.EventEmitter {
+@@ -2374,6 +2469,7 @@
      networking.on("stateChange", this.onNetworkingStateChange);
      networking.on("error", this.onNetworkingError);
      networking.on("debug", this.onNetworkingDebug);
@@ -517,7 +526,7 @@ index 63c6dfb..ae29184 100644
      networking.on("transitioned", this.onNetworkingTransitioned);
      this.state = {
        ...this.state,
-@@ -2460,6 +2544,9 @@ var VoiceConnection = class extends import_node_events8.EventEmitter {
+@@ -2460,6 +2556,9 @@
     *
     * @param transitionId - The transition id
     */
@@ -528,10 +537,9 @@ index 63c6dfb..ae29184 100644
      this.emit("transitioned", transitionId);
    }
 diff --git a/node_modules/@discordjs/voice/dist/index.mjs b/node_modules/@discordjs/voice/dist/index.mjs
-index 4a5678c..612abce 100644
 --- a/node_modules/@discordjs/voice/dist/index.mjs
 +++ b/node_modules/@discordjs/voice/dist/index.mjs
-@@ -673,6 +673,9 @@ var DAVESession = class extends EventEmitter2 {
+@@ -673,6 +673,9 @@
     * Whether this session is currently re-initializing due to an invalid transition.
     */
    reinitializing = false;
@@ -541,7 +549,7 @@ index 4a5678c..612abce 100644
    /**
     * The underlying DAVE Session of this wrapper.
     */
-@@ -702,10 +705,30 @@ var DAVESession = class extends EventEmitter2 {
+@@ -702,10 +705,30 @@
      if (!this.session) throw new Error("Session not available");
      return this.session.getVerificationCode(userId);
    }
@@ -573,7 +581,7 @@ index 4a5678c..612abce 100644
      if (this.protocolVersion > 0) {
        if (this.session) {
          this.session.reinit(this.protocolVersion, this.userId, this.channelId);
-@@ -714,7 +737,7 @@ var DAVESession = class extends EventEmitter2 {
+@@ -714,7 +737,7 @@
          this.session = new Davey.DAVESession(this.protocolVersion, this.userId, this.channelId);
          this.emit("debug", `Session initialized for protocol version ${this.protocolVersion}`);
        }
@@ -582,7 +590,7 @@ index 4a5678c..612abce 100644
      } else if (this.session) {
        this.session.reset();
        this.session.setPassthroughMode(true, TRANSITION_EXPIRY);
-@@ -784,7 +807,7 @@ var DAVESession = class extends EventEmitter2 {
+@@ -784,7 +807,7 @@
      this.emit("debug", `Preparing for epoch (${data.epoch})`);
      if (data.epoch === 1) {
        this.protocolVersion = data.protocol_version;
@@ -591,7 +599,7 @@ index 4a5678c..612abce 100644
      }
    }
    /**
-@@ -792,13 +815,14 @@ var DAVESession = class extends EventEmitter2 {
+@@ -792,13 +815,14 @@
     *
     * @param transitionId - The transition id to invalidate
     */
@@ -609,7 +617,7 @@ index 4a5678c..612abce 100644
    }
    /**
     * Processes proposals from the MLS group.
-@@ -830,6 +854,7 @@ var DAVESession = class extends EventEmitter2 {
+@@ -830,6 +854,7 @@
      const transitionId = payload.readUInt16BE(0);
      try {
        this.session.processCommit(payload.subarray(2));
@@ -617,7 +625,7 @@ index 4a5678c..612abce 100644
        if (transitionId === 0) {
          this.reinitializing = false;
          this.lastTransitionId = transitionId;
-@@ -840,7 +865,7 @@ var DAVESession = class extends EventEmitter2 {
+@@ -840,7 +865,7 @@
        return { transitionId, success: true };
      } catch (error) {
        this.emit("debug", `MLS commit errored from transition ${transitionId}: ${error}`);
@@ -626,7 +634,7 @@ index 4a5678c..612abce 100644
        return { transitionId, success: false };
      }
    }
-@@ -855,6 +880,7 @@ var DAVESession = class extends EventEmitter2 {
+@@ -855,6 +880,7 @@
      const transitionId = payload.readUInt16BE(0);
      try {
        this.session.processWelcome(payload.subarray(2));
@@ -634,7 +642,7 @@ index 4a5678c..612abce 100644
        if (transitionId === 0) {
          this.reinitializing = false;
          this.lastTransitionId = transitionId;
-@@ -865,7 +891,7 @@ var DAVESession = class extends EventEmitter2 {
+@@ -865,7 +891,7 @@
        return { transitionId, success: true };
      } catch (error) {
        this.emit("debug", `MLS welcome errored from transition ${transitionId}: ${error}`);
@@ -643,12 +651,21 @@ index 4a5678c..612abce 100644
        return { transitionId, success: false };
      }
    }
-@@ -885,19 +911,23 @@ var DAVESession = class extends EventEmitter2 {
+@@ -885,19 +911,32 @@
     * @param userId - The user id that sent the packet
     * @returns The decrypted packet, or `null` if the decryption failed but should be ignored
     */
 -  decrypt(packet, userId) {
 +  decrypt(packet, userId, diagnostics) {
++    if (this.session && !this.session.ready && this.protocolVersion > 0) {
++      if (diagnostics) diagnostics.daveDecryptDecision = "not-ready";
++      try {
++        const plaintext = this.session.decrypt(userId, Davey.MediaType.AUDIO, packet);
++        return plaintext.equals(packet) ? packet : plaintext;
++      } catch {
++        return null;
++      }
++    }
      const canDecrypt = this.session?.ready && (this.protocolVersion !== 0 || this.session?.canPassthrough(userId));
 -    if (packet.equals(SILENCE_FRAME) || !canDecrypt || !this.session) return packet;
 +    if (packet.equals(SILENCE_FRAME) || !canDecrypt || !this.session) {
@@ -670,7 +687,7 @@ index 4a5678c..612abce 100644
            else throw error;
          }
        } else if (this.reinitializing) {
-@@ -906,16 +936,25 @@ var DAVESession = class extends EventEmitter2 {
+@@ -906,15 +945,24 @@
          this.emit("debug", `Failed to decrypt a packet (${this.pendingTransitions.size} pending transition[s])`);
        }
      }
@@ -685,18 +702,17 @@ index 4a5678c..612abce 100644
      try {
        this.session?.reset();
      } catch {
-     }
++    }
 +    // shortcut: abrupt exits lose counters; add bounded flushing if that limits analysis.
 +    if (this.resetMeasurements.size) {
 +      const summary = Object.freeze(Array.from(this.resetMeasurements.values(), (row) => Object.freeze(row)));
 +      this.resetMeasurements.clear();
 +      // Observation must not interrupt native teardown or the transport state machine.
 +      try { this.emit("resetSummary", summary); } catch {}
-+    }
+     }
    }
  };
- 
-@@ -1288,6 +1327,7 @@ var Networking = class extends EventEmitter5 {
+@@ -1288,6 +1336,7 @@
      this.onWsDebug = this.onWsDebug.bind(this);
      this.onUdpDebug = this.onUdpDebug.bind(this);
      this.onUdpClose = this.onUdpClose.bind(this);
@@ -704,7 +720,7 @@ index 4a5678c..612abce 100644
      this.onDaveDebug = this.onDaveDebug.bind(this);
      this.onDaveKeyPackage = this.onDaveKeyPackage.bind(this);
      this.onDaveInvalidateTransition = this.onDaveInvalidateTransition.bind(this);
-@@ -1346,6 +1386,7 @@ var Networking = class extends EventEmitter5 {
+@@ -1346,6 +1395,7 @@
        oldDave.off("keyPackage", this.onDaveKeyPackage);
        oldDave.off("invalidateTransition", this.onDaveInvalidateTransition);
        oldDave.destroy();
@@ -712,7 +728,7 @@ index 4a5678c..612abce 100644
      }
      const oldState = this._state;
      this._state = newState;
-@@ -1392,9 +1433,10 @@ to ${stringifyState2(newState)}`);
+@@ -1392,9 +1442,10 @@
      );
      session.on("error", this.onChildError);
      session.on("debug", this.onDaveDebug);
@@ -724,7 +740,7 @@ index 4a5678c..612abce 100644
      return session;
    }
    /**
-@@ -1600,21 +1642,31 @@ to ${stringifyState2(newState)}`);
+@@ -1600,21 +1651,31 @@
     *
     * @param keyPackage - The new key package
     */
@@ -760,7 +776,7 @@ index 4a5678c..612abce 100644
    }
    /**
     * Propagates debug messages from the child WebSocket.
-@@ -1637,6 +1689,9 @@ to ${stringifyState2(newState)}`);
+@@ -1637,6 +1698,9 @@
     *
     * @param message - The emitted debug message
     */
@@ -770,7 +786,7 @@ index 4a5678c..612abce 100644
    onDaveDebug(message) {
      this.debug?.(`[DAVE] ${message}`);
    }
-@@ -1967,6 +2022,10 @@ var VoiceReceiver = class {
+@@ -1967,6 +2031,10 @@
    speaking;
    constructor(voiceConnection) {
      this.voiceConnection = voiceConnection;
@@ -781,13 +797,14 @@ index 4a5678c..612abce 100644
      this.ssrcMap = new SSRCMap();
      this.speaking = new SpeakingMap();
      this.subscriptions = /* @__PURE__ */ new Map();
-@@ -2044,10 +2103,30 @@ var VoiceReceiver = class {
+@@ -2044,10 +2112,33 @@
        const headerExtensionLength = buffer.subarray(14).readUInt16BE();
        packet = packet.subarray(4 * headerExtensionLength);
      }
 -    if (this.voiceConnection.state.status === "ready" /* Ready */ && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
 -      const daveSession = this.voiceConnection.state.networking.state.dave;
 -      if (daveSession) packet = daveSession.decrypt(packet, userId);
+-    }
 +    const connectionState = this.voiceConnection.state;
 +    const networkState = connectionState.networking?.state;
 +    const daveSession = networkState?.dave;
@@ -810,12 +827,15 @@ index 4a5678c..612abce 100644
 +    if ((this.voiceConnection.state.status === "ready" /* Ready */ || this.voiceConnection.state.status === "connecting" /* Connecting */) && (this.voiceConnection.state.networking.state.code === 4 /* Ready */ || this.voiceConnection.state.networking.state.code === 5 /* Resuming */)) {
 +      diagnostics.daveDecryptDecision = "no-session";
 +      if (daveSession) packet = daveSession.decrypt(packet, userId, diagnostics);
-     }
++    }
++    if (!packet && diagnostics.daveDecryptDecision === "not-ready" && diagnostics.daveProtocolVersion > 0) {
++      this.subscriptions.get(userId)?.emit("davePendingInput");
++    }
 +    if (packet) this.packetDiagnostics.set(packet, Object.freeze(diagnostics));
      return packet;
    }
    /**
-@@ -2095,7 +2174,9 @@ var VoiceReceiver = class {
+@@ -2095,7 +2186,9 @@
        ...createDefaultAudioReceiveStreamOptions(),
        ...options
      });
@@ -826,7 +846,7 @@ index 4a5678c..612abce 100644
      this.subscriptions.set(userId, stream);
      return stream;
    }
-@@ -2169,6 +2250,7 @@ var VoiceConnection = class extends EventEmitter8 {
+@@ -2169,6 +2262,7 @@
      this.onNetworkingStateChange = this.onNetworkingStateChange.bind(this);
      this.onNetworkingError = this.onNetworkingError.bind(this);
      this.onNetworkingDebug = this.onNetworkingDebug.bind(this);
@@ -834,7 +854,7 @@ index 4a5678c..612abce 100644
      this.onNetworkingTransitioned = this.onNetworkingTransitioned.bind(this);
      const adapter = options.adapterCreator({
        onVoiceServerUpdate: /* @__PURE__ */ __name((data) => this.addServerPacket(data), "onVoiceServerUpdate"),
-@@ -2207,6 +2289,7 @@ var VoiceConnection = class extends EventEmitter8 {
+@@ -2207,6 +2301,7 @@
          oldNetworking.off("stateChange", this.onNetworkingStateChange);
          oldNetworking.off("transitioned", this.onNetworkingTransitioned);
          oldNetworking.destroy();
@@ -842,7 +862,7 @@ index 4a5678c..612abce 100644
        }
        if (newNetworking) this.updateReceiveBindings(newNetworking.state, oldNetworking?.state);
      }
-@@ -2314,6 +2397,7 @@ var VoiceConnection = class extends EventEmitter8 {
+@@ -2314,6 +2409,7 @@
      networking.on("stateChange", this.onNetworkingStateChange);
      networking.on("error", this.onNetworkingError);
      networking.on("debug", this.onNetworkingDebug);
@@ -850,7 +870,7 @@ index 4a5678c..612abce 100644
      networking.on("transitioned", this.onNetworkingTransitioned);
      this.state = {
        ...this.state,
-@@ -2400,6 +2484,9 @@ var VoiceConnection = class extends EventEmitter8 {
+@@ -2400,6 +2496,9 @@
     *
     * @param transitionId - The transition id
     */

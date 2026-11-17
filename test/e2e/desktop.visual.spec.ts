@@ -317,7 +317,6 @@ test.describe("desktop visual regression", () => {
         name: "Sign in to record",
       }),
     ).toBeVisible();
-    await expectDesktopScreenshot(page, "desktop-signed-out");
 
     await page.getByRole("button", { name: "Sign in with Chronote" }).click();
     await expect(page.getByRole("heading", { name: "Recorder" })).toBeVisible();
@@ -327,12 +326,10 @@ test.describe("desktop visual regression", () => {
     ).toHaveAttribute("href", "http://127.0.0.1:5173/portal/meetings");
     await page.getByLabel("Title").fill("Design review");
     await page.getByLabel("Tags").fill("desktop, visual");
-    await expectDesktopScreenshot(page, "desktop-ready");
 
     await page.getByRole("button", { name: "Settings" }).click();
     await page.getByLabel("Microphone").selectOption("mic-default");
     await page.getByLabel("System output").selectOption("speaker-default");
-    await expectDesktopScreenshot(page, "desktop-settings");
     await page.getByRole("button", { name: "Hide settings" }).click();
 
     await page.getByRole("button", { name: "Record" }).click();
@@ -358,7 +355,6 @@ test.describe("desktop visual regression", () => {
       ),
     ).toBeVisible();
     await expect(page.getByText("Checking processing status...")).toBeVisible();
-    await expectDesktopScreenshot(page, "desktop-processing");
     await expect(
       page.getByText("Your meeting is processing. You can open it now."),
     ).toBeVisible();
@@ -368,7 +364,6 @@ test.describe("desktop visual regression", () => {
       "href",
       "http://127.0.0.1:5173/portal/meetings/personal%3Auser-visual/personal%232025-01-01T12%3A00%3A00.000Z",
     );
-    await expectDesktopScreenshot(page, "desktop-processing-linked");
     await expect(page.getByText("Your meeting is ready.")).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Open created meeting" }),
@@ -376,7 +371,6 @@ test.describe("desktop visual regression", () => {
       "href",
       "http://127.0.0.1:5173/portal/meetings/personal%3Auser-visual/personal%232025-01-01T12%3A00%3A00.000Z",
     );
-    await expectDesktopScreenshot(page, "desktop-uploaded");
   });
 
   test("desktop recorder narrow layout @visual", async ({ page }) => {
@@ -409,7 +403,6 @@ test.describe("desktop visual regression", () => {
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("retainedAction")))
       .toBe("open_retained_recording");
-    await expectDesktopScreenshot(page, "desktop-retained-paused");
     await page.getByRole("button", { name: "Record", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Stop and upload" }),

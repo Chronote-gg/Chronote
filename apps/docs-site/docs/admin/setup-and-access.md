@@ -132,7 +132,13 @@ The portal's **Teach Chronote** workflow requires **Manage Server**. It can prop
 
 ### Web portal access
 
-The web portal uses Discord OAuth. Users land on **My Meetings** first, then can open direct meeting links or use **View servers** to browse Server Library for one server at a time. Users see meetings from channels they have access to in Discord. Attendees of a meeting can always view it regardless of current channel permissions.
+The web portal uses Discord OAuth. Users land on **My Meetings** first, then can open direct meeting links or use **View servers** to browse Server Library for one server at a time. Users can read meetings through their current Discord channel permissions or the server's Attendee access setting.
+
+Current server owners and members with Discord's **Administrator** permission can also read server-owned meeting history, including meetings they did not attend and meetings whose original voice or notes channel was deleted. **Manage Server** or **Manage Channels** alone does not grant this access. This works independently of the Attendee access setting and applies to past and future server meetings.
+
+Chronote verifies current server authority on each request. If you lose ownership, Administrator or server membership, this access route ends on a later request. Your existing attendee or channel permissions may still allow access. If Discord cannot verify authority, Chronote grants no access through that check; retry if rate limited.
+
+Restricted Remote MCP and service-account tokens still need their current channel permissions and must stay within their channel allowlists. Personal recordings keep their existing ownership and sharing rules. Reading a meeting does not grant permission to edit it or publish it elsewhere. Archive and attended-only filters still apply.
 
 Server artifact settings are checked after meeting access. A user may be allowed to open a meeting while its transcript, audio recording, or both are unavailable.
 
@@ -170,6 +176,11 @@ Each plan tier includes a weekly meeting minutes allowance. Monitor usage by wat
 
 ## Billing
 
+On the [upgrade page](https://chronote.gg/upgrade), compare prices and choose
+**Continue with Basic** or **Continue with Pro**. If you are signed out, that
+action takes you through Discord sign-in and keeps your chosen plan and billing
+period. Select a server you manage before continuing to checkout.
+
 Open your server's Billing page in the portal to review its plan and usage. The
 original payer must also have Manage Server permission to manage an existing
 Stripe subscription. Other server managers cannot open the payer's Stripe account.
@@ -196,6 +207,17 @@ Use billing management to update payment methods or view invoice history. If a
 subscription has an unpaid invoice or a payment is still being settled,
 resolve that payment before changing plans. Contact support if the original payer
 cannot access billing or the server's billing information needs repair.
+
+Checkout collects billing address details when Stripe needs them. If you are
+purchasing for a business, enter its legal name in the optional business name
+field. You can also enter a VAT or other supported business tax ID before paying.
+These details are saved
+in Stripe for future invoices. A business name does not require a tax ID.
+
+The original payer can open **Manage billing** to update the billing name,
+address and tax ID. Changes apply to future invoices, not invoices that have
+already been finalized. Contact support for a company registration number or
+missing details on an existing invoice.
 
 Plan tiers affect weekly meeting minutes, the number of meetings searchable by `/ask`, and access to features like image generation.
 

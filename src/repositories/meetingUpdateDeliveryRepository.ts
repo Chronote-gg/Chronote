@@ -2,7 +2,6 @@ import {
   canonicalPersonalClaim,
   canonicalWriterRequiresAdmission,
 } from "../types/meetingCanonicalWriter";
-import { readCanonicalWriterChecks } from "./meetingCanonicalWriterAdmission";
 import {
   publicationMutationExcluded,
   publicationSnapshot,
@@ -18,7 +17,6 @@ import {
   TransactWriteItemsCommand,
   UpdateItemCommand,
   type UpdateItemCommandInput,
-  type TransactWriteItem,
 } from "@aws-sdk/client-dynamodb";
 import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
 import { z } from "zod";
@@ -30,10 +28,7 @@ import type {
   NotesEditSource,
   SuggestionHistoryEntry,
 } from "../types/db";
-import type {
-  ControlTableNames,
-  WorkAdmissionAuthority,
-} from "../types/deploymentControl";
+import type { ControlTableNames } from "../types/deploymentControl";
 import {
   MEETING_UPDATE_DELIVERY_DUE_INDEX,
   MEETING_UPDATE_DELIVERY_QUEUE,
@@ -53,10 +48,7 @@ import {
   type MeetingUpdateDeliveryTransition,
   type NotesPointers,
 } from "../types/meetingUpdateDelivery";
-import {
-  buildPersonalClaimCheck,
-  buildWorkAdmissionChecks,
-} from "../services/deploymentControlTransactions";
+import { buildPersonalClaimCheck } from "../services/personalUploadTransactions";
 import { classifyDeploymentTransactionError } from "./deploymentControlRepository";
 import {
   applyDeliveryChange,
@@ -105,7 +97,9 @@ export type MeetingClaim = {
   expectedContentRevision: number;
   expectedDeliveryRevision: string;
   attempt: PreparedMeetingUpdateAttempt;
-  authority: WorkAdmissionAuthority;
+  ownerInstanceId: string;
+  /** Epoch seconds. */
+  now: number;
   signal?: AbortSignal;
 };
 export type MeetingDeliveryTransition = {
@@ -154,36 +148,15 @@ export function validateDue(input: MeetingDueInput) {
   z.number().int().min(1).max(25).parse(input.limit);
   return readMeetingUpdateDeliveryCursor(input.cursor);
 }
-function claimAuthorityMatches(
-  row: MeetingHistory,
-  authority: WorkAdmissionAuthority,
-): boolean {
-  return (
-    authority.kind === "serving" ||
-    (authority.ownership.guildId === row.guildId &&
-      authority.ownership.meetingId === row.meetingId)
-  );
-}
 export function claimDelivery(
   row: MeetingHistory,
   input: MeetingClaim,
 ): MeetingUpdateDelivery | undefined {
-  if (
-    !claimAuthorityMatches(row, input.authority) ||
-    publicationMutationExcluded(publicationSnapshot(row))
-  )
-    return undefined;
+  if (publicationMutationExcluded(publicationSnapshot(row))) return undefined;
   if (!contentMatches(row, input) || !row.updateDelivery) return undefined;
   const before = meetingUpdateDeliverySchema.parse(row.updateDelivery);
   const attempt = preparedMeetingUpdateAttemptSchema.parse(input.attempt);
-  const now =
-    input.authority.kind === "serving"
-      ? input.authority.context.now
-      : input.authority.now;
-  const ownerInstanceId =
-    input.authority.kind === "serving"
-      ? input.authority.context.instanceId
-      : input.authority.ownership.ownerInstanceId;
+  const { now, ownerInstanceId } = input;
   const due = meetingUpdateDeliveryNextCheck(before);
   if (due === undefined || due > now) return undefined;
   let progress: MeetingUpdateDelivery["progress"];
@@ -333,12 +306,13 @@ const changedFields = [
   "processingRetry",
   "processingRetryQueue",
   "processingRetryDueAt",
+  "status",
 ] as const;
 type WriteOptions = {
-  canonicalChecks?: TransactWriteItem[];
   personalClaim?: PersonalMediaClaim;
-  authority?: WorkAdmissionAuthority;
   registerPointers?: boolean;
+  /** The SDK's transaction idempotency token turns a retry after a lost response into success rather than a false conflict. */
+  transact?: boolean;
 };
 function conditionalUpdate(
   table: string,
@@ -429,6 +403,7 @@ function conditionalUpdate(
         "notesChannelId",
         "notesMessageIds",
         "processingRetry",
+        "status",
       ].includes(field)
     ) {
       if (before[field] === undefined)
@@ -524,18 +499,15 @@ export function createDynamoMeetingUpdateDeliveryRepository(
       after,
       options.registerPointers ?? false,
     );
-    const authority = options.authority;
     const personalClaim = options.personalClaim;
     if (personalClaim && !tables.personalMediaUpload)
       throw new Error("Personal canonical edits require the upload job table");
-    if (authority || personalClaim || options.canonicalChecks?.length) {
+    if (personalClaim || options.transact) {
       const { ReturnValues, ...transactionUpdate } = update;
       void ReturnValues;
       await client.send(
         new TransactWriteItemsCommand({
           TransactItems: [
-            ...(options.canonicalChecks ?? []),
-            ...(authority ? buildWorkAdmissionChecks(authority, tables) : []),
             ...(personalClaim && tables.personalMediaUpload
               ? [
                   buildPersonalClaimCheck(
@@ -597,20 +569,12 @@ export function createDynamoMeetingUpdateDeliveryRepository(
         row,
         Math.floor(Date.now() / 1000),
       );
-      const canonicalChecks = canonicalWriterRequiresAdmission(row)
-        ? await readCanonicalWriterChecks(
-            client,
-            tables.deploymentControl,
-            personalClaim ? 2 : 1,
-            signal,
-          )
-        : [];
-      if (!canonicalChecks) return { kind: "conflict" };
       const next = prepareContentWrite(row, input);
       try {
+        // Rows that previously carried the canonical writer checks keep their transaction shape.
         const saved = await persist(row, next, signal, {
           personalClaim,
-          canonicalChecks,
+          transact: canonicalWriterRequiresAdmission(row),
         });
         return { kind: "committed", history: saved };
       } catch (error) {
@@ -667,7 +631,6 @@ export function createDynamoMeetingUpdateDeliveryRepository(
         row,
         withDelivery(row, delivery),
         input.signal,
-        { authority: input.authority },
       )) === "applied"
         ? "claimed"
         : "stale";

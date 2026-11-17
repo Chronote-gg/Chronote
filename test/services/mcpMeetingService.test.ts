@@ -1,3 +1,5 @@
+import { resolveGuildHistoryAuthority } from "../../src/services/guildHistoryAuthorityService";
+import { fetchJsonFromS3 } from "../../src/services/storageService";
 /** @jest-environment node */
 import {
   getSnapshotBoolean,
@@ -22,6 +24,8 @@ import { listMeetingUserIndexForUserInRangeService } from "../../src/services/me
 import { checkUserMeetingAccess } from "../../src/services/meetingAccessService";
 import {
   getMcpMeetingSummary,
+  getMcpMeetingTranscript,
+  listMcpMeetings,
   listMcpMyMeetings,
 } from "../../src/services/mcpMeetingService";
 
@@ -95,6 +99,14 @@ jest.mock(
       typeof import("../../src/testSupport/meetingBrowseLegacy")
     >("../../src/testSupport/meetingBrowseLegacy").browseCursorFixture.storage,
 );
+
+jest.mock("../../src/services/guildHistoryAuthorityService", () => ({
+  resolveGuildHistoryAuthority: jest.fn(),
+}));
+jest.mock("../../src/services/discordPermissionsService", () => ({
+  ensureUserCanConnectChannel: async () => false,
+  ensureUserCanReadChannelHistory: async () => false,
+}));
 
 const meeting: MeetingHistory = {
   guildId: "guild-old",
@@ -233,5 +245,79 @@ describe("mcpMeetingService", () => {
         id: meeting.channelId_timestamp,
       }),
     ).rejects.toThrow();
+  });
+  describe("guild authority through real shared authorization", () => {
+    const input = {
+      userId: "admin-1",
+      guildId: meeting.guildId,
+      id: meeting.channelId_timestamp,
+    };
+    beforeEach(() => {
+      mockedGetGuildMember.mockResolvedValue({
+        user: { id: "admin-1" },
+        roles: [],
+      });
+      mockedCheckMeetingAccess.mockImplementation(
+        jest.requireActual<
+          typeof import("../../src/services/meetingAccessService")
+        >("../../src/services/meetingAccessService").checkUserMeetingAccess,
+      );
+      jest
+        .mocked(resolveGuildHistoryAuthority)
+        .mockResolvedValue({ allowed: true, via: "guild_administrator" });
+      mockedGetMeetingHistory.mockResolvedValue({
+        ...meeting,
+        participants: [],
+        transcript: "Synthetic transcript",
+      });
+    });
+    test("opens a deleted-channel meeting and transcript for a non-attendee Administrator", async () => {
+      expect((await getMcpMeetingSummary(input)).meeting.id).toBe(input.id);
+      expect((await getMcpMeetingTranscript(input)).transcript).toBe(
+        "Synthetic transcript",
+      );
+    });
+    test("reuses fresh authority across rows within one list request", async () => {
+      jest.mocked(listMeetingsForGuildInRangeService).mockResolvedValue([
+        { ...meeting, participants: [] },
+        { ...meeting, meetingId: "meeting-2", participants: [] },
+      ]);
+      const result = await listMcpMeetings({
+        ...input,
+        startDate: "2026-01-01T00:00:00Z",
+      });
+      expect(result.meetings).toHaveLength(2);
+      expect(resolveGuildHistoryAuthority).toHaveBeenCalledTimes(1);
+    });
+    test.each([getMcpMeetingSummary, getMcpMeetingTranscript])(
+      "restricted detail and transcript retain deleted-channel and allowlist denials",
+      async (read) => {
+        await expect(
+          read({
+            ...input,
+            restriction: { guildId: input.guildId, channelIds: ["other"] },
+          }),
+        ).rejects.toMatchObject({ code: "forbidden" });
+        await expect(
+          read({
+            ...input,
+            restriction: { guildId: input.guildId, channelIds: ["voice-1"] },
+          }),
+        ).rejects.toMatchObject({ code: "forbidden" });
+        expect(resolveGuildHistoryAuthority).not.toHaveBeenCalled();
+        expect(fetchJsonFromS3).not.toHaveBeenCalled();
+      },
+    );
+    test("artifact settings remain enforced after guild authority allows reading", async () => {
+      jest.mocked(getSnapshotBoolean).mockReturnValue(false);
+      await expect(getMcpMeetingSummary(input)).resolves.toHaveProperty(
+        "meeting.id",
+        input.id,
+      );
+      await expect(getMcpMeetingTranscript(input)).rejects.toMatchObject({
+        code: "artifact_unavailable",
+      });
+      expect(fetchJsonFromS3).not.toHaveBeenCalled();
+    });
   });
 });

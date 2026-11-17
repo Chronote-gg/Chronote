@@ -155,7 +155,7 @@ const toTrpcNotionError = (err: unknown): TRPCError => {
   }
   if (err.status === 401) {
     return new TRPCError({
-      code: "UNAUTHORIZED",
+      code: "PRECONDITION_FAILED",
       message: "Reconnect Notion and try again.",
     });
   }

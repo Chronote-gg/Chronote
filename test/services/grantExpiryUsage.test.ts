@@ -13,6 +13,8 @@ import {
 import type { EntitlementGrant, MeetingHistory } from "../../src/types/db";
 import { getMockBillingSnapshot } from "../../src/services/billingService";
 
+import { weeklyLimitNoticeAfterMeeting } from "../../src/services/recordingLimitService";
+
 const guild = "grant-usage-test";
 const expiry = Date.parse("2026-11-10T12:00:00.000Z");
 const hour = 3_600_000;
@@ -430,5 +432,23 @@ test("editing the paid plan alone does not create an allowance reset", async () 
   await expect(getMockBillingSnapshot(guild)).resolves.toMatchObject({
     tier: "pro",
     usage: { usedMinutes: 10 },
+  });
+});
+
+test("after-meeting notice advertises the temporary grant reset using one instant", async () => {
+  seed(grant({ tier: "basic" }));
+  recordings(meeting(expiry - hour, 20 * 3600));
+  jest.setSystemTime(expiry - 1);
+  jest
+    .spyOn(getEntitlementGrantRepository(), "listActiveForGuild")
+    .mockImplementationOnce(async () => {
+      jest.setSystemTime(expiry + 1);
+      return [grant({ tier: "basic" })];
+    });
+  await expect(
+    weeklyLimitNoticeAfterMeeting({ guildId: guild }),
+  ).resolves.toMatchObject({
+    outcome: "exhausted_after_meeting",
+    message: `This server has used its rolling-week recording allowance. You can record again after <t:${expiry / 1000}:R>.`,
   });
 });

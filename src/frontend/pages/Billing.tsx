@@ -148,9 +148,9 @@ const BENEFITS: Benefit[] = [
   {
     label: "Ask history",
     values: {
-      free: "Up to 5 meetings",
-      basic: "Up to 25 meetings",
-      pro: "Up to 100 meetings",
+      free: "All accessible meetings",
+      basic: "All accessible meetings",
+      pro: "All accessible meetings",
     },
   },
   {
@@ -591,7 +591,7 @@ function BillingPlanCards({
         features={[
           "4 recording hours per rolling week",
           "Up to 90 minutes per meeting",
-          "Ask across up to 5 meetings",
+          "Ask across accessible meeting history",
           "Notes, tags, and summaries",
         ]}
         cta={freeAction.cta}
@@ -607,11 +607,11 @@ function BillingPlanCards({
       <PricingCard
         name="Basic"
         price={introOfferPrice(shownOffer, basicPlan, interval)}
-        description="Unlock longer sessions and deeper recall."
+        description="Record longer meetings."
         features={[
           "20 recording hours per rolling week",
           "Up to 2 hours per meeting",
-          "Ask across up to 25 meetings",
+          "Ask across accessible meeting history",
           "Live voice mode",
         ]}
         cta={basicCta}
@@ -622,7 +622,7 @@ function BillingPlanCards({
             : { variant: "filled", onClick: checkoutBasic }
         }
         highlighted
-        badge={paidPlanBadge(data, "basic", "Best value")}
+        badge={paidPlanBadge(data, "basic")}
         billingLabel={billingLabelForInterval(interval)}
         terms={<BasicIntroTerms offer={shownOffer} />}
         introOffer={shownOffer}
@@ -631,10 +631,10 @@ function BillingPlanCards({
       <PricingCard
         name="Pro"
         price={formatPlanPrice(proPlan, interval)}
-        description="More recording time and a wider Ask history."
+        description="More recording time for busy servers."
         features={[
           "No weekly recording limit",
-          "Ask across up to 100 meetings",
+          "Ask across accessible meeting history",
           "Up to 2 hours per meeting",
           "Priority features + support",
         ]}
@@ -663,8 +663,8 @@ function expandedPlanSelection(data: BillingData, showPlans: boolean): boolean {
 function paidPlanBadge(
   data: BillingData,
   tier: PaidTier,
-  fallback: string,
-): string {
+  fallback?: string,
+): string | undefined {
   return data.tier === tier && !isTerminalStripeHistory(data)
     ? "Current plan"
     : fallback;
