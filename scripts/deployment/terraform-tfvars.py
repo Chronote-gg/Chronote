@@ -104,7 +104,7 @@ for name, value in github_vars.items():
         data[key] = collection_value(key, value)
     elif str(value).strip():
         value = str(value).strip()
-        if key == "ENABLE_PROCESSING_RETRY_INDEX":
+        if key in {"ENABLE_PROCESSING_RETRY_INDEX", "ENABLE_SEARCH_PROJECTION"}:
             if value not in ("true", "false"):
                 raise SystemExit("Invalid declared Terraform boolean; values are not logged.")
             data[key] = value == "true"

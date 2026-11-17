@@ -104,16 +104,18 @@ test("the AWS session key and the retired AWS_TOKEN_KEY never reach Terraform", 
   expect(values).not.toHaveProperty("AWS_TOKEN_KEY");
   expect(JSON.stringify(values)).not.toContain("session-key");
 });
-test.each([
-  ["false", false],
-  ["true", true],
-  [" \tfalse\n", false],
-  [" \ttrue\n", true],
-])("declared retry flag %j renders as boolean %s", (value, expected) => {
-  expect(
-    run(valid, { TFVAR_ENABLE_PROCESSING_RETRY_INDEX: value })
-      .ENABLE_PROCESSING_RETRY_INDEX,
-  ).toBe(expected);
+test.each(
+  ["ENABLE_PROCESSING_RETRY_INDEX", "ENABLE_SEARCH_PROJECTION"].flatMap(
+    (key) =>
+      [
+        ["false", false],
+        ["true", true],
+        [" \tfalse\n", false],
+        [" \ttrue\n", true],
+      ].map(([value, expected]) => [key, value, expected]),
+  ),
+)("declared %s flag %j renders as boolean %s", (key, value, expected) => {
+  expect(run(valid, { [`TFVAR_${key}`]: value })[key]).toBe(expected);
 });
 
 test.each(["", " \t\n"])(
