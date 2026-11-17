@@ -5,7 +5,7 @@ resource "aws_iam_role" "production_terraform" {
   count                = var.enable_production_terraform_role ? 1 : 0
   name                 = local.terraform_role_name
   path                 = "/"
-  max_session_duration = 3600
+  max_session_duration = 7200 # the Apply job may run up to 120 minutes
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{

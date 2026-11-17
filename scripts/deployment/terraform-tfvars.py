@@ -4,8 +4,9 @@ from pathlib import Path
 
 path = Path("_infra/terraform.auto.tfvars.json")
 data = json.loads(os.environ["TERRAFORM_TFVARS_JSON"])
-# Retired input: the secret may still carry it, and Terraform warns on it.
-data.pop("AWS_TOKEN_KEY", None)
+# Retired inputs: the secret may still carry them, and Terraform warns on them.
+for retired in ["AWS_TOKEN_KEY", "LIVE_VOICE_GATE_MODEL"]:
+    data.pop(retired, None)
 
 for name in ["REDIS_AUTH_TOKEN", "REDIS_URL"]:
     value = os.environ.get(name, "").strip()

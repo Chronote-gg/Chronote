@@ -4,6 +4,7 @@ import { describe, expect, test } from "@jest/globals";
 import { parse } from "yaml";
 import {
   assertProductionIdle,
+  checkPlanRetention,
   github,
   planStore,
   planSummary,
@@ -106,6 +107,68 @@ describe("planStore", () => {
     ["production", "1", "0"],
   ])("refuses %s run %s attempt %s", (environment, runId, attempt) => {
     expect(() => planStore(environment, runId, attempt, backend)).toThrow();
+  });
+});
+
+describe("checkPlanRetention", () => {
+  const expiring = (prefix, extra = {}) => ({
+    ID: "plans",
+    Status: "Enabled",
+    Filter: { Prefix: prefix },
+    Expiration: { Days: 30 },
+    NoncurrentVersionExpiration: { NoncurrentDays: 1 },
+    ...extra,
+  });
+
+  test.each([
+    ["the plans prefix", expiring("terraform-plans/")],
+    ["the whole bucket", expiring("")],
+    ["a filter with no prefix", { ...expiring(""), Filter: {} }],
+    [
+      "an And filter",
+      { ...expiring(""), Filter: { And: { Prefix: "terraform-plans/" } } },
+    ],
+  ])("accepts a rule expiring %s", (_name, rule) => {
+    expect(() => checkPlanRetention({ Rules: [rule] })).not.toThrow();
+  });
+
+  test.each([
+    ["no lifecycle configuration", {}],
+    ["no rules", { Rules: [] }],
+    [
+      "a disabled rule",
+      { Rules: [expiring("terraform-plans/", { Status: "Disabled" })] },
+    ],
+    ["a rule for another prefix", { Rules: [expiring("logs/")] }],
+    [
+      "a rule for a narrower prefix",
+      { Rules: [expiring("terraform-plans/sandbox/")] },
+    ],
+    [
+      "a rule with no expiration",
+      { Rules: [{ ...expiring("terraform-plans/"), Expiration: undefined }] },
+    ],
+  ])("refuses %s", (_name, config) => {
+    expect(() => checkPlanRetention(config)).toThrow(
+      "No enabled lifecycle rule expires terraform-plans/ in the state bucket",
+    );
+  });
+
+  // Versioning is on, so expiring the current version only adds a delete
+  // marker; the plan bytes stay as a noncurrent version until this removes them.
+  test("refuses an expiry that keeps noncurrent versions forever", () => {
+    expect(() =>
+      checkPlanRetention({
+        Rules: [
+          {
+            ...expiring("terraform-plans/"),
+            NoncurrentVersionExpiration: undefined,
+          },
+        ],
+      }),
+    ).toThrow(
+      "No enabled lifecycle rule removes noncurrent versions under terraform-plans/",
+    );
   });
 });
 
@@ -513,6 +576,42 @@ describe("workflow shape", () => {
     expect(download).toContain("Reading the stored plan failed (");
     // The raw CLI message is never printed, only the code taken from it.
     expect(download).not.toMatch(/echo[^\n]*\$err/);
+  });
+
+  test("the plan refuses to run unless the state bucket expires stored plans", () => {
+    const names = planJob.steps.map((s) => s.name);
+    const check = names.indexOf("Check plan retention");
+    expect(check).toBeGreaterThan(names.indexOf("Locate the plan store"));
+    expect(check).toBeLessThan(names.indexOf("Plan"));
+    const run = step(planJob, "Check plan retention").run;
+    expect(run).toContain(
+      'aws s3api get-bucket-lifecycle-configuration --bucket "$BUCKET"',
+    );
+    // No configuration at all is a refusal, not a read failure.
+    expect(run).toContain(
+      'if [ "$code" = NoSuchLifecycleConfiguration ]; then',
+    );
+    expect(run).toContain(
+      'node scripts/deployment/terraform-runs.cjs check-plan-retention "$RUNNER_TEMP/lifecycle.json"',
+    );
+    expect(run).not.toMatch(/echo[^\n]*\$err/);
+  });
+
+  // A lost log must never turn an applied change or a stored plan red.
+  test("storing a log can only warn", () => {
+    for (const job of [planJob, applyJob]) {
+      const store = step(job, "Store log").run;
+      expect(store).toMatch(
+        /\|\| echo "::warning::Storing the [a-z]+ log failed/,
+      );
+    }
+  });
+
+  test("the Apply session lasts as long as the Apply job may", () => {
+    const credentials = step(applyJob, "Configure AWS credentials").with;
+    expect(credentials["role-duration-seconds"]).toBe(
+      applyJob["timeout-minutes"] * 60,
+    );
   });
 
   test("apply applies the saved plan and takes the three reviewed inputs", () => {

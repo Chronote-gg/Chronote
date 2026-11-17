@@ -79,6 +79,13 @@ test("moved tfvars normalizes one string and preserves approved credential overl
   expect(values).not.toHaveProperty("OTHER");
 });
 // A session key ID written into a GitHub variable would drift on every Apply.
+// Retired inputs left in the write-only secret would otherwise make Terraform
+// warn about an undeclared variable on every plan.
+test("the retired LIVE_VOICE_GATE_MODEL is dropped", () => {
+  expect(
+    run({ ...valid, LIVE_VOICE_GATE_MODEL: "gpt-5-mini" }),
+  ).not.toHaveProperty("LIVE_VOICE_GATE_MODEL");
+});
 test("the AWS session key and the retired AWS_TOKEN_KEY never reach Terraform", () => {
   const values = run(valid, {}, { AWS_ACCESS_KEY_ID: "session-key" });
   expect(values).not.toHaveProperty("AWS_TOKEN_KEY");

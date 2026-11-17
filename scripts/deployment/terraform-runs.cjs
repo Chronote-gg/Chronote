@@ -73,6 +73,27 @@ async function verifyPlanRun(get, { repository, runId, environment, sha }) {
   return run;
 }
 
+const planPrefix = "terraform-plans/";
+// A stored plan holds credentials, so nothing may be stored unless the bucket
+// itself expires it. The bucket is versioned: expiring the current version
+// only adds a delete marker, so noncurrent versions must expire too.
+function checkPlanRetention(config) {
+  const covering = (config.Rules ?? []).filter((rule) => {
+    if (rule.Status !== "Enabled") return false;
+    const prefix =
+      rule.Filter?.Prefix ?? rule.Filter?.And?.Prefix ?? rule.Prefix ?? "";
+    return planPrefix.startsWith(prefix);
+  });
+  assert.ok(
+    covering.some((rule) => rule.Expiration),
+    "No enabled lifecycle rule expires terraform-plans/ in the state bucket; add the rule in docs/terraform-delivery.md before planning",
+  );
+  assert.ok(
+    covering.some((rule) => rule.NoncurrentVersionExpiration),
+    "No enabled lifecycle rule removes noncurrent versions under terraform-plans/; add the rule in docs/terraform-delivery.md before planning",
+  );
+}
+
 // Workflows that move production traffic or roles that the Apply may change.
 const productionWriters = ["deploy.yml"];
 const activeStatuses = ["in_progress", "queued", "waiting", "pending"];
@@ -218,6 +239,7 @@ function planSummary(plan, { sha, digest, attempt, location }) {
 
 module.exports = {
   github,
+  checkPlanRetention,
   verifyPlanRun,
   assertProductionIdle,
   waitForApplyIdle,
@@ -231,6 +253,10 @@ async function main([command, ...args]) {
     const [planPath, sha, attempt, digest, location] = args;
     const plan = JSON.parse(readFileSync(planPath, "utf8"));
     process.stdout.write(planSummary(plan, { sha, attempt, digest, location }));
+    return;
+  }
+  if (command === "check-plan-retention") {
+    checkPlanRetention(JSON.parse(readFileSync(args[0], "utf8")));
     return;
   }
   if (command === "plan-store") {

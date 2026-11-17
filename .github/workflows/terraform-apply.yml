@@ -74,7 +74,7 @@ jobs:
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: terraform-apply-${{ github.run_id }}-${{ github.run_attempt }}
-          role-duration-seconds: 3600
+          role-duration-seconds: 7200
           unset-current-credentials: true
           mask-aws-account-id: true
 
@@ -142,7 +142,7 @@ jobs:
         run: |
           log="$RUNNER_TEMP/terraform.log"
           if [ -f "$log" ] && [ -n "$PREFIX" ]; then
-            aws s3api put-object --bucket "$BUCKET" --key "$PREFIX/apply-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log" --body "$log" --if-none-match "*" > /dev/null
+            aws s3api put-object --bucket "$BUCKET" --key "$PREFIX/apply-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log" --body "$log" --if-none-match "*" > /dev/null || echo "::warning::Storing the apply log failed; the Apply result above stands"
           fi
 
       - name: Remove plaintext plan

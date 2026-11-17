@@ -69,6 +69,31 @@ jobs:
           GITHUB_VARS_JSON: ${{ toJSON(vars) }}
         run: python3 scripts/deployment/terraform-tfvars.py
 
+      - name: Locate the plan store
+        id: store
+        run: node scripts/deployment/terraform-runs.cjs plan-store "$PLAN_ENVIRONMENT" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+      # A stored plan holds credentials, so nothing is planned or stored unless
+      # the bucket expires stored plans on its own. No lifecycle configuration
+      # at all is a refusal; any other read error is a failure. Only the error
+      # code is printed: the CLI message names just the operation and error.
+      - name: Check plan retention
+        env:
+          BUCKET: ${{ steps.store.outputs.bucket }}
+        run: |
+          if err=$(aws s3api get-bucket-lifecycle-configuration --bucket "$BUCKET" 2>&1 > "$RUNNER_TEMP/lifecycle.json"); then
+            :
+          else
+            code=$(grep -oE '\([A-Za-z0-9]+\)' <<< "$err" | head -n 1 | tr -d '()')
+            if [ "$code" = NoSuchLifecycleConfiguration ]; then
+              echo '{}' > "$RUNNER_TEMP/lifecycle.json"
+            else
+              echo "::error::Reading the state bucket's lifecycle configuration failed (${code:-no error code})"
+              exit 1
+            fi
+          fi
+          node scripts/deployment/terraform-runs.cjs check-plan-retention "$RUNNER_TEMP/lifecycle.json"
+
       # Terraform output can carry values, so it goes only to a log file that
       # is stored beside the plan in the state bucket; on failure the job
       # prints the exit code alone.
@@ -88,14 +113,9 @@ jobs:
             *) fail plan "$status" ;;
           esac
 
-      - name: Locate the plan store
-        id: store
-        if: always()
-        run: node scripts/deployment/terraform-runs.cjs plan-store "$PLAN_ENVIRONMENT" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
-
       # The saved plan holds every variable value, including credentials, so it
-      # goes only to the state bucket, which already holds the same secrets in
-      # state. The Lambda archives are data-source outputs the apply reads from
+      # goes only to the state bucket (docs/terraform-delivery.md says who can
+      # read it and how it expires). The Lambda archives are data-source outputs the apply reads from
       # disk, so they travel with it. A key is written once and never replaced.
       - name: Store plan
         id: bundle
@@ -131,9 +151,9 @@ jobs:
         run: |
           log="$RUNNER_TEMP/terraform.log"
           if [ -f "$log" ] && [ -n "$PREFIX" ]; then
-            aws s3api put-object --bucket "$BUCKET" --key "$PREFIX/terraform.log" --body "$log" --if-none-match "*" > /dev/null
+            aws s3api put-object --bucket "$BUCKET" --key "$PREFIX/terraform.log" --body "$log" --if-none-match "*" > /dev/null || echo "::warning::Storing the plan log failed; the plan itself is unaffected"
           fi
 
       - name: Remove plaintext plan
         if: always()
-        run: rm -f _infra/tfplan _infra/terraform.auto.tfvars.json "$RUNNER_TEMP/plan.tar.gz" "$RUNNER_TEMP/plan.json" "$RUNNER_TEMP/terraform.log"
+        run: rm -f _infra/tfplan _infra/terraform.auto.tfvars.json "$RUNNER_TEMP/lifecycle.json" "$RUNNER_TEMP/plan.tar.gz" "$RUNNER_TEMP/plan.json" "$RUNNER_TEMP/terraform.log"
