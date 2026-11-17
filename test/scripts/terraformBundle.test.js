@@ -18,6 +18,8 @@ function fixture() {
     zip = Buffer.from([80, 75, 0, 255]);
   writeFileSync(join(directory, "tfplan"), plan);
   writeFileSync(join(directory, "discord_alert.zip"), zip);
+  writeFileSync(join(directory, "grafana_token_rotation.zip"), zip);
+  writeFileSync(join(directory, "search_projection.zip"), zip);
   const bundle = createBundle({
     invocation,
     terraformVersion: "1.14.0",
@@ -48,6 +50,9 @@ test("whole bundle verifies all original bytes before exact file restoration", (
     restoreBundle(files, destination);
     expect(readFileSync(join(destination, "tfplan"))).toEqual(f.plan);
     expect(readFileSync(join(destination, "discord_alert.zip"))).toEqual(f.zip);
+    expect(readFileSync(join(destination, "search_projection.zip"))).toEqual(
+      f.zip,
+    );
     expect(
       readFileSync(join(destination, "terraform-review.txt"), "utf8"),
     ).toBe("PRIVATE_REVIEW");

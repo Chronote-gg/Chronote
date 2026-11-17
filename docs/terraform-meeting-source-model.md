@@ -1,5 +1,13 @@
 # Sandbox delivery plan source model
 
+## Search-source addition audit (November 17)
+
+`_infra/search.tf` introduces downstream vector indexes, a derived-state table, Lambda projection, failure queue and reconciliation schedule. Their graph edges point to the existing MeetingHistory table, KMS key, source bucket, application role and secret metadata. None of those existing closure resources reads the new resource outputs. The application task definition reads search environment locals downstream and remains outside the delivery closure.
+
+MeetingHistory now reads `ENABLE_SEARCH_PROJECTION` for `stream_enabled` and `stream_view_type`; its validation reads `ENABLE_MEETING_SEARCH`. Vector buckets use AWS-managed SSE-S3, so no shared KMS key-policy change or reverse edge is introduced. Consequently legacy delivery/model verification requires explicit typed false values for both provisioning flags and for `SEARCH_ENABLED` and `ASK_AGENT_ENABLED`. It verifies the two stream configuration expressions reference only `ENABLE_SEARCH_PROJECTION`, requires the planned stream to remain disabled, and refuses unknown stream effects. Existing table/index comparison and byte-equal KMS policy checks remain in force. The search scope has its own validator and cannot use the legacy source-model proof to admit search changes.
+
+All additional search variable validation identities are source-declared catalog entries. They must pass; no new resource check is excluded as unknown. The resource closure is unchanged with these flags false. The complete top-level source-file/content pin still must be regenerated from the final committed checkout after this audit; dirty, untracked or mismatched source remains a refusal. This audit does not authorize provisioning, permission installation or deployment.
+
 ## Sandbox artifact saved-plan scope
 
 Sandbox `artifact-preservation` reuses the protected bundle, producer-source,

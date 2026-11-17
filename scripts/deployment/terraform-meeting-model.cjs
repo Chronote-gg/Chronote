@@ -219,6 +219,18 @@ function verifyModel(plan, token) {
     false,
     "Retry index must be explicitly disabled",
   );
+  for (const name of [
+    "ENABLE_MEETING_SEARCH",
+    "ENABLE_SEARCH_PROJECTION",
+    "SEARCH_ENABLED",
+    "ASK_AGENT_ENABLED",
+  ]) {
+    assert.equal(
+      plan.variables?.[name]?.value,
+      false,
+      `${name} must be explicitly disabled in legacy delivery scopes`,
+    );
+  }
   const root = plan.configuration?.root_module;
   assert.ok(root && !root.module_calls, "Missing or indirect configuration");
   const matches = root.resources?.filter((r) => r.address === tableAddress);
@@ -232,6 +244,10 @@ function verifyModel(plan, token) {
   assert.equal(resource.count_expression, undefined);
   assert.equal(resource.for_each_expression, undefined);
   const expressions = resource.expressions;
+  for (const field of ["stream_enabled", "stream_view_type"])
+    assert.deepEqual(expressions[field], {
+      references: ["var.ENABLE_SEARCH_PROJECTION"],
+    });
   assert.deepEqual(expressions.billing_mode, {
     constant_value: "PAY_PER_REQUEST",
   });
@@ -270,6 +286,21 @@ function verifyModel(plan, token) {
     expected,
   );
   const table = plan.resource_changes.find((r) => r.address === tableAddress);
+  assert.equal(table.change.after.stream_enabled, false);
+  assert.ok(
+    table.change.after.stream_view_type == null ||
+      table.change.after.stream_view_type === "",
+  );
+  for (const field of [
+    "stream_enabled",
+    "stream_view_type",
+    "stream_arn",
+    "stream_label",
+  ])
+    assert.ok(
+      [false, null, undefined].includes(table.change.after_unknown?.[field]),
+      "Unknown stream effect in legacy delivery scope",
+    );
   const core = (index) =>
     Object.fromEntries(
       Object.keys(expected[0]).map((key) => [key, index[key]]),
@@ -313,6 +344,12 @@ function excludedCheck(address) {
         "environment",
         "aws_region",
         "ENABLE_PROCESSING_RETRY_INDEX",
+        "ENABLE_MEETING_SEARCH",
+        "ENABLE_SEARCH_PROJECTION",
+        "SEARCH_ENABLED",
+        "ASK_AGENT_ENABLED",
+        "SEARCH_GENERATION",
+        "SEARCH_RETAINED_GENERATIONS",
       ].includes(address.name),
       "Unknown check address",
     );

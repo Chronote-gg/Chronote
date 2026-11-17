@@ -304,6 +304,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const userId = authQuery.data?.id;
   const wasAuthenticated = useRef(false);
   useEffect(() => {
+    if (state === "unauthenticated") {
+      for (const key of Object.keys(sessionStorage)) {
+        if (key.startsWith("chronote-ask-run:")) sessionStorage.removeItem(key);
+      }
+    }
     if (state === "authenticated" && userId) {
       identifyUser(userId);
       wasAuthenticated.current = true;

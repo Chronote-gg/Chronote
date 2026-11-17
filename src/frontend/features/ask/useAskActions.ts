@@ -24,6 +24,9 @@ import type { AskShareModalProps } from "./AskShareModal";
 import { exportAskThread } from "./askExportActions";
 
 type AskActionsOptions = {
+  contextMeetingIds?: string[];
+  onAskAccepted?: () => void;
+  onNewRun?: () => void;
   selectedGuildId: string | null;
   listMode: ListMode;
   askAccessAllowed: boolean;
@@ -82,7 +85,19 @@ type AskActionsOptions = {
     mode: ListMode,
   ) => void;
   trpcUtils: ReturnType<typeof trpc.useUtils>;
-  askMutation: ReturnType<typeof trpc.ask.ask.useMutation>;
+  askMutation: {
+    isPending: boolean;
+    mutateAsync: (input: {
+      serverId: string;
+      conversationId?: string;
+      question: string;
+      contextMeetingIds?: string[];
+    }) => Promise<{
+      conversationId: string;
+      conversation: AskConversation;
+      messages: AskMessage[];
+    }>;
+  };
   renameMutation: ReturnType<typeof trpc.ask.rename.useMutation>;
   shareMutation: ReturnType<typeof trpc.ask.setVisibility.useMutation>;
   archiveMutation: ReturnType<typeof trpc.ask.setArchived.useMutation>;
@@ -169,6 +184,7 @@ export const useAskActions = (options: AskActionsOptions): AskActionsResult => {
   };
 
   const handleNewConversation = () => {
+    options.onNewRun?.();
     setNewConversationRequested(true);
     setIsCreatingNew(true);
     setDraft("");
@@ -202,10 +218,12 @@ export const useAskActions = (options: AskActionsOptions): AskActionsResult => {
     }
     try {
       const result = await askMutation.mutateAsync({
+        contextMeetingIds: options.contextMeetingIds,
         serverId: selectedGuildId,
         question,
         conversationId: activeId ?? undefined,
       });
+      options.onAskAccepted?.();
       setDraft("");
       navigateToConversation(result.conversationId, "mine");
       setIsCreatingNew(false);
@@ -223,6 +241,7 @@ export const useAskActions = (options: AskActionsOptions): AskActionsResult => {
         buildConversationMessagesUpdate(result.conversation, result.messages),
       );
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setErrorMessage(
         err instanceof Error ? err.message : "Unable to reach Chronote.",
       );

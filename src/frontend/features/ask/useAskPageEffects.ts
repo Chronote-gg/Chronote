@@ -9,6 +9,7 @@ import type { ListMode } from "../../utils/askLinks";
 import { resolveNextConversationId } from "./askPageState";
 
 type AskPageEffectsOptions = {
+  focusReady?: boolean;
   selectedGuildId: string | null;
   askAccessAllowed: boolean;
   listMode: ListMode;
@@ -214,14 +215,28 @@ const syncActiveConversation = ({
   }
 };
 
-const requestInputFocus = (inputRef: RefObject<HTMLTextAreaElement | null>) => {
+const requestInputFocus = (
+  inputRef: RefObject<HTMLTextAreaElement | null>,
+  allowedElement: Element | null,
+  onAttempt?: () => void,
+) => {
   const handle = window.requestAnimationFrame(() => {
-    inputRef.current?.focus();
+    onAttempt?.();
+    if (!window.matchMedia("(min-width: 62em) and (pointer: fine)").matches)
+      return;
+    if (
+      document.activeElement !== document.body &&
+      document.activeElement !== inputRef.current &&
+      document.activeElement !== allowedElement
+    )
+      return;
+    inputRef.current?.focus({ preventScroll: true });
   });
   return () => window.cancelAnimationFrame(handle);
 };
 
 export const useAskPageEffects = ({
+  focusReady = true,
   selectedGuildId,
   askAccessAllowed,
   listMode,
@@ -254,6 +269,45 @@ export const useAskPageEffects = ({
   activeMessages,
 }: AskPageEffectsOptions) => {
   const previousListModeRef = useRef<ListMode>(listMode);
+  const initialFocusGuildRef = useRef<string | null>(null);
+  const entryFocusRef = useRef(document.activeElement);
+  const newChatFocusRef = useRef<Element | null>(null);
+
+  useEffect(() => {
+    if (isCreatingNew) newChatFocusRef.current = document.activeElement;
+  }, [isCreatingNew]);
+
+  useEffect(() => {
+    if (
+      !selectedGuildId ||
+      !focusReady ||
+      !askAccessAllowed ||
+      listBusy ||
+      conversationBusy ||
+      listMode !== "mine" ||
+      activeId ||
+      activeConversation ||
+      isCreatingNew ||
+      highlightedMessageId
+    )
+      return;
+    if (initialFocusGuildRef.current === selectedGuildId) return;
+    return requestInputFocus(inputRef, entryFocusRef.current, () => {
+      initialFocusGuildRef.current = selectedGuildId;
+    });
+  }, [
+    selectedGuildId,
+    focusReady,
+    askAccessAllowed,
+    listBusy,
+    conversationBusy,
+    listMode,
+    activeId,
+    activeConversation,
+    isCreatingNew,
+    highlightedMessageId,
+    inputRef,
+  ]);
 
   useEffect(() => {
     resetOnGuildChange({
@@ -339,15 +393,35 @@ export const useAskPageEffects = ({
 
   useEffect(() => {
     if (!selectedGuildId || !isCreatingNew || listMode !== "mine") return;
-    return requestInputFocus(inputRef);
-  }, [isCreatingNew, selectedGuildId, listMode, inputRef]);
+    if (!focusReady || !askAccessAllowed || listBusy || conversationBusy)
+      return;
+    return requestInputFocus(inputRef, newChatFocusRef.current);
+  }, [
+    isCreatingNew,
+    selectedGuildId,
+    listMode,
+    inputRef,
+    focusReady,
+    askAccessAllowed,
+    listBusy,
+    conversationBusy,
+  ]);
 
   useEffect(() => {
     if (!selectedGuildId) return;
     if (listMode !== "mine") return;
+    if (
+      !focusReady ||
+      !askAccessAllowed ||
+      listBusy ||
+      conversationBusy ||
+      activeConversation?.archivedAt ||
+      highlightedMessageId
+    )
+      return;
     if (askPending) return;
     if (!activeId && !isCreatingNew && !activeConversation) return;
-    return requestInputFocus(inputRef);
+    return requestInputFocus(inputRef, entryFocusRef.current);
   }, [
     askPending,
     activeId,
@@ -356,6 +430,12 @@ export const useAskPageEffects = ({
     selectedGuildId,
     listMode,
     inputRef,
+    focusReady,
+    askAccessAllowed,
+    listBusy,
+    conversationBusy,
+    highlightedMessageId,
+    activeConversation?.archivedAt,
   ]);
 
   useEffect(() => {

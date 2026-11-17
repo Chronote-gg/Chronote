@@ -1,5 +1,5 @@
 import { Divider, LoadingOverlay, Stack } from "@mantine/core";
-import type { RefObject } from "react";
+import type { RefObject, ReactNode } from "react";
 import Surface from "../../components/Surface";
 import type {
   AskConversation,
@@ -15,6 +15,11 @@ import { AskConversationNotices } from "./AskConversationNotices";
 import { AskMessageList } from "./AskMessageList";
 
 type AskConversationPaneProps = {
+  startingContent?: ReactNode;
+  contextChips?: ReactNode;
+  contextAction?: ReactNode;
+  onStop?: () => void;
+  activity?: string;
   listBusy: boolean;
   conversationBusy: boolean;
   listMode: ListMode;
@@ -65,6 +70,11 @@ type AskConversationPaneProps = {
 };
 
 export function AskConversationPane({
+  startingContent,
+  contextChips,
+  contextAction,
+  onStop,
+  activity,
   listBusy,
   conversationBusy,
   listMode,
@@ -171,6 +181,7 @@ export function AskConversationPane({
         />
         <Divider />
         <AskMessageList
+          emptyContent={startingContent}
           askAccessAllowed={askAccessAllowed}
           listMode={listMode}
           sharingEnabled={sharingEnabled}
@@ -188,6 +199,10 @@ export function AskConversationPane({
         />
         <Divider my="xs" />
         <AskComposer
+          contextChips={contextChips}
+          contextAction={contextAction}
+          onStop={onStop}
+          activity={activity}
           listMode={listMode}
           isArchived={isArchived}
           askAccessAllowed={askAccessAllowed}

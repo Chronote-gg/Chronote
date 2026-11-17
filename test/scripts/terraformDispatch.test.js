@@ -158,6 +158,7 @@ test.each(["plan", "apply"])(
     const commands = steps.filter((step) => step.run).map((step) => step.run);
     expect(commands).toEqual([
       "bash scripts/ci-install-dependencies.sh",
+      ...(mode === "plan" ? ["node scripts/search/build-projection.mjs"] : []),
       "node scripts/deployment/terraform-dispatch.cjs --validate",
       ...(mode === "apply"
         ? [
@@ -170,6 +171,7 @@ test.each(["plan", "apply"])(
             'test "$IDENTITY_MATCHES" = true',
             "node scripts/deployment/terraform-plan-identity.cjs --validate",
             "node scripts/deployment/validate-artifact-preservation-plan.cjs --session plan",
+            "node scripts/deployment/search-plan-session.cjs",
           ]),
       "set +x\nnode scripts/deployment/terraform-dispatch.cjs\n",
     ]);
@@ -537,7 +539,7 @@ test.each(["plan", "apply"])(
     }
     const condition =
       mode === "plan"
-        ? "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' && inputs.plan_scope != 'artifact-preservation' }}"
+        ? "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' && inputs.plan_scope != 'artifact-preservation' && inputs.plan_scope != 'meeting-search' }}"
         : "${{ inputs.github_environment == 'sandbox' }}";
     const oidc = steps.find(
       (s) =>
@@ -632,7 +634,7 @@ test("Plan selects site-only extra bucket reads while legacy scopes retain exact
     (s) => s.name === "Configure Sandbox site-permissions Plan credentials",
   );
   expect(legacy.if).toBe(
-    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' && inputs.plan_scope != 'artifact-preservation' }}",
+    "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope != 'sandbox-site-permissions' && inputs.plan_scope != 'artifact-preservation' && inputs.plan_scope != 'meeting-search' }}",
   );
   expect(site.if).toBe(
     "${{ inputs.github_environment == 'sandbox' && inputs.plan_scope == 'sandbox-site-permissions' }}",

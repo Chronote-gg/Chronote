@@ -3,7 +3,6 @@ import { useMemo, useState } from "react";
 import { useIntroOfferExposure } from "../hooks/useIntroOfferExposure";
 import {
   Alert,
-  Badge,
   Button,
   Container,
   Group,
@@ -308,14 +307,7 @@ export default function Home() {
                     <Table.Tr>
                       <Table.Th />
                       <Table.Th>Free</Table.Th>
-                      <Table.Th style={recommendedCell}>
-                        <Group gap="xs" wrap="nowrap">
-                          <span>Basic</span>
-                          <Badge size="xs" variant="light">
-                            Best value
-                          </Badge>
-                        </Group>
-                      </Table.Th>
+                      <Table.Th style={recommendedCell}>Basic</Table.Th>
                       <Table.Th>Pro</Table.Th>
                     </Table.Tr>
                   </Table.Thead>

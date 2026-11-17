@@ -59,17 +59,17 @@ const FEATURES = {
   free: [
     "4 recording hours per rolling week",
     "Up to 90 minutes per meeting",
-    "Ask across the last 5 meetings",
+    "Ask across accessible meeting history",
   ],
   basic: [
     "20 recording hours per rolling week",
     "Up to 2 hours per meeting",
-    "Ask across the last 25 meetings",
+    "Ask across accessible meeting history",
   ],
   pro: [
     "No weekly recording limit",
     "Up to 2 hours per meeting",
-    "Ask across the last 100 meetings",
+    "Ask across accessible meeting history",
   ],
 };
 
@@ -336,6 +336,13 @@ export default function UpgradeServerSelect({
     navigate({ search: { ...intent, serverId } });
   };
   const handleCheckout = async (tier: PaidTier) => {
+    if (authState === "unauthenticated") {
+      const redirect = new URL(returnUrl);
+      redirect.searchParams.set("plan", tier);
+      handleAuthStarted();
+      window.location.href = `${buildApiUrl("/auth/discord")}?redirect=${encodeURIComponent(redirect.toString())}`;
+      return;
+    }
     if (
       !selectedServerId ||
       !(tier === "basic" ? basicActionEnabled : proActionEnabled)
@@ -445,41 +452,27 @@ export default function UpgradeServerSelect({
       px={0}
       style={{ containerType: "inline-size" }}
     >
-      <Stack gap="xl" data-testid="upgrade-purchase">
-        <Title
-          order={1}
-          fz={{ base: 30, md: 42 }}
-          lh={1.15}
-          style={{ letterSpacing: "-0.025em", textWrap: "balance" }}
-        >
-          Upgrade your plan
-        </Title>
-        <Text c="dimmed">Your subscription helps keep Chronote running.</Text>
+      <Stack gap="md" data-testid="upgrade-purchase">
+        <Stack gap="xs">
+          <Title
+            order={1}
+            fz={{ base: 30, md: 42 }}
+            lh={1.15}
+            style={{ letterSpacing: "-0.025em", textWrap: "balance" }}
+          >
+            Upgrade your plan
+          </Title>
+          <Text c="dimmed">
+            One subscription covers everyone in a server you manage.
+          </Text>
+        </Stack>
         <RecordingPlanContext context={limitContext} />
         {search.canceled && (
           <Alert color="gray" title="Checkout canceled">
             Your plan options are still here when you are ready to continue.
           </Alert>
         )}
-        {authState !== "authenticated" ? (
-          <Surface p="lg">
-            <Stack gap="sm" align="flex-start">
-              <Text fw={600}>Connect Discord to choose your server</Text>
-              <Text size="sm" c="dimmed">
-                One subscription covers everyone in a server you manage.
-              </Text>
-              <Button
-                component="a"
-                href={loginUrl}
-                onClick={handleAuthStarted}
-                loading={authLoading}
-                rightSection={<IconArrowRight size={16} />}
-              >
-                Connect Discord
-              </Button>
-            </Stack>
-          </Surface>
-        ) : (
+        {authState === "authenticated" && (
           <Surface p="lg">
             <Stack gap="md">
               {serverReady && (
@@ -611,8 +604,8 @@ export default function UpgradeServerSelect({
                 control: classes.control,
                 label: classes.label,
               }}
-              size="lg"
-              radius="lg"
+              size="sm"
+              radius="md"
               color="brand"
               withItemsBorders={false}
               value={interval}
@@ -651,26 +644,12 @@ export default function UpgradeServerSelect({
           )}
           <div className={classes.plans} data-testid="upgrade-plans">
             <PricingCard
-              name="Free"
-              price="$0"
-              description="For occasional meetings."
-              features={FEATURES.free}
-              badge={
-                currentTier === "free" && !billing?.hasStripeBilling
-                  ? "Current plan"
-                  : "Free plan"
-              }
-              billingLabel="Always free"
-              tone="soft"
-              testId="upgrade-plan-free"
-            />
-            <PricingCard
               name="Basic"
               price={introOfferPrice(shownOffer, basicPlan, interval)}
               description="For regular meetings."
               features={FEATURES.basic}
               highlighted
-              badge={currentTier === "basic" ? "Current plan" : "Recommended"}
+              badge={currentTier === "basic" ? "Current plan" : undefined}
               billingLabel={
                 offerChoice === "promotion" && promoCode.trim()
                   ? "Promotion price confirmed at checkout"
@@ -683,7 +662,11 @@ export default function UpgradeServerSelect({
                   ? "Current plan"
                   : "Continue with Basic"
               }
-              ctaDisabled={!basicActionEnabled}
+              ctaDisabled={
+                authState === "unauthenticated"
+                  ? authLoading || !basicPlan || pricingQuery.isFetching
+                  : !basicActionEnabled
+              }
               ctaProps={{
                 variant: "filled",
                 onClick: () => void handleCheckout("basic"),
@@ -699,13 +682,31 @@ export default function UpgradeServerSelect({
               badge={currentTier === "pro" ? "Current plan" : undefined}
               billingLabel={billingLabelForInterval(interval)}
               cta="Continue with Pro"
-              ctaDisabled={!proActionEnabled}
+              ctaDisabled={
+                authState === "unauthenticated"
+                  ? authLoading || !proPlan || pricingQuery.isFetching
+                  : !proActionEnabled
+              }
               ctaProps={{
                 variant: "outline",
                 onClick: () => void handleCheckout("pro"),
                 rightSection: <IconArrowRight size={16} />,
               }}
               testId="upgrade-plan-pro"
+            />
+            <PricingCard
+              name="Free"
+              price="$0"
+              description="For occasional meetings."
+              features={FEATURES.free}
+              badge={
+                currentTier === "free" && !billing?.hasStripeBilling
+                  ? "Current plan"
+                  : "Free plan"
+              }
+              billingLabel="Always free"
+              tone="soft"
+              testId="upgrade-plan-free"
             />
           </div>
           <IntroOfferAvailability offer={offer} />
@@ -752,6 +753,25 @@ export default function UpgradeServerSelect({
             available changes and discounts are confirmed before payment.
           </Text>
         </Stack>
+        {authState !== "authenticated" && (
+          <Surface p="md">
+            <Stack gap="sm" align="flex-start">
+              <Text fw={600}>Connect Discord to choose your server</Text>
+              <Text size="sm" c="dimmed">
+                One subscription covers everyone in a server you manage.
+              </Text>
+              <Button
+                component="a"
+                href={loginUrl}
+                onClick={handleAuthStarted}
+                loading={authLoading}
+                rightSection={<IconArrowRight size={16} />}
+              >
+                Connect Discord
+              </Button>
+            </Stack>
+          </Surface>
+        )}
       </Stack>
     </Container>
   );

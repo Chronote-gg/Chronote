@@ -2598,6 +2598,7 @@ export async function getAskConversation(
   const params = {
     TableName: tableName("AskConversationTable"),
     Key: marshall({ pk, sk }),
+    ConsistentRead: true,
   };
   const command = new GetItemCommand(params);
   const result = await dynamoDbClient.send(command);

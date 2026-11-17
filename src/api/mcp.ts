@@ -37,6 +37,14 @@ import type {
   McpTokenRestriction,
 } from "../types/mcpOAuth";
 import { myMeetingsInputFields } from "../types/myMeetingsInput";
+import {
+  searchMeetingsForUser,
+  searchTranscriptsForUser,
+} from "../services/meetingSearchService";
+import {
+  MeetingSearchError,
+  type MeetingSearchPrincipal,
+} from "../types/meetingSearch";
 
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const JSON_RPC_VERSION = "2.0";
@@ -118,6 +126,52 @@ const meetingSummaryLookupSchema = z.object({
   id: z.string().min(1),
 });
 
+const meetingRefSchema = z
+  .object({ serverId: z.string().min(1), id: z.string().min(1) })
+  .strict();
+const searchPageFields = {
+  pageSize: z.number().int().min(1).max(25).optional(),
+  cursor: z.string().min(1).optional(),
+};
+const searchMeetingsSchema = z
+  .object({
+    query: z.string().trim().min(1),
+    filters: z
+      .object({
+        serverIds: z.array(z.string().min(1)).min(1).optional(),
+        meetingIds: z.array(meetingRefSchema).min(1).optional(),
+        from: z.string().datetime().optional(),
+        before: z.string().datetime().optional(),
+        channelId: z.string().min(1).optional(),
+        tags: z.array(z.string().min(1)).optional(),
+        archive: z.enum(["active", "all", "archived"]).optional(),
+      })
+      .strict()
+      .optional(),
+    ...searchPageFields,
+  })
+  .strict();
+const searchTranscriptsSchema = z
+  .object({
+    query: z.string().trim().min(1),
+    meetingIds: z.array(meetingRefSchema).min(1),
+    ...searchPageFields,
+  })
+  .strict();
+const meetingRefJsonSchema = {
+  type: "object",
+  properties: {
+    serverId: { type: "string", minLength: 1 },
+    id: { type: "string", minLength: 1 },
+  },
+  required: ["serverId", "id"],
+  additionalProperties: false,
+};
+const searchPageJsonFields = {
+  pageSize: { type: "integer", minimum: 1, maximum: 25 },
+  cursor: { type: "string" },
+};
+
 const meetingTranscriptLookupSchema = z.object({
   serverId: z.string().min(1),
   id: z.string().min(1),
@@ -167,6 +221,64 @@ const meetingControlRequestSchema = z.object({
 });
 
 const toolDefinitions: McpToolDefinition[] = [
+  {
+    name: "search_meetings",
+    title: "Search Chronote Meetings",
+    description:
+      "Search accessible retained meetings by title, summary and complete current notes. Scope is bound to the authenticated user and token. Read these complete records before investigating selected transcripts. Results report partial coverage when applicable.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", minLength: 1 },
+        ...searchPageJsonFields,
+        filters: {
+          type: "object",
+          properties: {
+            serverIds: {
+              type: "array",
+              minItems: 1,
+              items: { type: "string" },
+            },
+            meetingIds: {
+              type: "array",
+              minItems: 1,
+              items: meetingRefJsonSchema,
+            },
+            from: { type: "string", format: "date-time" },
+            before: { type: "string", format: "date-time" },
+            channelId: {
+              type: "string",
+              description:
+                "Voice or associated text channel filter, within token restrictions.",
+            },
+            tags: { type: "array", items: { type: "string" } },
+            archive: { type: "string", enum: ["active", "all", "archived"] },
+          },
+          additionalProperties: false,
+        },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+    annotations: toolAnnotations,
+  },
+  {
+    name: "search_transcripts",
+    title: "Search Selected Chronote Transcripts",
+    description:
+      "Search transcript passages within a required nonempty selected meeting set. Discover meetings and inspect their complete current notes first. Requires meetings:read and transcripts:read. No global transcript search.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", minLength: 1 },
+        meetingIds: { type: "array", minItems: 1, items: meetingRefJsonSchema },
+        ...searchPageJsonFields,
+      },
+      required: ["query", "meetingIds"],
+      additionalProperties: false,
+    },
+    annotations: toolAnnotations,
+  },
   {
     name: "list_servers",
     title: "List Chronote Servers",
@@ -424,6 +536,8 @@ const toolDefinitions: McpToolDefinition[] = [
 ];
 
 const toolScopes = new Map<string, McpScope[]>([
+  ["search_meetings", ["meetings:read"]],
+  ["search_transcripts", ["meetings:read", "transcripts:read"]],
   ["list_servers", ["meetings:read"]],
   ["list_meetings", ["meetings:read"]],
   ["list_my_meetings", ["meetings:read"]],
@@ -653,6 +767,40 @@ async function callMeetingTool(
   args: unknown,
 ) {
   const restriction = auth.restriction;
+  if (name === "search_meetings" || name === "search_transcripts") {
+    const input =
+      name === "search_meetings"
+        ? searchMeetingsSchema.parse(args)
+        : searchTranscriptsSchema.parse(args);
+    if ("filters" in input) {
+      resolveTokenServerIds(restriction, input.filters?.serverIds);
+      for (const meeting of input.filters?.meetingIds ?? [])
+        assertTokenGuildId(restriction, meeting.serverId);
+    }
+    if ("meetingIds" in input)
+      for (const meeting of input.meetingIds)
+        assertTokenGuildId(restriction, meeting.serverId);
+    const servers = await listMcpServersForToken({
+      userId: auth.userId,
+      restriction,
+    });
+    const principal: MeetingSearchPrincipal = {
+      userId: auth.userId,
+      serverIds: servers.map((server) => server.id),
+      ...(restriction ? { restriction } : { scope: { kind: "all" } }),
+    };
+    return toolResult(
+      name === "search_meetings"
+        ? await searchMeetingsForUser(
+            principal,
+            searchMeetingsSchema.parse(input),
+          )
+        : await searchTranscriptsForUser(
+            principal,
+            searchTranscriptsSchema.parse(input),
+          ),
+    );
+  }
   if (name === "list_servers") {
     listServersSchema.parse(args);
     return toolResult({
@@ -792,6 +940,16 @@ async function callTool(auth: McpAccessTokenInfo, name: string, args: unknown) {
   } catch (error) {
     if (error instanceof z.ZodError)
       return toolError(formatZodToolError(error));
+    if (error instanceof MeetingSearchError) {
+      const failure = {
+        error: {
+          code: error.code,
+          message: error.message,
+          retryable: error.retryable,
+        },
+      };
+      return { ...toolResult(failure), isError: true };
+    }
     if (error instanceof McpTokenScopeError) return toolError(error.message);
     const meetingError = mapMeetingError(error);
     if (meetingError) return meetingError;

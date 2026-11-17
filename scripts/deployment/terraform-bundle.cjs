@@ -32,11 +32,16 @@ const invocationSchema = z
       "sandbox-site-permissions",
       "processing-retry",
       "artifact-preservation",
+      "meeting-search",
       "meeting-update-delivery",
     ]),
   })
   .strict();
-const zipNames = ["discord_alert.zip", "grafana_token_rotation.zip"];
+const zipNames = [
+  "discord_alert.zip",
+  "grafana_token_rotation.zip",
+  "search_projection.zip",
+];
 const requiredNames = [
   "tfplan",
   "tfplan.sha256",
@@ -58,7 +63,7 @@ const bundleSchema = z
     invocation: invocationSchema,
     terraformVersion: z.string().regex(/^\d+\.\d+\.\d+$/),
     lockfileSha256: hash,
-    files: z.array(fileSchema).min(5).max(7),
+    files: z.array(fileSchema).min(5).max(8),
   })
   .strict();
 function parseInvocation(value) {
@@ -74,13 +79,16 @@ function parseInvocation(value) {
         "processing-retry",
         "sandbox-site-permissions",
         "artifact-preservation",
+        "meeting-search",
       ].includes(parsed.scope),
       "Unsupported Sandbox scope",
     );
   if (
-    ["meeting-update-delivery", "sandbox-site-permissions"].includes(
-      parsed.scope,
-    )
+    [
+      "meeting-update-delivery",
+      "sandbox-site-permissions",
+      "meeting-search",
+    ].includes(parsed.scope)
   )
     assert.equal(parsed.environment, "sandbox");
   return parsed;

@@ -34,6 +34,7 @@ function parseDispatch(env, event) {
       "sandbox-site-permissions",
       "processing-retry",
       "artifact-preservation",
+      "meeting-search",
     ]),
   };
   const hash = z.string().regex(/^[a-f0-9]{64}$/);

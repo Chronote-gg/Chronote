@@ -341,7 +341,9 @@ it("shows Free as a readonly comparison with vertical feature entries", () => {
   expect(
     free.getByText("4 recording hours per rolling week"),
   ).toBeInTheDocument();
-  expect(free.getByText("Ask across the last 5 meetings")).toBeInTheDocument();
+  expect(
+    free.getByText("Ask across accessible meeting history"),
+  ).toBeInTheDocument();
   expect(screen.queryByTestId("upgrade-server-select")).not.toBeInTheDocument();
   expect(screen.getByText("Current plan: Free")).toBeInTheDocument();
 });
@@ -545,7 +547,7 @@ it("preserves tier, interval, promo and cancellation through login", () => {
     offerChoice: "automatic",
     source: "direct",
   });
-  expect(button("Pro")).toBeDisabled();
+  expect(button("Pro")).toBeEnabled();
   expect(mockCheckout).not.toHaveBeenCalled();
 });
 

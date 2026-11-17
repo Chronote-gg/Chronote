@@ -44,6 +44,7 @@ const {
   validateArtifactPreservationPlan,
 } = require("./validate-artifact-preservation-plan.cjs");
 const scopedValidators = {
+  "meeting-search": require("./validate-search-plan.cjs").validateSearchPlan,
   "deployment-prerequisites": validatePrerequisitePlan,
   "deployment-runtime": validateRuntimePlan,
   "site-delivery": validateSitePlan,
@@ -53,6 +54,7 @@ const scopedValidators = {
 };
 // Bound scopes revalidate their restored plan before Apply.
 const appliedScopes = new Set([
+  "meeting-search",
   "deployment-runtime",
   "site-delivery",
   "sandbox-site-permissions",
@@ -60,6 +62,7 @@ const appliedScopes = new Set([
   "artifact-preservation",
 ]);
 const scopedTargets = {
+  "meeting-search": require("./validate-search-plan.cjs").searchTargets,
   "deployment-runtime": runtimeTargets,
   "site-delivery": siteTargets,
   "sandbox-site-permissions": sandboxSitePermissionsTargets,

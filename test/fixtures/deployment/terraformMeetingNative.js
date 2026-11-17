@@ -19,7 +19,15 @@ import { digest } from "../../../scripts/deployment/collector-payload.cjs";
 export function nativeMeetingPlan() {
   const plan = JSON.parse(JSON.stringify(meetingUpdatePlan()));
   plan.terraform_version = "1.17.1";
-  plan.variables = { ENABLE_PROCESSING_RETRY_INDEX: { value: false } };
+  plan.variables = Object.fromEntries(
+    [
+      "ENABLE_PROCESSING_RETRY_INDEX",
+      "ENABLE_MEETING_SEARCH",
+      "ENABLE_SEARCH_PROJECTION",
+      "SEARCH_ENABLED",
+      "ASK_AGENT_ENABLED",
+    ].map((name) => [name, { value: false }]),
+  );
   plan.checks = excludedChecks.map((address) => ({
     address: { ...address },
     status: "unknown",
@@ -42,6 +50,10 @@ export function nativeMeetingPlan() {
     });
   }
   const table = plan.resource_changes[0];
+  table.change.before.stream_enabled = false;
+  table.change.before.stream_view_type = null;
+  table.change.after.stream_enabled = false;
+  table.change.after.stream_view_type = null;
   const fields = ["name", "hash_key", "range_key", "projection_type"];
   plan.configuration = {
     root_module: {
@@ -54,6 +66,8 @@ export function nativeMeetingPlan() {
           provider_config_key: "aws",
           expressions: {
             billing_mode: { constant_value: "PAY_PER_REQUEST" },
+            stream_enabled: { references: ["var.ENABLE_SEARCH_PROJECTION"] },
+            stream_view_type: { references: ["var.ENABLE_SEARCH_PROJECTION"] },
             global_secondary_index:
               table.change.after.global_secondary_index.map((index) =>
                 Object.fromEntries(

@@ -1,3 +1,14 @@
+import { setTimeout as delay } from "node:timers/promises";
+import {
+  getAskApplicationRunByRequest,
+  startAskApplicationRun,
+  getAskApplicationRun,
+  stopAskApplicationRun,
+} from "../../services/askApplicationService";
+import {
+  searchMeetingsForUser,
+  listMeetingsForUser,
+} from "../../services/meetingSearchService";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { CONFIG_KEYS } from "../../config/keys";
@@ -105,6 +116,7 @@ const ask = guildMemberProcedure
       tags: z.array(z.string()).optional(),
       scope: z.enum(["guild", "channel"]).optional(),
       channelId: z.string().optional(),
+      contextMeetingIds: z.array(z.string().min(1)).max(3).optional(),
     }),
   )
   .mutation(async ({ ctx, input }) => {
@@ -124,6 +136,7 @@ const ask = guildMemberProcedure
         tags: input.tags,
         scope: input.scope,
         viewerUserId: ctx.user.id,
+        contextMeetingIds: input.contextMeetingIds,
       });
       return result;
     } catch (error) {
@@ -335,7 +348,188 @@ const setArchived = guildMemberProcedure
     return { conversation: updated };
   });
 
+const runAddress = z.object({
+  serverId: z.string().min(1),
+  conversationId: z.string().min(1).max(128),
+  runId: z.string().min(1).max(128),
+});
+const searchFilters = z.object({
+  serverIds: z.array(z.string().min(1)).nonempty().optional(),
+  meetingIds: z
+    .array(z.object({ serverId: z.string().min(1), id: z.string().min(1) }))
+    .nonempty()
+    .optional(),
+  from: z.string().datetime().optional(),
+  before: z.string().datetime().optional(),
+  channelId: z.string().min(1).optional(),
+  tags: z.array(z.string().min(1)).optional(),
+  archive: z.enum(["active", "all", "archived"]).optional(),
+});
+
 export const askRouter = router({
+  searchMeetings: guildMemberProcedure
+    .input(
+      z.object({
+        serverId: z.string(),
+        query: z.string().min(1).max(2000),
+        filters: searchFilters.optional(),
+        pageSize: z.number().int().min(1).max(25).optional(),
+        cursor: z.string().max(100000).optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      await resolveAskAccess({
+        accessToken: ctx.user.accessToken ?? "",
+        guildId: input.serverId,
+        userId: ctx.user.id,
+        session: ctx.req.session,
+      });
+      return searchMeetingsForUser(
+        { userId: ctx.user.id, serverIds: [input.serverId] },
+        input,
+      );
+    }),
+  startRun: guildMemberProcedure
+    .input(
+      z.object({
+        serverId: z.string(),
+        conversationId: z.string().min(1).max(128),
+        requestId: z.string().min(1).max(128),
+        question: z.string().trim().min(1).max(10000),
+        timezone: z
+          .string()
+          .max(100)
+          .refine((zone) => {
+            try {
+              new Intl.DateTimeFormat("en", { timeZone: zone });
+              return true;
+            } catch {
+              return false;
+            }
+          }, "Invalid timezone")
+          .optional(),
+        contextMeetingIds: z.array(z.string().min(1)).max(3).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      await resolveAskAccess({
+        accessToken: ctx.user.accessToken ?? "",
+        guildId: input.serverId,
+        userId: ctx.user.id,
+        session: ctx.req.session,
+      });
+      return startAskApplicationRun({
+        ...input,
+        userId: ctx.user.id,
+        guildId: input.serverId,
+      });
+    }),
+  getRunByRequest: guildMemberProcedure
+    .input(
+      z.object({
+        serverId: z.string(),
+        conversationId: z.string().min(1).max(128),
+        requestId: z.string().min(1).max(128),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      await resolveAskAccess({
+        accessToken: ctx.user.accessToken ?? "",
+        guildId: input.serverId,
+        userId: ctx.user.id,
+        session: ctx.req.session,
+      });
+      return getAskApplicationRunByRequest({
+        ...input,
+        userId: ctx.user.id,
+        guildId: input.serverId,
+      });
+    }),
+  getRun: guildMemberProcedure
+    .input(runAddress)
+    .query(async ({ ctx, input }) => {
+      await resolveAskAccess({
+        accessToken: ctx.user.accessToken ?? "",
+        guildId: input.serverId,
+        userId: ctx.user.id,
+        session: ctx.req.session,
+      });
+      return getAskApplicationRun({
+        ...input,
+        userId: ctx.user.id,
+        guildId: input.serverId,
+      });
+    }),
+  stopRun: guildMemberProcedure
+    .input(runAddress)
+    .mutation(async ({ ctx, input }) => {
+      await resolveAskAccess({
+        accessToken: ctx.user.accessToken ?? "",
+        guildId: input.serverId,
+        userId: ctx.user.id,
+        session: ctx.req.session,
+      });
+      return stopAskApplicationRun({
+        ...input,
+        userId: ctx.user.id,
+        guildId: input.serverId,
+      });
+    }),
+  watchRun: guildMemberProcedure
+    .input(runAddress)
+    .subscription(async function* ({ ctx, input, signal }) {
+      const address = {
+        ...input,
+        userId: ctx.user.id,
+        guildId: input.serverId,
+      };
+      let version = "";
+      while (!signal?.aborted) {
+        await resolveAskAccess({
+          accessToken: ctx.user.accessToken ?? "",
+          guildId: input.serverId,
+          userId: ctx.user.id,
+          session: ctx.req.session,
+        });
+        const snapshot = await getAskApplicationRun(address);
+        const next = JSON.stringify(snapshot);
+        if (next !== version) {
+          version = next;
+          yield snapshot;
+        }
+        if (snapshot.status !== "running" && snapshot.status !== "queued")
+          return;
+        try {
+          await delay(1000, undefined, { signal });
+        } catch {
+          if (signal?.aborted) return;
+          throw new Error("Ask stream interrupted");
+        }
+      }
+    }),
+  startingContext: guildMemberProcedure
+    .input(z.object({ serverId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      await resolveAskAccess({
+        accessToken: ctx.user.accessToken ?? "",
+        guildId: input.serverId,
+        userId: ctx.user.id,
+        session: ctx.req.session,
+      });
+      const page = await listMeetingsForUser(
+        { userId: ctx.user.id, serverIds: [input.serverId] },
+        { pageSize: 3 },
+      );
+      return {
+        // A browse page is not a total-library count.
+        coverage: page.coverage,
+        meetings: page.meetings.map((meeting) => ({
+          id: meeting.meeting.id,
+          title: meeting.title,
+          timestamp: meeting.startedAt,
+        })),
+      };
+    }),
   settings,
   ask,
   listConversations,

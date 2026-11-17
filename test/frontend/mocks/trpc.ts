@@ -333,6 +333,16 @@ export const serversChannelsQuery = buildQueryState<ChannelsData>({
   textChannels: [],
 });
 export const askListQuery = buildQueryState<AskListData>({ conversations: [] });
+export const askStartingContextQuery = buildQueryState<
+  inferRouterOutputs<AppRouter>["ask"]["startingContext"]
+>({
+  coverage: {
+    status: "ready",
+    semanticStatus: "ready",
+    ranking: "authorized_partition_order",
+  },
+  meetings: [],
+});
 export const askSettingsQuery = buildQueryState<AskSettingsData>({
   askMembersEnabled: true,
   askSharingPolicy: "server",
@@ -721,6 +731,14 @@ export const resetTrpcMocks = () => {
     textChannels: [],
   });
   resetQueryState(askListQuery, { conversations: [] });
+  resetQueryState(askStartingContextQuery, {
+    coverage: {
+      status: "ready",
+      semanticStatus: "ready",
+      ranking: "authorized_partition_order",
+    },
+    meetings: [],
+  });
   resetQueryState(askSettingsQuery, {
     askMembersEnabled: true,
     askSharingPolicy: "server",
@@ -1064,6 +1082,15 @@ jest.mock("../../../src/frontend/services/trpc", () => ({
     },
     ask: {
       settings: { useQuery: () => askSettingsQuery },
+      startingContext: { useQuery: () => askStartingContextQuery },
+      searchMeetings: {
+        useQuery: () =>
+          buildQueryState({
+            hits: [],
+            nextCursor: null,
+            coverage: { status: "ready" },
+          }),
+      },
       listConversations: { useQuery: () => askListQuery },
       listSharedConversations: { useQuery: () => askSharedListQuery },
       getConversation: { useQuery: () => askConversationQuery },

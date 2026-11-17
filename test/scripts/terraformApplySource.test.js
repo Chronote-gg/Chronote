@@ -62,6 +62,9 @@ test.each([
   ".yarnrc",
   ".yarnrc.yml",
   "scripts/ci-install-dependencies.sh",
+  "scripts/search/build-projection.mjs",
+  "src/apps/searchProjection/main.ts",
+  "src/services/meetingSearchProjectionService.ts",
 ])("refuses a descendant that changes %s", async (path) => {
   const { get } = compare(["docs/a.md", path]);
   await expect(check(get)).rejects.toThrow(

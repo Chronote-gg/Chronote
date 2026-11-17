@@ -27,7 +27,7 @@ export const NewBuyer: Story = {
         canvas.getByRole("button", { name: "Continue with Basic" }),
       ).toBeEnabled(),
     );
-    await expect(canvas.getByText("Recommended")).toBeVisible();
+    await expect(canvas.queryByText(/Best value/i)).toBeNull();
     await expect(canvas.getByRole("radio", { name: "Monthly" })).toBeChecked();
     await expect(canvas.queryByText(/months free/)).toBeNull();
   },
@@ -943,4 +943,46 @@ export const RenewalGraceProcessing: Story = {
     }),
   },
   tags: ["renewal-grace"],
+};
+
+export const SignedOutUpgradeShort: Story = {
+  args: {
+    signedIn: false,
+    path: "/upgrade/select-server?serverId=example&source=discord_limit&interval=year",
+  },
+  tags: ["upgrade-viewport"],
+};
+export const SignedOutUpgradeMobile: Story = {
+  ...SignedOutUpgradeShort,
+  tags: ["upgrade-viewport"],
+};
+
+export const SignedOutUpgradeMonthlyShort: Story = {
+  ...SignedOutUpgradeShort,
+  args: {
+    signedIn: false,
+    path: "/upgrade/select-server?serverId=example&source=discord_limit&interval=month",
+  },
+  tags: ["upgrade-viewport"],
+};
+export const SignedOutUpgradeMonthlyMobile: Story = {
+  ...SignedOutUpgradeMonthlyShort,
+  tags: ["upgrade-viewport"],
+};
+export const BillingAskHistoryShort: Story = {
+  ...BillingFree,
+  tags: ["upgrade-viewport"],
+  play: async ({ canvasElement }) => {
+    const rewards = await within(canvasElement).findAllByText(
+      "Ask across accessible meeting history",
+    );
+    await expect(rewards).toHaveLength(3);
+    await expect(
+      within(canvasElement).queryByText(/wider Ask history|deeper recall/i),
+    ).toBeNull();
+  },
+};
+export const BillingAskHistoryMobile: Story = {
+  ...BillingAskHistoryShort,
+  tags: ["upgrade-viewport"],
 };

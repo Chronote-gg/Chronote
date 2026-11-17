@@ -384,6 +384,27 @@ test.each([
     },
   ]),
   ...[
+    "ENABLE_MEETING_SEARCH",
+    "ENABLE_SEARCH_PROJECTION",
+    "SEARCH_ENABLED",
+    "ASK_AGENT_ENABLED",
+  ].flatMap((name) =>
+    [true, "false", null, undefined].map((value) => [
+      `search flag ${name} ${value}`,
+      (p) => {
+        p.variables[name].value = value;
+      },
+    ]),
+  ),
+  ...["stream_enabled", "stream_view_type", "stream_arn", "stream_label"].map(
+    (field) => [
+      `unknown stream ${field}`,
+      (p) => {
+        p.resource_changes[0].change.after_unknown[field] = true;
+      },
+    ],
+  ),
+  ...[
     "warm_throughput",
     "on_demand_throughput",
     "read_capacity",

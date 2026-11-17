@@ -60,6 +60,9 @@ async function verifyRun(get, invocation, completed, inputs) {
 const terraformInputs = [
   /^_infra\//,
   /^scripts\/deployment\//,
+  /^scripts\/search\//,
+  /^src\/(apps\/searchProjection|services|repositories|types|utils)\//,
+  /^src\/(db|constants)\.ts$/,
   /^patches\//,
   /^\.yarn\//,
   /^\.github\/workflows\/terraform-(plan|apply)\.yml$/,
