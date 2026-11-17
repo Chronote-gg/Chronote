@@ -156,10 +156,10 @@ function checkPlanPolicy(policy, account) {
         Array.isArray(allowed) &&
         allowed.length === 3 &&
         roles.every((role) => allowed.includes(role)) &&
-        allowed.every((arn) =>
-          new RegExp(
-            `^arn:aws:iam::${account}:role/[A-Za-z0-9_+=,.@/-]+$`,
-          ).test(arn),
+        allowed.every(
+          (arn) =>
+            arn.startsWith(`arn:aws:iam::${account}:role/`) &&
+            /^arn:aws:iam::[0-9]{12}:role\/[A-Za-z0-9_+=,.@/-]+$/.test(arn),
         )
       );
     }),
