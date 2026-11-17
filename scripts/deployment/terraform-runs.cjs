@@ -27,8 +27,24 @@ function github(token, request = fetch) {
 
 const planWorkflow = ".github/workflows/terraform-plan.yml";
 
-// Apply runs only the artifact of a successful first-attempt plan of this
-// exact commit: a re-run could replace the artifact that was reviewed.
+// Saved plans and Terraform logs live in the state bucket, which already holds
+// every secret a plan carries, under a prefix no state or workspace key uses.
+function planStore(environment, runId, attempt, backendSource) {
+  assert.ok(["production", "sandbox"].includes(environment));
+  assert.match(String(runId), /^[1-9]\d{0,15}$/);
+  assert.match(String(attempt), /^[1-9]\d{0,3}$/);
+  const bucket = backendSource.match(
+    /backend "s3" \{[^}]*?\bbucket\s*=\s*"([^"]+)"/,
+  )?.[1];
+  assert.ok(bucket, "No S3 backend bucket in _infra/main.tf");
+  return {
+    bucket,
+    prefix: `terraform-plans/${environment}/${runId}-${attempt}`,
+  };
+}
+
+// Apply runs only the bundle of a successful first-attempt plan of this exact
+// commit: a re-run would store a different bundle under another attempt.
 async function verifyPlanRun(get, { repository, runId, environment, sha }) {
   const run = await get(`/repos/${repository}/actions/runs/${runId}`);
   assert.equal(String(run.id), String(runId));
@@ -53,14 +69,6 @@ async function verifyPlanRun(get, { repository, runId, environment, sha }) {
     run.run_attempt,
     1,
     "A re-run plan cannot be applied; plan again",
-  );
-  const artifacts = await get(
-    `/repos/${repository}/actions/runs/${runId}/artifacts?name=terraform-plan-${environment}`,
-  );
-  assert.equal(
-    artifacts.total_count,
-    1,
-    "The plan has no changes; there is nothing to apply",
   );
   return run;
 }
@@ -155,7 +163,7 @@ const sensitiveType =
 
 // Reads only types, addresses and actions from `terraform show -json`: the
 // plan's before/after values carry secrets and must never reach the summary.
-function planSummary(plan, { sha, digest, attempt }) {
+function planSummary(plan, { sha, digest, attempt, location }) {
   const changes = (plan.resource_changes ?? [])
     .map(({ address, type, change }) => ({
       address,
@@ -173,7 +181,7 @@ function planSummary(plan, { sha, digest, attempt }) {
     return [
       ...header,
       "",
-      "No changes. Nothing was uploaded and there is nothing to apply.",
+      "No changes. Nothing was stored and there is nothing to apply.",
       "",
     ].join("\n");
   const count = (kind) => changes.filter((c) => c.kind === kind).length;
@@ -188,7 +196,8 @@ function planSummary(plan, { sha, digest, attempt }) {
       : [];
   return [
     ...header,
-    `Encrypted plan SHA-256 (\`plan_sha256\`): \`${digest}\``,
+    `Plan bundle SHA-256 (\`plan_sha256\`): \`${digest}\``,
+    `Plan bundle: \`${location}\``,
     "",
     `${count("add")} to add, ${count("change")} to change, ${count("replace")} to replace, ${count("destroy")} to destroy.`,
     "",
@@ -212,15 +221,27 @@ module.exports = {
   verifyPlanRun,
   assertProductionIdle,
   waitForApplyIdle,
+  planStore,
   planSummary,
 };
 
 async function main([command, ...args]) {
   const { GITHUB_REPOSITORY: repository, GH_TOKEN: token } = process.env;
   if (command === "plan-summary") {
-    const [planPath, sha, attempt, digest] = args;
+    const [planPath, sha, attempt, digest, location] = args;
     const plan = JSON.parse(readFileSync(planPath, "utf8"));
-    process.stdout.write(planSummary(plan, { sha, attempt, digest }));
+    process.stdout.write(planSummary(plan, { sha, attempt, digest, location }));
+    return;
+  }
+  if (command === "plan-store") {
+    const [environment, runId, attempt] = args;
+    const store = planStore(
+      environment,
+      runId,
+      attempt,
+      readFileSync("_infra/main.tf", "utf8"),
+    );
+    process.stdout.write(`bucket=${store.bucket}\nprefix=${store.prefix}\n`);
     return;
   }
   const get = github(token);

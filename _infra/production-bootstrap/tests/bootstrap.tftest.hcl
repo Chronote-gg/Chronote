@@ -176,6 +176,14 @@ run "policy_limits" {
     error_message = "The inline policy holds only the guardrails."
   }
   assert {
+    condition     = one([for s in jsondecode(aws_iam_role_policy.production_terraform_plan[0].policy).Statement : s if s.Sid == "PlanStore"]) == { Sid = "PlanStore", Effect = "Allow", Action = "s3:PutObject", Resource = "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/production/*", Condition = { StringEquals = { "s3:if-none-match" = "*" } } }
+    error_message = "The Plan role may only create new objects under the production plans prefix, never overwrite one or write state."
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : s if s.Sid == "PlanStoreLogs"]) == { Sid = "PlanStoreLogs", Effect = "Allow", Action = "s3:PutObject", Resource = "arn:aws:s3:::meeting-notes-terraform-state-bucket/terraform-plans/production/*", Condition = { StringEquals = { "s3:if-none-match" = "*" } } }
+    error_message = "The Apply role may only create its log under the production plans prefix."
+  }
+  assert {
     condition     = one([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : s if s.Sid == "ServiceLinkedRoles"]) == { Sid = "ServiceLinkedRoles", Effect = "Allow", Action = "iam:CreateServiceLinkedRole", Resource = "arn:aws:iam::123456789012:role/aws-service-role/*", Condition = { StringEquals = { "iam:AWSServiceName" = ["ecs.amazonaws.com", "elasticloadbalancing.amazonaws.com", "elasticache.amazonaws.com", "grafana.amazonaws.com"] } } }
     error_message = "Only the service-linked roles of services _infra uses may be created."
   }
@@ -192,8 +200,8 @@ run "policy_limits" {
     error_message = "The Plan role reads through ReadOnlyAccess."
   }
   assert {
-    condition     = toset(flatten([for s in jsondecode(aws_iam_role_policy.production_terraform_plan[0].policy).Statement : s.Action if s.Effect == "Allow"])) == toset(["dynamodb:PutItem", "dynamodb:DeleteItem", "secretsmanager:GetSecretValue", "kms:Decrypt"]) && one([for s in jsondecode(aws_iam_role_policy.production_terraform_plan[0].policy).Statement : s.Sid if s.Effect == "Deny"]) == "CustomerData"
-    error_message = "Beyond ReadOnlyAccess the Plan role may only take the state lock and read secrets a refresh needs, and is denied customer data."
+    condition     = toset(flatten([for s in jsondecode(aws_iam_role_policy.production_terraform_plan[0].policy).Statement : s.Action if s.Effect == "Allow"])) == toset(["dynamodb:PutItem", "dynamodb:DeleteItem", "secretsmanager:GetSecretValue", "kms:Decrypt", "s3:PutObject"]) && one([for s in jsondecode(aws_iam_role_policy.production_terraform_plan[0].policy).Statement : s.Sid if s.Effect == "Deny"]) == "CustomerData"
+    error_message = "Beyond ReadOnlyAccess the Plan role may only take the state lock, read secrets a refresh needs and store its plan, and is denied customer data."
   }
   assert {
     condition     = one([for s in jsondecode(aws_iam_policy.production_terraform_delivery[0].policy).Statement : s if s.Sid == "ProductionKeyCreation"]) == { Sid = "ProductionKeyCreation", Effect = "Allow", Action = ["kms:CreateKey", "kms:TagResource"], Resource = "*", Condition = { StringEquals = { "aws:RequestTag/Environment" = "prod" } } }
