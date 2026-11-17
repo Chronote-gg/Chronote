@@ -756,8 +756,12 @@ export const BillingPlanChangeReview: Story = {
     await userEvent.click(
       await canvas.findByRole("button", { name: "Review Pro" }),
     );
-    await waitFor(() => expect(root.scrollTop).toBeLessThan(before));
     const review = await canvas.findByTestId("billing-change-review");
+    await waitFor(() => {
+      const bounds = review.getBoundingClientRect();
+      expect(bounds.top).toBeGreaterThanOrEqual(0);
+      expect(bounds.bottom).toBeLessThanOrEqual(window.innerHeight);
+    });
     await expect(review).toHaveTextContent("Change to Pro");
     await expect(review).toHaveTextContent("$9");
     await expect(canvas.getByTestId("billing-current-plan")).toHaveTextContent(

@@ -1,10 +1,40 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import { expect, within } from "storybook/test";
 import { UnifiedMeetingsPreview } from "../storybook/UnifiedMeetingsPreview";
 const meta = {
   title: "Meetings/Unified",
   component: UnifiedMeetingsPreview,
   tags: ["unified-meetings"],
   parameters: { layout: "fullscreen" },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await canvas.findByTestId("unified-meetings-page");
+    if (args.scenario === "loading") {
+      await expect(await canvas.findByTestId("library-loading")).toBeVisible();
+    } else if (args.scenario === "error") {
+      await expect(
+        await canvas.findByText("Unable to load meetings. Try again shortly."),
+      ).toBeVisible();
+    } else if (args.scenario === "empty") {
+      await expect(
+        await canvas.findByText(
+          /Upload your first personal recording|Choose a source or upload|Your first meeting in/,
+        ),
+      ).toBeVisible();
+    } else if (args.path?.includes("q=unmatched")) {
+      await expect(
+        await canvas.findByText("No meetings match these filters."),
+      ).toBeVisible();
+    } else {
+      await expect(
+        (await canvas.findAllByTestId("library-meeting-row"))[0],
+      ).toBeVisible();
+      if (args.path?.includes("meetingId="))
+        await expect(
+          await within(canvasElement.ownerDocument.body).findByRole("dialog"),
+        ).toHaveTextContent("Decision 1");
+    }
+  },
 } satisfies Meta<typeof UnifiedMeetingsPreview>;
 export default meta;
 type Story = StoryObj<typeof meta>;

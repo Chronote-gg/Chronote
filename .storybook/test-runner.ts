@@ -22,7 +22,6 @@ const config: TestRunnerConfig = {
   async postVisit(page, context) {
     await page.setViewportSize(screenshotViewport(context.id));
     await page.waitForLoadState("domcontentloaded");
-    await page.waitForTimeout(150);
     if (context.id.startsWith("pages-upgradeplans--signed-out-upgrade-")) {
       await page.evaluate(() => window.scrollTo(0, 0));
       const action = page
@@ -85,6 +84,8 @@ const config: TestRunnerConfig = {
         "The page scroll position must change",
       );
     }
+    if (process.env.STORYBOOK_SCREENSHOTS !== "true") return;
+    await page.waitForTimeout(150);
     await mkdir(screenshotsDir, { recursive: true });
     await page.screenshot({
       path: resolve(screenshotsDir, `${context.id}.png`),

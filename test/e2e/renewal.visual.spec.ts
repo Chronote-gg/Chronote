@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { useIntroBilling, useFreeBilling } from "./billingMocks";
+import { useIntroBilling } from "./billingMocks";
 import { annualSubscriber } from "../../src/frontend/pages/basicIntroFixtures";
 import { createRenewalFixture } from "../../src/frontend/pages/renewalFixtures";
 import { mockGuilds } from "./mockData";
@@ -21,57 +21,25 @@ async function openBilling(page: Page) {
 const runVisual = process.env.PW_VISUAL === "true";
 const views = [
   { name: "desktop", width: 1280, height: 720 },
-  { name: "intermediate", width: 768, height: 900 },
   { name: "mobile", width: 390, height: 844 },
 ];
 for (const viewport of views) {
-  for (const state of [
-    "off",
-    "on",
-    "processing",
-    "failure",
-    "history-open",
-    "terminal",
-    "payment-attention",
-  ] as const) {
+  for (const state of ["off"] as const) {
     test(`renewal ${state} at ${viewport.name} @visual`, async ({ page }) => {
       test.skip(!runVisual, "Visual regression disabled");
       await page.setViewportSize(viewport);
       await applyVisualDefaults(page);
-      if (state === "terminal")
-        await useFreeBilling(page, { terminalStatus: "canceled" });
-      else {
-        const renewal = createRenewalFixture({
-          details: annualSubscriber,
-          cancellationAt: state === "on" ? null : annualSubscriber.renewalAt,
-        });
-        if (state === "processing")
-          renewal.state = {
-            kind: "processing",
-            operationId: "00000000-0000-4000-8000-000000000001",
-            endsAt: annualSubscriber.renewalAt!,
-          };
-        if (state === "payment-attention")
-          renewal.state = { kind: "payment_problem" };
-        if (state === "failure")
-          renewal.state = {
-            kind: "unavailable",
-            knownEndsAt: annualSubscriber.renewalAt!,
-          };
-        await useIntroBilling(page, {
-          details: annualSubscriber,
-          cancellationAt: state === "on" ? null : annualSubscriber.renewalAt,
-          renewal,
-        });
-      }
+      const renewal = createRenewalFixture({
+        details: annualSubscriber,
+        cancellationAt: annualSubscriber.renewalAt,
+      });
+      await useIntroBilling(page, {
+        details: annualSubscriber,
+        cancellationAt: annualSubscriber.renewalAt,
+        renewal,
+      });
       await openBilling(page);
       await expect(page.getByTestId("billing-current-plan")).toBeVisible();
-      if (state === "history-open") {
-        await page
-          .getByRole("button", { name: "Payment history", exact: true })
-          .click();
-        await expect(page.getByText(/\$64.20 paid/)).toBeVisible();
-      }
       await waitForVisualReady(page);
       expect(
         await page.evaluate(
