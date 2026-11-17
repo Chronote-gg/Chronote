@@ -74,7 +74,8 @@ locals {
     "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:PassRole",
     "iam:CreatePolicy", "iam:DeletePolicy", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion", "iam:SetDefaultPolicyVersion", "iam:TagPolicy", "iam:UntagPolicy",
   ]
-  state_lock_keys = ["${local.state_bucket}/${local.state_key}", "${local.state_bucket}/${local.state_key}-md5"]
+  state_lock_keys           = ["${local.state_bucket}/${local.state_key}", "${local.state_bucket}/${local.state_key}-md5"]
+  sandbox_search_bucket_arn = "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-sandbox-search-${var.sandbox_account_id}"
   # Saved plans and Terraform logs (scripts/deployment/terraform-runs.cjs
   # planStore). If-None-Match makes every key write-once.
   plan_store_statement = { Effect = "Allow", Action = "s3:PutObject", Resource = "arn:aws:s3:::${local.state_bucket}/terraform-plans/sandbox/*", Condition = { StringEquals = { "s3:if-none-match" = "*" } } }
@@ -133,7 +134,7 @@ locals {
       { Sid = "PrivilegedPolicies", Effect = "Deny", Action = ["iam:AttachRolePolicy", "iam:AttachUserPolicy", "iam:AttachGroupPolicy"], Resource = "*", Condition = { ArnEquals = { "iam:PolicyARN" = ["arn:aws:iam::aws:policy/AdministratorAccess", "arn:aws:iam::aws:policy/IAMFullAccess", "arn:aws:iam::aws:policy/PowerUserAccess"] } } },
       { Sid = "BootstrapState", Effect = "Deny", Action = ["s3:PutObject", "s3:DeleteObject*"], Resource = "arn:aws:s3:::${local.state_bucket}/meeting-notes-terraform/*-bootstrap/*" },
       # ReadOnlyAccess would otherwise read meeting data, which Terraform never needs.
-      { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:Export*", "s3:GetObject*", "s3vectors:QueryVectors", "s3vectors:GetVectors", "s3vectors:ListVectors"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-sandbox-*", "arn:aws:s3:::meeting-notes-sandbox-*/*", "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-sandbox-*/index/*"] },
+      { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:GetRecords", "dynamodb:Export*", "s3:GetObject*", "s3vectors:QueryVectors", "s3vectors:GetVectors", "s3vectors:ListVectors"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-sandbox-*", "arn:aws:s3:::meeting-notes-sandbox-*/*", "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-sandbox-*/index/*"] },
       # The GitHub provider is shared and production-tagged. Only its metadata read
       # may cross the tag boundary; every write and other provider read stays denied.
       { Sid = "ProductionResources", Effect = "Deny", NotAction = "iam:GetOpenIDConnectProvider", Resource = "*", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "prod" } } },
@@ -185,9 +186,10 @@ resource "aws_iam_role_policy" "sandbox_terraform_plan" {
       { Sid = "ProductionOidcMetadata", Effect = "Deny", Action = "iam:GetOpenIDConnectProvider", NotResource = "${local.iam_arn}:oidc-provider/token.actions.githubusercontent.com", Condition = { StringEquals = { "aws:ResourceTag/Environment" = "prod" } } },
       { Sid = "StateLock", Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:DeleteItem"], Resource = "arn:aws:dynamodb:${local.region_account}:table/meeting-notes-terraform-state-locks", Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = local.state_lock_keys } } },
       merge({ Sid = "PlanStore" }, local.plan_store_statement),
+      { Sid = "SearchTagMetadata", Effect = "Allow", Action = "s3vectors:ListTagsForResource", Resource = [local.sandbox_search_bucket_arn, "${local.sandbox_search_bucket_arn}/index/*"] },
       { Sid = "SecretRefresh", Effect = "Allow", Action = "secretsmanager:GetSecretValue", Resource = "arn:aws:secretsmanager:${local.region_account}:secret:meeting-notes-sandbox/*" },
       { Sid = "SecretDecrypt", Effect = "Allow", Action = "kms:Decrypt", Resource = "arn:aws:kms:${local.region_account}:key/*", Condition = { StringEquals = { "kms:ViaService" = "secretsmanager.us-east-1.amazonaws.com", "aws:ResourceTag/Environment" = "sandbox" } } },
-      { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:Export*", "s3:GetObject*", "s3vectors:QueryVectors", "s3vectors:GetVectors", "s3vectors:ListVectors"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-sandbox-*", "arn:aws:s3:::meeting-notes-sandbox-*/*", "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-sandbox-*/index/*"] }
+      { Sid = "CustomerData", Effect = "Deny", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect", "dynamodb:GetRecords", "dynamodb:Export*", "s3:GetObject*", "s3vectors:QueryVectors", "s3vectors:GetVectors", "s3vectors:ListVectors"], Resource = ["arn:aws:dynamodb:${local.region_account}:table/meeting-notes-sandbox-*", "arn:aws:s3:::meeting-notes-sandbox-*/*", "arn:aws:s3vectors:${local.region_account}:bucket/meeting-notes-sandbox-*/index/*"] }
     ]
   })
 }
