@@ -67,10 +67,16 @@ jobs:
         if: inputs.environment == 'production'
         run: node scripts/deployment/terraform-runs.cjs assert-production-idle
 
+      - name: Require the Sandbox Apply role
+        if: inputs.environment == 'sandbox'
+        env:
+          SANDBOX_APPLY_ROLE_ARN: ${{ vars.SANDBOX_APPLY_ROLE_ARN }}
+        run: test -n "$SANDBOX_APPLY_ROLE_ARN" || { echo "::error::SANDBOX_APPLY_ROLE_ARN is required for Sandbox Apply"; exit 1; }
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.TERRAFORM_AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars[inputs.environment == 'sandbox' && 'SANDBOX_APPLY_ROLE_ARN' || 'TERRAFORM_AWS_ROLE_ARN'] }}
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: terraform-apply-${{ github.run_id }}-${{ github.run_attempt }}

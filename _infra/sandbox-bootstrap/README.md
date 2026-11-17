@@ -215,3 +215,27 @@ The original thirteen-field inputs and any plan saved before installation are
 stale for this installed state. Reconcile the reviewed source, protected inputs
 and binding before preparing another plan; do not reuse an earlier review or
 omit the resource to make an old guard pass.
+
+## Full Plan/Apply delivery migration
+
+Set `enable_sandbox_terraform_delivery=true` in the protected bootstrap inputs to migrate the existing role to the merged full-plan workflow. It requires both existing enable flags. With the migration off, the eight-resource policy and saved-plan guards retain their previous contract. Those legacy guards deliberately refuse the migration plan; review its exact saved binary and JSON instead of using the old site-policy update mode.
+
+The migration keeps the existing role, inline-policy name and six private-evidence resources. It adds six resources: the Apply role's ReadOnlyAccess attachment, its Sandbox write policy and attachment, and a separate Plan role with its inline policy and ReadOnlyAccess attachment. Apply sessions last two hours; Plan sessions last one. Both trusts pin master, the immutable repository identities, the existing sandbox GitHub environment and their exact Terraform Apply or Terraform Plan workflow. Existing environment approval rules remain unchanged.
+
+Both roles explicitly deny production names and production-tagged resources. Their S3 object reads are limited to the exact Sandbox application state key and `terraform-plans/sandbox/*`, so the shared bucket cannot expose production state, bootstrap inputs or another environment's plans. The Apply role cannot change either Terraform identity, their policies or the OIDC provider. Write-once plan uploads require If-None-Match. Generated-ID resources that lack environment tags still need careful plan review, as in production.
+
+Prepare locally with Terraform 1.16.0, the committed AWS 6.69.1 lock and a verified administrator session. Use the existing protected bootstrap variable file, not application tfvars or guessed replacements:
+
+```powershell
+terraform '-chdir=_infra/sandbox-bootstrap' init -input=false -lockfile=readonly
+terraform '-chdir=_infra/sandbox-bootstrap' workspace show
+terraform '-chdir=_infra/sandbox-bootstrap' plan -input=false '-var-file=<protected-bootstrap.tfvars.json>' -var=enable_sandbox_terraform_delivery=true '-out=<private-absolute-path>/sandbox-bootstrap.tfplan'
+terraform '-chdir=_infra/sandbox-bootstrap' show -json '<private-absolute-path>/sandbox-bootstrap.tfplan' > '<private-absolute-path>/sandbox-bootstrap-plan.json'
+Get-FileHash '<private-absolute-path>/sandbox-bootstrap.tfplan' -Algorithm SHA256
+```
+
+The workspace must be default and the backend must stay at `meeting-notes-terraform/sandbox-bootstrap/state`. Review six creates and in-place changes to the existing role trust/session length and inline policy. Any replacement, destruction or private-evidence change stops the migration. Retain the exact binary, source/input hashes and review outside the repository. Applying it is a separate action under the existing approval rules.
+
+Before the application Plan, an administrator must install both environment-specific plan-store deny statements and the 30-day lifecycle rule described in `docs/terraform-delivery.md`. Point sandbox's `TERRAFORM_AWS_ROLE_ARN` at `terraform_plan_role_arn` and its `SANDBOX_APPLY_ROLE_ARN` at `terraform_role_arn`. Source checks do not establish installed permissions or a successful saved-plan Apply.
+
+Offline checks: `terraform -chdir=_infra/sandbox-bootstrap init -backend=false -lockfile=readonly`, `validate`, `test`, and the existing Node guard suites. The delivery tests check exact trusts, production/shared-state isolation, identity protection, conditional uploads and IAM size limits.

@@ -2,8 +2,8 @@ resource "aws_iam_role" "sandbox_terraform" {
   count                = var.enable_sandbox_terraform_role ? 1 : 0
   name                 = local.terraform_role_name
   path                 = "/"
-  max_session_duration = 3600
-  assume_role_policy = jsonencode({
+  max_session_duration = var.enable_sandbox_terraform_delivery ? 7200 : 3600
+  assume_role_policy = var.enable_sandbox_terraform_delivery ? local.delivery_apply_trust : jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow", Action = "sts:AssumeRoleWithWebIdentity"
@@ -27,7 +27,7 @@ resource "aws_iam_role" "sandbox_terraform" {
 }
 
 locals {
-  terraform_role_policy = jsonencode({
+  legacy_terraform_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       { Sid = "ArtifactTranscriptVersion", Effect = "Allow", Action = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyTags", "iam:ListPolicyVersions", "iam:CreatePolicyVersion"], Resource = "arn:aws:iam::${var.sandbox_account_id}:policy/meeting-notes-sandbox-bot-transcripts-s3-policy" },
