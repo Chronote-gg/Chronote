@@ -965,10 +965,7 @@ for (const width of [320, 768, 993, 1199, 1201, 1280]) {
     await period.getByText("Monthly", { exact: true }).click();
     await expect(
       page.getByText(
-        "One subscription covers everyone in a server you manage.",
-        {
-          exact: true,
-        },
+        /^One subscription covers everyone in a server you manage\.$/,
       ),
     ).toBeVisible();
     await expect(page.getByText(/running for communities on Free/)).toHaveCount(

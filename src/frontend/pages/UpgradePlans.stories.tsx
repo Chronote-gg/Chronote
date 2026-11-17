@@ -161,9 +161,11 @@ export const BillingCanceledSubscription: Story = {
     await expect(currentPlan).toHaveTextContent("Free");
     await expect(currentPlan).not.toHaveTextContent("Canceled");
     await expect(currentPlan).not.toHaveTextContent("No subscription needed");
-    await expect(
-      canvas.getByRole("button", { name: "Get Basic again" }),
-    ).toBeEnabled();
+    await waitFor(() =>
+      expect(
+        canvas.getByRole("button", { name: "Get Basic again" }),
+      ).toBeEnabled(),
+    );
     await expect(
       canvas.getByRole("button", { name: "Upgrade to Pro" }),
     ).toBeEnabled();
@@ -558,7 +560,7 @@ export const IntroSubscriberCanceled: Story = {
       await within(canvasElement).findByTestId("billing-current-plan"),
     );
     await expect(
-      current.getByText("Renewal off", { exact: true }),
+      await current.findByText("Renewal off", { exact: true }),
     ).toBeVisible();
     await expect(current.queryByText(/next billing/)).toBeNull();
     await expect(

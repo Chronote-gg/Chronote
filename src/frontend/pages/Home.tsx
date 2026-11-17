@@ -78,9 +78,9 @@ const PRICING_ROWS: PricingRow[] = [
   },
   {
     label: "Ask searches",
-    free: "Last 5 meetings",
-    basic: "Last 25 meetings",
-    pro: "Last 100 meetings",
+    free: "All accessible meetings",
+    basic: "All accessible meetings",
+    pro: "All accessible meetings",
   },
   {
     label: "Text to speech",

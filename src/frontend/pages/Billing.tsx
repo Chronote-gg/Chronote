@@ -148,9 +148,9 @@ const BENEFITS: Benefit[] = [
   {
     label: "Ask history",
     values: {
-      free: "Up to 5 meetings",
-      basic: "Up to 25 meetings",
-      pro: "Up to 100 meetings",
+      free: "All accessible meetings",
+      basic: "All accessible meetings",
+      pro: "All accessible meetings",
     },
   },
   {
