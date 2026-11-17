@@ -48,6 +48,37 @@ test.each([400, 401, 403, 404, 422])(
   },
 );
 
+test("a 400 with keywords is retried once without them", async () => {
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  const f = await buildAsrFixture({
+    outcomes: [{ status: 400 }, validResponse],
+    keywords: ["Kwylt"],
+  });
+  const { metricsRegistry } = await import("../../src/metrics");
+  await expect(f.run()).resolves.toEqual(validResponse);
+  expect(f.bodies[0]).toContain("Kwylt");
+  expect(f.bodies[1]).not.toContain("Kwylt");
+  const metric = await metricsRegistry
+    .getSingleMetric("chronote_transcription_keywords_rejected_total")
+    ?.get();
+  expect(metric?.values).toEqual([
+    expect.objectContaining({ value: 1, labels: { model: "gpt-transcribe" } }),
+  ]);
+  expect(warn).toHaveBeenCalledWith(
+    "Transcription keywords rejected; retrying without them.",
+    expect.objectContaining({ keywordCount: 1 }),
+  );
+});
+
+test.each([
+  [{ status: 422 }, ["Kwylt"]],
+  [{ status: 400 }, undefined],
+])("terminal %j with keywords %j is not retried", async (outcome, keywords) => {
+  const f = await buildAsrFixture({ outcomes: [outcome], keywords });
+  await expect(f.run()).rejects.toMatchObject({ status: outcome.status });
+  expect(f.fetch).toHaveBeenCalledTimes(1);
+});
+
 test.each([
   { status: 429, code: "insufficient_quota" },
   { status: 503, headers: { "x-should-retry": "false" } },

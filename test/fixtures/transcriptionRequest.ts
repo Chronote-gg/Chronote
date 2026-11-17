@@ -17,6 +17,7 @@ type FixtureOptions = {
   holdFetch?: Promise<void>;
   defaultTransport?: boolean;
   generationPrompt?: LangfusePromptMeta;
+  keywords?: string[];
 };
 
 export async function buildAsrFixture(options: FixtureOptions) {
@@ -96,6 +97,7 @@ export async function buildAsrFixture(options: FixtureOptions) {
         temperature: 0,
         response_format: "json",
         include: ["logprobs"],
+        ...(options.keywords ? { keywords: options.keywords } : {}),
       },
       ledger,
       clientOptions: {

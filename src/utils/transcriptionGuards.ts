@@ -333,39 +333,8 @@ const buildRateFlags = (input: {
   return flags;
 };
 
-const keywordWords = (value: string) =>
-  value.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? [];
-
-/** Distinct keywords in a text made only of keywords; 0 when any other word appears. */
-export function keywordOnlyCount(
-  text: string,
-  keywords: readonly string[],
-): number {
-  const tokens = keywordWords(text);
-  const phrases = keywords
-    .map(keywordWords)
-    .filter((phrase) => phrase.length > 0)
-    .sort((a, b) => b.length - a.length);
-  const used = new Set<string>();
-  for (let index = 0; index < tokens.length;) {
-    const phrase = phrases.find((candidate) =>
-      candidate.every((word, offset) => tokens[index + offset] === word),
-    );
-    if (!phrase) return 0;
-    used.add(phrase.join(" "));
-    index += phrase.length;
-  }
-  return used.size;
-}
-
-// Noise sent with keywords can come back as a run of keywords and nothing else.
-// One or two keywords alone are kept, because people do say "Sprint review."
-const KEYWORD_LIST_MIN_TERMS = 3;
-
 export function applyTranscriptionGuards(input: {
   transcription: string;
-  /** Keywords sent with this request; an output listing only them is suppressed. */
-  keywords: readonly string[];
   suppressionEnabled: boolean;
   hardSilenceDbfs?: number;
   rateMaxSeconds?: number;
@@ -418,17 +387,13 @@ export function applyTranscriptionGuards(input: {
     baseFlags: rate.flags,
     suppressedByRateMismatch: suppression.suppressedByRateMismatch,
   });
-  const keywordList =
-    input.suppressionEnabled &&
-    keywordOnlyCount(trimmed, input.keywords) >= KEYWORD_LIST_MIN_TERMS;
-  const suppressed = suppression.suppressed || punctuationOnly || keywordList;
+  const suppressed = suppression.suppressed || punctuationOnly;
 
   return {
     text: suppressed ? "" : trimmed,
     flags: [
       ...(input.suppressionEnabled ? [...loudnessFlags, ...rateFlags] : []),
       ...(punctuationOnly ? ["suppressed_punctuation_only"] : []),
-      ...(keywordList ? ["suppressed_keyword_list"] : []),
     ],
     logprobMetrics: loudness.logprobMetrics,
     quietAudio: loudness.quietAudio,

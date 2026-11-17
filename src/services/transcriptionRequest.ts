@@ -17,6 +17,7 @@ import {
   type createTranscriptionAttemptLedger,
   type TranscriptionAttemptOutcome,
 } from "../observability/transcriptionAttempts";
+import { recordTranscriptionKeywordsRejected } from "../metrics";
 import { createOpenAIClient } from "./openaiClient";
 import {
   TranscriptionInputError,
@@ -153,9 +154,32 @@ async function runAttempt(input: RequestInput): Promise<Transcription> {
   }
 }
 
+/**
+ * Dictionary terms are user text, so a term the provider refuses would fail
+ * every snippet in the server. A 400 on a request with keywords is retried
+ * once without them, trading dictionary spelling for the transcript.
+ */
 export async function runTranscriptionRequest(
   input: RequestInput,
 ): Promise<Transcription> {
+  const { keywords, ...withoutKeywords } = input.request;
+  try {
+    return await runWithRetries(input);
+  } catch (error) {
+    if (!keywords?.length || !(error instanceof OpenAI.BadRequestError)) {
+      throw error;
+    }
+    input.signal.throwIfAborted();
+    recordTranscriptionKeywordsRejected(input.request.model);
+    console.warn("Transcription keywords rejected; retrying without them.", {
+      model: input.request.model,
+      keywordCount: keywords.length,
+    });
+    return await runWithRetries({ ...input, request: withoutKeywords });
+  }
+}
+
+async function runWithRetries(input: RequestInput): Promise<Transcription> {
   const generator = new ExponentialBackoff({
     initialDelay: TRANSCRIPTION_RETRY_INITIAL_DELAY_MS,
     exponent: TRANSCRIPTION_RETRY_EXPONENT,

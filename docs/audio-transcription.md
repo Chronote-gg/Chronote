@@ -23,7 +23,7 @@ Chronote records voice audio, builds per speaker snippets, and runs transcriptio
 - The ASR model is `models.transcription` (default `gpt-transcribe`; options `gpt-transcribe`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`). Personal uploads use the same key. Requests send `temperature: 0`, `response_format: "json"` and `include: ["logprobs"]`, with no `prompt`, so the provider has no glossary text to echo back. Personal uploads send no keywords and no language hint.
 - What each model accepts comes from the capability table in `services/transcriptionRequest.ts`, never from guessing: `gpt-transcribe` takes `keywords` and a `languages` list (the API refuses `language` and `languages` together), while `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` reject both `keywords` and `languages` with HTTP 400 and take the singular `language`. An unknown model id throws.
 - Dictionary terms steer recognition as `keywords`: terms only, no definitions, chosen by `buildDictionaryPromptLines` (newest `updatedAt` first, then alphabetical) within `dictionary.maxEntries` and `dictionary.maxChars.transcription`, capped at 20 per request (`TRANSCRIPTION_KEYWORD_LIMIT`). Terms are whitespace-normalized, and a term containing `<` or `>` is skipped, because one such keyword makes the API reject the whole request. Fast and slow passes both send them. Definitions feed notes, cleanup, ask and other text prompts.
-- Keywords are sent when speech detection assessed the snippet as `speech` or enforced no decision (`off`, `shadow`, forced admission). They are withheld only when `enforce` mode ran and assessed the snippet `uncertain` or the detector was unavailable and the snippet was admitted anyway, because uncertain noise sent with keywords came back as a lone keyword. With detection off every admitted snippet carries them. When suppression is enabled, an output made only of three or more distinct sent keywords is suppressed as a list dump (`suppressed_keyword_list`); one or two keywords alone are kept, since people do say a name or two on their own.
+- Keywords are sent when speech detection assessed the snippet as `speech` or enforced no decision (`off`, `shadow`, forced admission). They are withheld only when `enforce` mode ran and assessed the snippet `uncertain` or the detector was unavailable and the snippet was admitted anyway, because uncertain noise sent with keywords came back as a lone keyword. With detection off every admitted snippet carries them.
 - Guardrails include a loudness gate (noise gate metrics plus token logprobs), hard silence suppression, a syllable rate gate for short snippets, and suppression of punctuation-only output.
 
 ## Snippet ASR retries
@@ -32,6 +32,8 @@ Each snippet request owns at most four ASR attempts, including
 the first. Only connection failures, timeouts and HTTP 408, 409, 429 or 5xx
 responses can retry. Cancellation, local input failures, other 4xx responses,
 quota exhaustion and an explicit `x-should-retry: false` are terminal.
+An HTTP 400 on a request that carried keywords is retried once without them,
+with a warning and `chronote_transcription_keywords_rejected_total`.
 Guards and attachment failures do not retry ASR.
 
 Each attempt opens and closes a fresh upload stream and disables SDK retries

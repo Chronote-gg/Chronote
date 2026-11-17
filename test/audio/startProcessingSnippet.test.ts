@@ -114,6 +114,7 @@ describe("startProcessingSnippet", () => {
         },
         dictionary: {
           maxEntries: 0,
+          maxCharsTranscription: 0,
           maxCharsContext: 0,
         },
       },

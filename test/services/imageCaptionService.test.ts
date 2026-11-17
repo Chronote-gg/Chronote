@@ -40,6 +40,7 @@ const buildMeeting = (chatLog: ChatEntry[]): MeetingData =>
       },
       dictionary: {
         maxEntries: 0,
+        maxCharsTranscription: 0,
         maxCharsContext: 0,
       },
       autoRecordCancellation: {

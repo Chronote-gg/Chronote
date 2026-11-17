@@ -216,8 +216,6 @@ type TranscriptionTraceContext = {
 /** The post-ASR guards every live transcription passes, shared with the offline eval. */
 export async function guardTranscription(input: {
   raw: { text?: string; logprobs?: { logprob?: number }[] };
-  /** Keywords the request carried. */
-  keywords: readonly string[];
   audioSeconds: number;
   noiseGateMetrics?: NoiseGateMetrics;
   guardConfig: ReturnType<typeof resolveTranscriptionGuardConfig>;
@@ -232,7 +230,6 @@ export async function guardTranscription(input: {
   });
   const guardResult = applyTranscriptionGuards({
     transcription: raw,
-    keywords: input.keywords,
     ...guardConfig,
     noiseGateMetrics: input.noiseGateMetrics,
     audioSeconds: input.audioSeconds,
@@ -350,7 +347,6 @@ async function transcribeInternal(
     }
     const guarded = await guardTranscription({
       raw: transcription,
-      keywords,
       audioSeconds: context.audioSeconds,
       noiseGateMetrics: context.noiseGateMetrics,
       guardConfig,

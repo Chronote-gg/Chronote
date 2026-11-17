@@ -100,6 +100,7 @@ const buildRuntimeConfig = (
     },
     dictionary: {
       maxEntries: 3,
+      maxCharsTranscription: 200,
       maxCharsContext: 500,
       ...overrides.dictionary,
     },
@@ -134,6 +135,7 @@ const dictionaryFixture = () => ({
   dictionaryEntries: [DICTIONARY_ENTRY],
   dictionaryBudgets: {
     maxEntries: 5,
+    maxCharsTranscription: 200,
     maxCharsContext: 200,
   },
 });
@@ -200,6 +202,7 @@ describe("contextService", () => {
     expect(result.dictionaryEntries).toHaveLength(1);
     expect(result.dictionaryBudgets).toEqual({
       maxEntries: 3,
+      maxCharsTranscription: 200,
       maxCharsContext: 500,
     });
     expect(result.recentMeetings).toHaveLength(1);

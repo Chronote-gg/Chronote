@@ -48,10 +48,10 @@ hurting transcripts:
    first). They go out on fast and slow passes unless speech detection in
    `enforce` mode assessed the snippet `uncertain` or was unavailable and
    admitted it anyway; with detection `off`, in `shadow` or on forced
-   admission every admitted snippet carries them. With suppression enabled,
-   an output made only of three or more distinct sent keywords is suppressed
-   inside `guardTranscription`. A per-model
-   capability table decides the keyword and language fields; an unknown
+   admission every admitted snippet carries them. A request whose keywords
+   the provider rejects with HTTP 400 is retried once without them, so a bad
+   term costs dictionary spelling, not the snippet. A per-model capability
+   table decides the keyword and language fields; an unknown
    model throws.
 3. Delete the prompt echo gate, the vote and its second call, the ASR prompt
    and its Langfuse prompt, coalesce, and the finalized-audio pass and its
@@ -152,16 +152,15 @@ stored transcript has the term and an unprompted local model hears it.
   and one whole-list dump on a snippet assessed `speech`. Withholding
   keywords from the `uncertain` snippet removed the first three and cost no
   term recall on the synthetic, public or real term clips, which were all
-  assessed `speech`. Suppressing three or more distinct keywords alone
-  removed the dump (it held all 20; no observed dump held fewer), while
-  "Sprint review." or two names said together survive. Two lone keywords
-  remain (2 of 36 runs). Suppressing a lone keyword as well would have
-  removed them, but 984 of 29,698 stored segments in the four servers with a
+  assessed `speech`. Three keyword-only outputs remain (3 of 36 runs). A
+  guard blanking outputs made only of three or more keywords removed one more
+  run, but it would also blank genuine speech made only of dictionary terms,
+  so it is not used. Suppressing a lone keyword would have removed the rest,
+  but 984 of 29,698 stored segments in the four servers with a
   dictionary are exactly one term; the former prompt inserted terms, so how
   many were spoken is unknown, and every spoken one would be lost. With
   detection `off`, keywords go out on every admitted snippet, so the
-  unmitigated figure applies: 6 of 36 keyword-only outputs, 5 after the list
-  guard. With the server's own 4 terms only, the same 36 runs returned no
+  unmitigated figure applies: 6 of 36 keyword-only outputs. With the server's own 4 terms only, the same 36 runs returned no
   text at all, before any guard (0 of 36).
 
 ## Alternatives Considered
@@ -177,8 +176,9 @@ stored transcript has the term and an unprompted local model hears it.
   Notion export) kept it, and synthetic term recall was 0.36.
 - Also suppress a single keyword alone: removes the last measured echoes but
   drops a person saying one name on its own.
-- Rebuild the prompt echo gate or the vote for keywords: the two rules above
-  removed the measured echoes without a second request.
+- Rebuild the prompt echo gate or the vote for keywords: withholding keywords
+  from uncertain snippets removed most measured echoes without a second
+  request.
 - Remove the language setting: the 0 of 90 English result supported it, but
   the short Japanese result above showed auto detection is worse for servers
   that speak one non-English language.

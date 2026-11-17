@@ -129,6 +129,12 @@ const transcriptionMissingLogprobs = new Counter({
   labelNames: ["model"],
   registers: [metricsRegistry],
 });
+const transcriptionKeywordsRejected = new Counter({
+  name: "chronote_transcription_keywords_rejected_total",
+  help: "ASR requests rejected with HTTP 400 while carrying keywords, then retried without them",
+  labelNames: ["model"],
+  registers: [metricsRegistry],
+});
 const speechCapturedAudio = new Counter({
   name: "chronote_speech_detection_captured_audio_seconds_total",
   help: "Decoded recording seconds independent of admission decisions",
@@ -204,6 +210,10 @@ export function recordSpeechProviderSubmission(input: {
 
 export function recordTranscriptionMissingLogprobs(model: string): void {
   transcriptionMissingLogprobs.inc({ model });
+}
+
+export function recordTranscriptionKeywordsRejected(model: string): void {
+  transcriptionKeywordsRejected.inc({ model });
 }
 
 export function recordSpeechCapturedAudio(input: {

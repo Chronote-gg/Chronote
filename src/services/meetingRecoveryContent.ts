@@ -168,7 +168,10 @@ export function transcriptionInput(
   effect: TranscriptionContentInput["effect"],
   artifacts?: RecoveryArtifactScope,
 ): TranscriptionContentInput {
-  if (context.settings.availability !== "available")
+  if (
+    context.settings.availability !== "available" ||
+    context.context.availability !== "available"
+  )
     throw new InvalidRecoveryContent(
       "Original transcription inputs unavailable",
     );

@@ -176,7 +176,6 @@ export async function runTranscriptionQualityCase(input: {
         );
         const guarded = await guardTranscription({
           raw,
-          keywords,
           audioSeconds,
           noiseGateMetrics:
             input.pcm.length &&

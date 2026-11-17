@@ -58,6 +58,7 @@ const buildMeeting = (): MeetingData => {
     runtimeConfig: {
       dictionary: {
         maxEntries: 10,
+        maxCharsTranscription: 200,
         maxCharsContext: 500,
       },
     },
@@ -128,6 +129,7 @@ describe("transcriptionPromptService", () => {
       dictionaryEntries: buildMeeting().dictionaryEntries,
       dictionaryBudgets: {
         maxEntries: 10,
+        maxCharsTranscription: 400,
         maxCharsContext: 400,
       },
     });

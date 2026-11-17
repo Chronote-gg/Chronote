@@ -319,30 +319,6 @@ test.each([
   await transcribeSnippet(dictionaryMeeting(), snippet);
   expect(mockCreate.mock.calls[0][0]).not.toHaveProperty("keywords");
 });
-test.each([
-  ["Kwylt, Xaerith, Brightwater.", true],
-  ["Kwylt? Xaerith!", false],
-])("keyword list guard on %s: %s", async (answer, listed) => {
-  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-  mockAssess.mockResolvedValue(assessment("speech"));
-  const meeting = dictionaryMeeting();
-  meeting.runtimeConfig!.transcription.suppressionEnabled = true;
-  for (const term of ["Xaerith", "Brightwater"]) {
-    meeting.dictionaryEntries!.push({
-      ...meeting.dictionaryEntries![0],
-      termKey: term.toLowerCase(),
-      term,
-    });
-  }
-  mockCreate.mockImplementation(async ({ file }) => {
-    await consumeFile(file);
-    return { text: answer, logprobs: [{ logprob: 0 }] };
-  });
-  await transcribeSnippet(meeting, snippet);
-  const flags = warn.mock.calls.flatMap(([, review]) => review?.flags ?? []);
-  expect(flags.includes("suppressed_keyword_list")).toBe(listed);
-  warn.mockRestore();
-});
 test("off supplies the baseline without acquiring a detector", async () => {
   expect(await transcribeSnippet(buildMeeting("off"), snippet)).toMatchObject({
     status: "succeeded",

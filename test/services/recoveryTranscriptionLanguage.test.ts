@@ -85,3 +85,14 @@ test("recovery sends the saved dictionary terms as keywords", async () => {
   });
   expect(request.keywords).toEqual(["Kwylt", "Xaerith"]);
 });
+
+test("recovery refuses a recording whose saved context was unavailable", async () => {
+  const { payload } = await recoveryFixture();
+  const context = generationContextSchema.parse({
+    ...payload,
+    context: { ...payload.context, availability: "unavailable" },
+  });
+  expect(() =>
+    transcriptionInput(context, new AbortController().signal, (run) => run()),
+  ).toThrow("Original transcription inputs unavailable");
+});
