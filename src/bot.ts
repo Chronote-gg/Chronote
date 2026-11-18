@@ -101,6 +101,7 @@ import {
 } from "./commands/contactFeedback";
 import { config } from "./services/configService";
 import { startChronoteAboutRefresh } from "./services/chronoteAboutService";
+import { getChronoteDemo } from "./services/chronoteDemo";
 import {
   handleEditTagsButton,
   handleEditTagsModal,
@@ -984,11 +985,21 @@ async function handleUserJoin(newState: VoiceState) {
       return;
     }
     try {
-      // Check for specific channel setting
-      let autoRecordSetting = await getAutoRecordSettingByChannel(
-        newState.guild.id,
-        newState.channelId!,
-      );
+      const demo = await getChronoteDemo();
+      const isDemoChannel =
+        demo?.guildId === newState.guild.id &&
+        demo.voiceChannelId === newState.channel.id;
+      let autoRecordSetting = isDemoChannel
+        ? {
+            enabled: true,
+            recordAll: false,
+            channelId: newState.channel.id,
+            tags: undefined,
+          }
+        : await getAutoRecordSettingByChannel(
+            newState.guild.id,
+            newState.channel.id,
+          );
 
       // If no specific setting, check for record-all setting
       if (!autoRecordSetting) {

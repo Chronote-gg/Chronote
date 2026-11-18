@@ -114,7 +114,7 @@ export async function refreshChronoteAbout(client: Client): Promise<void> {
       `### ${formatCount.format(client.guilds.cache.size)} servers · ${formatCount.format(completed)} meetings · ${formatCount.format(Math.floor(seconds / 3600))} hours`,
       "Chronote records Discord voice meetings and generates transcripts and notes. Search meetings you have access to or ask questions with links back to the source.",
       "**Get started**\n[Add Chronote](https://chronote.gg/join) · [Open portal](https://chronote.gg/portal) · [Docs](https://docs.chronote.gg/)",
-      `**Try the demo**\nJoin <#${demo.voiceChannelId}>, run \`/startmeeting\` if recording hasn’t started, and talk about a made-up topic. End the recording to get your notes in <#${demo.outputChannelId}>.`,
+      `**Try the demo**\nJoining <#${demo.voiceChannelId}> starts recording automatically. Talk about a made-up topic, then end the recording to see your notes in <#${demo.outputChannelId}>.`,
       demo.supportChannelId &&
         `**Need help?**\nAsk in <#${demo.supportChannelId}>.`,
     ]
