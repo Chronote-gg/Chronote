@@ -233,6 +233,9 @@ export async function resolveConfigSnapshot(
   }
 
   CONFIG_REGISTRY.forEach((entry) => {
+    // Meeting and server snapshots can be visible outside the demo guild.
+    if (entry.key === CONFIG_KEYS.demo.channels) return;
+
     const resolved = resolveEntryValue({
       entry,
       chain,
