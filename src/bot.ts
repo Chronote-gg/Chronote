@@ -100,6 +100,7 @@ import {
   isContactFeedbackModal,
 } from "./commands/contactFeedback";
 import { config } from "./services/configService";
+import { startChronoteAboutRefresh } from "./services/chronoteAboutService";
 import {
   handleEditTagsButton,
   handleEditTagsModal,
@@ -738,6 +739,7 @@ export const isBotGatewayReady = () => client.isReady();
 /** Runs once, when this worker first becomes eligible: queued controls, commands and occupied channels. */
 export function startEligibleBotWork(): void {
   startMeetingControlCommandWorker(client);
+  startChronoteAboutRefresh(client);
   void (async () => {
     await setupApplicationCommands();
     await reevaluateOccupiedVoiceChannels();

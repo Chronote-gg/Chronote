@@ -36,6 +36,9 @@ import {
   buildMeetingResultMessages,
   presentationFromMeeting,
 } from "../../src/embed";
+import { getChronoteDemo } from "../../src/services/chronoteDemo";
+jest.mock("../../src/services/chronoteDemo");
+
 import { claimSummaryUpgrade } from "../../src/services/summaryUpgradeService";
 import { DiscordMessageHttpError } from "../../src/services/discordMessageEditor";
 import {
@@ -120,6 +123,59 @@ const withoutTimestamps = (message: {
 });
 
 const missingStart = () => history({ startMessageId: "999" });
+
+test("demo delivery pings only the starter on the first notes post", async () => {
+  const starter = "200000000000000001";
+  const row = history({
+    guildId: "200000000000000010",
+    channelId: "200000000000000011",
+    textChannelId: "200000000000000012",
+    startTriggeredByUserId: starter,
+  });
+  jest
+    .mocked(getChronoteDemo)
+    .mockResolvedValue({
+      guildId: row.guildId,
+      voiceChannelId: row.channelId,
+      outputChannelId: row.textChannelId,
+    });
+  const { transport } = fakeDiscord(row.textChannelId);
+  const created = jest.spyOn(transport, "createMessage");
+  const { save, current } = savingRow(row);
+  await expect(
+    deliverMeeting({
+      history: row,
+      transport,
+      save,
+      signal: signal(),
+      path: "live",
+    }),
+  ).resolves.toEqual({ kind: "delivered" });
+  expect(current().notesChannelId).toBe(row.textChannelId);
+  expect(created.mock.calls.filter(([call]) => call.payload.content)).toEqual([
+    [
+      expect.objectContaining({
+        channelId: row.textChannelId,
+        payload: expect.objectContaining({
+          content: `<@${starter}> Your Chronote demo notes are ready.`,
+          allowed_mentions: { parse: [], users: [starter] },
+        }),
+      }),
+    ],
+  ]);
+  created.mockClear();
+  await expect(
+    deliverMeeting({
+      history: current(),
+      transport,
+      save,
+      signal: signal(),
+      path: "live",
+    }),
+  ).resolves.toEqual({ kind: "delivered" });
+  expect(created).not.toHaveBeenCalled();
+});
+
 const summaryPosts = (discord: ReturnType<typeof fakeDiscord>) =>
   discord.requests.filter(
     (r) =>

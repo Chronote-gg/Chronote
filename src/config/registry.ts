@@ -584,6 +584,17 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     ui: { type: "text", placeholder: "project x, roadmap, weekly" },
   },
   {
+    key: "demo.channels",
+    label: "Guided demo channels",
+    description:
+      "Discord IDs for one demo server. Provide a JSON object with guildId, voiceChannelId, outputChannelId, and optional aboutChannelId and supportChannelId.",
+    category: "Notes",
+    group: "Advanced",
+    valueType: "string",
+    scopes: { global: scope(true, false, "superadmin", "text") },
+    ui: { type: "text" },
+  },
+  {
     key: "announcements.operatorNotices.enabled",
     label: "Chronote operator notices",
     description:

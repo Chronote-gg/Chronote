@@ -16,6 +16,9 @@ import {
   resolveMeetingNotesChannel,
 } from "../../src/services/meetingNotesDestinationService";
 
+import { getChronoteDemo } from "../../src/services/chronoteDemo";
+jest.mock("../../src/services/chronoteDemo");
+
 const client = new Client({ intents: [] });
 const guild: Guild = Reflect.construct(Guild, [client, { id: "guild-1" }]);
 const destination: TextChannel = Reflect.construct(TextChannel, [
@@ -62,6 +65,36 @@ test("explicit_destination_wins", async () => {
   expect(fetchChannel).toHaveBeenCalledWith("notes-1");
   expect(getGlobalConfigValues).not.toHaveBeenCalled();
   expect(listConfigOverridesForScope).not.toHaveBeenCalled();
+});
+
+test("the exact demo voice channel routes to its dedicated output", async () => {
+  const guildId = "200000000000000010";
+  const voiceChannelId = "200000000000000011";
+  const outputId = "200000000000000012";
+  jest
+    .mocked(getChronoteDemo)
+    .mockResolvedValue({ guildId, voiceChannelId, outputChannelId: outputId });
+  const demoGuild: Guild = Reflect.construct(Guild, [client, { id: guildId }]);
+  const output: TextChannel = Reflect.construct(TextChannel, [
+    demoGuild,
+    { id: outputId, type: ChannelType.GuildText },
+    demoGuild.client,
+  ]);
+  const fetch = jest
+    .spyOn(demoGuild.channels, "fetch")
+    .mockResolvedValue(output);
+  const args = {
+    guild: demoGuild,
+    voiceChannelId,
+    explicitChannelId: "another-text-channel",
+  };
+  await expect(resolveMeetingNotesChannel(args)).resolves.toBe(output);
+  expect(fetch).toHaveBeenCalledWith(outputId);
+  expect(getGlobalConfigValues).not.toHaveBeenCalled();
+
+  fetch.mockResolvedValue(null);
+  await expect(resolveMeetingNotesChannel(args)).rejects.toThrow();
+  expect(fetch.mock.calls).toEqual([[outputId], [outputId]]);
 });
 
 test("voice_override_wins", async () => {

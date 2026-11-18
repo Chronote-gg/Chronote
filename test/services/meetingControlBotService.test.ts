@@ -23,6 +23,10 @@ import {
   type MeetingControlCommand,
 } from "../../src/types/meetingControl";
 
+jest.mock("../../src/services/chronoteDemo", () => ({
+  getChronoteDemo: async () => undefined,
+}));
+
 const fixture = createMeetingStartDiscordFixture();
 let serverDestination: string | undefined;
 let voiceDestination: string | undefined;
@@ -82,7 +86,7 @@ test("omitted remote destination uses the current voice settings", async () => {
   expect(send).toHaveBeenCalledTimes(1);
 });
 
-test("an explicit remote destination keeps its existing validation and skips config", async () => {
+test("an explicit remote destination keeps its existing validation and skips notes overrides", async () => {
   const result = await executeMeetingControlCommand(
     fixture.client,
     command("explicit-notes"),

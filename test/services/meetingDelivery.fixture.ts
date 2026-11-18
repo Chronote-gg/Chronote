@@ -94,7 +94,7 @@ export type RecordedRequest = {
 };
 
 /** A fetch-level Discord with one text channel that keeps the messages it is sent. */
-export function fakeDiscord() {
+export function fakeDiscord(channelId = TEXT_CHANNEL_ID) {
   const messages: DiscordEditorMessage[] = [
     discordMessage(START_MESSAGE_ID, { embeds: [{ title: "Processing" }] }),
   ];
@@ -171,7 +171,7 @@ export function fakeDiscord() {
     if (injected) return injected;
     if (path === "/users/@me") return json({ id: BOT_ID, bot: true });
     const match = /^\/channels\/(\d+)\/messages(?:\/(\d+))?$/.exec(path);
-    if (!match || match[1] !== TEXT_CHANNEL_ID) return notFound();
+    if (!match || match[1] !== channelId) return notFound();
     if (request.method === "GET") return listMessages(url.searchParams);
     if (request.method === "POST") return createMessage(request.body);
     return changeMessage(request, match[2]);

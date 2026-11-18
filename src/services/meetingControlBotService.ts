@@ -207,13 +207,11 @@ const executeStartMeeting = async (
   }
   assertSameVoiceChannel(state, voiceChannel);
 
-  const textChannel =
-    input.textChannelId !== undefined
-      ? await fetchTextChannel(guild, input.textChannelId)
-      : await resolveMeetingNotesChannel({
-          guild,
-          voiceChannelId: voiceChannel.id,
-        });
+  const textChannel = await resolveMeetingNotesChannel({
+    guild,
+    voiceChannelId: voiceChannel.id,
+    explicitChannelId: input.textChannelId,
+  });
   const member = await fetchMember(guild, userId);
   assertMemberCanUseTextChannel(member, textChannel);
   const creator = await client.users.fetch(userId);
