@@ -673,6 +673,7 @@ export async function handleAutoStartMeeting(
     startReason?: MeetingStartReason;
     startTriggeredByUserId?: string;
     autoRecordRule?: AutoRecordRule;
+    guidedDemo?: boolean;
   },
 ) {
   const guildId = voiceChannel.guild.id;
@@ -754,6 +755,7 @@ export async function handleAutoStartMeeting(
     startReason: options?.startReason,
     startTriggeredByUserId: options?.startTriggeredByUserId,
     autoRecordRule: options?.autoRecordRule,
+    skipAutoRecordCancellation: options?.guidedDemo,
     tags: options?.tags,
     onTimeout: (meeting) => handleEndMeetingOther(client, meeting),
     onEndMeeting: (meeting) => handleEndMeetingOther(client, meeting),
@@ -812,9 +814,16 @@ export async function handleAutoStartMeeting(
     ...components,
   );
 
+  const starterId = options?.startTriggeredByUserId;
   const message = await textChannel.send({
     embeds: [embed],
     components: [row],
+    ...(options?.guidedDemo && starterId && /^\d{17,20}$/.test(starterId)
+      ? {
+          content: `<@${starterId}> Your Chronote demo recording has started.`,
+          allowedMentions: { parse: [], users: [starterId] },
+        }
+      : {}),
   });
   await recordStartMessage(meeting, message.id);
 

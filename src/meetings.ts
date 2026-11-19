@@ -140,6 +140,7 @@ export interface MeetingInitOptions {
   startReason?: MeetingStartReason;
   startTriggeredByUserId?: string;
   autoRecordRule?: AutoRecordRule;
+  skipAutoRecordCancellation?: boolean;
   onTimeout?: (meeting: MeetingData) => void;
   tags?: string[];
   liveVoiceEnabled?: boolean;
@@ -622,6 +623,9 @@ export async function buildMeetingSession(
     userId: meeting.creator.id,
     tier: subscriptionTier,
   });
+  if (options.skipAutoRecordCancellation) {
+    meeting.runtimeConfig.autoRecordCancellation.enabled = false;
+  }
   signal.throwIfAborted();
   prepareMeetingOutputs(meeting, liveAudioPlayer);
   watchConnectionErrors(meeting, connection, textChannel, isAutoRecording);

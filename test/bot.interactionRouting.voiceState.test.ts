@@ -203,6 +203,7 @@ describe("voice state", () => {
     expect(mockWorld.autostarts[0][3]).toMatchObject({
       startReason: "auto_record_channel",
       startTriggeredByUserId: USER,
+      guidedDemo: true,
       autoRecordRule: { mode: "channel", channelId: "synthetic-voice" },
     });
     await voiceUpdate(workerA, null, "other-voice");

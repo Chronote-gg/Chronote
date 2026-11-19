@@ -144,34 +144,50 @@ test("auto refusal passes a real trigger to the shared delivery policy", async (
   expect(initializeMeeting).not.toHaveBeenCalled();
 });
 
-test("an auto start enforces the tier per-meeting cap instead of the global maximum", async () => {
-  const freeLimits = getLimitsForTier("free");
-  mockFreeGuildLimits(ROLLING_CAP_ABOVE_RECORDED_USAGE_MINUTES);
-  jest.mocked(initializeMeeting).mockResolvedValue({
-    guildId: guild.id,
-    meetingId: "auto-1",
-    voiceChannel,
-    textChannel,
-    startTime: new Date("2026-10-16T00:00:00Z"),
-  } as never);
-  jest
-    .mocked(textChannel.send)
-    .mockResolvedValue({ id: "start-message" } as never);
+test.each([false, true])(
+  "an auto start enforces the tier cap and only pings the demo starter (demo=%s)",
+  async (guidedDemo) => {
+    const starter = "200000000000000001";
+    const freeLimits = getLimitsForTier("free");
+    mockFreeGuildLimits(ROLLING_CAP_ABOVE_RECORDED_USAGE_MINUTES);
+    jest.mocked(initializeMeeting).mockResolvedValue({
+      guildId: guild.id,
+      meetingId: "auto-1",
+      voiceChannel,
+      textChannel,
+      startTime: new Date("2026-10-16T00:00:00Z"),
+    } as never);
+    jest
+      .mocked(textChannel.send)
+      .mockResolvedValue({ id: "start-message" } as never);
 
-  await expect(
-    handleAutoStartMeeting(client, voiceChannel, textChannel, {
-      startTriggeredByUserId: creator.id,
-    }),
-  ).resolves.toBe(true);
+    await expect(
+      handleAutoStartMeeting(client, voiceChannel, textChannel, {
+        startTriggeredByUserId: starter,
+        guidedDemo,
+      }),
+    ).resolves.toBe(true);
 
-  expect(freeLimits.maxMeetingDurationMs).toBeLessThan(
-    MAXIMUM_MEETING_DURATION,
-  );
-  expect(initializeMeeting).toHaveBeenCalledWith(
-    expect.objectContaining({
-      isAutoRecording: true,
-      maxMeetingDurationMs: freeLimits.maxMeetingDurationMs,
-      maxMeetingDurationPretty: freeLimits.maxMeetingDurationPretty,
-    }),
-  );
-});
+    expect(freeLimits.maxMeetingDurationMs).toBeLessThan(
+      MAXIMUM_MEETING_DURATION,
+    );
+    expect(initializeMeeting).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isAutoRecording: true,
+        skipAutoRecordCancellation: guidedDemo,
+        maxMeetingDurationMs: freeLimits.maxMeetingDurationMs,
+        maxMeetingDurationPretty: freeLimits.maxMeetingDurationPretty,
+      }),
+    );
+    const payload = jest.mocked(textChannel.send).mock.calls[0][0];
+    if (guidedDemo) {
+      expect(payload).toMatchObject({
+        content: `<@${starter}> Your Chronote demo recording has started.`,
+        allowedMentions: { parse: [], users: [starter] },
+      });
+    } else {
+      expect(payload).not.toHaveProperty("content");
+      expect(payload).not.toHaveProperty("allowedMentions");
+    }
+  },
+);

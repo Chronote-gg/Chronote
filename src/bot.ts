@@ -1071,6 +1071,7 @@ async function handleUserJoin(newState: VoiceState) {
           startReason,
           startTriggeredByUserId,
           autoRecordRule,
+          guidedDemo: isDemoChannel && textChannel.id === demo.outputChannelId,
         });
         return;
       }
