@@ -55,6 +55,7 @@ export const CONFIG_KEYS = {
   announcements: {
     operatorNoticesEnabled: "announcements.operatorNotices.enabled",
   },
+  demo: { channels: "demo.channels" },
   meetings: {
     attendeeAccessEnabled: "meetings.attendeeAccess.enabled",
     sharingPolicy: "meetings.sharing.policy",

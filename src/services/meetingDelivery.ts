@@ -11,6 +11,7 @@ import type { NotesDeliveryTiming } from "../types/meetingNotesTiming";
 import type { DeliveryResult, MeetingDelivery } from "../types/meetingDelivery";
 import type { RecordingRecoveryState } from "../types/meetingLifecycle";
 import { config } from "./configService";
+import { getChronoteDemo } from "./chronoteDemo";
 import {
   createDiscordMessageTransport,
   DiscordMessageHttpError,
@@ -23,7 +24,7 @@ export type RestMessage = {
   embeds: Record<string, unknown>[];
   components?: Record<string, unknown>[];
   content?: string;
-  allowed_mentions: { parse: [] };
+  allowed_mentions: { parse: []; users?: string[] };
 };
 
 export type DeliveryOutcome =
@@ -343,6 +344,32 @@ async function placeSummary(
   };
 }
 
+async function resolveDemoStarter(history: MeetingHistory, channelId: string) {
+  const starterId = history.startTriggeredByUserId;
+  if (!starterId || !/^\d{17,20}$/.test(starterId)) return undefined;
+  const demo = await getChronoteDemo().catch(() => undefined);
+  if (
+    demo?.guildId !== history.guildId ||
+    demo.voiceChannelId !== history.channelId ||
+    demo.outputChannelId !== channelId
+  )
+    return undefined;
+  return starterId;
+}
+
+function withDemoNotesMention(
+  chunk: RestMessage,
+  starterId: string | undefined,
+  first: boolean,
+): RestMessage {
+  if (!first || !starterId) return chunk;
+  return {
+    ...chunk,
+    content: `<@${starterId}> Your Chronote demo notes are ready.`,
+    allowed_mentions: { parse: [], users: [starterId] },
+  };
+}
+
 export async function deliverMeeting(input: {
   history: MeetingHistory;
   save(patch: DeliveryPatch): Promise<MeetingHistory | undefined>;
@@ -366,11 +393,12 @@ export async function deliverMeeting(input: {
   const readback = () =>
     (channelRead ??= readChannel({ transport, channelId, history, signal }));
   try {
+    const demoStarter = await resolveDemoStarter(history, channelId);
     const placed = await placeSummary(
       transport,
       channelId,
       history,
-      summary,
+      demoStarter ? { ...summary, content: "" } : summary,
       signal,
       readback,
     );
@@ -402,8 +430,13 @@ export async function deliverMeeting(input: {
     }
     for (const chunk of notes.slice(notesMessageIds.length)) {
       signal.throwIfAborted();
+      const payload = withDemoNotesMention(
+        chunk,
+        demoStarter,
+        notesMessageIds.length === 0,
+      );
       const created = createdMessageSchema.parse(
-        await transport.createMessage({ channelId, payload: chunk, signal }),
+        await transport.createMessage({ channelId, payload, signal }),
       );
       notesMessageIds.push(created.id);
       acknowledge(notesMessageIds.length === notes.length);

@@ -657,11 +657,19 @@ export async function handleRequestStartMeeting(
   }
 }
 
+function guidedDemoStartMention(demo?: boolean, starterId?: string) {
+  if (!demo || !starterId || !/^\d{17,20}$/.test(starterId)) return {};
+  return {
+    content: `<@${starterId}> Your Chronote demo recording has started.`,
+    allowedMentions: { parse: [] as [], users: [starterId] },
+  };
+}
+
 export async function handleAutoStartMeeting(
   client: Client,
   voiceChannel: VoiceBasedChannel,
   textChannel: TextChannel,
-  options?: {
+  options: {
     assertAdmission?: () => Promise<void>;
     tags?: string[];
     liveVoiceEnabled?: boolean;
@@ -673,11 +681,12 @@ export async function handleAutoStartMeeting(
     startReason?: MeetingStartReason;
     startTriggeredByUserId?: string;
     autoRecordRule?: AutoRecordRule;
-  },
+    guidedDemo?: boolean;
+  } = {},
 ) {
   const guildId = voiceChannel.guild.id;
   const botMember = voiceChannel.guild.members.cache.get(client.user!.id);
-  await options?.assertAdmission?.();
+  await options.assertAdmission?.();
   if (!botMember) {
     await textChannel.send(
       `Cannot start auto-recording - bot not found in server.`,
@@ -696,7 +705,7 @@ export async function handleAutoStartMeeting(
       voiceChannel,
       textChannel,
       botMember,
-      startTriggeredByUserId: options?.startTriggeredByUserId,
+      startTriggeredByUserId: options.startTriggeredByUserId,
     });
     return false;
   }
@@ -709,12 +718,12 @@ export async function handleAutoStartMeeting(
   const { limits, subscription } = await getGuildLimits(guildId, at);
   const limitNotice = await getLimitNotice(guildId, limits, at);
   if (limitNotice) {
-    await options?.assertAdmission?.();
+    await options.assertAdmission?.();
     await notifyRecordingLimit(
       {
         ...limitNotice,
         guildId,
-        userId: options?.startTriggeredByUserId,
+        userId: options.startTriggeredByUserId,
         limitType: "weekly_recording",
         limitSurface: "auto_start",
         outcome: "blocked_start",
@@ -751,18 +760,19 @@ export async function handleAutoStartMeeting(
     generateNotes: true, // Always generate notes for auto-recordings
     initialInteraction: undefined, // No interaction for auto-recordings
     isAutoRecording: true,
-    startReason: options?.startReason,
-    startTriggeredByUserId: options?.startTriggeredByUserId,
-    autoRecordRule: options?.autoRecordRule,
-    tags: options?.tags,
+    startReason: options.startReason,
+    startTriggeredByUserId: options.startTriggeredByUserId,
+    autoRecordRule: options.autoRecordRule,
+    skipAutoRecordCancellation: options.guidedDemo,
+    tags: options.tags,
     onTimeout: (meeting) => handleEndMeetingOther(client, meeting),
     onEndMeeting: (meeting) => handleEndMeetingOther(client, meeting),
-    liveVoiceEnabled: options?.liveVoiceEnabled,
-    liveVoiceCommandsEnabled: options?.liveVoiceCommandsEnabled,
-    liveVoiceTtsVoice: options?.liveVoiceTtsVoice,
-    chatTtsEnabled: options?.chatTtsEnabled,
-    chatTtsVoice: options?.chatTtsVoice,
-    chatTtsSpeakerPrefixMode: options?.chatTtsSpeakerPrefixMode,
+    liveVoiceEnabled: options.liveVoiceEnabled,
+    liveVoiceCommandsEnabled: options.liveVoiceCommandsEnabled,
+    liveVoiceTtsVoice: options.liveVoiceTtsVoice,
+    chatTtsEnabled: options.chatTtsEnabled,
+    chatTtsVoice: options.chatTtsVoice,
+    chatTtsSpeakerPrefixMode: options.chatTtsSpeakerPrefixMode,
     maxMeetingDurationMs: limits.maxMeetingDurationMs,
     maxMeetingDurationPretty: limits.maxMeetingDurationPretty,
     subscriptionTier: subscription.tier,
@@ -815,6 +825,10 @@ export async function handleAutoStartMeeting(
   const message = await textChannel.send({
     embeds: [embed],
     components: [row],
+    ...guidedDemoStartMention(
+      options.guidedDemo,
+      options.startTriggeredByUserId,
+    ),
   });
   await recordStartMessage(meeting, message.id);
 

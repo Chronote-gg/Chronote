@@ -6,6 +6,7 @@ import {
   type TextChannel,
 } from "discord.js";
 import { CONFIG_KEYS } from "../config/keys";
+import { getChronoteDemo } from "./chronoteDemo";
 import {
   getSnapshotString,
   resolveConfigSnapshot,
@@ -19,9 +20,25 @@ export async function resolveMeetingNotesChannel(input: {
   voiceChannelId: string;
   explicitChannelId?: string;
   invocationChannelId?: string;
+  fetchExplicitChannel?: (
+    guild: Guild,
+    channelId: string,
+  ) => Promise<TextChannel>;
 }): Promise<TextChannel> {
   try {
+    const demo = await getChronoteDemo();
+    const demoOutput =
+      demo?.guildId === input.guild.id &&
+      demo.voiceChannelId === input.voiceChannelId
+        ? demo.outputChannelId
+        : undefined;
+    if (!demoOutput && input.explicitChannelId && input.fetchExplicitChannel)
+      return await input.fetchExplicitChannel(
+        input.guild,
+        input.explicitChannelId,
+      );
     const configuredChannelId =
+      demoOutput ??
       input.explicitChannelId ??
       getSnapshotString(
         await resolveConfigSnapshot(

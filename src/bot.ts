@@ -52,7 +52,7 @@ import {
 } from "./commands/startMeeting";
 import { handleAutoRecordCommand } from "./commands/autorecord";
 import { handleContextCommand } from "./commands/context";
-import { getAutoRecordSettingByChannel } from "./services/autorecordService";
+import { resolveVoiceAutoRecord } from "./services/voiceAutoRecordSettings";
 import { resolveMeetingVoiceSettings } from "./services/meetingVoiceSettingsService";
 import {
   getSnapshotString,
@@ -100,6 +100,7 @@ import {
   isContactFeedbackModal,
 } from "./commands/contactFeedback";
 import { config } from "./services/configService";
+import { startChronoteAboutRefresh } from "./services/chronoteAboutService";
 import {
   handleEditTagsButton,
   handleEditTagsModal,
@@ -738,6 +739,7 @@ export const isBotGatewayReady = () => client.isReady();
 /** Runs once, when this worker first becomes eligible: queued controls, commands and occupied channels. */
 export function startEligibleBotWork(): void {
   startMeetingControlCommandWorker(client);
+  startChronoteAboutRefresh(client);
   void (async () => {
     await setupApplicationCommands();
     await reevaluateOccupiedVoiceChannels();
@@ -982,20 +984,8 @@ async function handleUserJoin(newState: VoiceState) {
       return;
     }
     try {
-      // Check for specific channel setting
-      let autoRecordSetting = await getAutoRecordSettingByChannel(
-        newState.guild.id,
-        newState.channelId!,
-      );
-
-      // If no specific setting, check for record-all setting
-      if (!autoRecordSetting) {
-        autoRecordSetting = await getAutoRecordSettingByChannel(
-          newState.guild.id,
-          "ALL",
-        );
-      }
-
+      const { setting: autoRecordSetting, demoOutputChannelId } =
+        await resolveVoiceAutoRecord(newState.guild.id, newState.channel.id);
       // If auto-record is enabled, start recording
       if (autoRecordSetting && autoRecordSetting.enabled) {
         let defaultTags: string[] | undefined;
@@ -1058,6 +1048,7 @@ async function handleUserJoin(newState: VoiceState) {
           startReason,
           startTriggeredByUserId,
           autoRecordRule,
+          guidedDemo: textChannel.id === demoOutputChannelId,
         });
         return;
       }

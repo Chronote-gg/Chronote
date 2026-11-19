@@ -5,6 +5,12 @@ slug: /getting-started
 
 This guide walks you through adding Chronote to your Discord server and running your first recorded meeting.
 
+## Try the guided demo
+
+If you see a demo voice channel linked in **About Chronote** on Discord, joining it starts recording automatically. Use a made-up topic since others with access to the demo output channel can see your notes.
+
+Chronote tags the person who started the demo when recording starts. Select **End Recording** on that post or leave the voice channel when you're done. Chronote posts the finished notes in the demo output channel and tags the same person again.
+
 ## Prerequisites
 
 - A Discord server where you have **Manage Server** permission.

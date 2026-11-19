@@ -191,6 +191,25 @@ describe("voice state", () => {
     expect(mockWorld.autostarts).toEqual([]);
   });
 
+  test("joining the bound demo voice channel starts automatically as that member", async () => {
+    mockWorld.demo = {
+      guildId: GUILD,
+      voiceChannelId: "synthetic-voice",
+      outputChannelId: "synthetic-notes",
+    };
+    await voiceUpdate(workerA, null, "synthetic-voice");
+    expect(eventsOf(workerA)).not.toContain("autorecord-evaluated");
+    expect(mockWorld.autostarts).toHaveLength(1);
+    expect(mockWorld.autostarts[0][3]).toMatchObject({
+      startReason: "auto_record_channel",
+      startTriggeredByUserId: USER,
+      guidedDemo: true,
+      autoRecordRule: { mode: "channel", channelId: "synthetic-voice" },
+    });
+    await voiceUpdate(workerA, null, "other-voice");
+    expect(mockWorld.autostarts).toHaveLength(1);
+  });
+
   test("a channel with no auto-record setting starts nothing", async () => {
     await voiceUpdate(workerA, null, "synthetic-voice");
     expect(mockWorld.autostarts).toEqual([]);

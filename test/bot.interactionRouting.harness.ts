@@ -45,6 +45,9 @@ export const mockWorld = {
   endRequests: [] as unknown[][],
   subscribeFailure: false,
   autoRecordAll: false,
+  demo: undefined as
+    | { guildId: string; voiceChannelId: string; outputChannelId: string }
+    | undefined,
   destinationMissing: false,
   suppressed: false,
   autostarts: [] as unknown[][],
@@ -232,6 +235,9 @@ jest.mock("../src/services/autoRecordJoinSuppressionService", () => {
     },
   };
 });
+jest.mock("../src/services/chronoteDemo", () => ({
+  getChronoteDemo: async () => mockWorld.demo,
+}));
 jest.mock("../src/services/autorecordService", () => {
   const worker = mockLoadingWorker();
   return {
@@ -451,6 +457,7 @@ export function useRoutingWorkers() {
     mockWorld.endRequests = [];
     mockWorld.subscribeFailure = false;
     mockWorld.autoRecordAll = false;
+    mockWorld.demo = undefined;
     mockWorld.destinationMissing = false;
     mockWorld.suppressed = false;
     mockWorld.autostarts = [];
