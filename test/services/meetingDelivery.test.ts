@@ -132,13 +132,11 @@ test("demo delivery pings only the starter on the first notes post", async () =>
     textChannelId: "200000000000000012",
     startTriggeredByUserId: starter,
   });
-  jest
-    .mocked(getChronoteDemo)
-    .mockResolvedValue({
-      guildId: row.guildId,
-      voiceChannelId: row.channelId,
-      outputChannelId: row.textChannelId,
-    });
+  jest.mocked(getChronoteDemo).mockResolvedValue({
+    guildId: row.guildId,
+    voiceChannelId: row.channelId,
+    outputChannelId: row.textChannelId,
+  });
   const { transport } = fakeDiscord(row.textChannelId);
   const created = jest.spyOn(transport, "createMessage");
   const { save, current } = savingRow(row);
