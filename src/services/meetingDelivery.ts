@@ -344,6 +344,28 @@ async function placeSummary(
   };
 }
 
+async function withDemoNotesMention(
+  chunk: RestMessage,
+  history: MeetingHistory,
+  channelId: string,
+  first: boolean,
+): Promise<RestMessage> {
+  const starterId = history.startTriggeredByUserId;
+  if (!first || !starterId || !/^\d{17,20}$/.test(starterId)) return chunk;
+  const demo = await getChronoteDemo().catch(() => undefined);
+  if (
+    demo?.guildId !== history.guildId ||
+    demo.voiceChannelId !== history.channelId ||
+    demo.outputChannelId !== channelId
+  )
+    return chunk;
+  return {
+    ...chunk,
+    content: `<@${starterId}> Your Chronote demo notes are ready.`,
+    allowed_mentions: { parse: [], users: [starterId] },
+  };
+}
+
 export async function deliverMeeting(input: {
   history: MeetingHistory;
   save(patch: DeliveryPatch): Promise<MeetingHistory | undefined>;
@@ -403,27 +425,12 @@ export async function deliverMeeting(input: {
     }
     for (const chunk of notes.slice(notesMessageIds.length)) {
       signal.throwIfAborted();
-      const starterId = history.startTriggeredByUserId;
-      const notifyDemoStarter =
-        notesMessageIds.length === 0 &&
-        starterId &&
-        /^\d{17,20}$/.test(starterId);
-      const demo = notifyDemoStarter
-        ? await getChronoteDemo().catch(() => undefined)
-        : undefined;
-      const isDemoOutput =
-        demo &&
-        demo.guildId === history.guildId &&
-        demo.voiceChannelId === history.channelId &&
-        demo.outputChannelId === channelId;
-      const payload: RestMessage =
-        isDemoOutput && starterId
-          ? {
-              ...chunk,
-              content: `<@${starterId}> Your Chronote demo notes are ready.`,
-              allowed_mentions: { parse: [], users: [starterId] },
-            }
-          : chunk;
+      const payload = await withDemoNotesMention(
+        chunk,
+        history,
+        channelId,
+        notesMessageIds.length === 0,
+      );
       const created = createdMessageSchema.parse(
         await transport.createMessage({ channelId, payload, signal }),
       );

@@ -35,6 +35,11 @@ type OverrideMaps = {
   meeting: Map<string, unknown>;
 };
 
+// Meeting and server snapshots can be visible outside the demo guild.
+const SNAPSHOT_CONFIG_ENTRIES = CONFIG_REGISTRY.filter(
+  (entry) => entry.key !== CONFIG_KEYS.demo.channels,
+);
+
 const EMPTY_MAP = new Map<string, unknown>();
 
 const warnedRetired = new Set<unknown>();
@@ -232,10 +237,7 @@ export async function resolveConfigSnapshot(
     experimentalEnabled = Boolean(experimentalCoerced.value);
   }
 
-  CONFIG_REGISTRY.forEach((entry) => {
-    // Meeting and server snapshots can be visible outside the demo guild.
-    if (entry.key === CONFIG_KEYS.demo.channels) return;
-
+  SNAPSHOT_CONFIG_ENTRIES.forEach((entry) => {
     const resolved = resolveEntryValue({
       entry,
       chain,

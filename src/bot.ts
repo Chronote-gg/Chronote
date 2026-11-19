@@ -52,7 +52,7 @@ import {
 } from "./commands/startMeeting";
 import { handleAutoRecordCommand } from "./commands/autorecord";
 import { handleContextCommand } from "./commands/context";
-import { getAutoRecordSettingByChannel } from "./services/autorecordService";
+import { resolveVoiceAutoRecord } from "./services/voiceAutoRecordSettings";
 import { resolveMeetingVoiceSettings } from "./services/meetingVoiceSettingsService";
 import {
   getSnapshotString,
@@ -101,7 +101,6 @@ import {
 } from "./commands/contactFeedback";
 import { config } from "./services/configService";
 import { startChronoteAboutRefresh } from "./services/chronoteAboutService";
-import { getChronoteDemo } from "./services/chronoteDemo";
 import {
   handleEditTagsButton,
   handleEditTagsModal,
@@ -985,30 +984,8 @@ async function handleUserJoin(newState: VoiceState) {
       return;
     }
     try {
-      const demo = await getChronoteDemo();
-      const isDemoChannel =
-        demo?.guildId === newState.guild.id &&
-        demo.voiceChannelId === newState.channel.id;
-      let autoRecordSetting = isDemoChannel
-        ? {
-            enabled: true,
-            recordAll: false,
-            channelId: newState.channel.id,
-            tags: undefined,
-          }
-        : await getAutoRecordSettingByChannel(
-            newState.guild.id,
-            newState.channel.id,
-          );
-
-      // If no specific setting, check for record-all setting
-      if (!autoRecordSetting) {
-        autoRecordSetting = await getAutoRecordSettingByChannel(
-          newState.guild.id,
-          "ALL",
-        );
-      }
-
+      const { setting: autoRecordSetting, demoOutputChannelId } =
+        await resolveVoiceAutoRecord(newState.guild.id, newState.channel.id);
       // If auto-record is enabled, start recording
       if (autoRecordSetting && autoRecordSetting.enabled) {
         let defaultTags: string[] | undefined;
@@ -1071,7 +1048,7 @@ async function handleUserJoin(newState: VoiceState) {
           startReason,
           startTriggeredByUserId,
           autoRecordRule,
-          guidedDemo: isDemoChannel && textChannel.id === demo.outputChannelId,
+          guidedDemo: textChannel.id === demoOutputChannelId,
         });
         return;
       }

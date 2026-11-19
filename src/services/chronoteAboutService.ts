@@ -4,6 +4,7 @@ import {
   PermissionFlagsBits,
   type APIEmbed,
   type Client,
+  type TextChannel,
 } from "discord.js";
 import { dynamoDbClient, tableName } from "../repositories/dynamoClient";
 import { getChronoteDemo } from "./chronoteDemo";
@@ -53,9 +54,37 @@ export async function refreshChronoteAbout(client: Client): Promise<void> {
   )
     return;
 
+  const message = await findAboutPost(channel, client.user);
+  const { completed, seconds } = await countCompletedMeetings();
+  const embed = buildAboutEmbed(
+    demo,
+    client.guilds.cache.size,
+    completed,
+    seconds,
+  );
+
+  if (!isEligible() || isShuttingDown()) return;
+  if (message) {
+    if (message.embeds.length !== 1 || !message.embeds[0].equals(embed))
+      await message.edit({ embeds: [embed] });
+    return;
+  }
+
+  // Discord deduplicates concurrent creates during a worker handoff.
+  await channel.send({
+    embeds: [embed],
+    nonce: "chronote-about",
+    enforceNonce: true,
+  });
+}
+
+async function findAboutPost(
+  channel: TextChannel,
+  clientUser: NonNullable<Client["user"]>,
+) {
   if (
     !channel
-      .permissionsFor(client.user)
+      .permissionsFor(clientUser)
       ?.has(PermissionFlagsBits.ReadMessageHistory)
   ) {
     throw new Error("Chronote needs Read Message History in #chronote-about");
@@ -71,7 +100,7 @@ export async function refreshChronoteAbout(client: Client): Promise<void> {
     });
     message = messages.find(
       (candidate) =>
-        candidate.author.id === client.user.id &&
+        candidate.author.id === clientUser.id &&
         candidate.embeds.some(
           (embed) => embed.title === ABOUT_TITLE && embed.url === ABOUT_URL,
         ),
@@ -79,6 +108,10 @@ export async function refreshChronoteAbout(client: Client): Promise<void> {
     before = messages.size === 100 ? messages.last()?.id : undefined;
   } while (!message && before);
 
+  return message;
+}
+
+async function countCompletedMeetings() {
   const signal = AbortSignal.timeout(30_000);
   let completed = 0;
   let seconds = 0;
@@ -107,11 +140,20 @@ export async function refreshChronoteAbout(client: Client): Promise<void> {
     cursor = page.LastEvaluatedKey;
   } while (cursor);
 
-  const embed: APIEmbed = {
+  return { completed, seconds };
+}
+
+function buildAboutEmbed(
+  demo: NonNullable<Awaited<ReturnType<typeof getChronoteDemo>>>,
+  servers: number,
+  completed: number,
+  seconds: number,
+): APIEmbed {
+  return {
     title: ABOUT_TITLE,
     url: ABOUT_URL,
     description: [
-      `### ${formatCount.format(client.guilds.cache.size)} servers · ${formatCount.format(completed)} meetings · ${formatCount.format(Math.floor(seconds / 3600))} hours`,
+      `### ${formatCount.format(servers)} servers · ${formatCount.format(completed)} meetings · ${formatCount.format(Math.floor(seconds / 3600))} hours`,
       "Chronote records Discord voice meetings and generates transcripts and notes. Search meetings you have access to or ask questions with links back to the source.",
       "**Get started**\n[Add Chronote](https://chronote.gg/join) · [Open portal](https://chronote.gg/portal) · [Docs](https://docs.chronote.gg/)",
       `**Try the demo**\nJoining <#${demo.voiceChannelId}> starts recording automatically. Talk about a made-up topic, then end the recording to see your notes in <#${demo.outputChannelId}>.`,
@@ -123,18 +165,4 @@ export async function refreshChronoteAbout(client: Client): Promise<void> {
     color: 0x6f75ff,
     thumbnail: { url: "https://chronote.gg/logo192.png" },
   };
-
-  if (!isEligible() || isShuttingDown()) return;
-  if (message) {
-    if (message.embeds.length !== 1 || !message.embeds[0].equals(embed))
-      await message.edit({ embeds: [embed] });
-    return;
-  }
-
-  // Discord deduplicates concurrent creates during a worker handoff.
-  await channel.send({
-    embeds: [embed],
-    nonce: "chronote-about",
-    enforceNonce: true,
-  });
 }
