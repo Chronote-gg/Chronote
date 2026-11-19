@@ -20,6 +20,7 @@ export function liveMeetingNotesInput(meeting: MeetingData): MeetingNotesInput {
     summarySentence: meeting.summarySentence,
     summaryLabel: meeting.summaryLabel,
     meetingName: meeting.meetingName,
+    meetingContext: meeting.meetingContext,
     tags: meeting.tags,
     participants: meeting.participants,
     attendance: meeting.attendance,

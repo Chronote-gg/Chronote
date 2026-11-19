@@ -28,6 +28,7 @@ import {
 } from "../../src/services/subscriptionService";
 import { initializeMeeting } from "../../src/meetings";
 import { MAXIMUM_MEETING_DURATION } from "../../src/constants";
+import { GUIDED_DEMO_CONTEXT } from "../../src/services/chronoteDemo";
 import type {
   Client,
   Guild,
@@ -175,6 +176,7 @@ test.each([false, true])(
       expect.objectContaining({
         isAutoRecording: true,
         skipAutoRecordCancellation: guidedDemo,
+        meetingContext: guidedDemo ? GUIDED_DEMO_CONTEXT : undefined,
         maxMeetingDurationMs: freeLimits.maxMeetingDurationMs,
         maxMeetingDurationPretty: freeLimits.maxMeetingDurationPretty,
       }),

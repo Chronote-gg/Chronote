@@ -184,6 +184,7 @@ export type MeetingNotesInput = Pick<
   | "participants"
   | "attendance"
   | "langfuseParentSpanContext"
+  | "meetingContext"
 > & {
   recentMeetingNames?: string;
   creator: Pick<User, "id">;

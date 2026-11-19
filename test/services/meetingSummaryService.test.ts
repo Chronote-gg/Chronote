@@ -145,6 +145,8 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
 
   const { generateMeetingSummaries } =
     await import("../../src/services/meetingSummaryService");
+  const { GUIDED_DEMO_CONTEXT } =
+    await import("../../src/services/chronoteDemo");
   const { MODEL_SELECTION_DEFAULTS } =
     await import("../../src/config/modelChoices");
 
@@ -155,7 +157,7 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
     month: "long",
     day: "numeric",
   });
-  const result = await generateMeetingSummaries({
+  const input = {
     notes: "These are the notes.",
     serverName: "Chronote HQ",
     channelName: "general",
@@ -163,7 +165,8 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
     now,
     previousSummarySentence: "Old summary.",
     previousSummaryLabel: "Old label",
-  });
+  };
+  const result = await generateMeetingSummaries(input);
 
   expect(result).toEqual({
     summarySentence: "One sentence.",
@@ -189,6 +192,16 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
   expect(userPrompt).toContain("Previous summary label: Old label");
   expect(userPrompt).toContain("Notes:");
   expect(userPrompt).toContain("These are the notes.");
+  expect(call.input).toHaveLength(2);
+
+  await generateMeetingSummaries({
+    ...input,
+    meetingContext: GUIDED_DEMO_CONTEXT,
+  });
+  expect(mockCreate.mock.calls[1][0].input).toContainEqual({
+    role: "system",
+    content: expect.stringContaining("Start summaryLabel with the word Demo"),
+  });
 });
 
 test("generateMeetingSummaries keeps a recording frozen on gpt-5.2", async () => {

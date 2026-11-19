@@ -21,6 +21,7 @@ import {
   initializeMeeting,
 } from "../meetings";
 import { randomUUID } from "node:crypto";
+import { guidedDemoContext } from "../services/chronoteDemo";
 import {
   buildAutoRecordPermissionChannelMessage,
   buildAutoRecordPermissionDmMessage,
@@ -764,6 +765,7 @@ export async function handleAutoStartMeeting(
     startTriggeredByUserId: options.startTriggeredByUserId,
     autoRecordRule: options.autoRecordRule,
     skipAutoRecordCancellation: options.guidedDemo,
+    meetingContext: guidedDemoContext(options.guidedDemo),
     tags: options.tags,
     onTimeout: (meeting) => handleEndMeetingOther(client, meeting),
     onEndMeeting: (meeting) => handleEndMeetingOther(client, meeting),

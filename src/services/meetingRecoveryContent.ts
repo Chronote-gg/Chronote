@@ -776,6 +776,7 @@ export function recoveryNotesInput(
     participants: new Map(context.participants.map((p) => [p.id, p])),
     attendance: new Set(context.attendance),
     tags: context.tags,
+    meetingContext: history.context,
     finalTranscript: transcript,
     notesText:
       history.processing?.notes === "generated" ? history.notes : undefined,

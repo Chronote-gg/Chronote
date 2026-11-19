@@ -90,6 +90,7 @@ export async function ensureMeetingSummaries(
       recentMeetingNames: meeting.recentMeetingNames,
       frozenModel: meeting.frozenModels?.meetingSummary,
       captureNotice: meeting.captureNotice,
+      meetingContext: meeting.meetingContext,
     });
     if (!summaries.summarySentence?.trim() && !summaries.summaryLabel?.trim()) {
       meeting.processing = { ...meeting.processing, summary: "failed" };

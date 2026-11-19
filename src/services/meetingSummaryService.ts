@@ -11,6 +11,7 @@ import { getModelChoice } from "./modelFactory";
 import { resolveChatParamsForRole } from "./openaiModelParams";
 import type { ModelParamConfig } from "../config/types";
 import { listRecentMeetingNamesForPrompt } from "./meetingNameService";
+import { GUIDED_DEMO_CONTEXT } from "./chronoteDemo";
 
 export type MeetingSummaries = {
   summarySentence?: string;
@@ -24,6 +25,7 @@ type MeetingSummaryInput = {
     MeetingNotesInput["frozenModels"]
   >["meetingSummary"];
   captureNotice?: string;
+  meetingContext?: string;
   signal?: AbortSignal;
   guildId?: string;
   notes: string;
@@ -127,6 +129,13 @@ async function prepareSummaryPrompt(input: MeetingSummaryInput) {
       });
   if (input.captureNotice)
     messages.push({ role: "system", content: input.captureNotice });
+  if (input.meetingContext === GUIDED_DEMO_CONTEXT) {
+    messages.push({
+      role: "system",
+      content:
+        "This recording is a guided Chronote demo. Start summaryLabel with the word Demo and follow it with the actual topic, within five words total. In summarySentence, briefly identify the recording as a demo and describe what was discussed. Stay grounded in the notes.",
+    });
+  }
 
   return { messages, langfusePrompt };
 }

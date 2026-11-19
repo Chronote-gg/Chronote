@@ -201,6 +201,7 @@ export async function buildCurrentNotesInput(
     startTime: new Date(history.timestamp),
     finalTranscript: transcript,
     meetingName: history.meetingName,
+    meetingContext: history.context,
     tags: history.tags,
     participants,
     attendance,
