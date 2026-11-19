@@ -377,6 +377,7 @@ async function transcribeInternal(
     {
       traceName: "transcription",
       userId: context.userId,
+      sessionId: meeting.meetingId,
       tags: ["feature:transcription"],
       metadata: toLangfuseAttributeMetadata(traceMetadata),
     },

@@ -165,8 +165,11 @@ function mockObservation(options: FixtureOptions, events: string[]) {
       usageRecorded.resolve();
     }
   });
+  const propagateAttributes = jest.fn(
+    (_attributes: unknown, run: () => unknown) => run(),
+  );
   jest.doMock("@langfuse/tracing", () => ({
-    propagateAttributes: (_attributes: unknown, run: () => unknown) => run(),
+    propagateAttributes,
     updateActiveObservation: update,
     startActiveObservation: async (_name: string, run: () => unknown) => {
       generationStarted();
@@ -184,6 +187,7 @@ function mockObservation(options: FixtureOptions, events: string[]) {
     attachmentRecorded: attachmentRecorded.promise,
     generationStarted,
     generationEnded,
+    propagateAttributes,
   };
 }
 

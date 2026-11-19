@@ -28,6 +28,10 @@ function expectReleased(f: TracingFixture) {
 }
 
 function expectPreservedTrace(f: TracingFixture) {
+  expect(f.propagateAttributes).toHaveBeenCalledWith(
+    expect.objectContaining({ sessionId: "tracing-meeting" }),
+    expect.any(Function),
+  );
   const requests = 1;
   expect(f.create).toHaveBeenCalledTimes(requests);
   expect(f.create.mock.calls[0]).toEqual([
