@@ -49,12 +49,14 @@ period or expiry rule for meeting artifacts, including recording checkpoints.
 
 ## Observability
 
-Terraform provisions Amazon Managed Prometheus. CloudWatch and SNS provide
-operational alarms. Chronote uses PostHog for product analytics.
+CloudWatch and SNS provide operational alarms. Chronote uses PostHog for
+product analytics. The application still exposes `/metrics` for local Prometheus.
 
-Keep the retired Grafana provider address and state removal blocks until every
-workspace has applied the retirement. Once the workspaces are gone, remove the
-Grafana-only grants from both Terraform bootstrap roles in a separate Apply.
+For each environment, review the saved plan for deletion of its managed Grafana
+and Prometheus workspaces and the Grafana-only supporting resources. Keep the
+Grafana provider address and state removal blocks until every workspace has
+applied the retirement. Once the managed workspaces are gone, remove the
+retired service grants from both Terraform bootstrap roles in a separate Apply.
 
 ## Critical alerts (SNS)
 

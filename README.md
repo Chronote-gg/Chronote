@@ -275,8 +275,8 @@ Terraform uses a GitHub provider to manage the Actions environment and variables
 
 ### Observability (hosted)
 
-Terraform provisions Amazon Managed Prometheus and CloudWatch alarms. Chronote
-uses PostHog for product analytics.
+CloudWatch alarms and SNS provide hosted operational monitoring and
+notifications. Chronote uses PostHog for product analytics.
 
 ### Observability (local)
 
