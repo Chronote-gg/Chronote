@@ -5,7 +5,9 @@ import type {
   RefObject,
 } from "react";
 import {
+  ActionIcon,
   Anchor,
+  Avatar,
   Box,
   Button,
   Center,
@@ -14,6 +16,7 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from "@mantine/core";
@@ -21,6 +24,7 @@ import {
   IconFilter,
   IconMessageCircle,
   IconMicrophone,
+  IconPlayerPlay,
   IconSpeakerphone,
   IconSparkles,
   IconUsers,
@@ -67,6 +71,8 @@ type MeetingTimelineProps = {
   title?: string;
   headerActions?: ReactNode;
   showFilters?: boolean;
+  onPlayFrom?: (seconds: number) => void;
+  playbackEventId?: string | null;
   viewportRef?: RefObject<HTMLDivElement | null>;
   viewportProps?: HTMLAttributes<HTMLDivElement>;
 };
@@ -80,6 +86,8 @@ export default function MeetingTimeline({
   title = "Timeline",
   headerActions,
   showFilters = true,
+  onPlayFrom,
+  playbackEventId,
   viewportRef,
   viewportProps,
 }: MeetingTimelineProps) {
@@ -158,11 +166,22 @@ export default function MeetingTimeline({
               const meta = EVENT_META[event.type];
               const Icon = meta.icon;
               const showMetaLabel = Boolean(event.speaker);
+              const offset = event.offsetSeconds;
+              const playFrom =
+                onPlayFrom &&
+                event.type === "voice" &&
+                offset !== undefined &&
+                Number.isFinite(offset) &&
+                offset >= 0
+                  ? () => onPlayFrom(offset)
+                  : undefined;
+              const isPlaying = event.id === playbackEventId;
               return (
                 <Box
                   key={event.id}
                   id={anchorId}
                   data-event-id={event.id}
+                  aria-current={isPlaying || undefined}
                   data-timeline-anchor={anchorId}
                   px="sm"
                   py="sm"
@@ -173,9 +192,22 @@ export default function MeetingTimeline({
                   }}
                 >
                   <Group gap="sm" align="flex-start" wrap="nowrap">
-                    <ThemeIcon variant="light" color={meta.color} size={32}>
-                      <Icon size={16} />
-                    </ThemeIcon>
+                    {playFrom && event.speaker ? (
+                      <Avatar
+                        name={event.speaker}
+                        size={32}
+                        color="initials"
+                        style={{
+                          boxShadow: isPlaying
+                            ? "0 0 0 2px var(--mantine-color-green-5)"
+                            : undefined,
+                        }}
+                      />
+                    ) : (
+                      <ThemeIcon variant="light" color={meta.color} size={32}>
+                        <Icon size={16} />
+                      </ThemeIcon>
+                    )}
                     <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
                       <Group gap="xs" align="baseline" wrap="wrap">
                         <Text fw={700} size="sm">
@@ -221,6 +253,27 @@ export default function MeetingTimeline({
                         ) : null}
                       </Stack>
                     </Stack>
+                    {playFrom ? (
+                      <Tooltip
+                        label="Play from here"
+                        events={{ hover: true, focus: true, touch: false }}
+                      >
+                        <ActionIcon
+                          variant="subtle"
+                          color="brand"
+                          size={44}
+                          aria-label={
+                            "Play from here, " +
+                            (event.speaker ?? "Voice") +
+                            " at " +
+                            event.time
+                          }
+                          onClick={playFrom}
+                        >
+                          <IconPlayerPlay size={17} aria-hidden="true" />
+                        </ActionIcon>
+                      </Tooltip>
+                    ) : null}
                   </Group>
                 </Box>
               );

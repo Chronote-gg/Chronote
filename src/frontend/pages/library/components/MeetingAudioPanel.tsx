@@ -1,3 +1,4 @@
+import type { Ref } from "react";
 import { Divider, Group, Stack, Text, ThemeIcon } from "@mantine/core";
 import { IconMicrophone } from "@tabler/icons-react";
 import Surface from "../../../components/Surface";
@@ -5,11 +6,15 @@ import Surface from "../../../components/Surface";
 type MeetingAudioPanelProps = {
   audioUrl?: string | null;
   accessEnabled?: boolean;
+  audioRef?: Ref<HTMLAudioElement>;
+  onPlaybackTimeChange?: (seconds: number | null) => void;
 };
 
 export function MeetingAudioPanel({
   audioUrl,
   accessEnabled = true,
+  audioRef,
+  onPlaybackTimeChange,
 }: MeetingAudioPanelProps) {
   return (
     <Surface p="md" tone="soft">
@@ -31,8 +36,22 @@ export function MeetingAudioPanel({
         </Text>
       ) : audioUrl ? (
         <audio
+          ref={audioRef}
           controls
           preload="metadata"
+          onPlaying={(event) =>
+            onPlaybackTimeChange?.(event.currentTarget.currentTime)
+          }
+          onTimeUpdate={(event) => {
+            const audio = event.currentTarget;
+            onPlaybackTimeChange?.(
+              audio.paused || audio.ended ? null : audio.currentTime,
+            );
+          }}
+          onPause={() => onPlaybackTimeChange?.(null)}
+          onEnded={() => onPlaybackTimeChange?.(null)}
+          onEmptied={() => onPlaybackTimeChange?.(null)}
+          onError={() => onPlaybackTimeChange?.(null)}
           style={{ width: "100%" }}
           src={audioUrl}
         />

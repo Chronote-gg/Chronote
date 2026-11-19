@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import { expect, fn, within } from "storybook/test";
 import MeetingTimeline, { MEETING_TIMELINE_FILTERS } from "./MeetingTimeline";
 import type { MeetingEvent } from "../../types/meetingTimeline";
 
@@ -74,4 +75,28 @@ type Story = StoryObj<typeof MeetingTimeline>;
 
 export const Default: Story = {
   render: (args) => <MeetingTimeline {...args} />,
+};
+
+export const PlaybackMobile: Story = {
+  tags: ["transcript-playback"],
+  args: {
+    events: [{ ...events[0], offsetSeconds: 463 }, ...events.slice(1)],
+    onPlayFrom: fn(),
+    playbackEventId: "event-1",
+  },
+  play: async ({ args, canvasElement, userEvent }) => {
+    const canvas = within(canvasElement);
+    const buttons = canvas.getAllByRole("button", { name: /Play from here/ });
+    await expect(buttons).toHaveLength(1);
+    const [play] = buttons;
+    await userEvent.click(canvas.getByText(events[0].text));
+    await expect(args.onPlayFrom).not.toHaveBeenCalled();
+    play.focus();
+    await expect(
+      await within(document.body).findByRole("tooltip"),
+    ).toHaveTextContent("Play from here");
+    await userEvent.keyboard("{Enter}");
+    await expect(args.onPlayFrom).toHaveBeenCalledWith(463);
+    play.blur();
+  },
 };

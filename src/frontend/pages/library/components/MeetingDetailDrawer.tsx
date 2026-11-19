@@ -214,6 +214,8 @@ export default function MeetingDetailDrawer({
   const [dictionaryTeachingContextToken, setDictionaryTeachingContextToken] =
     useState<string | undefined>();
   const initializedMeetingIdRef = useRef<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playbackEventId, setPlaybackEventId] = useState<string | null>(null);
 
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
@@ -914,9 +916,49 @@ export default function MeetingDetailDrawer({
     }
   };
 
+  useEffect(() => {
+    setPlaybackEventId(null);
+  }, [fullScreen, selectedMeetingId, meeting?.audioUrl]);
+
+  const updatePlaybackEvent = (seconds: number | null) => {
+    let eventId = null;
+    let latestOffset = -1;
+    if (seconds !== null) {
+      for (const event of displayEvents) {
+        const offset = event.offsetSeconds;
+        if (
+          event.type === "voice" &&
+          offset !== undefined &&
+          offset >= latestOffset &&
+          offset >= 0 &&
+          offset <= seconds
+        ) {
+          eventId = event.id;
+          latestOffset = offset;
+        }
+      }
+    }
+    setPlaybackEventId(eventId);
+  };
+
+  const playRecordingFrom = async (seconds: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    try {
+      audio.currentTime = seconds;
+      await audio.play();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      notifications.show({ message: "Couldn't play the meeting recording." });
+    }
+  };
+
   const audioSection = meeting ? (
     <MeetingAudioPanel
       audioUrl={meeting.audioUrl}
+      audioRef={audioRef}
+      onPlaybackTimeChange={fullScreen ? updatePlaybackEvent : undefined}
       accessEnabled={meeting.audioAccessEnabled}
     />
   ) : null;
@@ -1270,6 +1312,12 @@ export default function MeetingDetailDrawer({
                           >
                             <MeetingTimeline
                               events={displayEvents}
+                              playbackEventId={playbackEventId}
+                              onPlayFrom={
+                                meeting.audioAccessEnabled && meeting.audioUrl
+                                  ? playRecordingFrom
+                                  : undefined
+                              }
                               activeFilters={activeFilters}
                               onToggleFilter={(value) =>
                                 setActiveFilters((current) =>

@@ -236,6 +236,67 @@ describe("MeetingDetailDrawer summary copy", () => {
     ).toBeVisible();
   });
 
+  it("plays only from the explicit transcript control and follows playback cues", async () => {
+    const audioUrl = "/mock-audio.wav";
+    useMeetingDetailMock.mockReturnValue({
+      ...buildUseMeetingDetailResult({ meeting: buildMeeting({ audioUrl }) }),
+      displayEvents: [
+        {
+          id: "first",
+          type: "voice",
+          time: "0:00",
+          speaker: "Jamie",
+          text: "First line",
+          offsetSeconds: 0,
+        },
+        {
+          id: "second",
+          type: "voice",
+          time: "0:05",
+          speaker: "Alex",
+          text: "Second line",
+          offsetSeconds: 5,
+        },
+      ],
+    });
+    const play = jest
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockResolvedValue();
+    try {
+      renderDrawer();
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "Open fullscreen" })[0],
+      );
+      const audio = document.querySelector("audio")!;
+      fireEvent.click(screen.getByText("First line"));
+      expect(play).not.toHaveBeenCalled();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Play from here, Jamie at 0:00" }),
+      );
+      expect(play).toHaveBeenCalledTimes(1);
+      expect(audio.currentTime).toBe(0);
+      fireEvent.playing(audio);
+      const first = screen.getByText("First line").closest("[data-event-id]");
+      const second = screen.getByText("Second line").closest("[data-event-id]");
+      expect(first).toHaveAttribute("aria-current", "true");
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Play from here, Alex at 0:05" }),
+      );
+      expect(play).toHaveBeenCalledTimes(2);
+      expect(audio.currentTime).toBe(5);
+      jest.spyOn(audio, "paused", "get").mockReturnValue(false);
+      fireEvent.timeUpdate(audio);
+      expect(first).not.toHaveAttribute("aria-current");
+      expect(second).toHaveAttribute("aria-current", "true");
+      fireEvent.pause(audio);
+      expect(second).not.toHaveAttribute("aria-current");
+    } finally {
+      play.mockRestore();
+    }
+  });
+
   it("shows server access notices instead of transcript and audio", () => {
     useMeetingDetailMock.mockReturnValue(
       buildUseMeetingDetailResult({
