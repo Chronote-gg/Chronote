@@ -168,13 +168,23 @@ test.each([
 ])("TFVAR credential override %s refuses", (key) => {
   expect(() => run(valid, { ["TFVAR_" + key]: "fake" })).toThrow();
 });
-test.each([
-  { GITHUB_TOKEN: "" },
-  { DISCORD_CLIENT_ID: ["123", "456"] },
-  { grafana_api_key: "not-empty" },
-  { grafana_service_account_id: "" },
-])("tfvars rejects invalid required, type or Grafana values %s", (patch) => {
-  expect(() => run({ ...valid, ...patch })).toThrow();
+test.each([{ GITHUB_TOKEN: "" }, { DISCORD_CLIENT_ID: ["123", "456"] }])(
+  "tfvars rejects invalid required or type values %s",
+  (patch) => {
+    expect(() => run({ ...valid, ...patch })).toThrow();
+  },
+);
+
+test("retired Grafana inputs are dropped from saved blobs and variable overlays", () => {
+  const values = run(
+    { ...valid, grafana_api_key: "legacy", grafana_suffix_seed: "legacy" },
+    { TFVAR_GRAFANA_TOKEN_ROTATION_DAYS: "25" },
+  );
+  expect(
+    Object.keys(values).filter((key) =>
+      key.toLowerCase().startsWith("grafana_"),
+    ),
+  ).toEqual([]);
 });
 
 const collections = {

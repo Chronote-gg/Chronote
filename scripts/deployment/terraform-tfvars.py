@@ -4,8 +4,15 @@ from pathlib import Path
 
 path = Path("_infra/terraform.auto.tfvars.json")
 data = json.loads(os.environ["TERRAFORM_TFVARS_JSON"])
-# Retired inputs: the secret may still carry them, and Terraform warns on them.
-for retired in ["AWS_TOKEN_KEY", "LIVE_VOICE_GATE_MODEL"]:
+retired_grafana = {
+    "grafana_api_key",
+    "grafana_url",
+    "grafana_service_account_id",
+    "grafana_suffix_seed",
+    "grafana_token_rotation_days",
+}
+# Saved input blobs can still carry retired keys.
+for retired in ("AWS_TOKEN_KEY", "LIVE_VOICE_GATE_MODEL", *retired_grafana):
     if retired in data:
         if retired == "LIVE_VOICE_GATE_MODEL":
             print(f"::warning::Ignoring retired tfvars key {retired}")
@@ -95,6 +102,8 @@ for name, value in github_vars.items():
         print(f"::warning::Ignoring retired tfvars key {name[6:]}")
         continue
     key = name[len("TFVAR_") :]
+    if key.lower() in retired_grafana:
+        continue
     if key.lower() in canonical_keys:
         key = key.lower()
         if key in seen:
@@ -114,9 +123,6 @@ for name, value in github_vars.items():
 required = ["GITHUB_TOKEN", "DISCORD_CLIENT_ID"]
 string_fields = required + [
     "SUPER_ADMIN_USER_IDS",
-    "grafana_api_key",
-    "grafana_url",
-    "grafana_service_account_id",
 ]
 for name in string_fields:
     value = data.get(name)
@@ -148,15 +154,4 @@ if missing:
     raise SystemExit(
         "Missing required Terraform variables in TERRAFORM_TFVARS_JSON: "
         + ", ".join(missing)
-    )
-
-if data.get("grafana_api_key"):
-    raise SystemExit(
-        "grafana_api_key must be empty after Grafana token rotation is active. "
-        "Use grafana_service_account_id plus the Secrets Manager token instead."
-    )
-
-if data.get("grafana_url") and not data.get("grafana_service_account_id"):
-    raise SystemExit(
-        "grafana_service_account_id is required when grafana_url is configured."
     )

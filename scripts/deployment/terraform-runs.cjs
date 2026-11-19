@@ -268,6 +268,7 @@ const actionKinds = new Map([
   ["delete,create", "replace"],
   ["create,delete", "replace"],
   ["delete", "destroy"],
+  ["forget", "remove from state"],
 ]);
 
 // Changes a reviewer must read even when they look routine: identity,
@@ -322,6 +323,10 @@ function planSummary(plan, { sha, digest, attempt, location }) {
     ...flagged(
       "Replace or destroy",
       changes.filter((c) => ["replace", "destroy"].includes(c.kind)),
+    ),
+    ...flagged(
+      "Remove from state",
+      changes.filter((c) => c.kind === "remove from state"),
     ),
     "### All changes",
     "",

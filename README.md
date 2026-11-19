@@ -275,13 +275,8 @@ Terraform uses a GitHub provider to manage the Actions environment and variables
 
 ### Observability (hosted)
 
-- AMP (Amazon Managed Prometheus) and AMG (Amazon Managed Grafana) are provisioned by Terraform. AMG requires IAM Identity Center (AWS SSO) to be enabled in the account.
-- **Manual Grafana service account token (one-time):**
-  1. In the AWS console: Amazon Managed Grafana → open your workspace.
-  2. In Grafana: _Administration → Service accounts_ → **New service account** (role: Admin) and create a token.
-  3. Export `GRAFANA_API_KEY=<service account token>` (or set `TF_VAR_grafana_api_key`) before running `terraform apply`.
-  4. Set `GRAFANA_URL` (or `TF_VAR_grafana_url`) to the AMG endpoint shown in the console (e.g., `https://g-xxxx.grafana-workspace.us-east-1.amazonaws.com/`).
-  5. The Grafana provider uses that URL + token to create the Prometheus data source pointing at AMP and a starter dashboard.
+Terraform provisions Amazon Managed Prometheus and CloudWatch alarms. Chronote
+uses PostHog for product analytics.
 
 ### Observability (local)
 
