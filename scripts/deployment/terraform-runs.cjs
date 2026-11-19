@@ -268,6 +268,7 @@ const actionKinds = new Map([
   ["delete,create", "replace"],
   ["create,delete", "replace"],
   ["delete", "destroy"],
+  ["forget", "remove from state"],
 ]);
 
 // Changes a reviewer must read even when they look routine: identity,
@@ -278,13 +279,21 @@ const sensitiveType =
 // Reads only types, addresses and actions from `terraform show -json`: the
 // plan's before/after values carry secrets and must never reach the summary.
 function planSummary(plan, { sha, digest, attempt, location }) {
-  const changes = (plan.resource_changes ?? [])
-    .map(({ address, type, change }) => ({
-      address,
-      type,
-      kind: actionKinds.get(change.actions.join(",")),
-    }))
-    .filter((change) => change.kind);
+  const changes = (plan.resource_changes ?? []).flatMap(
+    ({ address, type, change }) => {
+      const action = change.actions.join(",");
+      const entries = [];
+      if (action && action !== "no-op" && action !== "read")
+        entries.push({
+          address,
+          type,
+          kind: actionKinds.get(action) ?? action,
+        });
+      if (change.importing)
+        entries.push({ address, type, kind: "import into state" });
+      return entries;
+    },
+  );
   const header = [
     "## Terraform Plan",
     "",
@@ -308,12 +317,25 @@ function planSummary(plan, { sha, digest, attempt, location }) {
           "",
         ]
       : [];
+  const counts = [
+    `${count("add")} to add`,
+    `${count("change")} to change`,
+    `${count("replace")} to replace`,
+    `${count("destroy")} to destroy`,
+  ];
+  for (const kind of ["remove from state", "import into state"]) {
+    if (count(kind)) counts.push(`${count(kind)} to ${kind}`);
+  }
+  const knownKinds = new Set([...actionKinds.values(), "import into state"]);
+  const otherActions = changes.filter(({ kind }) => !knownKinds.has(kind));
+  if (otherActions.length)
+    counts.push(`${otherActions.length} with other actions`);
   return [
     ...header,
     `Plan bundle SHA-256 (\`plan_sha256\`): \`${digest}\``,
     `Plan bundle: \`${location}\``,
     "",
-    `${count("add")} to add, ${count("change")} to change, ${count("replace")} to replace, ${count("destroy")} to destroy.`,
+    `${counts.join(", ")}.`,
     "",
     ...flagged(
       "Security-sensitive",
@@ -322,6 +344,14 @@ function planSummary(plan, { sha, digest, attempt, location }) {
     ...flagged(
       "Replace or destroy",
       changes.filter((c) => ["replace", "destroy"].includes(c.kind)),
+    ),
+    ...flagged(
+      "Remove from state",
+      changes.filter((c) => c.kind === "remove from state"),
+    ),
+    ...flagged(
+      "Import into state",
+      changes.filter((c) => c.kind === "import into state"),
     ),
     "### All changes",
     "",

@@ -562,6 +562,51 @@ describe("planSummary", () => {
     expect(summary).not.toContain("data.aws_caller_identity.g");
   });
 
+  test("reports removal from state even without a provider destroy", () => {
+    const text = planSummary(
+      {
+        resource_changes: [
+          change("grafana_folder.fixture", "grafana_folder", ["forget"]),
+        ],
+      },
+      meta,
+    );
+    expect(text).toContain("0 to destroy, 1 to remove from state.");
+    expect(text).toContain("Remove from state");
+    expect(text).toContain("`grafana_folder.fixture` remove from state");
+    expect(text).not.toContain("Nothing was stored");
+  });
+
+  test("reports imports with or without a remote change", () => {
+    const items = ["no-op", "update"].map((action) =>
+      change(`aws_s3_bucket.${action}`, "aws_s3_bucket", [action]),
+    );
+    for (const item of items) item.change.importing = { id: "hidden" };
+    const text = planSummary({ resource_changes: items }, meta);
+    expect(text).toContain(
+      "1 to change, 0 to replace, 0 to destroy, 2 to import into state.",
+    );
+    expect(text).toContain("`aws_s3_bucket.no-op` import into state");
+    expect(text).toContain("`aws_s3_bucket.update` change");
+    expect(text).not.toContain("hidden");
+  });
+
+  test("counts and lists an unfamiliar action combination", () => {
+    const text = planSummary(
+      {
+        resource_changes: [
+          change("aws_s3_bucket.fixture", "aws_s3_bucket", [
+            "future",
+            "update",
+          ]),
+        ],
+      },
+      meta,
+    );
+    expect(text).toContain("0 to destroy, 1 with other actions.");
+    expect(text).toContain("`aws_s3_bucket.fixture` future,update");
+  });
+
   test("flags security-sensitive changes and replace or destroy before the full list", () => {
     const flagged = summary.slice(0, summary.indexOf("### All changes"));
     for (const line of [

@@ -72,7 +72,3 @@ alert_email=""
 alert_discord_channel_id=""
 
 # Observability
-grafana_api_key=""
-grafana_url=""
-grafana_service_account_id=""
-grafana_token_rotation_days=25
