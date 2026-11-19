@@ -55,9 +55,6 @@ const valid = {
   AWS_TOKEN_KEY: "old",
   DISCORD_CLIENT_ID: ["", "123"],
   SUPER_ADMIN_USER_IDS: ["456"],
-  grafana_api_key: "",
-  grafana_url: "https://synthetic.invalid",
-  grafana_service_account_id: "7",
 };
 test("moved tfvars normalizes one string and preserves approved credential overlays", () => {
   const values = run(
@@ -164,7 +161,6 @@ test.each([
   "DOCS_ALGOLIA_API_KEY",
   "REDIS_AUTH_TOKEN",
   "REDIS_URL",
-  "grafana_api_key",
 ])("TFVAR credential override %s refuses", (key) => {
   expect(() => run(valid, { ["TFVAR_" + key]: "fake" })).toThrow();
 });
@@ -176,10 +172,16 @@ test.each([{ GITHUB_TOKEN: "" }, { DISCORD_CLIENT_ID: ["123", "456"] }])(
 );
 
 test("retired Grafana inputs are dropped from saved blobs and variable overlays", () => {
-  const values = run(
-    { ...valid, grafana_api_key: "legacy", grafana_suffix_seed: "legacy" },
-    { TFVAR_GRAFANA_TOKEN_ROTATION_DAYS: "25" },
+  const { values, stdout, status } = render(
+    { ...valid, grafana_api_key: "not-a-key", grafana_suffix_seed: "legacy" },
+    { TFVAR_GRAFANA_TOKEN_ROTATION_DAYS: "25", TFVAR_grafana_api_key: "old" },
   );
+  expect(status).toBe(0);
+  expect(stdout).toContain("Ignoring retired tfvars key grafana_api_key");
+  expect(stdout).toContain(
+    "Ignoring retired tfvars variable TFVAR_GRAFANA_API_KEY",
+  );
+  expect(stdout).not.toContain("not-a-key");
   expect(
     Object.keys(values).filter((key) =>
       key.toLowerCase().startsWith("grafana_"),

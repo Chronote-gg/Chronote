@@ -4,17 +4,17 @@ from pathlib import Path
 
 path = Path("_infra/terraform.auto.tfvars.json")
 data = json.loads(os.environ["TERRAFORM_TFVARS_JSON"])
-retired_grafana = {
+retired_grafana = (
     "grafana_api_key",
     "grafana_url",
     "grafana_service_account_id",
     "grafana_suffix_seed",
     "grafana_token_rotation_days",
-}
+)
 # Saved input blobs can still carry retired keys.
 for retired in ("AWS_TOKEN_KEY", "LIVE_VOICE_GATE_MODEL", *retired_grafana):
     if retired in data:
-        if retired == "LIVE_VOICE_GATE_MODEL":
+        if retired == "LIVE_VOICE_GATE_MODEL" or retired in retired_grafana:
             print(f"::warning::Ignoring retired tfvars key {retired}")
         del data[retired]
 
@@ -35,7 +35,6 @@ credential_tfvars = {
     "DOCS_ALGOLIA_API_KEY",
     "REDIS_AUTH_TOKEN",
     "REDIS_URL",
-    "grafana_api_key",
 }
 collection_keys = {
     "production_introduction_task_definitions",
@@ -103,6 +102,7 @@ for name, value in github_vars.items():
         continue
     key = name[len("TFVAR_") :]
     if key.lower() in retired_grafana:
+        print(f"::warning::Ignoring retired tfvars variable TFVAR_{key.upper()}")
         continue
     if key.lower() in canonical_keys:
         key = key.lower()

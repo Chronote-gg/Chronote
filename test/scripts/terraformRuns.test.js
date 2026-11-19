@@ -571,9 +571,22 @@ describe("planSummary", () => {
       },
       meta,
     );
+    expect(text).toContain("1 to remove from state without destroying.");
     expect(text).toContain("Remove from state");
     expect(text).toContain("`grafana_folder.fixture` remove from state");
     expect(text).not.toContain("Nothing was stored");
+  });
+
+  test("lists a future action even when it has no summary category", () => {
+    const text = planSummary(
+      {
+        resource_changes: [
+          change("aws_thing.fixture", "aws_thing", ["future"]),
+        ],
+      },
+      meta,
+    );
+    expect(text).toContain("`aws_thing.fixture` future");
   });
 
   test("flags security-sensitive changes and replace or destroy before the full list", () => {

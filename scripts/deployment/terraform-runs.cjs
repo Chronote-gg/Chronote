@@ -280,12 +280,11 @@ const sensitiveType =
 // plan's before/after values carry secrets and must never reach the summary.
 function planSummary(plan, { sha, digest, attempt, location }) {
   const changes = (plan.resource_changes ?? [])
-    .map(({ address, type, change }) => ({
-      address,
-      type,
-      kind: actionKinds.get(change.actions.join(",")),
-    }))
-    .filter((change) => change.kind);
+    .map(({ address, type, change }) => {
+      const action = change.actions.join(",");
+      return { address, type, kind: actionKinds.get(action) ?? action };
+    })
+    .filter(({ kind }) => kind && kind !== "no-op" && kind !== "read");
   const header = [
     "## Terraform Plan",
     "",
@@ -324,6 +323,12 @@ function planSummary(plan, { sha, digest, attempt, location }) {
       "Replace or destroy",
       changes.filter((c) => ["replace", "destroy"].includes(c.kind)),
     ),
+    ...(count("remove from state")
+      ? [
+          `${count("remove from state")} to remove from state without destroying.`,
+          "",
+        ]
+      : []),
     ...flagged(
       "Remove from state",
       changes.filter((c) => c.kind === "remove from state"),
