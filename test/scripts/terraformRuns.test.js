@@ -562,6 +562,20 @@ describe("planSummary", () => {
     expect(summary).not.toContain("data.aws_caller_identity.g");
   });
 
+  test("reports removal from state even without a provider destroy", () => {
+    const text = planSummary(
+      {
+        resource_changes: [
+          change("grafana_folder.fixture", "grafana_folder", ["forget"]),
+        ],
+      },
+      meta,
+    );
+    expect(text).toContain("Remove from state");
+    expect(text).toContain("`grafana_folder.fixture` remove from state");
+    expect(text).not.toContain("Nothing was stored");
+  });
+
   test("flags security-sensitive changes and replace or destroy before the full list", () => {
     const flagged = summary.slice(0, summary.indexOf("### All changes"));
     for (const line of [

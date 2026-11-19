@@ -47,76 +47,10 @@ The transcript bucket's lifecycle rule aborts incomplete multipart uploads seven
 days after they start. Nothing deletes completed objects: there is no retention
 period or expiry rule for meeting artifacts, including recording checkpoints.
 
-## Observability (AMP + AMG)
+## Observability
 
-This stack provisions:
-
-- Amazon Managed Prometheus (AMP) workspace
-- Amazon Managed Grafana (AMG) workspace
-- (Optional) Grafana datasource + starter dashboard via the Grafana provider
-
-### Prerequisites
-
-- **AWS Organizations enabled** (single-account org is fine)
-- **IAM Identity Center (AWS SSO)** enabled in the **same region** as AMG (us-east-1 here)
-
-### Bootstrap steps (Grafana service account token)
-
-1. **First apply** (creates AMP + AMG):
-   - Leave `grafana_api_key` and `grafana_url` empty in `terraform.tfvars`.
-   - Run: `terraform apply`
-
-2. **Create a Grafana service account + token**:
-   - Open the Grafana workspace URL.
-   - In Grafana: _Administration > Service accounts_ > **New service account** (role: Admin).
-   - Create a **token** and copy it.
-   - Note the service account numeric ID (or run
-     `aws grafana list-workspace-service-accounts --workspace-id <id> --region us-east-1`).
-   - Copy the workspace **endpoint URL** (e.g., `https://g-xxxx.grafana-workspace.us-east-1.amazonaws.com/`).
-
-3. **Second apply** (provisions datasource + dashboard + rotation infra):
-   - Set in `terraform.tfvars`:
-     - `grafana_api_key` (the manual token for bootstrapping)
-     - `grafana_url`
-     - `grafana_service_account_id` (numeric ID from step 2)
-   - Run: `terraform apply`
-
-4. **Seed the rotation** (one-time):
-   - Invoke the Lambda to create the first auto-managed token:
-
-     ```bash
-     aws lambda invoke --function-name <project_name>-<environment>-grafana-token-rotation \
-       --region us-east-1 /dev/stdout
-     ```
-
-   - The function name is derived from your Terraform variables (for example, with
-     `project_name = "meeting-notes"` and `environment = "prod"`, the name is
-     `meeting-notes-prod-grafana-token-rotation`).
-   - Clear `grafana_api_key` from `terraform.tfvars` (the Lambda now manages the token).
-   - Run `terraform apply` once more to confirm it reads from Secrets Manager.
-
-### Token rotation
-
-The Grafana service account token is auto-rotated by a Lambda on an EventBridge
-schedule (default: every 25 days). AMG tokens have a max TTL of 30 days, so the
-Lambda creates tokens with a TTL of rotation interval + 5-day buffer.
-
-The rotation flow:
-
-1. Lambda reads the current token ID from Secrets Manager.
-2. Creates a new token via the `CreateWorkspaceServiceAccountToken` API.
-3. Stores the new token in Secrets Manager.
-4. Deletes the old token.
-
-A CloudWatch alarm fires if the rotation Lambda errors. If the token expires
-before the next rotation (e.g., Lambda was disabled), manually invoke the Lambda
-or create a new token with the bootstrap steps above.
-
-### Useful tips
-
-- If AMG workspace creation conflicts, bump `grafana_suffix_seed` in `terraform.tfvars` to force a new non-production workspace name suffix. Production is pinned to the existing workspace seed in Terraform code; do not change it without an approved replacement plan.
-- If you change the workspace name, you may want to update `grafana_url` before the second apply.
-- To force an immediate rotation: `aws lambda invoke --function-name <project_name>-<environment>-grafana-token-rotation --region us-east-1 /dev/stdout`
+Terraform provisions Amazon Managed Prometheus. CloudWatch and SNS provide
+operational alarms. Chronote uses PostHog for product analytics.
 
 ## Critical alerts (SNS)
 
@@ -140,7 +74,6 @@ that address.
 | ALB ELB 5xx sustained         | 5+ load-balancer HTTP 5xx responses in 1 h     | 1 h x 1   |
 | ALB unhealthy hosts           | Any unhealthy target in `api-tg` for 10 min    | 5 min x 2 |
 | ALB spare unhealthy hosts     | Any unhealthy target in `api-spare` for 10 min | 5 min x 2 |
-| Grafana token rotation errors | Rotation Lambda error in 24 h                  | 1 day x 1 |
 | Checkout lock stuck           | `Checkout lock stuck` app log line in 1 h      | 1 h x 1   |
 | OpenAI requests rejected      | Any OpenAI quota, credit, or 429 log line      | 5 min x 1 |
 | Processing retry worker       | `Processing retry worker failed` log line      | 5 min x 1 |
@@ -469,8 +402,7 @@ manages; both use the `default` workspace. Sandbox uses `sandbox` and the
 [Terraform delivery](../docs/terraform-delivery.md#plan-review-apply).
 
 `TERRAFORM_TFVARS_JSON` is the environment-specific Terraform variable file as
-JSON. `scripts/deployment/terraform-tfvars.py` renders it, rejects a non-empty
-`grafana_api_key` after Grafana token rotation is active, and normalizes string
+JSON. `scripts/deployment/terraform-tfvars.py` renders it, drops retired Grafana inputs, and normalizes string
 arrays only when they contain exactly one non-empty value. Any variable
 `TFVAR_<KEY>` overrides `<KEY>`; credentials are refused through that path. A leftover `AWS_TOKEN_KEY` in the secret is dropped. When
 `REDIS_AUTH_TOKEN` or `REDIS_URL` is set as an environment secret, it overlays the
