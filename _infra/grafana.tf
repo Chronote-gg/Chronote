@@ -1,4 +1,4 @@
-# Keep the provider address while existing workspaces migrate away from AMG.
+# Keep the provider address and removed blocks until every workspace has applied retirement.
 provider "grafana" {
   alias = "amg"
   url   = "http://localhost"

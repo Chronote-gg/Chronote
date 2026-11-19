@@ -52,6 +52,10 @@ period or expiry rule for meeting artifacts, including recording checkpoints.
 Terraform provisions Amazon Managed Prometheus. CloudWatch and SNS provide
 operational alarms. Chronote uses PostHog for product analytics.
 
+Keep the retired Grafana provider address and state removal blocks until every
+workspace has applied the retirement. Once the workspaces are gone, remove the
+Grafana-only grants from both Terraform bootstrap roles in a separate Apply.
+
 ## Critical alerts (SNS)
 
 Set `alert_email` and/or `alert_discord_channel_id` in `terraform.tfvars` to
