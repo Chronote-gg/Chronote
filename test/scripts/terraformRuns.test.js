@@ -571,10 +571,24 @@ describe("planSummary", () => {
       },
       meta,
     );
-    expect(text).toContain("1 to remove from state without destroying.");
+    expect(text).toContain("0 to destroy, 1 to remove from state.");
     expect(text).toContain("Remove from state");
     expect(text).toContain("`grafana_folder.fixture` remove from state");
     expect(text).not.toContain("Nothing was stored");
+  });
+
+  test("reports imports with or without a remote change", () => {
+    const items = ["no-op", "update"].map((action) =>
+      change(`aws_s3_bucket.${action}`, "aws_s3_bucket", [action]),
+    );
+    for (const item of items) item.change.importing = { id: "hidden" };
+    const text = planSummary({ resource_changes: items }, meta);
+    expect(text).toContain(
+      "1 to change, 0 to replace, 0 to destroy, 2 to import into state.",
+    );
+    expect(text).toContain("`aws_s3_bucket.no-op` import into state");
+    expect(text).toContain("`aws_s3_bucket.update` change");
+    expect(text).not.toContain("hidden");
   });
 
   test("lists a future action even when it has no summary category", () => {

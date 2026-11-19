@@ -279,12 +279,21 @@ const sensitiveType =
 // Reads only types, addresses and actions from `terraform show -json`: the
 // plan's before/after values carry secrets and must never reach the summary.
 function planSummary(plan, { sha, digest, attempt, location }) {
-  const changes = (plan.resource_changes ?? [])
-    .map(({ address, type, change }) => {
+  const changes = (plan.resource_changes ?? []).flatMap(
+    ({ address, type, change }) => {
       const action = change.actions.join(",");
-      return { address, type, kind: actionKinds.get(action) ?? action };
-    })
-    .filter(({ kind }) => kind && kind !== "no-op" && kind !== "read");
+      const entries = [];
+      if (action && action !== "no-op" && action !== "read")
+        entries.push({
+          address,
+          type,
+          kind: actionKinds.get(action) ?? action,
+        });
+      if (change.importing)
+        entries.push({ address, type, kind: "import into state" });
+      return entries;
+    },
+  );
   const header = [
     "## Terraform Plan",
     "",
@@ -308,12 +317,21 @@ function planSummary(plan, { sha, digest, attempt, location }) {
           "",
         ]
       : [];
+  const counts = [
+    `${count("add")} to add`,
+    `${count("change")} to change`,
+    `${count("replace")} to replace`,
+    `${count("destroy")} to destroy`,
+  ];
+  for (const kind of ["remove from state", "import into state"]) {
+    if (count(kind)) counts.push(`${count(kind)} to ${kind}`);
+  }
   return [
     ...header,
     `Plan bundle SHA-256 (\`plan_sha256\`): \`${digest}\``,
     `Plan bundle: \`${location}\``,
     "",
-    `${count("add")} to add, ${count("change")} to change, ${count("replace")} to replace, ${count("destroy")} to destroy.`,
+    `${counts.join(", ")}.`,
     "",
     ...flagged(
       "Security-sensitive",
@@ -323,15 +341,13 @@ function planSummary(plan, { sha, digest, attempt, location }) {
       "Replace or destroy",
       changes.filter((c) => ["replace", "destroy"].includes(c.kind)),
     ),
-    ...(count("remove from state")
-      ? [
-          `${count("remove from state")} to remove from state without destroying.`,
-          "",
-        ]
-      : []),
     ...flagged(
       "Remove from state",
       changes.filter((c) => c.kind === "remove from state"),
+    ),
+    ...flagged(
+      "Import into state",
+      changes.filter((c) => c.kind === "import into state"),
     ),
     "### All changes",
     "",
