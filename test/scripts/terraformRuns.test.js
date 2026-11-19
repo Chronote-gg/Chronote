@@ -591,16 +591,20 @@ describe("planSummary", () => {
     expect(text).not.toContain("hidden");
   });
 
-  test("lists a future action even when it has no summary category", () => {
+  test("counts and lists an unfamiliar action combination", () => {
     const text = planSummary(
       {
         resource_changes: [
-          change("aws_thing.fixture", "aws_thing", ["future"]),
+          change("aws_s3_bucket.fixture", "aws_s3_bucket", [
+            "future",
+            "update",
+          ]),
         ],
       },
       meta,
     );
-    expect(text).toContain("`aws_thing.fixture` future");
+    expect(text).toContain("0 to destroy, 1 with other actions.");
+    expect(text).toContain("`aws_s3_bucket.fixture` future,update");
   });
 
   test("flags security-sensitive changes and replace or destroy before the full list", () => {

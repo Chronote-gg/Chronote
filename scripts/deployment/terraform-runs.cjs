@@ -326,6 +326,10 @@ function planSummary(plan, { sha, digest, attempt, location }) {
   for (const kind of ["remove from state", "import into state"]) {
     if (count(kind)) counts.push(`${count(kind)} to ${kind}`);
   }
+  const knownKinds = new Set([...actionKinds.values(), "import into state"]);
+  const otherActions = changes.filter(({ kind }) => !knownKinds.has(kind));
+  if (otherActions.length)
+    counts.push(`${otherActions.length} with other actions`);
   return [
     ...header,
     `Plan bundle SHA-256 (\`plan_sha256\`): \`${digest}\``,
