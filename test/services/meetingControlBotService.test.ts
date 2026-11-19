@@ -1,6 +1,11 @@
 /** @jest-environment node */
 import { createMeetingStartDiscordFixture } from "../fixtures/meetingStart";
-import { Message, PermissionFlagsBits, PermissionsBitField } from "discord.js";
+import {
+  ChannelType,
+  Message,
+  PermissionFlagsBits,
+  PermissionsBitField,
+} from "discord.js";
 import { closeMeeting } from "../../src/services/meetingClose";
 import { resolveServerMeetingArtifactAccess } from "../../src/services/meetingArtifactAccessService";
 import { getMeeting, initializeMeeting } from "../../src/meetings";
@@ -86,16 +91,24 @@ test("omitted remote destination uses the current voice settings", async () => {
   expect(send).toHaveBeenCalledTimes(1);
 });
 
-test("an explicit remote destination keeps its existing validation and skips notes overrides", async () => {
-  const result = await executeMeetingControlCommand(
-    fixture.client,
-    command("explicit-notes"),
-  );
-  expect(result).toEqual(expect.objectContaining({ status: "started" }));
-  expect(fetchChannel).toHaveBeenCalledWith("explicit-notes");
-  expect(getGlobalConfigValues).not.toHaveBeenCalled();
-  expect(initializeMeeting).toHaveBeenCalled();
-});
+test.each([
+  ChannelType.GuildText,
+  ChannelType.GuildAnnouncement,
+  ChannelType.PublicThread,
+])(
+  "an explicit remote destination keeps its existing validation for text-based type %s",
+  async (type) => {
+    jest.replaceProperty(fixture.notes, "type", type);
+    const result = await executeMeetingControlCommand(
+      fixture.client,
+      command("explicit-notes"),
+    );
+    expect(result).toEqual(expect.objectContaining({ status: "started" }));
+    expect(fetchChannel).toHaveBeenCalledWith("explicit-notes");
+    expect(getGlobalConfigValues).not.toHaveBeenCalled();
+    expect(initializeMeeting).toHaveBeenCalled();
+  },
+);
 
 test("denied remote access does not initialize or disclose the hidden channel name", async () => {
   jest

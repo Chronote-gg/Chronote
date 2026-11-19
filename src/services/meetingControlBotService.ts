@@ -211,6 +211,7 @@ const executeStartMeeting = async (
     guild,
     voiceChannelId: voiceChannel.id,
     explicitChannelId: input.textChannelId,
+    fetchExplicitChannel: fetchTextChannel,
   });
   const member = await fetchMember(guild, userId);
   assertMemberCanUseTextChannel(member, textChannel);

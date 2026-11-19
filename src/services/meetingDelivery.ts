@@ -344,21 +344,25 @@ async function placeSummary(
   };
 }
 
-async function withDemoNotesMention(
-  chunk: RestMessage,
-  history: MeetingHistory,
-  channelId: string,
-  first: boolean,
-): Promise<RestMessage> {
+async function resolveDemoStarter(history: MeetingHistory, channelId: string) {
   const starterId = history.startTriggeredByUserId;
-  if (!first || !starterId || !/^\d{17,20}$/.test(starterId)) return chunk;
+  if (!starterId || !/^\d{17,20}$/.test(starterId)) return undefined;
   const demo = await getChronoteDemo().catch(() => undefined);
   if (
     demo?.guildId !== history.guildId ||
     demo.voiceChannelId !== history.channelId ||
     demo.outputChannelId !== channelId
   )
-    return chunk;
+    return undefined;
+  return starterId;
+}
+
+function withDemoNotesMention(
+  chunk: RestMessage,
+  starterId: string | undefined,
+  first: boolean,
+): RestMessage {
+  if (!first || !starterId) return chunk;
   return {
     ...chunk,
     content: `<@${starterId}> Your Chronote demo notes are ready.`,
@@ -389,11 +393,12 @@ export async function deliverMeeting(input: {
   const readback = () =>
     (channelRead ??= readChannel({ transport, channelId, history, signal }));
   try {
+    const demoStarter = await resolveDemoStarter(history, channelId);
     const placed = await placeSummary(
       transport,
       channelId,
       history,
-      summary,
+      demoStarter ? { ...summary, content: "" } : summary,
       signal,
       readback,
     );
@@ -425,10 +430,9 @@ export async function deliverMeeting(input: {
     }
     for (const chunk of notes.slice(notesMessageIds.length)) {
       signal.throwIfAborted();
-      const payload = await withDemoNotesMention(
+      const payload = withDemoNotesMention(
         chunk,
-        history,
-        channelId,
+        demoStarter,
         notesMessageIds.length === 0,
       );
       const created = createdMessageSchema.parse(

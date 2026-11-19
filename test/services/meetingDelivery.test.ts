@@ -137,7 +137,8 @@ test("demo delivery pings only the starter on the first notes post", async () =>
     voiceChannelId: row.channelId,
     outputChannelId: row.textChannelId,
   });
-  const { transport } = fakeDiscord(row.textChannelId);
+  const { transport, messages } = fakeDiscord(row.textChannelId);
+  messages[0].content = `<@${starter}> Your Chronote demo recording has started.`;
   const created = jest.spyOn(transport, "createMessage");
   const { save, current } = savingRow(row);
   await expect(
@@ -150,6 +151,7 @@ test("demo delivery pings only the starter on the first notes post", async () =>
     }),
   ).resolves.toEqual({ kind: "delivered" });
   expect(current().notesChannelId).toBe(row.textChannelId);
+  expect(messages[0].content).toBe("");
   expect(created.mock.calls.filter(([call]) => call.payload.content)).toEqual([
     [
       expect.objectContaining({

@@ -587,7 +587,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
     key: "demo.channels",
     label: "Guided demo channels",
     description:
-      "Discord IDs for one demo server. Provide a JSON object with guildId, voiceChannelId, outputChannelId, and optional aboutChannelId and supportChannelId.",
+      "Discord IDs for one demo server. Provide a JSON object with guildId, voiceChannelId, outputChannelId, and optional aboutChannelId, supportChannelId, and stats with completedMeetings and recordedHours.",
     category: "Notes",
     group: "Advanced",
     valueType: "string",

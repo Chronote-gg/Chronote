@@ -20,6 +20,10 @@ export async function resolveMeetingNotesChannel(input: {
   voiceChannelId: string;
   explicitChannelId?: string;
   invocationChannelId?: string;
+  fetchExplicitChannel?: (
+    guild: Guild,
+    channelId: string,
+  ) => Promise<TextChannel>;
 }): Promise<TextChannel> {
   try {
     const demo = await getChronoteDemo();
@@ -28,6 +32,11 @@ export async function resolveMeetingNotesChannel(input: {
       demo.voiceChannelId === input.voiceChannelId
         ? demo.outputChannelId
         : undefined;
+    if (!demoOutput && input.explicitChannelId && input.fetchExplicitChannel)
+      return await input.fetchExplicitChannel(
+        input.guild,
+        input.explicitChannelId,
+      );
     const configuredChannelId =
       demoOutput ??
       input.explicitChannelId ??

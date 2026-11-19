@@ -10,6 +10,13 @@ const demoChannels = z
     outputChannelId: discordId,
     aboutChannelId: discordId.optional(),
     supportChannelId: discordId.optional(),
+    stats: z
+      .object({
+        completedMeetings: z.number().int().nonnegative(),
+        recordedHours: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
