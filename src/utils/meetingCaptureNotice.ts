@@ -42,10 +42,30 @@ export function summarizeCaptureCoverage(
   );
 }
 
-export function resolveCaptureStatus(input: CaptureNoticeInput) {
-  return input.capture?.kind === "interrupted"
-    ? MEETING_STATUS.INTERRUPTED
-    : (input.status ?? MEETING_STATUS.COMPLETE);
+export function resolveCaptureStatus(
+  input: CaptureNoticeInput & {
+    recovery?: PublicRecoveryState | RecoveryDisposition;
+  },
+) {
+  if (input.capture?.kind === "interrupted") return MEETING_STATUS.INTERRUPTED;
+  const status = input.status ?? MEETING_STATUS.COMPLETE;
+  if (
+    status !== MEETING_STATUS.IN_PROGRESS &&
+    status !== MEETING_STATUS.PROCESSING
+  )
+    return status;
+
+  switch (input.recovery?.disposition) {
+    case "done":
+      return input.recovery.outcome === "completed"
+        ? MEETING_STATUS.COMPLETE
+        : MEETING_STATUS.INTERRUPTED;
+    case "failed":
+    case "needs_reconciliation":
+      return MEETING_STATUS.INTERRUPTED;
+    default:
+      return status;
+  }
 }
 
 export function formatMeetingCaptureNotice(

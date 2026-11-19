@@ -95,3 +95,35 @@ test("public metadata excludes internal identities", () => {
     /attempt|executionVersion|ownerInstanceId|sourceId/,
   );
 });
+
+test.each(["in_progress", "processing"] as const)(
+  "saved recovery disposition overrides a stale %s badge only when work is settled",
+  (status) => {
+    const recovery = { stage: "delivery" } as const;
+    expect(
+      resolveCaptureStatus({
+        status,
+        recovery: { ...recovery, disposition: "done", outcome: "completed" },
+      }),
+    ).toBe("complete");
+    expect(
+      resolveCaptureStatus({
+        status,
+        recovery: { ...recovery, disposition: "needs_reconciliation" },
+      }),
+    ).toBe("interrupted");
+    expect(
+      resolveCaptureStatus({
+        status,
+        recovery: { ...recovery, disposition: "failed" },
+      }),
+    ).toBe("interrupted");
+    expect(
+      resolveCaptureStatus({
+        status,
+        recovery: { ...recovery, disposition: "claimed" },
+      }),
+    ).toBe(status);
+    expect(resolveCaptureStatus({ status })).toBe(status);
+  },
+);

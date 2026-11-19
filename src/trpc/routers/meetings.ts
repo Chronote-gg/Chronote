@@ -436,18 +436,19 @@ const resolveMeetingListChannelName = (
     ? PERSONAL_MEETING_CHANNEL_NAME
     : (channelMap.get(channelId) ?? channelId);
 
-const resolveMeetingListDuration = (meeting: MeetingSummary): number => {
-  const status = meeting.status;
+const resolveMeetingDuration = (
+  meeting: Pick<
+    MeetingSummary,
+    "status" | "timestamp" | "duration" | "capture" | "recovery"
+  >,
+): number => {
   if (
-    status === MEETING_STATUS.IN_PROGRESS ||
-    status === MEETING_STATUS.PROCESSING
+    resolveCaptureStatus(meeting) === MEETING_STATUS.IN_PROGRESS ||
+    (meeting.status == null &&
+      meeting.duration === 0 &&
+      !meeting.capture &&
+      !meeting.recovery)
   ) {
-    return Math.max(
-      0,
-      Math.floor((Date.now() - Date.parse(meeting.timestamp)) / 1000),
-    );
-  }
-  if (status == null && meeting.duration === 0) {
     return Math.max(
       0,
       Math.floor((Date.now() - Date.parse(meeting.timestamp)) / 1000),
@@ -552,7 +553,7 @@ const list = guildMemberProcedure
           ownershipScope: isPersonalMeeting(meeting) ? "personal" : "guild",
           ownerUserId: meeting.ownerUserId,
           timestamp: meeting.timestamp,
-          duration: resolveMeetingListDuration(meeting),
+          duration: resolveMeetingDuration(meeting),
           tags: resolveMeetingListTags(meeting.tags),
           notes: resolveMentions.toText(resolveMeetingListNotes(meeting.notes)),
           meetingName: meeting.meetingName,
@@ -740,16 +741,7 @@ const detail = authedProcedure
           isPersonalMeeting(history) &&
           resolveMeetingOwnerUserId(history) === ctx.user.id,
         timestamp: history.timestamp,
-        duration:
-          history.status === MEETING_STATUS.IN_PROGRESS ||
-          history.status === MEETING_STATUS.PROCESSING ||
-          ((history.status === null || history.status === undefined) &&
-            history.duration === 0)
-            ? Math.max(
-                0,
-                Math.floor((Date.now() - Date.parse(history.timestamp)) / 1000),
-              )
-            : history.duration,
+        duration: resolveMeetingDuration(history),
         tags: history.tags ?? [],
         notes,
         updateDelivery: projectMeetingUpdateDelivery(history),

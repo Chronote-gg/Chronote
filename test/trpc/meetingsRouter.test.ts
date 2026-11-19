@@ -246,7 +246,7 @@ describe("meetings router detail", () => {
     });
   });
 
-  test("returns persisted processing after access checks", async () => {
+  test("returns saved processing outcomes and duration after recovery needs review", async () => {
     const meetingId = "channel-1#2025-01-01T00:00:00.000Z";
     const history: MeetingHistory = {
       guildId: "guild-1",
@@ -259,6 +259,15 @@ describe("meetings router detail", () => {
       transcribeMeeting: true,
       generateNotes: true,
       notes: "",
+      status: "processing",
+      recovery: {
+        disposition: "needs_reconciliation",
+        stage: "delivery",
+        reason: "delivery_uncertain",
+        attempt: 1,
+        executionVersion: 1,
+        retry: { maxAttempts: 3, nextAttemptAt: null },
+      },
       processing: { transcription: "empty", notes: "skipped" },
     };
     mockedGetMeetingHistory.mockResolvedValue(history);
@@ -268,6 +277,9 @@ describe("meetings router detail", () => {
       meetingId,
     });
 
+    expect(result.meeting.status).toBe("interrupted");
+    expect(result.meeting.duration).toBe(60);
+    expect(result.meeting.recoveryNotice).toContain("Recovery needs review");
     expect(result.meeting.processing).toEqual(history.processing);
     expect(result.meeting.notes).toBe("");
     expect(mockedCheckMeetingAccess).toHaveBeenCalled();
