@@ -26,6 +26,10 @@ jobs:
     name: Check production release scope
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
     outputs:
       publish: ${{ steps.scope.outputs.publish }}
     steps:
@@ -33,20 +37,17 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Check the complete push diff
+      - name: Compare with the last completed publication
         id: scope
         env:
-          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
           AFTER: ${{ github.sha }}
         run: |
-          publish="$(node scripts/deployment/production-release-scope.cjs "$BEFORE" "$AFTER")"
+          publish="$(node scripts/deployment/production-release-scope.cjs "$GITHUB_REPOSITORY" "$AFTER")"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
 
   ci:
-    needs: [release-scope]
-    if: >-
-      !cancelled() && github.ref == 'refs/heads/master' &&
-      (github.event_name == 'workflow_dispatch' || needs.release-scope.outputs.publish != 'false')
+    if: github.ref == 'refs/heads/master'
     name: CI
     # One group across both events, so at most one master CI is ever alive and
     # the newest run wins. A merge therefore cancels a manual dispatch's CI as
@@ -414,7 +415,10 @@ jobs:
     concurrency:
       group: chronote-deploy-production-docs
       cancel-in-progress: false
-    needs: [ci]
+    needs: [ci, release-scope]
+    if: >-
+      !cancelled() && needs.ci.result == 'success' &&
+      (github.event_name == 'workflow_dispatch' || needs.release-scope.outputs.publish != 'false')
     runs-on: ubuntu-latest
     environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}
     timeout-minutes: 45
