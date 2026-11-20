@@ -21,7 +21,7 @@ const deployment = readWorkflow("deploy.yml");
 
 const CI_JOB = "ci";
 const deployJobs = Object.entries(deployment.jobs).filter(
-  ([id]) => id !== CI_JOB,
+  ([id]) => id !== CI_JOB && id !== "release-scope",
 );
 
 // A workflow-level group holds a newer run entirely pending, so its CI never
