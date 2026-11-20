@@ -32,6 +32,12 @@ variable "enable_private_evidence_store" {
     error_message = "Bootstrap requires the reviewed production account, us-east-1, prod and the default workspace."
   }
 }
+variable "use_dedicated_production_plan_environment" {
+  description = "Bind the Production Plan role to the provisioned production-plan GitHub environment."
+  type        = bool
+  default     = false
+}
+
 variable "enable_production_terraform_role" {
   type    = bool
   default = false

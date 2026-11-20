@@ -161,7 +161,7 @@ resource "aws_iam_role" "production_terraform_plan" {
       Principal = { Federated = data.aws_iam_openid_connect_provider.github[0].arn }
       Condition = { StringEquals = {
         "token.actions.githubusercontent.com:aud"                 = "sts.amazonaws.com"
-        "token.actions.githubusercontent.com:sub"                 = "repo:Chronote-gg/Chronote:environment:production"
+        "token.actions.githubusercontent.com:sub"                 = var.use_dedicated_production_plan_environment ? "repo:Chronote-gg/Chronote:environment:production-plan" : "repo:Chronote-gg/Chronote:environment:production"
         "token.actions.githubusercontent.com:repository_id"       = var.github_repository_id
         "token.actions.githubusercontent.com:repository_owner_id" = var.github_owner_id
         "token.actions.githubusercontent.com:ref"                 = "refs/heads/master"
