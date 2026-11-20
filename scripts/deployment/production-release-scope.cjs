@@ -31,6 +31,26 @@ function needsPublication(paths) {
 const shaPattern = /^[0-9a-f]{40}$/;
 const publishJobs = ["Deploy Docs", "Deploy Backend", "Deploy Frontend"];
 
+function publicationStatus(run, jobs) {
+  if (run.status !== "completed") return "uncertain";
+  if (
+    run.conclusion === "success" &&
+    publishJobs.every((name) =>
+      jobs.some((job) => job.name === name && job.conclusion === "success"),
+    )
+  )
+    return "published";
+  // A canceled approval has no executed steps. An attempted deploy may already
+  // have changed production even if the workflow ultimately failed.
+  return jobs.some(
+    (job) =>
+      job.conclusion === "success" ||
+      job.steps?.some((step) => step.started_at),
+  )
+    ? "uncertain"
+    : "untouched";
+}
+
 function lastPublishedHead(get, repo) {
   const route = "repos/" + repo + "/actions";
   const pageSize = 20;
@@ -53,26 +73,9 @@ function lastPublishedHead(get, repo) {
       const jobs = pages
         .flatMap(({ jobs }) => jobs)
         .filter((job) => publishJobs.includes(job.name));
-      if (
-        run.conclusion === "success" &&
-        publishJobs.every((name) =>
-          jobs.some((job) => job.name === name && job.conclusion === "success"),
-        )
-      ) {
-        return run.head_sha;
-      }
-      // An incomplete run may already have updated production. A job canceled
-      // at the approval gate has no executed steps and cannot have published.
-      if (
-        (run.status !== undefined && run.status !== "completed") ||
-        jobs.some(
-          (job) =>
-            job.conclusion === "success" ||
-            job.status === "in_progress" ||
-            job.steps?.some((step) => step.started_at),
-        )
-      )
-        return;
+      const status = publicationStatus(run, jobs);
+      if (status === "published") return run.head_sha;
+      if (status === "uncertain") return;
     }
     if (runs.length < pageSize) return;
   }

@@ -65,8 +65,13 @@ test("does not treat an infra-only skip as a release baseline", () => {
     path.includes("/workflows/")
       ? {
           workflow_runs: [
-            { id: 2, head_sha: "b".repeat(40) },
-            { id: 1, head_sha: published, conclusion: "success" },
+            { id: 2, head_sha: "b".repeat(40), status: "completed" },
+            {
+              id: 1,
+              head_sha: published,
+              status: "completed",
+              conclusion: "success",
+            },
           ],
         }
       : [
@@ -117,6 +122,12 @@ test("keeps master CI, manual release and Docs-before-backend ordering", () => {
   expect(workflow.jobs.deploybackend.if).toBe(
     "${{ !cancelled() && needs.ci.result == 'success' && needs.deploy-docs.result == 'success' }}",
   );
+  expect(
+    Object.entries(workflow.jobs)
+      .filter(([, job]) => job.needs?.includes("deploybackend"))
+      .map(([id]) => id)
+      .sort(),
+  ).toEqual(["deploy-frontend", "promote-prompts", "sync-openai-connection"]);
   expect(publishJobs).toEqual(
     ["deploy-docs", "deploybackend", "deploy-frontend"].map(
       (id) => workflow.jobs[id].name,
@@ -129,6 +140,7 @@ test("finds the last release beyond the first page, past skips and pre-approval 
   const earlierRuns = Array.from({ length: 20 }, (_, index) => ({
     id: index + 2,
     head_sha: "b".repeat(40),
+    status: "completed",
     conclusion: "cancelled",
   }));
   const get = (path) => {
@@ -136,7 +148,14 @@ test("finds the last release beyond the first page, past skips and pre-approval 
       return {
         workflow_runs: path.endsWith("&page=1")
           ? earlierRuns
-          : [{ id: 1, head_sha: published, conclusion: "success" }],
+          : [
+              {
+                id: 1,
+                head_sha: published,
+                status: "completed",
+                conclusion: "success",
+              },
+            ],
       };
     }
     const conclusion = path.includes("/runs/1/") ? "success" : "cancelled";
@@ -159,32 +178,48 @@ test("finds the last release beyond the first page, past skips and pre-approval 
   });
 });
 
-test("publishes a revert after an intervening run started publishing and failed", () => {
-  const get = (path) =>
-    path.includes("/workflows/")
-      ? {
-          workflow_runs: [
-            { id: 2, head_sha: "b".repeat(40), conclusion: "failure" },
-            { id: 1, head_sha: "a".repeat(40), conclusion: "success" },
-          ],
-        }
-      : [
-          {
-            jobs: [
+test.each(["completed", "waiting"])(
+  "preserves publication for a revert when the intervening run is %s",
+  (status) => {
+    const get = (path) =>
+      path.includes("/workflows/")
+        ? {
+            workflow_runs: [
               {
-                name: "Deploy Backend",
+                id: 2,
+                head_sha: "b".repeat(40),
+                status,
                 conclusion: "failure",
-                steps: [{ started_at: "2026-11-20T00:00:00Z" }],
+              },
+              {
+                id: 1,
+                head_sha: "a".repeat(40),
+                status: "completed",
+                conclusion: "success",
               },
             ],
-          },
-        ];
-  expect(
-    publicationDecision("test/repo", "c".repeat(40), get, () => [
-      "_infra/main.tf",
-    ]).publish,
-  ).toBe(true);
-});
+          }
+        : [
+            {
+              jobs: [
+                {
+                  name: "Deploy Backend",
+                  conclusion: "failure",
+                  steps:
+                    status === "completed"
+                      ? [{ started_at: "2026-11-20T00:00:00Z" }]
+                      : [],
+                },
+              ],
+            },
+          ];
+    expect(
+      publicationDecision("test/repo", "c".repeat(40), get, () => [
+        "_infra/main.tf",
+      ]).publish,
+    ).toBe(true);
+  },
+);
 
 test("skips a stale push when master advances before publication", () => {
   const get = (path) =>
