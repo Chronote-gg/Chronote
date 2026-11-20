@@ -53,7 +53,7 @@ function publicationStatus(run, jobs) {
 
 function* deploymentRuns(get, workflowRoute) {
   const pageSize = 20;
-  for (let page = 1; ; page += 1) {
+  for (let page = 1; page <= 5; page += 1) {
     const { workflow_runs: runs } = get(
       workflowRoute + "?branch=master&per_page=" + pageSize + "&page=" + page,
     );
@@ -119,15 +119,9 @@ function publicationDecision(
       ),
     ),
   diff = changedPaths,
-  verifyMaster = false,
 ) {
   try {
     const before = lastPublishedHead(get, repo);
-    if (verifyMaster) {
-      const current = get("repos/" + repo + "/git/ref/heads/master").object.sha;
-      if (shaPattern.test(current) && current !== after)
-        return { publish: false, paths: [], superseded: true };
-    }
     if (before) {
       const paths = diff(before, after);
       if (paths.length)
@@ -140,22 +134,15 @@ function publicationDecision(
 }
 
 if (require.main === module) {
-  const [repo, after] = process.argv.slice(2);
-  const { publish, before, paths, superseded } = publicationDecision(
-    repo,
-    after,
-    undefined,
-    undefined,
-    process.env.GITHUB_ACTIONS === "true",
+  const { publish, before, paths } = publicationDecision(
+    ...process.argv.slice(2),
   );
   if (process.env.GITHUB_STEP_SUMMARY) {
-    const decision = superseded
-      ? "Production publication skipped because a newer master commit superseded this run."
-      : !paths.length
-        ? "Production publication required because the baseline or diff could not be verified."
-        : publish
-          ? "Production publication required for this release."
-          : "Production publication skipped. The diff contains only infrastructure and operator files.";
+    const decision = !paths.length
+      ? "Production publication required because the baseline or diff could not be verified."
+      : publish
+        ? "Production publication required for this release."
+        : "Production publication skipped. The diff contains only infrastructure and operator files.";
     const summary = [decision];
     if (paths.length) {
       summary.push(
@@ -175,4 +162,9 @@ if (require.main === module) {
   console.log(publish);
 }
 
-module.exports = { needsPublication, publicationDecision, publishJobs };
+module.exports = {
+  infrastructureOnlyPaths,
+  needsPublication,
+  publicationDecision,
+  publishJobs,
+};

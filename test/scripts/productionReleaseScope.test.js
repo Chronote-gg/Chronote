@@ -3,6 +3,7 @@ import { expect, test } from "@jest/globals";
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import {
+  infrastructureOnlyPaths,
   needsPublication,
   publicationDecision,
   publishJobs,
@@ -221,15 +222,41 @@ test.each(["completed", "waiting"])(
   },
 );
 
-test("skips a stale push when master advances before publication", () => {
-  const get = (path) =>
-    path.endsWith("/git/ref/heads/master")
-      ? { object: { sha: "d".repeat(40) } }
-      : { workflow_runs: [] };
-  expect(
-    publicationDecision("test/repo", "c".repeat(40), get, undefined, true),
-  ).toMatchObject({
-    publish: false,
-    superseded: true,
-  });
+test("only exempts the reviewed Terraform and operator paths", () => {
+  expect(infrastructureOnlyPaths).toEqual(
+    new Set([
+      ".github/workflows/terraform-apply.yml",
+      ".github/workflows/terraform-plan.yml",
+      "README.md",
+      "docs/engineering/infrastructure.md",
+      "docs/terraform-delivery.md",
+      "scripts/deployment/production-release-scope.cjs",
+      "scripts/deployment/terraform-runs.cjs",
+      "scripts/deployment/terraform-tfvars.py",
+      "test/scripts/deployConcurrency.test.ts",
+      "test/scripts/productionReleaseScope.test.js",
+      "test/scripts/terraformRuns.test.js",
+      "test/scripts/terraformTfvars.test.js",
+    ]),
+  );
+});
+
+test("bounds history reads when no published run is found", () => {
+  const pages = [];
+  const get = (path) => {
+    if (!path.includes("/workflows/")) return [{ jobs: [] }];
+    const page = Number(new URLSearchParams(path.split("?")[1]).get("page"));
+    pages.push(page);
+    return {
+      workflow_runs: Array.from({ length: 20 }, (_, index) => ({
+        id: page * 20 + index,
+        head_sha: "a".repeat(40),
+        status: "completed",
+      })),
+    };
+  };
+  expect(publicationDecision("test/repo", "c".repeat(40), get).publish).toBe(
+    true,
+  );
+  expect(pages).toEqual([1, 2, 3, 4, 5]);
 });
