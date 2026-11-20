@@ -2,7 +2,6 @@ const { appendFileSync } = require("node:fs");
 const { execFileSync } = require("node:child_process");
 
 const infrastructureOnlyPaths = new Set([
-  ".github/workflows/deploy.yml",
   ".github/workflows/terraform-apply.yml",
   ".github/workflows/terraform-plan.yml",
   "README.md",
@@ -34,21 +33,48 @@ const publishJobs = ["Deploy Docs", "Deploy Backend", "Deploy Frontend"];
 
 function lastPublishedHead(get, repo) {
   const route = "repos/" + repo + "/actions";
-  const { workflow_runs: runs } = get(
-    route +
-      "/workflows/deploy.yml/runs?branch=master&status=success&per_page=20",
-  );
-  for (const run of runs) {
-    if (!Number.isSafeInteger(run.id) || !shaPattern.test(run.head_sha))
-      continue;
-    const { jobs } = get(route + "/runs/" + run.id + "/jobs?per_page=100");
-    if (
-      publishJobs.every((name) =>
-        jobs.some((job) => job.name === name && job.conclusion === "success"),
+  const pageSize = 20;
+  for (let page = 1; ; page += 1) {
+    const { workflow_runs: runs } = get(
+      route +
+        "/workflows/deploy.yml/runs?branch=master&per_page=" +
+        pageSize +
+        "&page=" +
+        page,
+    );
+    for (const run of runs) {
+      if (!Number.isSafeInteger(run.id) || !shaPattern.test(run.head_sha))
+        return;
+      if (run.id === Number(process.env.GITHUB_RUN_ID)) continue;
+      const pages = get(
+        route + "/runs/" + run.id + "/jobs?filter=all&per_page=100",
+        true,
+      );
+      const jobs = pages
+        .flatMap(({ jobs }) => jobs)
+        .filter((job) => publishJobs.includes(job.name));
+      if (
+        run.conclusion === "success" &&
+        publishJobs.every((name) =>
+          jobs.some((job) => job.name === name && job.conclusion === "success"),
+        )
+      ) {
+        return run.head_sha;
+      }
+      // An incomplete run may already have updated production. A job canceled
+      // at the approval gate has no executed steps and cannot have published.
+      if (
+        (run.status !== undefined && run.status !== "completed") ||
+        jobs.some(
+          (job) =>
+            job.conclusion === "success" ||
+            job.status === "in_progress" ||
+            job.steps?.some((step) => step.started_at),
+        )
       )
-    ) {
-      return run.head_sha;
+        return;
     }
+    if (runs.length < pageSize) return;
   }
 }
 
@@ -76,18 +102,29 @@ function changedPaths(before, after) {
 function publicationDecision(
   repo,
   after,
-  get = (path) =>
+  get = (path, paginate = false) =>
     JSON.parse(
-      execFileSync("gh", ["api", path], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 10000,
-      }),
+      execFileSync(
+        "gh",
+        ["api", ...(paginate ? ["--paginate", "--slurp"] : []), path],
+        {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 10000,
+          maxBuffer: 8 * 1024 * 1024,
+        },
+      ),
     ),
   diff = changedPaths,
+  verifyMaster = false,
 ) {
   try {
     const before = lastPublishedHead(get, repo);
+    if (verifyMaster) {
+      const current = get("repos/" + repo + "/git/ref/heads/master").object.sha;
+      if (shaPattern.test(current) && current !== after)
+        return { publish: false, paths: [], superseded: true };
+    }
     if (before) {
       const paths = diff(before, after);
       if (paths.length)
@@ -100,15 +137,22 @@ function publicationDecision(
 }
 
 if (require.main === module) {
-  const { publish, before, paths } = publicationDecision(
-    ...process.argv.slice(2),
+  const [repo, after] = process.argv.slice(2);
+  const { publish, before, paths, superseded } = publicationDecision(
+    repo,
+    after,
+    undefined,
+    undefined,
+    process.env.GITHUB_ACTIONS === "true",
   );
   if (process.env.GITHUB_STEP_SUMMARY) {
-    const decision = !paths.length
-      ? "Production publication required because the baseline or diff could not be verified."
-      : publish
-        ? "Production publication required for this release."
-        : "Production publication skipped. The diff contains only infrastructure and operator files.";
+    const decision = superseded
+      ? "Production publication skipped because a newer master commit superseded this run."
+      : !paths.length
+        ? "Production publication required because the baseline or diff could not be verified."
+        : publish
+          ? "Production publication required for this release."
+          : "Production publication skipped. The diff contains only infrastructure and operator files.";
     const summary = [decision];
     if (paths.length) {
       summary.push(
@@ -128,4 +172,4 @@ if (require.main === module) {
   console.log(publish);
 }
 
-module.exports = { needsPublication, publicationDecision };
+module.exports = { needsPublication, publicationDecision, publishJobs };

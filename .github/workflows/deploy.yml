@@ -24,20 +24,26 @@ permissions:
 jobs:
   release-scope:
     name: Check production release scope
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: ci
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       actions: read
       contents: read
     outputs:
-      publish: ${{ steps.scope.outputs.publish }}
+      publish: ${{ steps.manual.outputs.publish || steps.scope.outputs.publish }}
     steps:
+      - if: github.event_name == 'workflow_dispatch'
+        id: manual
+        run: echo 'publish=true' >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
+        if: github.event_name == 'push'
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Compare with the last completed publication
+        if: github.event_name == 'push'
         id: scope
         env:
           GH_TOKEN: ${{ github.token }}
@@ -76,6 +82,7 @@ jobs:
     timeout-minutes: 300
     # Publish privacy/What's New notices before expanded capture goes live.
     needs: [ci, deploy-docs]
+    if: ${{ !cancelled() && needs.ci.result == 'success' && needs.deploy-docs.result == 'success' }}
     runs-on: ubuntu-latest
     # A dispatch that retires older tasks ends live recordings, so it always
     # waits for the reviewed production approval.
