@@ -51,33 +51,33 @@ function publicationStatus(run, jobs) {
     : "untouched";
 }
 
-function lastPublishedHead(get, repo) {
-  const route = "repos/" + repo + "/actions";
+function* deploymentRuns(get, workflowRoute) {
   const pageSize = 20;
   for (let page = 1; ; page += 1) {
     const { workflow_runs: runs } = get(
-      route +
-        "/workflows/deploy.yml/runs?branch=master&per_page=" +
-        pageSize +
-        "&page=" +
-        page,
+      workflowRoute + "?branch=master&per_page=" + pageSize + "&page=" + page,
     );
-    for (const run of runs) {
-      if (!Number.isSafeInteger(run.id) || !shaPattern.test(run.head_sha))
-        return;
-      if (run.id === Number(process.env.GITHUB_RUN_ID)) continue;
-      const pages = get(
-        route + "/runs/" + run.id + "/jobs?filter=all&per_page=100",
-        true,
-      );
-      const jobs = pages
-        .flatMap(({ jobs }) => jobs)
-        .filter((job) => publishJobs.includes(job.name));
-      const status = publicationStatus(run, jobs);
-      if (status === "published") return run.head_sha;
-      if (status === "uncertain") return;
-    }
+    yield* runs;
     if (runs.length < pageSize) return;
+  }
+}
+
+function lastPublishedHead(get, repo) {
+  const route = "repos/" + repo + "/actions";
+  const currentRunId = Number(process.env.GITHUB_RUN_ID);
+  for (const run of deploymentRuns(get, route + "/workflows/deploy.yml/runs")) {
+    if (!Number.isSafeInteger(run.id) || !shaPattern.test(run.head_sha)) return;
+    if (run.id === currentRunId) continue;
+    const pages = get(
+      route + "/runs/" + run.id + "/jobs?filter=all&per_page=100",
+      true,
+    );
+    const jobs = pages
+      .flatMap(({ jobs }) => jobs)
+      .filter((job) => publishJobs.includes(job.name));
+    const status = publicationStatus(run, jobs);
+    if (status === "published") return run.head_sha;
+    if (status === "uncertain") return;
   }
 }
 
