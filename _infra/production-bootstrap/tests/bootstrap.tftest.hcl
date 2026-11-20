@@ -238,3 +238,20 @@ run "policy_limits" {
     error_message = "The evidence bucket policy is unchanged."
   }
 }
+
+run "dedicated_production_plan_environment" {
+  command = plan
+  variables {
+    enable_private_evidence_store             = true
+    enable_production_terraform_role          = true
+    use_dedicated_production_plan_environment = true
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role.production_terraform_plan[0].assume_role_policy).Statement[0].Condition.StringEquals == { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com", "token.actions.githubusercontent.com:sub" = "repo:Chronote-gg/Chronote:environment:production-plan", "token.actions.githubusercontent.com:repository_id" = var.github_repository_id, "token.actions.githubusercontent.com:repository_owner_id" = var.github_owner_id, "token.actions.githubusercontent.com:ref" = "refs/heads/master", "token.actions.githubusercontent.com:workflow" = "Terraform Plan" }
+    error_message = "The opt-in must change only the Plan environment binding."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role.production_terraform[0].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:Chronote-gg/Chronote:environment:production-terraform"
+    error_message = "Moving Plan must preserve the protected Apply environment."
+  }
+}

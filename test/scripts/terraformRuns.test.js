@@ -937,13 +937,18 @@ describe("Terraform roles and environments", () => {
     );
   });
 
-  test("the Plan role trusts only the Plan workflow in production", () => {
+  test("only Production Plan can opt into the dedicated planning environment", () => {
     const plan = workflow("terraform-plan.yml");
-    expect(trusts.production_terraform_plan).toEqual({
-      environment: "production",
-      workflow: plan.name,
-    });
-    expect(plan.jobs.plan.environment).toBe("${{ inputs.environment }}");
+    expect(trusts.production_terraform_plan.workflow).toBe(plan.name);
+    expect(role).toContain(
+      'var.use_dedicated_production_plan_environment ? "repo:Chronote-gg/Chronote:environment:production-plan" : "repo:Chronote-gg/Chronote:environment:production"',
+    );
+    expect(plan.jobs.plan.environment).toBe(
+      "${{ (inputs.environment == 'production' && vars.USE_DEDICATED_PRODUCTION_PLAN_ENVIRONMENT == 'true') && 'production-plan' || inputs.environment }}",
+    );
+    expect(plan.jobs.plan.env.PLAN_ENVIRONMENT).toBe(
+      "${{ inputs.environment }}",
+    );
   });
 
   test("Terraform never manages the Apply environment", () => {

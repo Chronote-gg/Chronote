@@ -24,3 +24,13 @@ terraform -chdir=_infra/production-bootstrap test
 ```
 
 The tests use mocked providers and synthetic identities. They check the trust, the evidence bucket controls, the resource addresses, both policy size limits, that IAM writes never use a wildcard resource, and the deny statements. `ci-core.yml` runs them with Terraform 1.16.0.
+
+### Dedicated Production Plan environment
+
+Production Plan uses the existing protected environment until the migration is enabled. Keep Production Apply on its existing protected environment.
+
+1. Create GitHub environment `production-plan` with a custom deployment branch policy for exact `master` and no required reviewers. Leave the existing environments and their protections in place.
+2. Provision this environment’s Plan-role ARN, AWS account and region, matching `TFVAR_*` variables, and Plan secrets from the authoritative deployment configuration. The Plan workflow needs `TERRAFORM_TFVARS_JSON` and the optional Redis inputs when configured. Existing GitHub secret values are write-only. Use the owner’s authorized source and supply values without logging them.
+3. Review and apply this separate production-bootstrap root with `use_dedicated_production_plan_environment = true`. The expected infrastructure change is the existing Plan role’s environment trust subject. This administrative bootstrap Apply requires separate approval. The application’s protected Terraform Apply cannot write bootstrap state.
+4. Set the repository Actions variable `USE_DEDICATED_PRODUCTION_PLAN_ENVIRONMENT` to `true`. Run the native Production Plan on `master` and verify its role, retention, saved-plan digest and absence of the reviewer gate. Use the existing native Production Apply review for any subsequent mutation.
+5. To restore the old route, revert the opt-in variable and reapply the previous Plan trust subject through the same reviewed bootstrap path. Plan can pause briefly between trust installation and toggling the repository variable.

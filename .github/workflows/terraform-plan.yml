@@ -27,7 +27,7 @@ jobs:
     name: Terraform Plan
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment: ${{ inputs.environment }}
+    environment: ${{ (inputs.environment == 'production' && vars.USE_DEDICATED_PRODUCTION_PLAN_ENVIRONMENT == 'true') && 'production-plan' || inputs.environment }}
     env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
