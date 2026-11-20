@@ -22,8 +22,31 @@ permissions:
 # a newer push cancel stale CI while every deploy job still runs to completion.
 
 jobs:
+  release-scope:
+    name: Check production release scope
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.scope.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the complete push diff
+        id: scope
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          publish="$(node scripts/deployment/production-release-scope.cjs "$BEFORE" "$AFTER")"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
   ci:
-    if: github.ref == 'refs/heads/master'
+    needs: [release-scope]
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/master' &&
+      (github.event_name == 'workflow_dispatch' || needs.release-scope.outputs.publish != 'false')
     name: CI
     # One group across both events, so at most one master CI is ever alive and
     # the newest run wins. A merge therefore cancels a manual dispatch's CI as
