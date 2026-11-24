@@ -22,6 +22,36 @@ permissions:
 # a newer push cancel stale CI while every deploy job still runs to completion.
 
 jobs:
+  release-scope:
+    name: Check production release scope
+    needs: ci
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      publish: ${{ steps.manual.outputs.publish || steps.scope.outputs.publish }}
+    steps:
+      - if: github.event_name == 'workflow_dispatch'
+        id: manual
+        run: echo 'publish=true' >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        if: github.event_name == 'push'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare with the last completed publication
+        if: github.event_name == 'push'
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AFTER: ${{ github.sha }}
+        run: |
+          publish="$(node scripts/deployment/production-release-scope.cjs "$GITHUB_REPOSITORY" "$AFTER")"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
   ci:
     if: github.ref == 'refs/heads/master'
     name: CI
@@ -52,6 +82,7 @@ jobs:
     timeout-minutes: 300
     # Publish privacy/What's New notices before expanded capture goes live.
     needs: [ci, deploy-docs]
+    if: ${{ !cancelled() && needs.ci.result == 'success' && needs.deploy-docs.result == 'success' }}
     runs-on: ubuntu-latest
     # A dispatch that retires older tasks ends live recordings, so it always
     # waits for the reviewed production approval.
@@ -391,7 +422,10 @@ jobs:
     concurrency:
       group: chronote-deploy-production-docs
       cancel-in-progress: false
-    needs: [ci]
+    needs: [ci, release-scope]
+    if: >-
+      !cancelled() && needs.ci.result == 'success' &&
+      (github.event_name == 'workflow_dispatch' || needs.release-scope.outputs.publish != 'false')
     runs-on: ubuntu-latest
     environment: ${{ (github.event_name == 'workflow_dispatch' && inputs.retire_older_tasks) && 'production' || vars.DEPLOY_ENVIRONMENT || 'production' }}
     timeout-minutes: 45
