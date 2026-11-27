@@ -68,6 +68,18 @@ After the first `terraform apply` with `alert_email` set, you must **confirm
 the subscription** by clicking the link in the confirmation email AWS sends to
 that address.
 
+The topic is encrypted with the application key, so every publisher needs that
+key's policy. **Until the 2026-11-27 key policy fix is applied, no alarm
+notification is delivered, and none was from at least 2026-10-28**: the `AllowSNSPublishers` statement required
+`kms:CallerAccount`, which does not match the CloudWatch service principal, and
+every alarm action failed with "CloudWatch Alarms does not have authorization to
+access the SNS topic encryption key". It is now scoped by the SNS encryption
+context `kms:EncryptionContext:aws:sns:topicArn` instead. Subscribers need no key
+access: SNS decrypts before delivery. `tests/alert-delivery.tftest.hcl` pins the
+grant and that every alarm notifies the topic. The proof step after the Apply and
+the daily delivery check are in
+[the deployment document](../docs/deployment.md#alarm-delivery).
+
 ### What triggers an alert
 
 | Alarm                       | Condition                                      | Period    |

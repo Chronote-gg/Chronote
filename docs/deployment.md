@@ -151,6 +151,23 @@ Terraform writes every variable above into the GitHub environment except `DEPLOY
 
 The alarm resources need a Terraform Apply of the environment; the code publishes the metrics either way. Without the deploy role's `cloudwatch:PutMetricData` grant, a drain timeout fails on the metric call with an access error instead of the drain message and publishes no metric, so `deploy_drain_timeout` cannot fire.
 
+### Alarm delivery
+
+**No production alarm notification was delivered from at least 2026-10-28 until the key policy fix is applied, and probably none ever was:** the faulty condition shipped with the topic (merged 2026-02-19). The retained alarm history (30 days) shows every action to `meeting-notes-prod-critical-alerts` failing from 2026-10-28 on with `CloudWatch Alarms does not have authorization to access the SNS topic encryption key`, and the topic recorded no published message and the Discord Lambda no invocation in the 90 days checked. The topic is encrypted with the application key, whose `AllowSNSPublishers` statement was conditioned on `kms:CallerAccount`. That key matches identities in the account, not the `cloudwatch.amazonaws.com` service principal, so KMS refused every publish. The statement now scopes the three service principals by `kms:EncryptionContext:aws:sns:topicArn`, the topic ARN SNS sets as encryption context on every publish. A failed publish leaves no SNS metric (`NumberOfNotificationsFailed` counts only messages SNS accepted), so the failure could not alarm through the topic it failed to reach.
+
+The fix reaches production through a full Plan and Apply ([Terraform delivery](terraform-delivery.md)); the Apply role may change this key's policy because the key carries `Environment = prod`. After the Apply, prove delivery with one test transition. This is a production write, so the owner runs it, at a time when no deployment is running (a real drain timeout would be indistinguishable):
+
+```sh
+aws cloudwatch set-alarm-state --alarm-name meeting-notes-prod-deploy-drain-timeout \
+  --state-value ALARM --state-reason "Alarm delivery test after the key policy fix, not a real drain timeout"
+aws cloudwatch describe-alarm-history --alarm-name meeting-notes-prod-deploy-drain-timeout \
+  --history-item-type Action --max-items 2
+```
+
+The history must show `Successfully executed action` for the topic, and the ALARM email and Discord post must arrive. The alarm returns to OK by itself at its next five minute evaluation, which sends the OK notification as well; no command sets it back.
+
+**Standing check.** `.github/workflows/alarm-delivery-check.yml` runs daily and fails if any `meeting-notes-*` alarm action failed in the last 26 hours, if the topic's `NumberOfNotificationsFailed` is non-zero, or if the topic has no confirmed email subscription. A failed scheduled run is emailed by GitHub, so the report does not depend on this key or topic. It cannot see an email that was accepted and then filtered as spam, and it does not cover Sandbox, which creates no topic while its alert variables are empty. It is skipped until the owner installs its role. Proposal, an owner decision since it adds an OIDC trust: a role `meeting-notes-prod-alarm-delivery-check` trusting the GitHub OIDC provider with `aud` `sts.amazonaws.com`, `sub` `repo:Chronote-gg/Chronote:ref:refs/heads/master` and `workflow` `Alarm Delivery Check`, allowed only `cloudwatch:DescribeAlarmHistory` and `cloudwatch:GetMetricStatistics` on `*` and `sns:ListSubscriptionsByTopic` on the topic, then the repository variable `ALARM_DELIVERY_CHECK_ROLE_ARN` set to it. A weekly synthetic alarm was rejected: it proves delivery only if someone notices the email not arriving.
+
 ### Sandbox gap
 
 The deploy role's `PutMetricData` and `StopTask` statements reach Sandbox only through a full Sandbox Plan and Apply, which needs the Sandbox Terraform role migrated first ([Terraform delivery](terraform-delivery.md#sandbox)). Until then, in Sandbox a drain timeout fails on the metric call with an access error, the drain timeout alarm cannot fire, and `retire_older_tasks` fails at its first stop, so a Sandbox rehearsal cannot exercise retire or the drain alarm.
