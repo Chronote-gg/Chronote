@@ -48,9 +48,20 @@ with exponent 2 and a 30,000 ms cap. Valid Retry-After values from 0 through
 60,000 ms take precedence. Cancellation interrupts backoff and prevents new
 dispatches; issued requests and streams still settle before cleanup.
 
-The shared bulkhead holds two complete logical transcriptions with up to
-100 queued jobs, for every meeting on the task. Logical starts remain spaced
-by 800 ms, so the task sends at most about 75 requests a minute. A full queue
+The shared bulkhead holds four complete logical transcriptions
+(`TRANSCRIPTION_MAX_CONCURRENT`) with up to 100 queued jobs, for every meeting
+on the task. Logical starts are spaced by 300 ms
+(`TRANSCRIPTION_RATE_MIN_TIME`), so the task sends at most about 200 requests
+a minute. Until 2026-11-27 it was two and 800 ms (about 75 a minute), below
+the roughly 120 a minute that three long meetings on one task demand. The
+account limit, 30,000 `gpt-transcribe` requests a minute with no audio or token
+limit header, was read on 2026-11-27 from the `x-ratelimit-*` headers of the
+development key, which may not be the production project. If production's
+limit is lower, a 429 still retries with its Retry-After (up to 60 s) or
+backoff, and exhausted 429s count toward the breaker. PCM to WAV conversion
+and speech detection run before a job enters the bulkhead, and the Langfuse
+MP3 encode inside it is limited to one at a time, so the extra slots add
+waiting on the network rather than CPU work. A full queue
 refuses a job at once without reaching the provider; the failure log line
 carries `reason: "queue_full"` and the `passMode`.
 

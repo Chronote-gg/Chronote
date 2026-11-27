@@ -1,6 +1,5 @@
 /** @jest-environment node */
 import type { ClientOptions } from "openai";
-import type { SnippetTranscriptionResult } from "../../src/types/audio";
 import {
   validResponse,
   withTracingFixture,
@@ -9,7 +8,6 @@ import {
 jest.setTimeout(120_000);
 
 const PROVIDER_LATENCY_MS = 1_000;
-const MEETINGS = 3;
 const SPEAKERS_PER_MEETING = 4;
 const TURN_PERIOD_MS = 20_000;
 const SIMULATED_MS = 8 * 60_000;
@@ -17,11 +15,12 @@ const SIMULATED_MS = 8 * 60_000;
 const FAST_PER_TURN = [2, 2, 3];
 
 type Mode = "fast" | "slow";
+type Constants = typeof import("../../src/constants");
 
-/** Every speaker's calls on one task: about 120 a minute against a 75 a minute queue. */
-function arrivals() {
+/** Every speaker's calls on one task; three meetings make about 120 a minute. */
+function arrivals(meetings: number) {
   const calls: Array<{ at: number; mode: Mode }> = [];
-  for (let speaker = 0; speaker < MEETINGS * SPEAKERS_PER_MEETING; speaker++) {
+  for (let speaker = 0; speaker < meetings * SPEAKERS_PER_MEETING; speaker++) {
     for (
       let turn = 0, start = speaker * 1_700;
       start < SIMULATED_MS;
@@ -36,7 +35,12 @@ function arrivals() {
   return calls;
 }
 
-test("three long meetings on one task shed fast previews and keep every slow snippet", async () => {
+/** Runs the real queue against a fake provider and reports what it refused. */
+async function simulate(meetings: number, overrides: Partial<Constants> = {}) {
+  jest.doMock("../../src/constants", () => ({
+    ...jest.requireActual<Constants>("../../src/constants"),
+    ...overrides,
+  }));
   jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
   const error = jest.spyOn(console, "error").mockImplementation(() => {});
   const fetch: NonNullable<ClientOptions["fetch"]> = () =>
@@ -46,18 +50,26 @@ test("three long meetings on one task shed fast previews and keep every slow sni
         PROVIDER_LATENCY_MS,
       ),
     );
+  const failed = { fast: 0, slow: 0 };
+  let maxQueueWaitMs = 0;
   try {
     await withTracingFixture(
       { realPolicies: true, transport: fetch },
       async (f) => {
         f.attachment.resolve();
-        const results: Array<Promise<[Mode, SnippetTranscriptionResult]>> = [];
-        for (const call of arrivals())
+        const results: Promise<void>[] = [];
+        for (const call of arrivals(meetings))
           setTimeout(() => {
+            const queuedAt = Date.now();
             results.push(
-              f
-                .transcribe({}, { noiseGateMode: call.mode })
-                .then((result) => [call.mode, result]),
+              f.transcribe({}, { noiseGateMode: call.mode }).then((result) => {
+                if (result.status === "failed") failed[call.mode] += 1;
+                else
+                  maxQueueWaitMs = Math.max(
+                    maxQueueWaitMs,
+                    Date.now() - queuedAt - PROVIDER_LATENCY_MS,
+                  );
+              }),
             );
           }, call.at);
         for (
@@ -66,20 +78,29 @@ test("three long meetings on one task shed fast previews and keep every slow sni
           elapsed += 1_000
         )
           await jest.advanceTimersByTimeAsync(1_000);
-        const settled = await Promise.all(results);
-        const failed = (mode: Mode) =>
-          settled.filter(([m, r]) => m === mode && r.status === "failed")
-            .length;
-        expect(failed("fast")).toBeGreaterThan(0);
-        expect(failed("slow")).toBe(0);
-        expect(error).toHaveBeenCalledWith(
-          expect.stringContaining("Failed to transcribe snippet"),
-          expect.objectContaining({ reason: "fast_shed", passMode: "fast" }),
-        );
+        await Promise.all(results);
       },
     );
+    return { slowRejected: failed.slow, fastShed: failed.fast, maxQueueWaitMs };
   } finally {
     error.mockRestore();
     jest.useRealTimers();
+    jest.dontMock("../../src/constants");
   }
+}
+
+const NO_SHEDDING = { TRANSCRIPTION_FAST_MAX_QUEUED: Number.POSITIVE_INFINITY };
+
+test("three long meetings on one task fit the queue without refusing a snippet", async () => {
+  const run = await simulate(3);
+  expect(run.slowRejected).toBe(0);
+  expect(run.fastShed).toBe(0);
+});
+
+test("past capacity the queue sheds fast previews and keeps every slow snippet", async () => {
+  const shedding = await simulate(8);
+  expect(shedding.slowRejected).toBe(0);
+  expect(shedding.fastShed).toBeGreaterThan(0);
+  const unshed = await simulate(8, NO_SHEDDING);
+  expect(unshed.slowRejected).toBeGreaterThan(0);
 });

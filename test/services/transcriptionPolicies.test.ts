@@ -8,6 +8,10 @@ import {
   waitFor,
   withTracingFixture,
 } from "../fixtures/transcriptionTracing";
+import {
+  TRANSCRIPTION_MAX_CONCURRENT as ACTIVE,
+  TRANSCRIPTION_RATE_MIN_TIME,
+} from "../../src/constants";
 
 jest.setTimeout(30_000);
 
@@ -111,8 +115,8 @@ test("new diagnostics exclude provider body, header, path and identifier sentine
 });
 
 test("real bulkhead retires an aborted queued item and starts the next while another remains active", async () => {
-  const held = [deferred<void>(), deferred<void>()];
-  const started = [deferred<void>(), deferred<void>(), deferred<void>()];
+  const held = Array.from({ length: ACTIVE }, () => deferred<void>());
+  const started = Array.from({ length: ACTIVE + 1 }, () => deferred<void>());
   const provider = providerTransport(async (attempt) => {
     started[attempt - 1]?.resolve();
     await held[attempt - 1]?.promise;
@@ -125,26 +129,25 @@ test("real bulkhead retires an aborted queued item and starts the next while ano
   const aborted = new AbortController();
   try {
     f.attachment.resolve();
-    const first = f.transcribe();
-    const second = f.transcribe();
-    await started[0].promise;
-    await started[1].promise;
-    const third = f.transcribe({ signal: aborted.signal });
-    const fourth = f.transcribe();
+    const [first, ...others] = held.map(() => f.transcribe());
+    await Promise.all(started.slice(0, ACTIVE).map((work) => work.promise));
+    const abortedJob = f.transcribe({ signal: aborted.signal });
+    const next = f.transcribe();
     await f.waitForQueuedJobs(2);
     aborted.abort();
     held[0].resolve();
     await expect(first).resolves.toMatchObject({ status: "succeeded" });
-    await expect(third).resolves.toMatchObject({ status: "failed" });
+    await expect(abortedJob).resolves.toMatchObject({ status: "failed" });
     await waitFor(
-      started[2].promise,
+      started[ACTIVE].promise,
       "eligible job after aborted queue item",
       3_000,
     );
-    expect(provider.calls).toHaveLength(3);
-    await expect(fourth).resolves.toMatchObject({ status: "succeeded" });
-    held[1].resolve();
-    await expect(second).resolves.toMatchObject({ status: "succeeded" });
+    expect(provider.calls).toHaveLength(ACTIVE + 1);
+    await expect(next).resolves.toMatchObject({ status: "succeeded" });
+    held.forEach((work) => work.resolve());
+    for (const other of others)
+      await expect(other).resolves.toMatchObject({ status: "succeeded" });
   } finally {
     held.forEach((work) => work.resolve());
     await f.dispose();
@@ -152,7 +155,7 @@ test("real bulkhead retires an aborted queued item and starts the next while ano
 });
 
 test("real policy keeps the concurrency slot until attachment work drains", async () => {
-  const entered = [deferred<void>(), deferred<void>(), deferred<void>()];
+  const entered = Array.from({ length: ACTIVE + 1 }, () => deferred<void>());
   const provider = providerTransport(async (attempt) => {
     entered[attempt - 1]?.resolve();
     return Response.json(validResponse);
@@ -162,16 +165,13 @@ test("real policy keeps the concurrency slot until attachment work drains", asyn
     transport: provider.fetch,
   });
   try {
-    const first = f.transcribe();
-    const second = f.transcribe();
-    const third = f.transcribe();
-    await entered[0].promise;
-    await entered[1].promise;
+    const jobs = entered.map(() => f.transcribe());
+    await Promise.all(entered.slice(0, ACTIVE).map((work) => work.promise));
     await wait(1_000);
-    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls).toHaveLength(ACTIVE);
     f.attachment.resolve();
-    await Promise.all([first, second, third]);
-    expect(provider.calls).toHaveLength(3);
+    await Promise.all(jobs);
+    expect(provider.calls).toHaveLength(ACTIVE + 1);
   } finally {
     await f.dispose();
   }
@@ -205,11 +205,11 @@ test.each([
   );
 });
 
-test("real bulkhead admits two active and one hundred queued jobs", async () => {
+test("real bulkhead admits its active jobs and one hundred queued jobs", async () => {
   const release = deferred<void>();
-  const bothActive = deferred<void>();
+  const allActive = deferred<void>();
   const provider = providerTransport(async (attempt) => {
-    if (attempt === 2) bothActive.resolve();
+    if (attempt === ACTIVE) allActive.resolve();
     await release.promise;
     return Response.json(validResponse);
   });
@@ -221,8 +221,8 @@ test("real bulkhead admits two active and one hundred queued jobs", async () => 
   const error = jest.spyOn(console, "error").mockImplementation(() => {});
   try {
     f.attachment.resolve();
-    const active = [f.transcribe(), f.transcribe()];
-    await bothActive.promise;
+    const active = Array.from({ length: ACTIVE }, () => f.transcribe());
+    await allActive.promise;
     const queued = controllers.map((controller) =>
       f.transcribe({ signal: controller.signal }),
     );
@@ -238,11 +238,11 @@ test("real bulkhead admits two active and one hundred queued jobs", async () => 
       expect.stringContaining("Failed to transcribe snippet"),
       expect.objectContaining({ reason: "fast_shed", passMode: "fast" }),
     );
-    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls).toHaveLength(ACTIVE);
     controllers.forEach((controller) => controller.abort());
     release.resolve();
     await Promise.all([...active, ...queued]);
-    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls).toHaveLength(ACTIVE);
   } finally {
     controllers.forEach((controller) => controller.abort());
     release.resolve();
@@ -269,10 +269,12 @@ test("real limiter spaces logical starts and records queue wait", async () => {
         await jest.advanceTimersByTimeAsync(1_000);
         await Promise.all(tasks);
         expect(starts).toHaveLength(2);
-        expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(780);
+        expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(
+          TRANSCRIPTION_RATE_MIN_TIME - 20,
+        );
         expect(
           f.state.metadata?.transcriptionQueueWaitMs,
-        ).toBeGreaterThanOrEqual(700);
+        ).toBeGreaterThanOrEqual(TRANSCRIPTION_RATE_MIN_TIME - 100);
       },
     );
   } finally {
