@@ -80,6 +80,7 @@ import {
   speechCoverageMatches,
 } from "./speechDetectionPolicy";
 import { getSpeechDetector } from "./speechDetectionService";
+import { emitMetric, LIFECYCLE_METRICS } from "../lifecycleMetrics";
 import type { SpeechDetectionMode } from "../config/speechDetection";
 import type { SpeechPhase, SpeechCoverage } from "./speechDetectionTypes";
 import {
@@ -555,6 +556,8 @@ function snippetFailure(
       passMode: failure.phase,
     },
   );
+  if (queueReason === "queue_full" && failure.phase === "slow")
+    emitMetric(LIFECYCLE_METRICS.transcriptionSlowPassRejected);
   if (queueReason)
     return {
       result: { status: "failed", reason: "queue_rejected" },

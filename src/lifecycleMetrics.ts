@@ -17,6 +17,19 @@ export const LIFECYCLE_METRICS = {
   workerEligible: "WorkerEligibleHeartbeat",
   finisherScanCompleted: "FinisherScanCompleted",
   renewalRecoveryStalled: "RenewalRecoveryStalled",
+  // An ASR response with text but no logprobs, so the quiet-audio guard is off.
+  transcriptionMissingLogprobs: "TranscriptionMissingLogprobs",
+  // HTTP 400 to a request carrying dictionary keywords, retried without them.
+  transcriptionKeywordsRejected: "TranscriptionKeywordsRejected",
+  // The speech detector killed its child (a hang, crash or invalid output).
+  speechDetectorRetired: "SpeechDetectorRetired",
+  // The transcription queue refused a slow-pass snippet (fast sheds excluded).
+  transcriptionSlowPassRejected: "TranscriptionSlowPassRejected",
+  // A meeting completed without a summary after the in-attempt retry.
+  meetingSummaryDropped: "MeetingSummaryDropped",
+  // Every speech assessment result, and every unavailable one (any reason).
+  speechAssessmentAttempted: "SpeechAssessmentAttempted",
+  speechAssessmentUnavailable: "SpeechAssessmentUnavailable",
 } as const;
 
 export type LifecycleMetric =
