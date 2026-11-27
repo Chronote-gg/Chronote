@@ -11,6 +11,8 @@ jest.mock("../../src/services/recoveryTranscriptionProcessing", () => ({
 import { transcribeContentSnippet } from "../../src/services/transcriptionService";
 import { processRecoveryTranscript } from "../../src/services/recoveryTranscriptionProcessing";
 import {
+  RECOVERY_QUEUE_RETRIES,
+  RECOVERY_QUEUE_RETRY_DELAY_MS,
   readRecoveryContent,
   recoverTranscript,
   recoveryPcmBudget,
@@ -189,16 +191,61 @@ const sliverRecording = () => [
   ]),
 ];
 
-test("recovery sends a sliver when the meeting's saved minimum was lower", async () => {
-  const transcribe = jest.mocked(transcribeContentSnippet);
-  await recover(sliverRecording(), (context) => {
-    if (context.settings.availability === "available")
-      context.settings.value.transcription.minSnippetSeconds = 0.01;
-  });
-  expect(
-    transcribe.mock.calls.map(([, snippet]) => snippet.chunks[0][0]),
-  ).toEqual([1, 2, 3]);
-});
+test.each([
+  { minimum: 0.01, sent: [1, 2, 3] },
+  { minimum: 5, sent: [1, 3] },
+])(
+  "a saved minimum of $minimum s lowers but never raises the recovery floor",
+  async ({ minimum, sent }) => {
+    const transcribe = jest.mocked(transcribeContentSnippet);
+    await recover(sliverRecording(), (context) => {
+      if (context.settings.availability === "available")
+        context.settings.value.transcription.minSnippetSeconds = minimum;
+    });
+    expect(
+      transcribe.mock.calls.map(([, snippet]) => snippet.chunks[0][0]),
+    ).toEqual(sent);
+  },
+);
+
+test.each([
+  { refusals: 2, completes: true },
+  { refusals: RECOVERY_QUEUE_RETRIES + 1, completes: false },
+])(
+  "a piece the queue refuses $refusals times is retried within the attempt",
+  async ({ refusals, completes }) => {
+    const transcribe = jest.mocked(transcribeContentSnippet);
+    for (let refusal = 0; refusal < refusals; refusal++)
+      transcribe.mockResolvedValueOnce({
+        status: "failed",
+        reason: "queue_rejected",
+      });
+    const wait = jest
+      .spyOn(
+        jest.requireActual<typeof import("node:timers/promises")>(
+          "node:timers/promises",
+        ),
+        "setTimeout",
+      )
+      .mockResolvedValue(undefined);
+    try {
+      const run = recover(sliverRecording().slice(0, 1));
+      await (completes
+        ? expect(run).resolves.toBeDefined()
+        : expect(run).rejects.toThrow("Recovery transcription failed"));
+      expect(wait).toHaveBeenCalledTimes(
+        Math.min(refusals, RECOVERY_QUEUE_RETRIES),
+      );
+      expect(wait).toHaveBeenCalledWith(
+        RECOVERY_QUEUE_RETRY_DELAY_MS,
+        undefined,
+        { signal: expect.any(AbortSignal) },
+      );
+    } finally {
+      wait.mockRestore();
+    }
+  },
+);
 
 test("recovery never sends a piece under the live minimum and still transcribes the rest", async () => {
   const minimumBytes = 192 * 300;

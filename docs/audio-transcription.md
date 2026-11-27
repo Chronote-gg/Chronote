@@ -62,7 +62,9 @@ limit is lower, a 429 still retries with its Retry-After (up to 60 s) or
 backoff, and exhausted 429s count toward the breaker. PCM to WAV conversion
 and speech detection run before a job enters the bulkhead, and the Langfuse
 MP3 encode inside it is limited to one at a time, so the extra slots add
-waiting on the network rather than CPU work. A full queue
+waiting on the network rather than CPU work. A slot is held until that encode
+drains, so with Langfuse tracing on, throughput is also capped by encode time;
+check `transcriptionQueueWaitMs` after deploy. A full queue
 refuses a job at once without reaching the provider; the failure log line
 carries `reason: "queue_full"` and the `passMode`, and the snippet outcome
 metric records `queue_rejected` rather than `provider_error`.
@@ -73,7 +75,10 @@ a fast request is shed before its audio is converted or assessed
 (`reason: "fast_shed"`) and the remaining slots stay free for slow snippets.
 The queue is shared by the whole worker, so one heavy meeting also sheds the
 live previews, and delays live voice replies to the slow pass, in every other
-meeting on that task. A shed or failed fast pass
+meeting on that task. With fast finalization on, a snippet whose fast
+revisions were all shed has no fast text to reuse, so its slow pass becomes a
+full provider call; shedding moves that work to the slow pass rather than
+removing it. A shed or failed fast pass
 leaves the snippet untouched: it sets no `transcriptionFailed`, so it never
 counts toward the three-failed-segment floor, and the slow pass still
 transcribes the snippet. A refused slow snippet is marked failed and
@@ -211,11 +216,16 @@ re-transcribes uncovered audio with the frozen model (a retired one runs on
 `gpt-transcribe`, logged once) and language, no prompt,
 and keywords rebuilt from the saved dictionary entries and saved
 `dictionary.maxChars.transcription` budget when the frozen model accepts them.
-Recovery never sends a piece at or under the meeting's saved
-`transcription.minSnippetSeconds` (default `MINIMUM_TRANSCRIPTION_LENGTH`,
-0.3 s), the same floor live capture used: the provider rejects such a sliver as
-corrupt audio on every attempt, and one failed piece fails the whole recovery
-attempt, so the sliver is covered as empty text instead.
+Recovery never sends a piece at or under the lower of the meeting's saved
+`transcription.minSnippetSeconds` and `MINIMUM_TRANSCRIPTION_LENGTH` (0.3 s):
+the provider rejects such a sliver as corrupt audio on every attempt, and one
+failed piece fails the whole recovery attempt, so the sliver is covered as
+empty text instead. The saved value only lowers the floor, because a residual
+range is often a fragment of a longer turn and a raised minimum would drop
+real speech. Recovery shares the live queue, so a piece the queue refuses is
+retried within the attempt up to four times, 5 s apart
+(`RECOVERY_QUEUE_RETRIES`, `RECOVERY_QUEUE_RETRY_DELAY_MS`), before it fails
+the attempt as before.
 
 ## Interjection behavior
 
