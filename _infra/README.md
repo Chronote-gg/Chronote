@@ -92,6 +92,7 @@ that address.
 | Finisher scan missing       | No `FinisherScanCompleted` in 10 min            | 5 min x 2  |
 | Renewal recovery stalled    | `RenewalRecoveryStalled` in each of 3 periods   | 5 min x 3  |
 | Speech detector retiring    | 3+ `SpeechDetectorRetired` in each of 3 periods | 5 min x 3  |
+| Speech unavailable share    | Over 20% unavailable, 50+ assessments           | 15 min x 2 |
 | Missing logprobs            | 6+ `TranscriptionMissingLogprobs` in 15 min     | 15 min x 1 |
 | Keywords rejected           | 6+ `TranscriptionKeywordsRejected` in 15 min    | 15 min x 1 |
 | Deploy drain timeout        | Deploy `DrainWaitTimedOut` metric published     | 5 min x 1  |

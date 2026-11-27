@@ -134,6 +134,54 @@ resource "aws_cloudwatch_metric_alarm" "lifecycle" {
   }
 }
 
+# The detector counts every assessment result and every unavailable one; the
+# share is the signal, since a slow or shedding detector no longer retires.
+# Healthy days run at 0 to 2 percent unavailable. Periods with fewer than 50
+# assessments score 0, so a quiet hour cannot trip it.
+resource "aws_cloudwatch_metric_alarm" "speech_detector_unavailable_share" {
+  count               = local.alerts_enabled ? 1 : 0
+  alarm_name          = "${local.name_prefix}-speech-detector-unavailable-share"
+  alarm_description   = "More than 20 percent of speech assessments were unavailable in each of two 15 minute periods with at least 50 assessments. Those snippets are transcribed without the speech gate. Check task CPU and the SpeechDetectorRetired alarm; sustained overload sheds work rather than retiring the child."
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0.2
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  treat_missing_data  = "notBreaching"
+
+  metric_query {
+    id          = "share"
+    expression  = "IF(attempted >= 50, FILL(unavailable, 0) / attempted, 0)"
+    label       = "Unavailable share of speech assessments"
+    return_data = true
+  }
+  metric_query {
+    id = "attempted"
+    metric {
+      namespace   = local.lifecycle_metrics_namespace
+      metric_name = "SpeechAssessmentAttempted"
+      period      = 900
+      stat        = "Sum"
+    }
+  }
+  metric_query {
+    id = "unavailable"
+    metric {
+      namespace   = local.lifecycle_metrics_namespace
+      metric_name = "SpeechAssessmentUnavailable"
+      period      = 900
+      stat        = "Sum"
+    }
+  }
+
+  alarm_actions = [local.critical_alerts_topic_arn]
+  ok_actions    = [local.critical_alerts_topic_arn]
+
+  tags = {
+    Project     = "${var.project_name}-discord-bot"
+    Environment = var.environment
+  }
+}
+
 # Published by scripts/deployment/deploy.cjs (wait-drain) with no dimensions,
 # under SECRETS_PREFIX, which Terraform sets to local.name_prefix.
 resource "aws_cloudwatch_metric_alarm" "deploy_drain_timeout" {

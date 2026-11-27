@@ -354,7 +354,7 @@ export function createSpeechDetector(
       return start()?.readiness ?? Promise.resolve(false);
     },
     assess(wav, phase) {
-      return enqueue(wav, phase);
+      return counted(enqueue(wav, phase));
     },
     async shutdown() {
       stopped = true;
@@ -362,6 +362,17 @@ export function createSpeechDetector(
       await Promise.all(terminations);
     },
   };
+}
+
+/** Every assessment result passes through here, whatever settled it. */
+async function counted(
+  result: Promise<SpeechAssessment>,
+): Promise<SpeechAssessment> {
+  const assessment = await result;
+  emitMetric(LIFECYCLE_METRICS.speechAssessmentAttempted);
+  if (assessment.kind === "unavailable")
+    emitMetric(LIFECYCLE_METRICS.speechAssessmentUnavailable);
+  return assessment;
 }
 
 function engineFailureReason(

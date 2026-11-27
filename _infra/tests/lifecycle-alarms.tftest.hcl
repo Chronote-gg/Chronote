@@ -22,6 +22,7 @@ run "lifecycle_alarms_route_by_name_and_notify" {
     target = [
       aws_cloudwatch_metric_alarm.lifecycle,
       aws_cloudwatch_metric_alarm.deploy_drain_timeout,
+      aws_cloudwatch_metric_alarm.speech_detector_unavailable_share,
     ]
   }
   variables { alert_email = "alerts@example.com" }
@@ -32,7 +33,7 @@ run "lifecycle_alarms_route_by_name_and_notify" {
   }
 
   assert {
-    condition     = alltrue([for a in concat(values(aws_cloudwatch_metric_alarm.lifecycle), aws_cloudwatch_metric_alarm.deploy_drain_timeout) : a.alarm_actions == toset(["arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts"])])
+    condition     = alltrue([for a in concat(values(aws_cloudwatch_metric_alarm.lifecycle), aws_cloudwatch_metric_alarm.deploy_drain_timeout, aws_cloudwatch_metric_alarm.speech_detector_unavailable_share) : a.alarm_actions == toset(["arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts"])])
     error_message = "Every lifecycle alarm must notify through the critical alerts topic."
   }
 
@@ -62,6 +63,11 @@ run "lifecycle_alarms_route_by_name_and_notify" {
   }
 
   assert {
+    condition     = aws_cloudwatch_metric_alarm.speech_detector_unavailable_share[0].threshold == 0.2 && aws_cloudwatch_metric_alarm.speech_detector_unavailable_share[0].comparison_operator == "GreaterThanThreshold" && aws_cloudwatch_metric_alarm.speech_detector_unavailable_share[0].evaluation_periods == 2 && aws_cloudwatch_metric_alarm.speech_detector_unavailable_share[0].datapoints_to_alarm == 2 && aws_cloudwatch_metric_alarm.speech_detector_unavailable_share[0].treat_missing_data == "notBreaching" && length([for q in aws_cloudwatch_metric_alarm.speech_detector_unavailable_share[0].metric_query : q if q.expression == "IF(attempted >= 50, FILL(unavailable, 0) / attempted, 0)" && q.return_data == true]) == 1 && alltrue([for q in aws_cloudwatch_metric_alarm.speech_detector_unavailable_share[0].metric_query : alltrue([for m in q.metric : m.namespace == "meeting-notes-prod/Lifecycle" && m.period == 900 && m.stat == "Sum"])])
+    error_message = "The unavailable share alarm must fire above 20 percent in two 15 minute periods with at least 50 assessments."
+  }
+
+  assert {
     condition     = aws_cloudwatch_metric_alarm.deploy_drain_timeout[0].namespace == "meeting-notes-prod/Deploy" && aws_cloudwatch_metric_alarm.deploy_drain_timeout[0].metric_name == "DrainWaitTimedOut" && length(coalesce(aws_cloudwatch_metric_alarm.deploy_drain_timeout[0].dimensions, {})) == 0
     error_message = "The drain alarm must watch the dimensionless metric deploy.cjs publishes."
   }
@@ -70,10 +76,10 @@ run "lifecycle_alarms_route_by_name_and_notify" {
 run "lifecycle_alarms_follow_alerting" {
   command = plan
   plan_options {
-    target = [aws_cloudwatch_metric_alarm.lifecycle, aws_cloudwatch_metric_alarm.deploy_drain_timeout]
+    target = [aws_cloudwatch_metric_alarm.lifecycle, aws_cloudwatch_metric_alarm.deploy_drain_timeout, aws_cloudwatch_metric_alarm.speech_detector_unavailable_share]
   }
   assert {
-    condition     = length(aws_cloudwatch_metric_alarm.lifecycle) == 0 && length(aws_cloudwatch_metric_alarm.deploy_drain_timeout) == 0
+    condition     = length(aws_cloudwatch_metric_alarm.lifecycle) == 0 && length(aws_cloudwatch_metric_alarm.deploy_drain_timeout) == 0 && length(aws_cloudwatch_metric_alarm.speech_detector_unavailable_share) == 0
     error_message = "Without an alert destination no lifecycle alarm is created."
   }
 }

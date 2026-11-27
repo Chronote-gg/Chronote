@@ -262,6 +262,19 @@ it("resets the expiry count after an in-budget result", async () => {
   reply(worker, 3);
   await expect(accepted).resolves.toEqual(scored);
 });
+it("counts every assessment attempted and every unavailable result", async () => {
+  const count = countMetric();
+  const r = rig();
+  await expect(
+    r.detector.assess(Uint8Array.of(1), "fast"),
+  ).resolves.toMatchObject({ reason: "not_ready" });
+  const worker = await r.ready();
+  const good = r.detector.assess(Uint8Array.of(2), "fast");
+  reply(worker, 0);
+  await good;
+  expect(count("SpeechAssessmentAttempted")).toBe(2);
+  expect(count("SpeechAssessmentUnavailable")).toBe(1);
+});
 it("retires a hung child exactly once and recovers the queue after respawn", async () => {
   const count = countMetric();
   const r = rig();

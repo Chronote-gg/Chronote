@@ -23,6 +23,9 @@ export const LIFECYCLE_METRICS = {
   transcriptionKeywordsRejected: "TranscriptionKeywordsRejected",
   // The speech detector killed its child (a hang, crash or invalid output).
   speechDetectorRetired: "SpeechDetectorRetired",
+  // Every speech assessment result, and every unavailable one (any reason).
+  speechAssessmentAttempted: "SpeechAssessmentAttempted",
+  speechAssessmentUnavailable: "SpeechAssessmentUnavailable",
 } as const;
 
 export type LifecycleMetric =
