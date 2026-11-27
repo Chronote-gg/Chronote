@@ -3,7 +3,10 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import type { AudioFileData } from "../types/audio";
 import type { RecoveryContent, RecoveryReader } from "./meetingRecoveryContent";
-import { InvalidRecoveryContent } from "./meetingRecoveryContent";
+import {
+  currentFrozenModel,
+  InvalidRecoveryContent,
+} from "./meetingRecoveryContent";
 import { compileSavedChatPrompt } from "./savedRecordingPrompt";
 import {
   cleanupContentTranscription,
@@ -203,7 +206,11 @@ export async function cleanupWithSavedSettings(
         signal,
       },
       prepared,
-      settings.models.transcriptionCleanup,
+      currentFrozenModel(
+        "transcriptionCleanup",
+        settings,
+        content.manifest.capture.meetingId,
+      ),
     );
     signal.throwIfAborted();
     const finalText = retainCleanupTranscript(

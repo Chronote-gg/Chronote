@@ -9,7 +9,7 @@ Author's calls, not decided by BASIC (please check these while reading):
 - The config flag starts off.
 - A job saves content only when every stage it re-ran succeeds, and every attempt counts.
 - Rules for what counts as human-edited notes.
-- A retry never posts fresh Discord messages.
+- A retry never posts fresh Discord messages next to published ones. A failed meeting that was never published is the exception: see the 2026-11-27 amendment in ADR-20261028.
 - `partial` caused only by incomplete capture is not eligible.
 
 ## Why
@@ -127,7 +127,7 @@ The stages reuse existing code, and that reuse is the main point of the design:
 
 - **New mutation and history source.** `updateMeeting` gains the `regeneration` mutation, and `NotesEditSource` gains the `processing_retry` value. The mutation sets notes (when regenerated), `summarySentence` and `summaryLabel` (when regenerated), `processing`, `transcriptS3Key` (when re-transcribed), and the terminal `processingRetry` status. It also removes `processingRetryQueue` and `processingRetryDueAt`.
 - **Repository work.** `meetingUpdateDeliveryRepository` only writes a fixed list of fields (`src/repositories/meetingUpdateDeliveryRepository.ts:300-319`). It has to learn the regeneration fields and an extra claim condition, and it has to keep treating a retried identical write as already applied. This is changed shared code and needs its own tests.
-- **Delivery and versioning.** Delivery is requested in that same write when `initialMeetingUpdatePolicy` allows it. When the meeting was never posted (`unpublished`) or its publication is `held`, the retry saves for the portal only. It never posts fresh Discord messages. Notes regeneration bumps `notesVersion` and appends a `notesHistory` entry with source `processing_retry`, edited by the requester. A summary-only retry does not change notes or bump the version.
+- **Delivery and versioning.** Delivery is requested in that same write when `initialMeetingUpdatePolicy` allows it. When the meeting was never posted (`unpublished`) or its publication is `held`, the retry saves for the portal only, except that a failed, never-published, non-personal lifecycle meeting is handed to the finish pipeline's delivery step (amended 2026-11-27, see ADR-20261028). Notes regeneration bumps `notesVersion` and appends a `notesHistory` entry with source `processing_retry`, edited by the requester. A summary-only retry does not change notes or bump the version.
 - **Failures.** A failed job writes only `processingRetry` (status, reason, counted attempts) and removes it from the queue. Meeting content is untouched.
 - **Old transcript.** The previous transcript object stays in S3, and `transcriptS3Key` moves to the new one.
 

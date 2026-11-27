@@ -97,10 +97,10 @@ test("clamps reasoning effort for gpt-5.2-pro", () => {
   expect(params.temperature).toBeUndefined();
 });
 
-test("falls back to temperature for non GPT-5 models", () => {
+test("falls back to temperature for unrecognised models", () => {
   const params = resolveChatParamsForRole({
     role: "liveVoiceGate",
-    model: "gpt-4o-mini",
+    model: "unknown-model",
     config: {
       samplingMode: "reasoning",
       reasoningEffort: "high",
@@ -114,7 +114,7 @@ test("falls back to temperature for non GPT-5 models", () => {
   expect(params.verbosity).toBeUndefined();
 });
 
-test.each(["gpt-6.1-sol", "gpt-6-astra"])(
+test.each(["gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-astra"])(
   "uses supported low reasoning instead of temperature for %s",
   (model) => {
     const params = resolveChatParamsForRole({
@@ -139,6 +139,7 @@ test.each(["gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"])(
 );
 
 test.each([
+  "gpt-6.2-sol",
   "gpt-6.1-sol",
   "gpt-6.1-terra",
   "gpt-6-astra",
@@ -158,6 +159,7 @@ test.each([
 });
 
 test.each([
+  "gpt-6.2-sol",
   "gpt-6.1-sol",
   "gpt-6.1-terra",
   "gpt-6-astra",

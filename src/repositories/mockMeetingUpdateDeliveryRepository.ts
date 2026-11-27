@@ -11,6 +11,7 @@ import {
 import {
   claimDelivery,
   canRegisterPointers,
+  retryPublicationRow,
   transitionDelivery,
   validateDue,
   type MeetingUpdateDeliveryRepository,
@@ -94,6 +95,12 @@ export function createMockMeetingUpdateDeliveryRepository(
         notesMessageIds: input.nextPointers.notesMessageIds,
       });
       return "applied";
+    },
+    async armRetryPublication(key, signal) {
+      const next = retryPublicationRow(read(key, signal));
+      if (!next) return "ineligible";
+      save(next);
+      return "armed";
     },
     async listDue(input) {
       input.signal?.throwIfAborted();

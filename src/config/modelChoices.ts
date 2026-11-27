@@ -1,5 +1,11 @@
 import type { ModelRole } from "./types";
 import { config } from "../services/configService";
+import {
+  RETIRED_CHAT_MODELS,
+  RETIRED_TRANSCRIPTION_MODELS,
+} from "./retiredModels";
+
+export { RETIRED_TRANSCRIPTION_MODELS };
 
 export const MODEL_SELECTION_ROLES: ModelRole[] = [
   "notes",
@@ -36,6 +42,7 @@ export const MODEL_SELECTION_ROLE_LABELS: Record<ModelRole, string> = {
 };
 
 const CHAT_MODEL_OPTIONS = [
+  "gpt-6.2-sol",
   "gpt-6.1-sol",
   "gpt-6.1-terra",
   "gpt-6-sol",
@@ -48,16 +55,9 @@ const CHAT_MODEL_OPTIONS = [
   "gpt-5.2-pro",
   "gpt-5-mini",
   "gpt-5-nano",
-  "gpt-4o-mini",
 ];
 
 const TRANSCRIPTION_MODEL_OPTIONS = ["gpt-transcribe"];
-// Unprompted these hallucinate on non-speech (ADR-20261116); stored or frozen
-// choices run on the default.
-export const RETIRED_TRANSCRIPTION_MODELS = [
-  "gpt-4o-transcribe",
-  "gpt-4o-mini-transcribe",
-];
 const IMAGE_MODEL_OPTIONS = ["dall-e-3"];
 const TTS_MODEL_OPTIONS = ["gpt-4o-mini-tts"];
 
@@ -78,7 +78,7 @@ export const MODEL_SELECTION_OPTIONS: Record<ModelRole, string[]> = {
   autoRecordCancel: CHAT_MODEL_OPTIONS,
 };
 
-const DEFAULT_TEXT_MODEL = "gpt-6.1-sol";
+const DEFAULT_TEXT_MODEL = "gpt-6.2-sol";
 
 export const MODEL_SELECTION_DEFAULTS: Record<ModelRole, string> = {
   notes: config.notes.model,
@@ -87,7 +87,7 @@ export const MODEL_SELECTION_DEFAULTS: Record<ModelRole, string> = {
   dictionaryTeaching: "gpt-6.1-terra",
   transcription: "gpt-transcribe",
   transcriptionCleanup: DEFAULT_TEXT_MODEL,
-  imageCaption: "gpt-4o-mini",
+  imageCaption: "gpt-6-luna",
   image: "dall-e-3",
   imagePrompt: DEFAULT_TEXT_MODEL,
   ask: config.liveVoice.responderModel,
@@ -95,6 +95,17 @@ export const MODEL_SELECTION_DEFAULTS: Record<ModelRole, string> = {
   liveVoiceResponder: config.liveVoice.responderModel,
   liveVoiceTts: config.liveVoice.ttsModel,
   autoRecordCancel: config.liveVoice.gateModel,
+};
+
+export const isRetiredModel = (role: ModelRole, model: unknown) => {
+  const options = MODEL_SELECTION_OPTIONS[role];
+  const retired =
+    options === TRANSCRIPTION_MODEL_OPTIONS
+      ? RETIRED_TRANSCRIPTION_MODELS
+      : options === CHAT_MODEL_OPTIONS
+        ? RETIRED_CHAT_MODELS
+        : [];
+  return retired.some((retiredModel) => retiredModel === model);
 };
 
 export const buildModelSelectionKey = (role: ModelRole) => `models.${role}`;

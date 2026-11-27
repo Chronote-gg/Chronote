@@ -24,6 +24,7 @@ import {
   generationContextSchema,
   completedTranscriptionSchema,
   type GenerationContextCheckpoint,
+  type SavedRecordingSettings,
 } from "../types/recordingContent";
 import { recordingCheckpointSchema } from "../types/recordingCheckpoint";
 import type {
@@ -37,7 +38,9 @@ import { buildDictionaryPromptLines } from "../utils/dictionary";
 import {
   MODEL_SELECTION_DEFAULTS,
   RETIRED_TRANSCRIPTION_MODELS,
+  isRetiredModel,
 } from "../config/modelChoices";
+import { resolveChatParamsForRole } from "./openaiModelParams";
 import { chatContextVariables } from "./notesPromptService";
 import {
   transcribeContentSnippet,
@@ -170,6 +173,28 @@ export function recoveryCaptureNotice(
       ? "Audio timing uses sample positions and observed gaps; exact physical wall-clock alignment is uncertain."
       : "Do not infer conversation outside the saved intervals.",
   ].join(" ");
+}
+type FrozenTextRole = "notes" | "meetingSummary" | "transcriptionCleanup";
+// The saved settings keep the frozen model; a retired one runs on the default.
+export function currentFrozenModel<Role extends FrozenTextRole>(
+  role: Role,
+  settings: SavedRecordingSettings,
+  meetingId: string,
+): SavedRecordingSettings["models"][Role] {
+  const frozen = settings.models[role];
+  if (!isRetiredModel(role, frozen.model)) return frozen;
+  const model = MODEL_SELECTION_DEFAULTS[role];
+  console.warn("Recovery text model superseded.", {
+    meetingId,
+    role,
+    frozenModel: frozen.model,
+    model,
+  });
+  return {
+    ...frozen,
+    model,
+    params: resolveChatParamsForRole({ role, model }),
+  };
 }
 export function transcriptionInput(
   context: GenerationContextCheckpoint,
@@ -855,6 +880,13 @@ export function recoveryNotesInput(
       prompt: context.prompts.summary.value,
       recentMeetingNames: context.recentMeetingNames.value,
     },
-    frozenModels: settings.models,
+    frozenModels: {
+      notes: currentFrozenModel("notes", settings, context.capture.meetingId),
+      meetingSummary: currentFrozenModel(
+        "meetingSummary",
+        settings,
+        context.capture.meetingId,
+      ),
+    },
   };
 }

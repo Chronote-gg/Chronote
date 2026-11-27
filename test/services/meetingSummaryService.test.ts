@@ -172,7 +172,7 @@ test("generateMeetingSummaries builds prompts and parses response", async () => 
   expect(mockCreate).toHaveBeenCalledTimes(1);
   const call = mockCreate.mock.calls[0][0];
   expect(call.model).toBe(MODEL_SELECTION_DEFAULTS.meetingSummary);
-  expect(call.model).toBe("gpt-6.1-sol");
+  expect(call.model).toBe("gpt-6.2-sol");
   expect(call.temperature).toBeUndefined();
   expect(call.reasoning).toEqual({ effort: "low" });
   expect(call.text.format).toEqual({ type: "json_object" });

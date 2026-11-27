@@ -65,3 +65,6 @@ Synthetic action-item fixtures support manual semantic review, not an automated
 quality claim. See [the notes eval guide](notes-eval.md#action-item-semantic-review).
 
 Prompt promotion follows the existing deployment workflow after merge.
+
+The notes default later moved to `gpt-6.2-sol` with the same cache policy
+([ADR-20261127](adr-20261127-text-model-defaults.md)).

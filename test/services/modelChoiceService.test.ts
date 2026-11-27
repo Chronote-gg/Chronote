@@ -15,10 +15,10 @@ describe("modelChoiceService", () => {
     const resolved = resolveModelChoicesByRole(snapshot);
     expect(resolved.notes).toBe(MODEL_SELECTION_DEFAULTS.notes);
     expect(resolved.transcription).toBe(MODEL_SELECTION_DEFAULTS.transcription);
-    expect(resolved.notes).toBe("gpt-6.1-sol");
-    expect(resolved.ask).toBe("gpt-4o-mini");
-    expect(resolved.liveVoiceGate).toBe("gpt-6.1-terra");
-    expect(resolved.imageCaption).toBe("gpt-4o-mini");
+    expect(resolved.notes).toBe("gpt-6.2-sol");
+    expect(resolved.ask).toBe("gpt-6.1-terra");
+    expect(resolved.liveVoiceGate).toBe("gpt-6-luna");
+    expect(resolved.imageCaption).toBe("gpt-6-luna");
   });
 
   test("offers each GPT-5.6 target on its rollout roles", () => {

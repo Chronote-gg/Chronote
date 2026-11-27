@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import path from "node:path";
 import { resolveLangfuseBaseUrl } from "./langfuseDefaults";
+import { RETIRED_CHAT_MODELS } from "../config/retiredModels";
 
 // Load environment variables once
 dotenv.config();
@@ -18,6 +19,18 @@ const parseOptionalNonNegativeInteger = (value: string | undefined) => {
   if (value === undefined || value.trim() === "") return undefined;
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+};
+
+const textModelEnv = (name: string, fallback: string) => {
+  const value = process.env[name];
+  if (!value) return fallback;
+  if (!RETIRED_CHAT_MODELS.includes(value)) return value;
+  console.warn("Configured model is retired; using the default.", {
+    name,
+    value,
+    model: fallback,
+  });
+  return fallback;
 };
 
 /**
@@ -114,7 +127,7 @@ class ConfigService {
 
   // Notes generation / testing configuration
   readonly notes = {
-    model: process.env.NOTES_MODEL || "gpt-6.1-sol",
+    model: textModelEnv("NOTES_MODEL", "gpt-6.2-sol"),
     longStoryTestMode: process.env.NOTES_LONG_STORY_TEST_MODE === "true",
     longStoryTargetChars:
       parseInt(process.env.NOTES_LONG_STORY_TARGET_CHARS || "20000", 10) ||
@@ -135,8 +148,8 @@ class ConfigService {
   // Live voice configuration
   readonly liveVoice = {
     mode: process.env.LIVE_VOICE_MODE || "off",
-    gateModel: process.env.LIVE_VOICE_GATE_MODEL || "gpt-6.1-terra",
-    responderModel: process.env.LIVE_VOICE_RESPONDER_MODEL || "gpt-4o-mini",
+    gateModel: textModelEnv("LIVE_VOICE_GATE_MODEL", "gpt-6-luna"),
+    responderModel: textModelEnv("LIVE_VOICE_RESPONDER_MODEL", "gpt-6.1-terra"),
     ttsModel: process.env.LIVE_VOICE_TTS_MODEL || "gpt-4o-mini-tts",
     ttsVoice: process.env.LIVE_VOICE_TTS_VOICE || "alloy",
     windowSeconds: parseInt(process.env.LIVE_VOICE_WINDOW_SECONDS || "90", 10),

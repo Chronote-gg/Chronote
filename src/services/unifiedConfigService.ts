@@ -11,7 +11,8 @@ import type {
 import { coerceConfigValue } from "../config/validation";
 import {
   buildModelSelectionKey,
-  RETIRED_TRANSCRIPTION_MODELS,
+  isRetiredModel,
+  MODEL_SELECTION_ROLES,
 } from "../config/modelChoices";
 import { getGlobalConfigValues } from "./appConfigService";
 import { listConfigOverridesForScope } from "./configOverridesService";
@@ -48,9 +49,10 @@ const warnedRetired = new Set<unknown>();
 function coerceStoredValue(entry: ConfigEntry, value: unknown): unknown {
   const coerced = coerceConfigValue(entry, value);
   if (coerced.valid) return coerced.value;
-  const retired =
-    entry.key === buildModelSelectionKey("transcription") &&
-    RETIRED_TRANSCRIPTION_MODELS.some((model) => model === value);
+  const retired = MODEL_SELECTION_ROLES.some(
+    (role) =>
+      entry.key === buildModelSelectionKey(role) && isRetiredModel(role, value),
+  );
   if (!retired) throw new Error(`Invalid value for ${entry.key}.`);
   if (!warnedRetired.has(value))
     console.warn("Stored config value is retired; using the default.", {

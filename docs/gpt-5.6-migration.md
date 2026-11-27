@@ -35,8 +35,9 @@ The following specialized models remain intentionally unchanged:
 - No Realtime API, Responses API, embeddings, Batch API, or OpenAI tool-calling
   path exists in the current repository.
 
-Legacy GPT-5.2, GPT-5 mini/nano, and GPT-4o mini choices remain the effective
-defaults and explicit rollback targets. GPT-5.6 targets are selectable only
+Legacy GPT-5.2 and GPT-5 mini/nano choices remain explicit rollback targets
+(GPT-4o mini was retired as a chat model, see
+[ADR-20261127](adr-20261127-text-model-defaults.md)). GPT-5.6 targets are selectable only
 through the existing per-role configuration controls. Historical test fixtures
 that exercise the legacy compatibility paths are also retained.
 

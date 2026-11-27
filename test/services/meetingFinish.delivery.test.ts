@@ -7,14 +7,23 @@ jest.mock("../../src/services/meetingNameService");
 
 import * as meetingDelivery from "../../src/services/meetingDelivery";
 import * as embed from "../../src/embed";
-import { initialMeetingUpdatePolicy } from "../../src/types/meetingPublication";
+import {
+  armRetryPublication,
+  initialMeetingUpdatePolicy,
+} from "../../src/types/meetingPublication";
+import { requestMeetingUpdateDelivery } from "../../src/types/meetingUpdateDelivery";
+import { regenerationPayload } from "../repositories/meetingRegenerationContract";
 import { LIFECYCLE } from "../../src/services/lifecycleTiming";
 import { nextDeliveryRetry } from "../../src/services/meetingFinish";
 import { captureEvent } from "../../src/services/analyticsService";
 import { MEETING_DELIVERY_FAILED_LOG } from "../../src/metrics";
 import type { MeetingHistory } from "../../src/types/db";
 import { expectSettledAndUnpublished } from "../fixtures/meetingFinishPipeline";
-import { DONE_MARKER, UPGRADE } from "./meetingDelivery.fixture";
+import {
+  DONE_MARKER,
+  START_MESSAGE_ID,
+  UPGRADE,
+} from "./meetingDelivery.fixture";
 import {
   CHECKPOINT,
   FORBIDDEN,
@@ -281,6 +290,63 @@ test("a correction held when delivery is given up is released as unpublished", a
     kind: "unpublished",
   });
   expect(world.current().finish).toBeUndefined();
+});
+
+describe("a failed meeting a processing retry handed back to delivery", () => {
+  function retriedRow(): MeetingHistory {
+    const row = processingRow({
+      status: "complete",
+      notes: "Synthetic retried notes",
+      checkpoint: CHECKPOINT,
+      transcriptS3Key: "synthetic/folder/transcript.json",
+      processingRetry: regenerationPayload().job,
+    });
+    const notes = { kind: "notes" as const, notes: row.notes! };
+    return armRetryPublication(
+      row,
+      requestMeetingUpdateDelivery({
+        history: row,
+        mutation: notes,
+        revision: "synthetic-retry",
+        now: START_SECONDS,
+        policy: { kind: "unpublished" },
+      }),
+    );
+  }
+
+  test("publishes like a normal finish and releases its hold to active", async () => {
+    const world = setup(retriedRow());
+    jest.mocked(world.deps.claimUpgrade).mockResolvedValue(UPGRADE);
+    const load = loads(finishInput());
+    await world.finish(load);
+    expect(startMessage(world)).toMatchObject({ content: "" });
+    expect(startMessage(world).embeds).toHaveLength(1);
+    expect(world.current()).toMatchObject({
+      summaryMessageId: START_MESSAGE_ID,
+      recovery: DONE_MARKER,
+      updateDelivery: { policy: { kind: "active" } },
+      notesDeliveryTiming: { path: "processing_retry" },
+    });
+    expect(world.current().notesMessageIds?.length).toBeGreaterThan(0);
+    expect(world.current().finish).toBeUndefined();
+    expect(world.deps.claimUpgrade).not.toHaveBeenCalled();
+    expect(world.deps.followOns.captureCompleted).toHaveBeenCalledTimes(1);
+    expect(world.deps.followOns.exportToNotion).toHaveBeenCalledTimes(1);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  test("a channel the bot lost leaves the notes unpublished and the retry succeeded", async () => {
+    const world = setup(retriedRow());
+    world.discord.state.fail = respondWith(FORBIDDEN);
+    await world.finish(loads(finishInput()));
+    expect(world.current()).toMatchObject({
+      delivery: { notes: { outcome: "failed" } },
+      updateDelivery: { policy: { kind: "unpublished" } },
+      processingRetry: { status: "succeeded" },
+      notes: "Synthetic retried notes",
+    });
+    expect(world.current().finish).toBeUndefined();
+  });
 });
 
 test("delivery gives up at 24 hours even when rendering the notes throws", async () => {
