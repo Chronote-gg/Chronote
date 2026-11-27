@@ -30,6 +30,7 @@ import {
 import { SCENARIO_ECS_AGENT_URI } from "./harness/fakeEcsAgent";
 import { finishRow } from "./harness/finisher";
 import { stopAddressedTo } from "./harness/scenarioExpectations";
+import { failEveryAttempt } from "./harness/processingFailure";
 
 /**
  * Scaled down so a dead worker is noticed in seconds: its registry record goes
@@ -495,8 +496,6 @@ test("scenario 6: Discord rejects the post temporarily, then permanently: retrie
   });
 });
 
-/** Each attempt may retry the call; this outlasts every attempt. */
-const MODEL_FAILURES = 1_000;
 /** One retry per backoff entry; the failure after the last is final. */
 const FINISH_RETRIES = PRODUCTION_LIFECYCLE.finishBackoffSeconds.length;
 
@@ -506,33 +505,11 @@ test.each([
 ] as const)(
   "scenario 7: %s keeps failing: retried on the finish schedule, then failed with one notice and an alarm, retryable from the portal, the server free",
   async (_label, kind) => {
-    scenario.scriptReplies();
-    await startWorker();
-    await startWorker();
-    const { row: live } = await scenario.startRecording(SERVER_A);
-    const startMessage = await scenario.startMessageOf(
-      SERVER_A,
-      live.meetingId,
+    const { failed, startMessage, samples } = await failEveryAttempt(
+      scenario,
+      startWorker,
+      kind,
     );
-    await scenario.speak(scenario.recorder(live), SERVER_A);
-    scenario.world.openai.failNext(kind, MODEL_FAILURES);
-    const samples = scenario.sampleRow(SERVER_A, live.meetingId);
-    await scenario.button("end_meeting", startMessage, SERVER_A);
-    await scenario.leaseGone();
-
-    let failed: MeetingHistory;
-    try {
-      failed = await scenario.rowWith(
-        SERVER_A,
-        (row) =>
-          row.meetingId === live.meetingId &&
-          row.status === "failed" &&
-          row.finish === undefined,
-        "meeting failed after its retries",
-      );
-    } finally {
-      await samples.stop();
-    }
     // Each failed attempt is counted on the row, one per backoff entry, and the next one fails it.
     const attempts = [
       ...new Set(samples.rows().flatMap((row) => row.finish?.attempts ?? [])),

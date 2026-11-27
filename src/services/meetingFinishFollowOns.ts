@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import type { MessageCreateOptions, MessageEditOptions } from "discord.js";
 import type { MeetingHistory } from "../types/db";
 import { MEETING_STATUS } from "../types/meetingLifecycle";
+import { deliversRetriedNotes } from "../types/meetingPublication";
 import { meetingFinishes, meetingsCancelled } from "../metrics";
 import { captureHistoryMeetingCompleted } from "../observability/meetingCompletionAnalytics";
 import { resolveHistoryActorId } from "../utils/meetingLifecycle";
@@ -111,10 +112,13 @@ export async function uploadRecording(
  * render the mix without provider work: the transcript is already stored, or
  * transcription is off. Otherwise it would transcribe pieces again for a
  * meeting whose result is already delivered, so the recording is skipped.
+ * A row whose notes a processing retry produced is skipped too: the retry
+ * did not need the mix, and rendering it again from the pieces is heavy work.
  */
 function recordingRecoverable(row: MeetingHistory): boolean {
   return (
     !row.audioS3Key &&
+    !deliversRetriedNotes(row) &&
     row.checkpoint !== undefined &&
     (row.transcriptS3Key !== undefined || !row.transcribeMeeting)
   );

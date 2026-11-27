@@ -3,6 +3,8 @@ import {
   canonicalWriterRequiresAdmission,
 } from "../types/meetingCanonicalWriter";
 import {
+  armRetryPublication,
+  awaitsRetryPublication,
   publicationMutationExcluded,
   publicationSnapshot,
   publicationSnapshotCondition,
@@ -141,7 +143,26 @@ export type MeetingUpdateDeliveryRepository = {
   registerNotesPointers(
     input: MeetingPointerRegistration,
   ): Promise<"applied" | "stale">;
+  /**
+   * Hands a meeting a processing retry fixed before retries published back to
+   * the finish pipeline's delivery step, only while the strongly read row
+   * still awaits that publication.
+   */
+  armRetryPublication(
+    key: MeetingUpdateKey,
+    signal?: AbortSignal,
+  ): Promise<"armed" | "ineligible" | "stale">;
 };
+/** The row that publication write leaves, or undefined when the row does not await it. */
+export function retryPublicationRow(
+  row: MeetingHistory | undefined,
+): MeetingHistory | undefined {
+  if (!row || !awaitsRetryPublication(row)) return undefined;
+  return armRetryPublication(row, {
+    ...row.updateDelivery,
+    revision: randomUUID(),
+  });
+}
 export const MEETING_UPDATE_CLAIM_LEASE_SECONDS = 60;
 export function validateDue(input: MeetingDueInput) {
   z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).parse(input.now);
@@ -307,6 +328,7 @@ const changedFields = [
   "processingRetryQueue",
   "processingRetryDueAt",
   "status",
+  "finish",
 ] as const;
 type WriteOptions = {
   personalClaim?: PersonalMediaClaim;
@@ -394,7 +416,7 @@ function conditionalUpdate(
       set.push(name + " = " + value);
       values[value] = after[field];
     }
-    // Preserve history/provenance, pointer snapshots and the retry job's exact claim even when other writers race.
+    // Preserve history/provenance, pointer snapshots, the retry job's exact claim and the finish marker even when other writers race.
     if (
       [
         "notesHistory",
@@ -404,6 +426,7 @@ function conditionalUpdate(
         "notesMessageIds",
         "processingRetry",
         "status",
+        "finish",
       ].includes(field)
     ) {
       if (before[field] === undefined)
@@ -652,6 +675,14 @@ export function createDynamoMeetingUpdateDeliveryRepository(
         notesChannelId: input.nextPointers.notesChannelId ?? undefined,
       };
       return writeDelivery(row, next, input.signal, { registerPointers: true });
+    },
+    async armRetryPublication(key, signal) {
+      const row = await getStrong(key, signal);
+      const next = retryPublicationRow(row);
+      if (!row || !next) return "ineligible";
+      return (await writeDelivery(row, next, signal)) === "applied"
+        ? "armed"
+        : "stale";
     },
   };
 }

@@ -2,8 +2,12 @@ import {
   canonicalWriterAllowsEdit,
   canonicalWriterSchema,
 } from "../types/meetingCanonicalWriter";
-import { repairPublicationOwnerSchema } from "../types/meetingPublication";
-import { matchesPublicationSnapshot } from "../types/meetingPublication";
+import {
+  armRetryPublication,
+  matchesPublicationSnapshot,
+  publishesAfterRetry,
+  repairPublicationOwnerSchema,
+} from "../types/meetingPublication";
 import {
   nextCanonicalFieldRevisions,
   validateCanonicalFieldRevisions,
@@ -223,7 +227,8 @@ export function prepareContentWrite(
   }
   if (notes && input.notesEdit)
     next = withNotesAudit(history, next, notes, input.notesEdit, editedAt);
-  if (input.regeneration) next = withRegeneration(next, input.regeneration);
+  if (input.regeneration)
+    next = withRegeneration(next, input.regeneration, requested);
   assertMeetingItemSize(next);
   return next;
 }
@@ -231,17 +236,23 @@ export function prepareContentWrite(
 function withRegeneration(
   next: MeetingHistory,
   regeneration: NonNullable<MeetingContentWrite["regeneration"]>,
+  requested: MeetingUpdateDelivery,
 ): MeetingHistory {
   const job = processingRetryJobSchema.parse(regeneration.job);
   if (job.jobId !== regeneration.expected.jobId || job.status !== "succeeded")
     throw new Error("Regeneration saves only its own succeeded job");
-  const saved: MeetingHistory = {
+  let saved: MeetingHistory = {
     ...next,
     processing: regeneration.processing,
     processingRetry: job,
   };
   if (regeneration.transcriptS3Key !== undefined)
     saved.transcriptS3Key = regeneration.transcriptS3Key;
+  // Decided here, on the row this write leaves, so the hold and the finish marker never disagree.
+  if (publishesAfterRetry(saved, saved.notes)) {
+    const armed = armRetryPublication(saved, requested);
+    saved = withDelivery(armed, armed.updateDelivery);
+  }
   // The pipeline gave up on this meeting; with notes regenerated it finished after all.
   if (
     saved.lifecycleVersion === 2 &&

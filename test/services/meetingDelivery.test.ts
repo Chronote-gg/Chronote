@@ -793,4 +793,29 @@ describe("meeting delivery", () => {
     ]);
     expect(discord.messages.at(-1)?.content).toBe(PROCESSING_FAILED_NOTICE);
   });
+
+  it("a summary edited over the failure notice clears the notice text", async () => {
+    const discord = fakeDiscord();
+    await deliverNotice(
+      history(),
+      PROCESSING_FAILED_NOTICE,
+      signal(),
+      discord.transport,
+    );
+    expect((await deliverLiveRow(history(), discord)).outcome).toEqual({
+      kind: "delivered",
+    });
+    const card = discord.messages.find((m) => m.id === START_MESSAGE_ID);
+    expect(card?.content).toBe("");
+    expect(card?.embeds).toEqual(
+      renderMeetingDelivery(history()).summary.embeds,
+    );
+    const edit = discord.requests.find(
+      (r) => r.method === "PATCH" && r.body?.embeds?.length,
+    );
+    expect(edit?.body).toMatchObject({
+      content: "",
+      allowed_mentions: { parse: [] },
+    });
+  });
 });
