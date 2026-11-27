@@ -1,23 +1,12 @@
 /** @jest-environment node */
-import { afterEach, beforeEach, expect, jest, test } from "@jest/globals";
+import { expect, test } from "@jest/globals";
+import { captureMetricLines } from "../helpers/metricLines";
 import {
   recordTranscriptionKeywordsRejected,
   recordTranscriptionMissingLogprobs,
 } from "../../src/metrics";
 
-let written: string[];
-beforeEach(() => {
-  written = [];
-  jest.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-    written.push(String(chunk));
-    return true;
-  });
-  process.env.METRICS_NAMESPACE = "meeting-notes-test/Lifecycle";
-});
-afterEach(() => {
-  jest.restoreAllMocks();
-  delete process.env.METRICS_NAMESPACE;
-});
+const written = captureMetricLines();
 
 // The alarms read the dimensionless series, so no model dimension is published.
 test.each([
