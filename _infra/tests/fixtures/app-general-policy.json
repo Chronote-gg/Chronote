@@ -109,11 +109,11 @@
           "sns.amazonaws.com"
         ]
       },
-      "Action": ["kms:Decrypt", "kms:GenerateDataKey*", "kms:DescribeKey"],
+      "Action": ["kms:Decrypt", "kms:GenerateDataKey*"],
       "Resource": "*",
       "Condition": {
         "StringEquals": {
-          "kms:CallerAccount": "123456789012"
+          "kms:EncryptionContext:aws:sns:topicArn": "arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts"
         }
       }
     }
