@@ -17,6 +17,10 @@ export const LIFECYCLE_METRICS = {
   workerEligible: "WorkerEligibleHeartbeat",
   finisherScanCompleted: "FinisherScanCompleted",
   renewalRecoveryStalled: "RenewalRecoveryStalled",
+  // An ASR response with text but no logprobs, so the quiet-audio guard is off.
+  transcriptionMissingLogprobs: "TranscriptionMissingLogprobs",
+  // HTTP 400 to a request carrying dictionary keywords, retried without them.
+  transcriptionKeywordsRejected: "TranscriptionKeywordsRejected",
 } as const;
 
 export type LifecycleMetric =
