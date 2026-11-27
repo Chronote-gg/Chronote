@@ -1,8 +1,6 @@
 /** @jest-environment node */
 import {
   SPEECH_HANG_CEILING_MS,
-  SPEECH_SHED_AFTER_EXPIRIES,
-  SPEECH_SHED_WINDOW_MS,
   createSpeechDetector,
 } from "../../src/services/speechDetectionService";
 import { DEFAULT_SPEECH_POLICY } from "../../src/services/speechDetectionPolicy";
@@ -91,7 +89,7 @@ const speech = {
 function reply(
   worker: ControlledSpeechWorker,
   index: number,
-  assessment: typeof scored | typeof speech = scored,
+  assessment: import("../../src/services/speechDetectionTypes").SpeechAssessment = scored,
 ) {
   worker.reply({
     type: "assessment",
@@ -160,7 +158,7 @@ it.each(["fast", "slow"] as const)(
     const r = rig();
     const worker = await r.ready();
     const budget = phase === "fast" ? 500 : 1500;
-    const jobs = Array.from({ length: SPEECH_SHED_AFTER_EXPIRIES - 1 }, () =>
+    const jobs = Array.from({ length: 4 }, () =>
       r.detector.assess(Uint8Array.of(1), phase),
     );
     r.clock.advance(budget - 1);
@@ -220,61 +218,216 @@ it("ignores a late reply for a timed-out job so it cannot answer the next job", 
   await expect(next).resolves.toEqual(scored);
   expect(worker.terminated).toBe(false);
 });
-/** Expires `count` fast jobs together: one running, the rest queued. */
-async function expireTogether(r: ReturnType<typeof rig>, count: number) {
-  const worker = r.workers[r.workers.length - 1];
-  const sent = worker.requests.length;
-  const jobs = Array.from({ length: count }, () =>
-    r.detector.assess(Uint8Array.of(1), "fast"),
-  );
+type Rig = ReturnType<typeof rig>;
+const assessFast = (r: Rig) => r.detector.assess(Uint8Array.of(1), "fast");
+/** One dispatched fast job whose inference outlives its budget, then replies late. */
+async function dispatchedMiss(r: Rig, worker: ControlledSpeechWorker) {
+  const index = worker.requests.length;
+  const job = assessFast(r);
+  expect(worker.requests).toHaveLength(index + 1);
   r.clock.advance(500);
-  await Promise.all(jobs);
-  reply(worker, sent);
+  await expect(job).resolves.toMatchObject({ reason: "timeout" });
+  reply(worker, index);
 }
-it("sheds work after consecutive expiries without killing the child, then accepts again", async () => {
-  const r = rig();
-  const worker = await r.ready();
-  await expireTogether(r, SPEECH_SHED_AFTER_EXPIRIES);
-  const shed = r.detector.assess(Uint8Array.of(2), "fast");
-  expect(await settled(shed)).toBe(true);
-  await expect(shed).resolves.toMatchObject({ reason: "not_ready" });
-  r.clock.advance(SPEECH_SHED_WINDOW_MS - 1);
-  await expect(
-    r.detector.assess(Uint8Array.of(3), "fast"),
-  ).resolves.toMatchObject({ reason: "not_ready" });
-  expect(worker.terminated).toBe(false);
-  expect(worker.requests).toHaveLength(1);
+async function inBudget(r: Rig, worker: ControlledSpeechWorker) {
+  const job = assessFast(r);
+  reply(worker, worker.requests.length - 1);
+  await expect(job).resolves.toEqual(scored);
+}
+async function refused(r: Rig) {
+  await expect(assessFast(r)).resolves.toMatchObject({ reason: "not_ready" });
+}
+/** The breaker stays open for `windowMs` from now, then admits a probe. */
+async function opensFor(r: Rig, windowMs: number) {
+  r.clock.advance(windowMs - 1);
+  await refused(r);
   r.clock.advance(1);
-  const accepted = r.detector.assess(Uint8Array.of(4), "fast");
-  reply(worker, 1);
-  await expect(accepted).resolves.toEqual(scored);
-  expect(r.workers).toHaveLength(1);
-});
-it("resets the expiry count after an in-budget result", async () => {
+}
+it("never opens the breaker on queued expiries alone", async () => {
   const r = rig();
   const worker = await r.ready();
-  await expireTogether(r, SPEECH_SHED_AFTER_EXPIRIES - 1);
-  const good = r.detector.assess(Uint8Array.of(2), "fast");
-  reply(worker, 1);
-  await expect(good).resolves.toEqual(scored);
-  await expireTogether(r, SPEECH_SHED_AFTER_EXPIRIES - 1);
-  const accepted = r.detector.assess(Uint8Array.of(3), "fast");
-  reply(worker, 3);
-  await expect(accepted).resolves.toEqual(scored);
-});
-it("counts every assessment attempted and every unavailable result", async () => {
-  const count = countMetric();
-  const r = rig();
-  await expect(
-    r.detector.assess(Uint8Array.of(1), "fast"),
-  ).resolves.toMatchObject({ reason: "not_ready" });
-  const worker = await r.ready();
-  const good = r.detector.assess(Uint8Array.of(2), "fast");
+  const running = r.detector.assess(Uint8Array.of(1), "slow");
+  const queued = Array.from({ length: 4 }, () => assessFast(r));
+  r.clock.advance(500);
+  await Promise.all(queued);
   reply(worker, 0);
-  await good;
-  expect(count("SpeechAssessmentAttempted")).toBe(2);
-  expect(count("SpeechAssessmentUnavailable")).toBe(1);
+  await expect(running).resolves.toEqual(scored);
+  await inBudget(r, worker);
+  expect(worker.requests).toHaveLength(2);
 });
+it("opens the breaker on two dispatched misses in a row, not one", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  await dispatchedMiss(r, worker);
+  await dispatchedMiss(r, worker);
+  await refused(r);
+  expect(worker.requests).toHaveLength(2);
+  expect(worker.terminated).toBe(false);
+});
+it("resets the miss count on an in-budget result", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  await dispatchedMiss(r, worker);
+  await inBudget(r, worker);
+  await dispatchedMiss(r, worker);
+  await inBudget(r, worker);
+});
+it("escalates the window 5, 10, 20, 30 s on failed probes and resets after a success", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  await dispatchedMiss(r, worker);
+  await dispatchedMiss(r, worker);
+  for (const windowMs of [5000, 10000, 20000, 30000, 30000]) {
+    await opensFor(r, windowMs);
+    await dispatchedMiss(r, worker);
+  }
+  await opensFor(r, 30000);
+  await inBudget(r, worker);
+  await dispatchedMiss(r, worker);
+  await dispatchedMiss(r, worker);
+  await opensFor(r, 5000);
+  await inBudget(r, worker);
+});
+it("does not close while a timed-out inference still holds the slot", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  await dispatchedMiss(r, worker);
+  const held = assessFast(r);
+  r.clock.advance(500);
+  await expect(held).resolves.toMatchObject({ reason: "timeout" });
+  r.clock.advance(SPEECH_HANG_CEILING_MS - 1000);
+  await refused(r);
+  reply(worker, 1);
+  await opensFor(r, 5000);
+  await inBudget(r, worker);
+});
+it("dispatches the newest queued job first", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  void r.detector.assess(Uint8Array.of(1), "slow");
+  for (let i = 0; i < 3; i++) void r.detector.assess(Uint8Array.of(1), "slow");
+  for (let i = 0; i < 4; i++) reply(worker, i);
+  const first = worker.requests[0].requestId;
+  expect(worker.requests.map((request) => request.requestId)).toEqual([
+    first,
+    first + 3,
+    first + 2,
+    first + 1,
+  ]);
+});
+it("bounds dispatches under a persistent 5 s inference to about one per 35 s", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  const inferenceMs = 5000;
+  const dispatchedAt: number[] = [];
+  const record = () => {
+    while (dispatchedAt.length < worker.requests.length)
+      dispatchedAt.push(r.clock.now());
+  };
+  let replied = 0;
+  for (let step = 0; step < 3000; step++) {
+    if (step % 3 === 0) void assessFast(r);
+    record();
+    if (
+      replied < worker.requests.length &&
+      r.clock.now() >= dispatchedAt[replied] + inferenceMs
+    )
+      reply(worker, replied++);
+    record();
+    r.clock.advance(100);
+  }
+  const lastMinute = dispatchedAt.filter((at) => at >= r.clock.now() - 60000);
+  expect(lastMinute.length).toBeLessThanOrEqual(2);
+  expect(dispatchedAt.length).toBeLessThanOrEqual(12);
+  expect(worker.terminated).toBe(false);
+});
+it("resets the miss count and escalation when the child retires", async () => {
+  const r = rig();
+  const hung = await r.ready();
+  await dispatchedMiss(r, hung);
+  await dispatchedMiss(r, hung);
+  await opensFor(r, 5000);
+  const probe = assessFast(r);
+  r.clock.advance(SPEECH_HANG_CEILING_MS);
+  await expect(probe).resolves.toMatchObject({ reason: "timeout" });
+  expect(hung.terminated).toBe(true);
+  r.clock.advance(30000);
+  const worker = await r.ready();
+  await dispatchedMiss(r, worker);
+  await dispatchedMiss(r, worker);
+  await opensFor(r, 5000);
+  await inBudget(r, worker);
+});
+type MetricCase = (
+  r: Rig,
+  worker: ControlledSpeechWorker,
+) => Promise<() => Promise<unknown>>;
+it.each<[string, MetricCase, number]>([
+  [
+    "breaker refusal",
+    async (r, worker) => {
+      await dispatchedMiss(r, worker);
+      await dispatchedMiss(r, worker);
+      return () => assessFast(r);
+    },
+    1,
+  ],
+  [
+    "queue_full",
+    async (r) => {
+      for (let i = 0; i < 5; i++) void assessFast(r);
+      return () => assessFast(r);
+    },
+    1,
+  ],
+  [
+    "timeout",
+    async (r) => async () => {
+      const job = assessFast(r);
+      r.clock.advance(500);
+      await job;
+    },
+    1,
+  ],
+  [
+    "shutdown",
+    async (r) => {
+      await r.detector.shutdown();
+      return () => assessFast(r);
+    },
+    1,
+  ],
+  [
+    "invalid_input from the child",
+    async (r, worker) => async () => {
+      const job = assessFast(r);
+      reply(worker, worker.requests.length - 1, {
+        kind: "unavailable",
+        reason: "invalid_input",
+        policyFingerprint: fingerprint,
+      });
+      await job;
+    },
+    0,
+  ],
+])(
+  "counts a %s result as attempted once",
+  async (_, prepare, unavailableCount) => {
+    const count = countMetric();
+    const r = rig();
+    const worker = await r.ready();
+    const call = await prepare(r, worker);
+    const before = {
+      attempted: count("SpeechAssessmentAttempted"),
+      unavailable: count("SpeechAssessmentUnavailable"),
+    };
+    await call();
+    expect(count("SpeechAssessmentAttempted") - before.attempted).toBe(1);
+    expect(count("SpeechAssessmentUnavailable") - before.unavailable).toBe(
+      unavailableCount,
+    );
+  },
+);
 it("retires a hung child exactly once and recovers the queue after respawn", async () => {
   const count = countMetric();
   const r = rig();

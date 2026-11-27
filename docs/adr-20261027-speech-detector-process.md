@@ -32,9 +32,16 @@ All nine controlled native fixtures retained classification and deterministic re
 
 ## Lifecycle and resource boundaries
 
-Register parent-disconnection handling before model initialization. A responsive child exits immediately on owner loss; the owner kills a stuck child on timeout. Revised 2026-11-27: killing the child on every missed deadline looped under CPU load, leaving the detector unavailable for most of each busy period. Each job now has one budget counted from enqueue (500 ms fast, 1500 ms slow), so no caller waits longer than before. An expired job fails alone as `timeout`: if still queued it is never dispatched; if running, the child keeps its slot until its reply arrives, which is matched by id and discarded. Five expiries in a row refuse new work as `not_ready` for 5 seconds without killing or reinitializing the child, and an in-budget result resets the count. Only an inference running 10 seconds past dispatch retires the child, failing its held and queued jobs once and starting the 30 second cooldown.
+Register parent-disconnection handling before model initialization. A responsive child exits immediately on owner loss; the owner kills a stuck child on timeout. Revised 2026-11-27: killing the child on every missed deadline looped under CPU load, leaving the detector unavailable for most of each busy period. The policy is now:
 
-Three regimes follow. An occasional slow inference fails that one job and nothing else. Sustained overload bounds every caller to its budget, sheds for 5 seconds after each run of five expiries (a full queue expiring together), and still returns assessments that finish in budget between windows; the unavailable share alarm reports it. A true hang retires the child once, and work resumes after the cooldown and a fresh model load (1.6 to 5 seconds measured).
+1. Each job has one budget from enqueue (500 ms fast, 1500 ms slow); no caller waits longer. An expired queued job fails as `timeout` and is never dispatched.
+2. The queue is served newest first: work is deadline-bound, so the oldest job has the least budget left and is the least likely to finish in time.
+3. A running job past its budget fails alone; the child keeps its slot until the late reply, which is dropped by id.
+4. Two such dispatched misses in a row open a breaker: new work gets `not_ready` and nothing is dispatched. Queued expiries never count.
+5. The window starts when the slot frees and grows 5, 10, 20, then 30 s per consecutive reopening. One probe follows; in budget resets everything, a miss reopens.
+6. Only an inference running 10 s past dispatch retires the child (30 s cooldown); retirement also resets the breaker.
+
+Regimes. A single slow inference fails that job (and queued jobs whose own budget passed) without opening the breaker. Moderate overload, for example 0.4 s inferences at 3 arrivals a second, serves the freshest job each time: slow-phase jobs finish in budget while stale ones time out, and fast-phase jobs open the breaker only if two dispatched jobs really miss in a row. Persistent slow inference wastes two inferences, then one probe per window: at 2 s per inference the steady CPU share is 2 / 32 s, about 6 percent, and at 5 s it is 5 / 35 s, about 14 percent. The old kill-and-cooldown spent a 1.6 to 5 s model load plus one inference per 30 s cooldown, about 7 to 18 percent, and failed every queued job each time.
 
 Count the parent's and every descendant's RSS. Process isolation is a failure boundary, not an independent memory allocation. Keep the original workload, CPU/memory limits, phase deadlines and acceptance thresholds. Missing resource evidence remains unknown and fails acceptance.
 

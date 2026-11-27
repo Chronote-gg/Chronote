@@ -3,6 +3,7 @@ import { fork } from "node:child_process";
 import { DEFAULT_SPEECH_POLICY } from "./speechDetectionPolicy";
 import { recordSpeechWorkerRestart } from "../metrics";
 import { emitMetric, LIFECYCLE_METRICS } from "../lifecycleMetrics";
+import { createSpeechBreaker } from "./speechDetectionBreaker";
 import type {
   SpeechPolicy,
   SpeechWorkerReply,
@@ -81,17 +82,6 @@ const replySchema = z.discriminatedUnion("type", [
  */
 const JOB_BUDGET_MS = { fast: 500, slow: 1500 } as const;
 /**
- * Expiries in a row that mean sustained overload rather than one slow
- * inference: a full queue (one running and four waiting) expiring together.
- */
-export const SPEECH_SHED_AFTER_EXPIRIES = 5;
-/**
- * How long new work is refused once shedding starts, so the child drains its
- * backlog and the CPU is given back. Ten slow budgets; short against the 30 s
- * retirement cooldown, and nothing is killed or reinitialized.
- */
-export const SPEECH_SHED_WINDOW_MS = 5000;
-/**
  * A running inference past this is hung rather than slow, and only this
  * retires the child. It is twice the slowest measured cold model load (5 s)
  * and over six times the slow inference budget.
@@ -137,8 +127,7 @@ export function createSpeechDetector(
   const terminations = new Set<Promise<void>>();
   let nextId = 0;
   let cooldownUntil = 0;
-  let shedUntil = 0;
-  let consecutiveExpiries = 0;
+  const breaker = createSpeechBreaker(bindings.now);
   let stopped = false;
   let hasStartedWorker = false;
   const unavailable = (reason: SpeechUnavailableReason): SpeechAssessment => ({
@@ -152,16 +141,18 @@ export function createSpeechDetector(
   };
   const expire = (job: Job): void => {
     settle(job, unavailable("timeout"));
-    consecutiveExpiries++;
-    if (consecutiveExpiries < SPEECH_SHED_AFTER_EXPIRIES) return;
-    consecutiveExpiries = 0;
-    shedUntil = bindings.now() + SPEECH_SHED_WINDOW_MS;
+  };
+  /** A dispatched job outlived its budget, which is what the breaker counts. */
+  const missed = (job: Job): void => {
+    expire(job);
+    breaker.miss();
   };
   /** Kills the child; every job it holds or has queued fails once with `reason`. */
   const retire = (reason: SpeechUnavailableReason): void => {
     const old = generation;
     generation = undefined;
     cooldownUntil = bindings.now() + RETIREMENT_COOLDOWN_MS;
+    breaker.reset();
     if (running) {
       running.hang.cancel();
       if (running.job) settle(running.job, unavailable(reason));
@@ -185,11 +176,13 @@ export function createSpeechDetector(
     terminations.add(termination);
   };
   const dispatch = (): void => {
-    if (!generation?.ready || running) return;
-    let job = waiting.shift();
+    if (!generation?.ready || running || !breaker.dispatching()) return;
+    // Newest first: work is deadline-bound, and the oldest job has the least
+    // budget left, so it is the least likely to finish in time.
+    let job = waiting.pop();
     while (job && bindings.now() >= job.deadline) {
       expire(job);
-      job = waiting.shift();
+      job = waiting.pop();
     }
     if (!job) return;
     const slot: Running = {
@@ -228,11 +221,12 @@ export function createSpeechDetector(
     slot.hang.cancel();
     running = undefined;
     const { job } = slot;
-    if (job && bindings.now() >= job.deadline) expire(job);
+    if (job && bindings.now() >= job.deadline) missed(job);
     else if (job) {
-      consecutiveExpiries = 0;
+      breaker.success();
       settle(job, assessment);
     }
+    breaker.slotFreed();
     dispatch();
   };
   const acceptReady = (current: Generation, fingerprint: string): void => {
@@ -320,10 +314,13 @@ export function createSpeechDetector(
   /** Settles a job that expired while queued, or while it was running. */
   const expireFromTimer = (job: Job): void => {
     const index = waiting.indexOf(job);
-    if (index >= 0) waiting.splice(index, 1);
-    else if (running?.job === job) running.job = undefined;
-    else return;
-    expire(job);
+    if (index >= 0) {
+      waiting.splice(index, 1);
+      expire(job);
+    } else if (running?.job === job) {
+      running.job = undefined;
+      missed(job);
+    }
   };
   const enqueue = (
     wav: Uint8Array,
@@ -331,10 +328,10 @@ export function createSpeechDetector(
   ): Promise<SpeechAssessment> => {
     if (stopped) return Promise.resolve(unavailable("shutdown"));
     const current = start();
-    if (!current?.ready || bindings.now() < shedUntil)
-      return Promise.resolve(unavailable("not_ready"));
+    if (!current?.ready) return Promise.resolve(unavailable("not_ready"));
     if (running && waiting.length >= MAX_WAITING_JOBS)
       return Promise.resolve(unavailable("queue_full"));
+    if (!breaker.admit()) return Promise.resolve(unavailable("not_ready"));
     const ownedWav = new Uint8Array(wav).buffer;
     const budget = JOB_BUDGET_MS[phase];
     return new Promise((resolve) => {
@@ -370,7 +367,11 @@ async function counted(
 ): Promise<SpeechAssessment> {
   const assessment = await result;
   emitMetric(LIFECYCLE_METRICS.speechAssessmentAttempted);
-  if (assessment.kind === "unavailable")
+  // Invalid input is about the caller's audio, not the detector's availability.
+  if (
+    assessment.kind === "unavailable" &&
+    assessment.reason !== "invalid_input"
+  )
     emitMetric(LIFECYCLE_METRICS.speechAssessmentUnavailable);
   return assessment;
 }

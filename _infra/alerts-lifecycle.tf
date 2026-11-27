@@ -135,13 +135,13 @@ resource "aws_cloudwatch_metric_alarm" "lifecycle" {
 }
 
 # The detector counts every assessment result and every unavailable one; the
-# share is the signal, since a slow or shedding detector no longer retires.
+# share is the signal, since a slow detector opens a breaker but no longer retires.
 # Healthy days run at 0 to 2 percent unavailable. Periods with fewer than 50
 # assessments score 0, so a quiet hour cannot trip it.
 resource "aws_cloudwatch_metric_alarm" "speech_detector_unavailable_share" {
   count               = local.alerts_enabled ? 1 : 0
   alarm_name          = "${local.name_prefix}-speech-detector-unavailable-share"
-  alarm_description   = "More than 20 percent of speech assessments were unavailable in each of two 15 minute periods with at least 50 assessments. Those snippets are transcribed without the speech gate. Check task CPU and the SpeechDetectorRetired alarm; sustained overload sheds work rather than retiring the child."
+  alarm_description   = "More than 20 percent of speech assessments were unavailable in each of two 15 minute periods with at least 50 assessments. Those snippets are transcribed without the speech gate. Check task CPU and the SpeechDetectorRetired alarm; persistently slow inference opens a breaker that refuses work rather than retiring the child."
   comparison_operator = "GreaterThanThreshold"
   threshold           = 0.2
   evaluation_periods  = 2
