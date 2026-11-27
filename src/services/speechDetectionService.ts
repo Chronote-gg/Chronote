@@ -75,14 +75,22 @@ const replySchema = z.discriminatedUnion("type", [
     assessment: assessmentSchema,
   }),
 ]);
-/** One inference's own budget, counted from dispatch. */
-const INFERENCE_DEADLINE_MS = { fast: 500, slow: 1500 } as const;
 /**
- * How long a job may wait from enqueue before it fails alone, so a snippet
- * never waits unboundedly to be transcribed. Two slow inferences: a job can
- * wait out one full slow inference ahead of it plus a slower overrun.
+ * A job's whole budget, queue time included, counted from enqueue: no caller
+ * waits longer than this. An expired job fails alone and is never dispatched.
  */
-export const SPEECH_QUEUE_WAIT_CAP_MS = 3000;
+const JOB_BUDGET_MS = { fast: 500, slow: 1500 } as const;
+/**
+ * Expiries in a row that mean sustained overload rather than one slow
+ * inference: a full queue (one running and four waiting) expiring together.
+ */
+export const SPEECH_SHED_AFTER_EXPIRIES = 5;
+/**
+ * How long new work is refused once shedding starts, so the child drains its
+ * backlog and the CPU is given back. Ten slow budgets; short against the 30 s
+ * retirement cooldown, and nothing is killed or reinitialized.
+ */
+export const SPEECH_SHED_WINDOW_MS = 5000;
 /**
  * A running inference past this is hung rather than slow, and only this
  * retires the child. It is twice the slowest measured cold model load (5 s)
@@ -96,8 +104,7 @@ type Timer = ReturnType<SpeechDetectorBindings["schedule"]>;
 type Job = {
   requestId: number;
   wav: ArrayBuffer;
-  phase: SpeechPhase;
-  waitUntil: number;
+  deadline: number;
   resolve: (assessment: SpeechAssessment) => void;
   timer: Timer;
 };
@@ -109,7 +116,6 @@ type Job = {
 type Running = {
   requestId: number;
   job?: Job;
-  deadline: number;
   hang: Timer;
 };
 type Generation = {
@@ -131,6 +137,8 @@ export function createSpeechDetector(
   const terminations = new Set<Promise<void>>();
   let nextId = 0;
   let cooldownUntil = 0;
+  let shedUntil = 0;
+  let consecutiveExpiries = 0;
   let stopped = false;
   let hasStartedWorker = false;
   const unavailable = (reason: SpeechUnavailableReason): SpeechAssessment => ({
@@ -142,9 +150,12 @@ export function createSpeechDetector(
     job.timer.cancel();
     job.resolve(assessment);
   };
-  const timeOut = (job: Job): void => {
+  const expire = (job: Job): void => {
     settle(job, unavailable("timeout"));
-    emitMetric(LIFECYCLE_METRICS.speechDetectorJobTimedOut);
+    consecutiveExpiries++;
+    if (consecutiveExpiries < SPEECH_SHED_AFTER_EXPIRIES) return;
+    consecutiveExpiries = 0;
+    shedUntil = bindings.now() + SPEECH_SHED_WINDOW_MS;
   };
   /** Kills the child; every job it holds or has queued fails once with `reason`. */
   const retire = (reason: SpeechUnavailableReason): void => {
@@ -176,27 +187,18 @@ export function createSpeechDetector(
   const dispatch = (): void => {
     if (!generation?.ready || running) return;
     let job = waiting.shift();
-    while (job && bindings.now() >= job.waitUntil) {
-      timeOut(job);
+    while (job && bindings.now() >= job.deadline) {
+      expire(job);
       job = waiting.shift();
     }
     if (!job) return;
-    job.timer.cancel();
-    const budget = INFERENCE_DEADLINE_MS[job.phase];
     const slot: Running = {
       requestId: job.requestId,
       job,
-      deadline: bindings.now() + budget,
       hang: bindings.schedule(() => {
         if (running === slot) retire("timeout");
       }, SPEECH_HANG_CEILING_MS),
     };
-    const dispatched = job;
-    job.timer = bindings.schedule(() => {
-      if (slot.job !== dispatched) return;
-      slot.job = undefined;
-      timeOut(dispatched);
-    }, budget);
     running = slot;
     try {
       generation.transport.post({
@@ -226,8 +228,11 @@ export function createSpeechDetector(
     slot.hang.cancel();
     running = undefined;
     const { job } = slot;
-    if (job && bindings.now() >= slot.deadline) timeOut(job);
-    else if (job) settle(job, assessment);
+    if (job && bindings.now() >= job.deadline) expire(job);
+    else if (job) {
+      consecutiveExpiries = 0;
+      settle(job, assessment);
+    }
     dispatch();
   };
   const acceptReady = (current: Generation, fingerprint: string): void => {
@@ -312,34 +317,44 @@ export function createSpeechDetector(
     );
     return current;
   };
+  /** Settles a job that expired while queued, or while it was running. */
+  const expireFromTimer = (job: Job): void => {
+    const index = waiting.indexOf(job);
+    if (index >= 0) waiting.splice(index, 1);
+    else if (running?.job === job) running.job = undefined;
+    else return;
+    expire(job);
+  };
+  const enqueue = (
+    wav: Uint8Array,
+    phase: SpeechPhase,
+  ): Promise<SpeechAssessment> => {
+    if (stopped) return Promise.resolve(unavailable("shutdown"));
+    const current = start();
+    if (!current?.ready || bindings.now() < shedUntil)
+      return Promise.resolve(unavailable("not_ready"));
+    if (running && waiting.length >= MAX_WAITING_JOBS)
+      return Promise.resolve(unavailable("queue_full"));
+    const ownedWav = new Uint8Array(wav).buffer;
+    const budget = JOB_BUDGET_MS[phase];
+    return new Promise((resolve) => {
+      const job: Job = {
+        requestId: ++nextId,
+        wav: ownedWav,
+        deadline: bindings.now() + budget,
+        resolve,
+        timer: bindings.schedule(() => expireFromTimer(job), budget),
+      };
+      waiting.push(job);
+      dispatch();
+    });
+  };
   return {
     warm() {
       return start()?.readiness ?? Promise.resolve(false);
     },
     assess(wav, phase) {
-      if (stopped) return Promise.resolve(unavailable("shutdown"));
-      const current = start();
-      if (!current?.ready) return Promise.resolve(unavailable("not_ready"));
-      if (running && waiting.length >= MAX_WAITING_JOBS)
-        return Promise.resolve(unavailable("queue_full"));
-      const ownedWav = new Uint8Array(wav).buffer;
-      return new Promise((resolve) => {
-        const job: Job = {
-          requestId: ++nextId,
-          wav: ownedWav,
-          phase,
-          waitUntil: bindings.now() + SPEECH_QUEUE_WAIT_CAP_MS,
-          resolve,
-          timer: bindings.schedule(() => {
-            const index = waiting.indexOf(job);
-            if (index < 0) return;
-            waiting.splice(index, 1);
-            timeOut(job);
-          }, SPEECH_QUEUE_WAIT_CAP_MS),
-        };
-        waiting.push(job);
-        dispatch();
-      });
+      return enqueue(wav, phase);
     },
     async shutdown() {
       stopped = true;
