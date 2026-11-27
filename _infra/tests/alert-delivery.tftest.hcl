@@ -3,6 +3,9 @@ mock_provider "aws" {
   mock_data "aws_caller_identity" {
     defaults = { account_id = "123456789012" }
   }
+  # Stands in for the ARN AWS returns. Assertions build the expected ARN from
+  # the topic's own planned name instead, so a condition or action that drifts
+  # from the real topic (name, region, account) fails.
   mock_resource "aws_sns_topic" {
     defaults = { arn = "arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts" }
   }
@@ -30,7 +33,7 @@ variables {
 # for it carries no encryption context, so the condition could never grant it.
 run "key_policy_lets_alarms_use_the_topic_key" {
   command = plan
-  plan_options { target = [aws_kms_key_policy.app_general] }
+  plan_options { target = [aws_kms_key_policy.app_general, aws_sns_topic.critical_alerts] }
   override_resource {
     target          = aws_cloudfront_distribution.frontend
     override_during = plan
@@ -49,7 +52,7 @@ run "key_policy_lets_alarms_use_the_topic_key" {
       && contains(flatten([try(s.Principal.Service, [])]), "cloudwatch.amazonaws.com")
       && toset(flatten([s.Action])) == toset(["kms:Decrypt", "kms:GenerateDataKey*"])
       && !contains(keys(merge(values(try(s.Condition, {}))...)), "kms:CallerAccount")
-      && try(s.Condition.StringEquals["kms:EncryptionContext:aws:sns:topicArn"], "") == "arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts"
+      && try(s.Condition.StringEquals["kms:EncryptionContext:aws:sns:topicArn"], "") == "arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${aws_sns_topic.critical_alerts[0].name}"
     ]) == 1
     error_message = "Exactly one statement must let cloudwatch.amazonaws.com exactly Decrypt and GenerateDataKey* for the critical alerts topic, without kms:CallerAccount."
   }
@@ -59,6 +62,7 @@ run "every_alarm_notifies_the_critical_topic" {
   command = plan
   plan_options {
     target = [
+      aws_sns_topic.critical_alerts,
       aws_cloudwatch_metric_alarm.ecs_no_running_tasks,
       aws_cloudwatch_metric_alarm.ecs_ephemeral_storage_leak,
       aws_cloudwatch_metric_alarm.ecs_ephemeral_storage_critical,
@@ -94,8 +98,8 @@ run "every_alarm_notifies_the_critical_topic" {
         aws_cloudwatch_metric_alarm.voice_settlement_unresolved,
         aws_cloudwatch_metric_alarm.voice_admission_blocked,
       ) :
-      a.alarm_actions == toset(["arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts"])
-      && a.ok_actions == toset(["arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts"])
+      a.alarm_actions == toset(["arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${aws_sns_topic.critical_alerts[0].name}"])
+      && a.ok_actions == toset(["arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${aws_sns_topic.critical_alerts[0].name}"])
     ])
     error_message = "Every alarm must send both ALARM and OK to the critical alerts topic."
   }
