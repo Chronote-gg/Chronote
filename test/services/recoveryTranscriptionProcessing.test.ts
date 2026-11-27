@@ -32,6 +32,7 @@ import { recoveryFixture } from "./meetingRecoveryFixtures";
 import {
   readRecoveryContent,
   recoverTranscript,
+  recoveryNotesInput,
   recoveryPcmBudget,
 } from "../../src/services/meetingRecoveryContent";
 import { LIFECYCLE } from "../../src/services/lifecycleTiming";
@@ -703,3 +704,55 @@ test.each(["text_only", "disjoint", "audio_only", "missing_pcm"] as const)(
     );
   },
 );
+test("a recording frozen on a retired text model recovers on the role defaults", async () => {
+  const f = await fixture(true);
+  if (f.content.context.settings.availability !== "available")
+    throw new Error("settings");
+  const retired = {
+    model: "gpt-4o-mini",
+    provider: "openai" as const,
+    params: { temperature: 0 },
+  };
+  Object.assign(f.content.context.settings.value.models, {
+    notes: retired,
+    meetingSummary: retired,
+    transcriptionCleanup: retired,
+  });
+  f.content.entries = [];
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  await recoverTranscript(f.content, f.reader, f.signal, (run) => run());
+  const client = jest.mocked(createOpenAIClient).mock.results[0].value;
+  expect(jest.mocked(client.responses.create).mock.calls[0][0]).toMatchObject({
+    model: "gpt-6.2-sol",
+    reasoning: { effort: "low" },
+    temperature: undefined,
+  });
+  expect(f.content.processing).toEqual({
+    cleanup: "acknowledged",
+    finalText: "Original saved cleanup result.",
+  });
+  const input = recoveryNotesInput(
+    f.claim.history,
+    f.content,
+    "Recovered transcript",
+    f.signal,
+    false,
+  );
+  expect(input.frozenModels).toEqual({
+    notes: {
+      model: "gpt-6.2-sol",
+      provider: "openai",
+      params: { reasoning_effort: "low" },
+    },
+    meetingSummary: {
+      model: "gpt-6.2-sol",
+      provider: "openai",
+      params: { reasoning_effort: "low" },
+    },
+  });
+  expect(warn).toHaveBeenCalledWith(
+    "Recovery text model superseded.",
+    expect.objectContaining({ role: "notes", frozenModel: "gpt-4o-mini" }),
+  );
+  warn.mockRestore();
+});

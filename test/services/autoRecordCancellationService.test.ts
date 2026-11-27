@@ -27,8 +27,8 @@ const loadModule = async (options: LoadOptions = {}) => {
     },
     notes: { model: "gpt-5.2" },
     liveVoice: {
-      gateModel: "gpt-5-mini",
-      responderModel: "gpt-4o-mini",
+      gateModel: "gpt-6-luna",
+      responderModel: "gpt-6.1-terra",
       ttsModel: "gpt-4o-mini-tts",
     },
   };
@@ -41,7 +41,7 @@ const loadModule = async (options: LoadOptions = {}) => {
   const createOpenAIClient = jest.fn(() => ({
     responses: { create: responsesCreate },
   }));
-  const getModelChoice = jest.fn(() => ({ model: "gpt-4o-mini" }));
+  const getModelChoice = jest.fn(() => ({ model: "gpt-6-luna" }));
   const buildModelOverrides = jest.fn(() => undefined);
 
   jest.doMock("../../src/services/configService", () => ({ config }));

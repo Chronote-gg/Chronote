@@ -16,8 +16,10 @@ secretKeyEnv: OPENAI_API_KEY
 baseUrl: https://api.openai.com/v1
 withDefaultModels: true
 customModels:
+  - gpt-6.2-sol
   - gpt-6.1-sol
   - gpt-6.1-terra
+  - gpt-6-luna
   - gpt-5.2
   - gpt-5.1
   - gpt-5-mini

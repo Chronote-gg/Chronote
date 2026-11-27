@@ -243,7 +243,7 @@ describe("notesPromptService", () => {
         contentType: "image/png",
         aiCaption: "A sketch of the architecture.",
         aiVisibleText: "API -> Worker -> DB",
-        aiCaptionModel: "gpt-4o-mini",
+        aiCaptionModel: "gpt-6-luna",
         aiCaptionedAt: "2025-01-01T00:00:01.000Z",
       },
     ];
@@ -272,7 +272,7 @@ describe("notesPromptService", () => {
         contentType: "image/png",
         aiCaption: "A sketch of the architecture.",
         aiVisibleText: "API -> Worker -> DB",
-        aiCaptionModel: "gpt-4o-mini",
+        aiCaptionModel: "gpt-6-luna",
         aiCaptionedAt: "2025-01-01T00:00:01.000Z",
       },
     ];

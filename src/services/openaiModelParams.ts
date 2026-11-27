@@ -117,8 +117,9 @@ const applyReasoningMode = (params: {
 const resolveGpt6Capabilities = (
   normalized: string,
 ): ModelCapabilities | undefined => {
-  const required = ["gpt-6.1-sol", "gpt-6-astra"].some((prefix) =>
-    normalized.startsWith(prefix),
+  // These reject temperature and the none and minimal efforts.
+  const required = ["gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-astra"].some(
+    (prefix) => normalized.startsWith(prefix),
   );
   const optional = ["gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"].some((prefix) =>
     normalized.startsWith(prefix),

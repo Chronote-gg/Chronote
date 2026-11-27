@@ -176,6 +176,7 @@ test("Responses keeps frozen model parameters instead of new live defaults", asy
 });
 
 test.each([
+  "gpt-6.2-sol",
   "gpt-6.1-sol",
   "gpt-6-sol",
   "gpt-6-luna",
@@ -203,7 +204,6 @@ test.each([
   "gpt-5.2-pro",
   "gpt-5-mini",
   "gpt-5-nano",
-  "gpt-4o-mini",
   "unknown-model",
 ])("notes on %s omits unsupported explicit-cache fields", async (model) => {
   const fixture = await loadResponse(completed("Notes"), model);

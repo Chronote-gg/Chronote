@@ -8,14 +8,14 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 
 ## What this project is
 
-- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-transcribe), generates notes with GPT-6.1 Sol, and posts results back to Discord.
+- Discord bot that records voice meetings, transcribes them with OpenAI (gpt-transcribe), generates notes with GPT-6.2 Sol, and posts results back to Discord.
 - Supports auto-recording, meeting history in DynamoDB, context injection (server/channel/meeting), dictionary terms for prompt context and speech recognition keyword hints, and a user-driven notes correction flow using LLMs.
 
 ## Tech stack
 
 - Runtime: Node.js 24.22.3, TypeScript.
 - Discord: discord.js v14, discord-api-types, @discordjs/voice for audio capture, @discordjs/opus, prism-media.
-- AI: openai SDK; gpt-transcribe for transcription; gpt-6.1-sol for notes, summaries, cleanup, corrections and image prompts; gpt-6.1-terra for dictionary teaching, the live gate and auto-record cancellation (production pins the last two to gpt-5-mini through `LIVE_VOICE_GATE_MODEL` in Terraform); DALL-E 3 for images.
+- AI: openai SDK; gpt-transcribe for transcription; gpt-6.2-sol for notes, summaries, cleanup, corrections and image prompts; gpt-6.1-terra for Ask, the live voice responder and dictionary teaching; gpt-6-luna for the live gate, auto-record cancellation and image captions (production's global AppConfig pins and the Terraform `NOTES_MODEL` and `LIVE_VOICE_RESPONDER_MODEL` variables take precedence, see `docs/adr-20261127-text-model-defaults.md`); DALL-E 3 for images.
 - Observability and prompt management: Langfuse for tracing, prompt versioning, and prompt sync scripts.
 - Storage: AWS DynamoDB (tables include MeetingHistory, MeetingUserIndex, PersonalMediaUploadJob, PersonalRecordingSegment, SessionTable, McpOAuthTable, NotionIntegrationTable), S3 for transcripts/audio.
 - Infra: Terraform -> AWS ECS Fargate, ECR, CloudWatch logs; static frontend on S3 + CloudFront with OAC; local Dynamo via docker-compose.
@@ -68,10 +68,10 @@ This file provides Copilot review context. AGENTS.md remains the source of truth
 - Remote MCP: `ENABLE_MCP` defaults true only when Discord OAuth is enabled, requires `OAUTH_SECRET`, and exposes `/mcp` on the API server. Use `MCP_PUBLIC_BASE_URL` for the external API origin so OAuth tokens are resource-bound to the public MCP endpoint.
 - OpenAI org/project IDs are optional (defaults empty).
 - Text generation uses the Responses API through `openaiTextService.ts`. Migrate callers together and delete superseded request paths. Preserve frozen recording settings, cancellation, mention checks and caller fallbacks; audio and image generation keep their dedicated endpoints.
-- `NOTES_MODEL` defaults to `gpt-6.1-sol` for notes only; the other text roles have their own `models.*` defaults (`gpt-6.1-sol` or `gpt-6.1-terra`). Existing `models.*` and compatible `modelParams.*` overrides still apply. Frozen DynamoDB v1 snapshots remain authoritative.
-- Exception: recovery re-runs a frozen retired transcription model on the current default.
+- `NOTES_MODEL` defaults to `gpt-6.2-sol` for notes only; the other text roles have their own `models.*` defaults (`gpt-6.2-sol`, `gpt-6.1-terra` or `gpt-6-luna`). Existing `models.*` and compatible `modelParams.*` overrides still apply. Frozen DynamoDB v1 snapshots remain authoritative.
+- Exception: a stored, saved or frozen retired model (`gpt-4o-mini` for text, the 4o transcription models) runs on the role's current default. The global AppConfig must never name a model the deployed code does not list.
 - Notes use low reasoning by default and omit temperature. Notes requests using
-  supported model profiles, including GPT-6.1 Sol, request explicit 30-minute
+  supported model profiles, including GPT-6.2 Sol, request explicit 30-minute
   cache control without breakpoints, including continuations. Older overrides
   omit unsupported fields. Preserve prompt ordering. See
   `docs/adr-20261022-sol-notes-caching.md`.
