@@ -45,6 +45,12 @@ async function simulate(meetings: number, overrides: Partial<Constants> = {}) {
   }));
   jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
   const error = jest.spyOn(console, "error").mockImplementation(() => {});
+  process.env.METRICS_NAMESPACE = "meeting-notes-test/Lifecycle";
+  const write = jest.spyOn(process.stdout, "write").mockReturnValue(true);
+  const slowRejectedMetrics = () =>
+    write.mock.calls.filter(([line]) =>
+      String(line).includes('"TranscriptionSlowPassRejected":1'),
+    ).length;
   const fetch: NonNullable<ClientOptions["fetch"]> = (_url, init) =>
     new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -97,9 +103,16 @@ async function simulate(meetings: number, overrides: Partial<Constants> = {}) {
         throw new Error(`${unsettled} of ${calls.length} jobs never settled`);
       },
     );
-    return { slowRejected: failed.slow, fastShed: failed.fast, maxQueueWaitMs };
+    return {
+      slowRejected: failed.slow,
+      fastShed: failed.fast,
+      slowRejectedMetrics: slowRejectedMetrics(),
+      maxQueueWaitMs,
+    };
   } finally {
     error.mockRestore();
+    write.mockRestore();
+    delete process.env.METRICS_NAMESPACE;
     jest.useRealTimers();
     jest.dontMock("../../src/constants");
   }
@@ -118,6 +131,10 @@ test("past capacity the queue sheds fast previews and keeps every slow snippet",
   const shedding = await simulate(8);
   expect(shedding.slowRejected).toBe(0);
   expect(shedding.fastShed).toBeGreaterThan(0);
+  // A fast shed is by design and alarms on nothing.
+  expect(shedding.slowRejectedMetrics).toBe(0);
   const unshed = await simulate(8, NO_SHEDDING);
   expect(unshed.slowRejected).toBeGreaterThan(0);
+  // Each refused slow snippet is counted once for the alarm.
+  expect(unshed.slowRejectedMetrics).toBe(unshed.slowRejected);
 });

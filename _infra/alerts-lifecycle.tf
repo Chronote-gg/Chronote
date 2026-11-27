@@ -67,6 +67,14 @@ locals {
       treat_missing_data = "notBreaching"
       description        = "Renewal recovery has skipped its polls on lease errors for fifteen minutes, so stuck billing renewals are not being recovered. Check the bot logs for \"Renewal recovery poll skipped after a lease error\"."
     }
+    transcription_slow_pass_rejected = {
+      metric             = "TranscriptionSlowPassRejected"
+      threshold          = 1
+      comparison         = "GreaterThanOrEqualToThreshold"
+      evaluation_periods = 1
+      treat_missing_data = "notBreaching"
+      description        = "The per-task transcription queue refused a slow-pass snippet, so that speech is missing from the live transcript until recovery. Check the bot logs for \"Failed to transcribe snippet for user\" with reason \"queue_full\" and passMode \"slow\", and the number of concurrent meetings on the task. Recovery retries a refused piece up to four times, and each of those refusals counts here too."
+    }
     meeting_summary_dropped = {
       # About one summary per meeting and a few dozen meetings a day, so 15
       # minutes rarely holds three meetings even when every summary fails.
