@@ -47,6 +47,12 @@ export function getAudioTranscriptionFacts(
     failedSegments: files.filter(
       (file) => !isAudioFileSpeechRejected(file) && file.transcriptionFailed,
     ).length,
+    queueRejectedSegments: files.filter(
+      (file) =>
+        !isAudioFileSpeechRejected(file) &&
+        file.transcriptionFailed &&
+        file.transcriptionQueueRejected,
+    ).length,
     captureIncomplete: audio.captureIncomplete ?? false,
   };
 }

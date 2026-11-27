@@ -44,6 +44,9 @@ function hasTranscriptionLoss(
   facts: TranscriptionFacts,
   failedSegmentThreshold: number,
 ): boolean {
+  // A queue refusal is not a provider hiccup: it is speech no provider heard,
+  // whose saved audio recovery can still transcribe, so it skips the floor.
+  if ((facts.queueRejectedSegments ?? 0) > 0) return true;
   return facts.usableSegments > 0
     ? facts.failedSegments >= failedSegmentThreshold
     : facts.failedSegments > 0;

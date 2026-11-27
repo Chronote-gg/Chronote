@@ -2,8 +2,13 @@ import {
   createPcmBudget,
   PCM_RESERVED_COPIES,
 } from "./recordingCheckpointCapture";
+import { setTimeout } from "node:timers/promises";
 import { LIFECYCLE } from "./lifecycleTiming";
-import { PROCESSING_RETRY_MAX_CONCURRENT } from "../constants";
+import {
+  MINIMUM_TRANSCRIPTION_LENGTH,
+  PROCESSING_RETRY_MAX_CONCURRENT,
+  RECORD_SAMPLE_RATE,
+} from "../constants";
 import { processRecoveryTranscript } from "./recoveryTranscriptionProcessing";
 import {
   createRecoveryArtifactScope,
@@ -369,6 +374,48 @@ function residualRanges(
     ranges.push({ startByte: cursor, endByte: item.object.byteLength });
   return ranges;
 }
+/**
+ * Live capture never sent a turn at or under its saved minimum, and the
+ * provider rejects a sliver as corrupt on every attempt. A residual range is
+ * often a fragment of a longer turn, so a raised minimum never drops more than
+ * the sliver the constant names.
+ */
+function isUnderRecoveryFloor(
+  group: RecoveryAudioGroup,
+  input: TranscriptionContentInput,
+) {
+  const minimumSeconds = Math.min(
+    input.runtimeConfig?.transcription.minSnippetSeconds ??
+      MINIMUM_TRANSCRIPTION_LENGTH,
+    MINIMUM_TRANSCRIPTION_LENGTH,
+  );
+  return (
+    (group.endFrame - group.startFrame) / RECORD_SAMPLE_RATE <= minimumSeconds
+  );
+}
+// A queue refusal never reached the provider, so it is retried within the
+// attempt; the waits bound one piece to 20 s before the attempt fails.
+export const RECOVERY_QUEUE_RETRIES = 4;
+export const RECOVERY_QUEUE_RETRY_DELAY_MS = 5_000;
+async function transcribeRecoveryPiece(
+  input: TranscriptionContentInput,
+  snippet: Parameters<typeof transcribeContentSnippet>[1],
+) {
+  for (let retry = 0; ; retry += 1) {
+    const result = await transcribeContentSnippet(input, snippet, {
+      tempSuffix: "recovery",
+    });
+    if (
+      result.status !== "failed" ||
+      result.reason !== "queue_rejected" ||
+      retry === RECOVERY_QUEUE_RETRIES
+    )
+      return result;
+    await setTimeout(RECOVERY_QUEUE_RETRY_DELAY_MS, undefined, {
+      signal: input.signal,
+    });
+  }
+}
 async function transcribeAudioGroup(
   group: RecoveryAudioGroup,
   readAudio: (object: CheckpointArtifact["object"]) => Promise<Uint8Array>,
@@ -377,6 +424,7 @@ async function transcribeAudioGroup(
   timestamp: number,
 ) {
   input.signal.throwIfAborted();
+  if (isUnderRecoveryFloor(group, input)) return "";
   const length = (group.endFrame - group.startFrame) * PCM_FRAME_BYTES;
   if (!recoveryPcmBudget.reserve(length))
     throw new Error("Recovery PCM budget unavailable");
@@ -390,11 +438,11 @@ async function transcribeAudioGroup(
         (slice.startFrame - group.startFrame) * 4,
       );
     }
-    const result = await transcribeContentSnippet(
-      input,
-      { userId, timestamp, chunks: [buffer] },
-      { tempSuffix: "recovery" },
-    );
+    const result = await transcribeRecoveryPiece(input, {
+      userId,
+      timestamp,
+      chunks: [buffer],
+    });
     input.signal.throwIfAborted();
     if (result.status === "succeeded") return result.text;
     // Audio the speech gate rejects is empty text, never a failed attempt.

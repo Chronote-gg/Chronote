@@ -11,6 +11,7 @@ import { meetingTranscriptionLanguage } from "../config/transcriptionLanguage";
 import path from "node:path";
 import {
   bulkhead,
+  BulkheadRejectedError,
   circuitBreaker,
   ConsecutiveBreaker,
   handleWhen,
@@ -39,6 +40,7 @@ import {
   TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
   TRANSCRIPTION_RATE_MIN_SYLLABLES,
   TRANSCRIPTION_RATE_MIN_WORDS,
+  TRANSCRIPTION_FAST_MAX_QUEUED,
   TRANSCRIPTION_MAX_CONCURRENT,
   TRANSCRIPTION_MAX_QUEUE,
   TRANSCRIPTION_RATE_MIN_TIME,
@@ -497,6 +499,76 @@ const langfuseAttachmentLimiter = new Bottleneck({
   minTime: LANGFUSE_AUDIO_ATTACHMENT_MIN_TIME,
 });
 
+class TranscriptionShedError extends Error {}
+
+/**
+ * Fast text is only a live preview, so it gives way before the queue can refuse
+ * a slow snippet, which is the authoritative transcript. Checked before any
+ * input is prepared, so a shed request spawns no conversion.
+ */
+function throwIfFastPassShed(phase: SpeechPhase) {
+  if (
+    phase === "fast" &&
+    TRANSCRIPTION_MAX_QUEUE - bulkheadPolicy.queueSlots >=
+      TRANSCRIPTION_FAST_MAX_QUEUED
+  )
+    throw new TranscriptionShedError("Fast transcription shed");
+}
+
+function queueRejectionReason(error: unknown) {
+  if (error instanceof TranscriptionShedError) return "fast_shed";
+  if (error instanceof BulkheadRejectedError) return "queue_full";
+  return undefined;
+}
+
+type SnippetOutcome = Parameters<
+  typeof recordSpeechSnippetOutcome
+>[0]["outcome"];
+
+/**
+ * Logs a failed snippet and maps it to its result and outcome. A queue
+ * refusal never reached the provider, so it is neither a conversion nor a
+ * provider error.
+ */
+function snippetFailure(
+  error: unknown,
+  failure: {
+    stage: "conversion" | "transcription";
+    phase: SpeechPhase;
+    outcome: SnippetOutcome;
+    userId: string;
+  },
+): { result: SnippetTranscriptionResult; outcome: SnippetOutcome } {
+  const queueReason = queueRejectionReason(error);
+  const providerError = error as { status?: unknown; code?: unknown };
+  const converting = failure.stage === "conversion" && !queueReason;
+  console.error(
+    `Failed to ${converting ? "convert" : "transcribe"} snippet for user ${failure.userId}.`,
+    {
+      status:
+        typeof providerError.status === "number"
+          ? providerError.status
+          : undefined,
+      code:
+        typeof providerError.code === "number" ? providerError.code : undefined,
+      reason: queueReason,
+      passMode: failure.phase,
+    },
+  );
+  if (queueReason)
+    return {
+      result: { status: "failed", reason: "queue_rejected" },
+      outcome: "queue_rejected",
+    };
+  return {
+    result: {
+      status: "failed",
+      reason: converting ? "conversion_error" : "transcription_error",
+    },
+    outcome: failure.outcome,
+  };
+}
+
 async function transcribe(
   meeting: TranscriptionContentInput,
   file: string,
@@ -643,8 +715,7 @@ export async function transcribeContentSnippet(
   });
 
   let stage: "conversion" | "transcription" = "conversion";
-  let outcome: Parameters<typeof recordSpeechSnippetOutcome>[0]["outcome"] =
-    "conversion_error";
+  let outcome: SnippetOutcome = "conversion_error";
   try {
     const tempFiles = buildSnippetTempFiles(meeting, snippet, suffix);
     const signal = meeting.signal;
@@ -662,6 +733,7 @@ export async function transcribeContentSnippet(
         },
       };
     }
+    throwIfFastPassShed(phase);
     return await withPreparedTranscriptionInput<SnippetTranscriptionResult>(
       {
         pcm: buffer,
@@ -705,26 +777,14 @@ export async function transcribeContentSnippet(
       },
     );
   } catch (error) {
-    const providerError = error as { status?: unknown; code?: unknown };
-    const failureLabel = stage === "conversion" ? "convert" : "transcribe";
-    console.error(
-      `Failed to ${failureLabel} snippet for user ${snippet.userId}.`,
-      {
-        status:
-          typeof providerError.status === "number"
-            ? providerError.status
-            : undefined,
-        code:
-          typeof providerError.code === "number"
-            ? providerError.code
-            : undefined,
-      },
-    );
-    return {
-      status: "failed",
-      reason:
-        stage === "conversion" ? "conversion_error" : "transcription_error",
-    };
+    const failure = snippetFailure(error, {
+      stage,
+      phase,
+      outcome,
+      userId: snippet.userId,
+    });
+    outcome = failure.outcome;
+    return failure.result;
   } finally {
     recordSpeechSnippetOutcome({
       mode,

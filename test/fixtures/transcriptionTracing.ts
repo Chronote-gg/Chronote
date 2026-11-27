@@ -80,6 +80,7 @@ function mockAudioFiles(
   });
   const pcmDeleted = jest.fn();
   const inputClosed = jest.fn();
+  const conversionStarted = jest.fn();
   jest.doMock("node:fs", () => {
     const fs = jest.requireActual<typeof import("node:fs")>("node:fs");
     return {
@@ -125,6 +126,7 @@ function mockAudioFiles(
               (error) => handlers.get("error")?.(error),
             );
           } else {
+            conversionStarted();
             handlers.get("end")?.();
           }
           return command;
@@ -136,7 +138,7 @@ function mockAudioFiles(
   jest.doMock("../../src/services/tempFileService", () => ({
     ensureMeetingTempDirSync: () => "/synthetic/tracing",
   }));
-  return { mp3Deleted, wavDeleted, pcmDeleted, inputClosed };
+  return { mp3Deleted, wavDeleted, pcmDeleted, inputClosed, conversionStarted };
 }
 
 function mockObservation(options: FixtureOptions, events: string[]) {
@@ -372,7 +374,10 @@ export async function buildTracingFixture(options: FixtureOptions = {}) {
     effect: (run) => lifetime.runMeetingProcessingEffect(owner, run),
   };
   const tasks: Promise<SnippetTranscriptionResult>[] = [];
-  const transcribe = (overrides: Partial<TranscriptionContentInput> = {}) => {
+  const transcribe = (
+    overrides: Partial<TranscriptionContentInput> = {},
+    options: Parameters<typeof service.transcribeContentSnippet>[2] = {},
+  ) => {
     const task = lifetime.runMeetingProcessingEffect(owner, () =>
       service.transcribeContentSnippet(
         { ...input, ...overrides },
@@ -384,6 +389,7 @@ export async function buildTracingFixture(options: FixtureOptions = {}) {
         {
           noiseGateEnabledOverride: false,
           suppressionEnabledOverride: false,
+          ...options,
         },
       ),
     );

@@ -48,8 +48,48 @@ with exponent 2 and a 30,000 ms cap. Valid Retry-After values from 0 through
 60,000 ms take precedence. Cancellation interrupts backoff and prevents new
 dispatches; issued requests and streams still settle before cleanup.
 
-The shared bulkhead holds two complete logical transcriptions with up to
-100 queued jobs. Logical starts remain spaced by 800 ms. The breaker counts
+The shared bulkhead holds four complete logical transcriptions
+(`TRANSCRIPTION_MAX_CONCURRENT`) with up to 100 queued jobs, for every meeting
+on the task. Logical starts are spaced by 300 ms
+(`TRANSCRIPTION_RATE_MIN_TIME`), so the task sends at most about 200 requests
+a minute. Until 2026-11-27 it was two and 800 ms (about 75 a minute), below
+the roughly 120 a minute that three long meetings on one task demand. The
+account limit, 30,000 `gpt-transcribe` requests a minute with no audio or token
+limit header, was read on 2026-11-27 from the `x-ratelimit-*` headers of the
+development key, which may not be the production project; read the same
+header from a production response after deploy. If production's
+limit is lower, a 429 still retries with its Retry-After (up to 60 s) or
+backoff, and exhausted 429s count toward the breaker. PCM to WAV conversion
+and speech detection run before a job enters the bulkhead, and the Langfuse
+MP3 encode inside it is limited to one at a time, so the extra slots add
+waiting on the network rather than CPU work. A slot is held until that encode
+drains, so with Langfuse tracing on, throughput is also capped by encode time;
+check `transcriptionQueueWaitMs` after deploy. A full queue
+refuses a job at once without reaching the provider; the failure log line
+carries `reason: "queue_full"` and the `passMode`, and the snippet outcome
+metric records `queue_rejected` rather than `provider_error`.
+
+The fast pass makes most of the calls and its text is only a live preview, so
+it gives way first: once 50 jobs (`TRANSCRIPTION_FAST_MAX_QUEUED`) are waiting,
+a fast request is shed before its audio is converted or assessed
+(`reason: "fast_shed"`) and the remaining slots stay free for slow snippets.
+The queue is shared by the whole worker, so one heavy meeting also sheds the
+live previews, and delays live voice replies to the slow pass, in every other
+meeting on that task. With fast finalization on, a snippet whose fast
+revisions were all shed has no fast text to reuse, so its slow pass becomes a
+full provider call; shedding moves that work to the slow pass rather than
+removing it. A shed or failed fast pass
+leaves the snippet untouched: it sets no `transcriptionFailed`, so it never
+counts toward the three-failed-segment floor, and the slow pass still
+transcribes the snippet. A refused slow snippet is marked failed and
+`transcriptionQueueRejected`, and is not retried live. One such snippet is
+enough for the finish to hand the meeting to recovery, bypassing the
+three-failed-segment floor, because no provider heard that speech and its
+saved audio is intact; recovery then re-transcribes it.
+Waiting in the queue has no deadline of its own: an aborted meeting's queued
+jobs are dropped only when they reach the front.
+
+The breaker counts
 five exhausted transient ASR operations before opening for 10,000 ms;
 unrelated guard errors cannot trip it. Text Responses and personal upload
 retry policies are separate.
@@ -176,6 +216,16 @@ re-transcribes uncovered audio with the frozen model (a retired one runs on
 `gpt-transcribe`, logged once) and language, no prompt,
 and keywords rebuilt from the saved dictionary entries and saved
 `dictionary.maxChars.transcription` budget when the frozen model accepts them.
+Recovery never sends a piece at or under the lower of the meeting's saved
+`transcription.minSnippetSeconds` and `MINIMUM_TRANSCRIPTION_LENGTH` (0.3 s):
+the provider rejects such a sliver as corrupt audio on every attempt, and one
+failed piece fails the whole recovery attempt, so the sliver is covered as
+empty text instead. The saved value only lowers the floor, because a residual
+range is often a fragment of a longer turn and a raised minimum would drop
+real speech. Recovery shares the live queue, so a piece the queue refuses is
+retried within the attempt up to four times, 5 s apart
+(`RECOVERY_QUEUE_RETRIES`, `RECOVERY_QUEUE_RETRY_DELAY_MS`), before it fails
+the attempt as before.
 
 ## Interjection behavior
 

@@ -11,6 +11,8 @@ jest.mock("../../src/services/recoveryTranscriptionProcessing", () => ({
 import { transcribeContentSnippet } from "../../src/services/transcriptionService";
 import { processRecoveryTranscript } from "../../src/services/recoveryTranscriptionProcessing";
 import {
+  RECOVERY_QUEUE_RETRIES,
+  RECOVERY_QUEUE_RETRY_DELAY_MS,
   readRecoveryContent,
   recoverTranscript,
   recoveryPcmBudget,
@@ -19,11 +21,15 @@ import { pcmArtifact, recoveryFixture } from "./meetingRecoveryFixtures";
 
 beforeEach(() => jest.clearAllMocks());
 
+type FixtureOptions = NonNullable<Parameters<typeof recoveryFixture>[1]>;
+
 async function recover(
-  artifacts: NonNullable<Parameters<typeof recoveryFixture>[1]>["artifacts"],
+  artifacts: FixtureOptions["artifacts"],
+  context?: FixtureOptions["context"],
 ) {
   const f = await recoveryFixture("", {
     artifacts,
+    context,
     transcript: (saved) => {
       saved.entries = [];
     },
@@ -35,7 +41,7 @@ async function recover(
 }
 
 test("recovery batches contiguous tiny artifacts without losing their PCM provenance", async () => {
-  const pieces = Array.from({ length: 10 }, (_, index) =>
+  const pieces = Array.from({ length: 20 }, (_, index) =>
     Buffer.alloc(3840, index + 1),
   );
   const f = await recover(
@@ -63,14 +69,14 @@ test("recovery batches contiguous tiny artifacts without losing their PCM proven
 
 test("recovery does not bridge a gap or mix speakers across artifacts", async () => {
   await recover([
-    pcmArtifact("user:456", 0, Buffer.alloc(3840, 1), [
-      { startOffsetMs: 0, durationMs: 20 },
+    pcmArtifact("user:456", 0, Buffer.alloc(76800, 1), [
+      { startOffsetMs: 0, durationMs: 400 },
     ]),
-    pcmArtifact("user:456", 1, Buffer.alloc(3840, 2), [
-      { startOffsetMs: 40, durationMs: 20 },
+    pcmArtifact("user:456", 1, Buffer.alloc(76800, 2), [
+      { startOffsetMs: 800, durationMs: 400 },
     ]),
-    pcmArtifact("user:789", 0, Buffer.alloc(3840, 3), [
-      { startOffsetMs: 20, durationMs: 20 },
+    pcmArtifact("user:789", 0, Buffer.alloc(76800, 3), [
+      { startOffsetMs: 400, durationMs: 400 },
     ]),
   ]);
   expect(transcribeContentSnippet).toHaveBeenCalledTimes(3);
@@ -78,7 +84,7 @@ test("recovery does not bridge a gap or mix speakers across artifacts", async ()
     jest
       .mocked(transcribeContentSnippet)
       .mock.calls.map(([, snippet]) => snippet.chunks[0].length),
-  ).toEqual([3840, 3840, 3840]);
+  ).toEqual([76800, 76800, 76800]);
 });
 
 test("recovery keeps cross-artifact batches within the existing 30 second limit", async () => {
@@ -97,15 +103,15 @@ test.each(["saved", "omitted"])(
   async (kind) => {
     const f = await recoveryFixture("Saved speech.", {
       artifacts: [0, 1, 2].map((sequence) =>
-        pcmArtifact("user:123", sequence, Buffer.alloc(3840, sequence + 1), [
-          { startOffsetMs: sequence * 20, durationMs: 20 },
+        pcmArtifact("user:123", sequence, Buffer.alloc(76800, sequence + 1), [
+          { startOffsetMs: sequence * 400, durationMs: 400 },
         ]),
       ),
       transcript: (saved) => {
         const correspondence = {
           kind: "pcm" as const,
           spans: [
-            { sourceId: "user:123", sequence: 1, startByte: 0, endByte: 3840 },
+            { sourceId: "user:123", sequence: 1, startByte: 0, endByte: 76800 },
           ],
         };
         if (kind === "saved") saved.entries[0].correspondence = correspondence;
@@ -136,8 +142,8 @@ test.each(["missing", "cancelled"])(
   async (failure) => {
     const f = await recoveryFixture("", {
       artifacts: [0, 1].map((sequence) =>
-        pcmArtifact("user:456", sequence, Buffer.alloc(3840), [
-          { startOffsetMs: sequence * 20, durationMs: 20 },
+        pcmArtifact("user:456", sequence, Buffer.alloc(76800), [
+          { startOffsetMs: sequence * 400, durationMs: 400 },
         ]),
       ),
       transcript: (saved) => {
@@ -173,6 +179,91 @@ test.each(["missing", "cancelled"])(
   },
 );
 
+const sliverRecording = () => [
+  pcmArtifact("user:456", 0, Buffer.alloc(192 * 1000, 1), [
+    { startOffsetMs: 0, durationMs: 1000 },
+  ]),
+  pcmArtifact("user:456", 1, Buffer.alloc(192 * 18, 2), [
+    { startOffsetMs: 5000, durationMs: 18 },
+  ]),
+  pcmArtifact("user:789", 0, Buffer.alloc(192 * 1000, 3), [
+    { startOffsetMs: 2000, durationMs: 1000 },
+  ]),
+];
+
+test.each([
+  { minimum: 0.01, sent: [1, 2, 3] },
+  { minimum: 5, sent: [1, 3] },
+])(
+  "a saved minimum of $minimum s lowers but never raises the recovery floor",
+  async ({ minimum, sent }) => {
+    const transcribe = jest.mocked(transcribeContentSnippet);
+    await recover(sliverRecording(), (context) => {
+      if (context.settings.availability === "available")
+        context.settings.value.transcription.minSnippetSeconds = minimum;
+    });
+    expect(
+      transcribe.mock.calls.map(([, snippet]) => snippet.chunks[0][0]),
+    ).toEqual(sent);
+  },
+);
+
+test.each([
+  { refusals: 2, completes: true },
+  { refusals: RECOVERY_QUEUE_RETRIES + 1, completes: false },
+])(
+  "a piece the queue refuses $refusals times is retried within the attempt",
+  async ({ refusals, completes }) => {
+    const transcribe = jest.mocked(transcribeContentSnippet);
+    for (let refusal = 0; refusal < refusals; refusal++)
+      transcribe.mockResolvedValueOnce({
+        status: "failed",
+        reason: "queue_rejected",
+      });
+    const wait = jest
+      .spyOn(
+        jest.requireActual<typeof import("node:timers/promises")>(
+          "node:timers/promises",
+        ),
+        "setTimeout",
+      )
+      .mockResolvedValue(undefined);
+    try {
+      const run = recover(sliverRecording().slice(0, 1));
+      await (completes
+        ? expect(run).resolves.toBeDefined()
+        : expect(run).rejects.toThrow("Recovery transcription failed"));
+      expect(wait).toHaveBeenCalledTimes(
+        Math.min(refusals, RECOVERY_QUEUE_RETRIES),
+      );
+      expect(wait).toHaveBeenCalledWith(
+        RECOVERY_QUEUE_RETRY_DELAY_MS,
+        undefined,
+        { signal: expect.any(AbortSignal) },
+      );
+    } finally {
+      wait.mockRestore();
+    }
+  },
+);
+
+test("recovery never sends a piece under the live minimum and still transcribes the rest", async () => {
+  const minimumBytes = 192 * 300;
+  const transcribe = jest.mocked(transcribeContentSnippet);
+  // The provider rejects a sliver as corrupt audio on every attempt.
+  transcribe.mockImplementation(async (_input, snippet) =>
+    snippet.chunks[0].length <= minimumBytes
+      ? { status: "failed", reason: "transcription_error" }
+      : { status: "succeeded", text: "Recovered discussion." },
+  );
+  await recover(sliverRecording());
+  expect(
+    transcribe.mock.calls.map(([, snippet]) => snippet.chunks[0][0]),
+  ).toEqual([1, 3]);
+  const files = jest.mocked(processRecoveryTranscript).mock.calls[0][1];
+  expect(files).toHaveLength(2);
+});
+
 test("unknown PCM coverage is not batched or submitted", async () => {
   const artifact = pcmArtifact("user:456", 0, Buffer.alloc(3840), [
     { startOffsetMs: 0, durationMs: 20 },
@@ -194,7 +285,7 @@ test("batched recovery retains speech around a short group the VAD skips", async
       reason: "non_speech",
       coverage: {
         pcmSha256: "sample",
-        audioBytes: 11520,
+        audioBytes: 69120,
         policyFingerprint: "policy",
       },
     })
@@ -203,15 +294,15 @@ test("batched recovery retains speech around a short group the VAD skips", async
   await recover(
     [5, 5, 3, 7].flatMap((count, group) =>
       Array.from({ length: count }, (_, index) =>
-        pcmArtifact("user:456", sequence++, Buffer.alloc(3840), [
-          { startOffsetMs: group * 1000 + index * 20, durationMs: 20 },
+        pcmArtifact("user:456", sequence++, Buffer.alloc(23040), [
+          { startOffsetMs: group * 1000 + index * 120, durationMs: 120 },
         ]),
       ),
     ),
   );
   expect(
     transcribe.mock.calls.map(([, snippet]) => snippet.chunks[0].length),
-  ).toEqual([19200, 19200, 11520, 26880]);
+  ).toEqual([115200, 115200, 69120, 161280]);
   const files = jest.mocked(processRecoveryTranscript).mock.calls[0][1];
   expect(files.map((file) => file.transcript)).toEqual([
     "First speech.",

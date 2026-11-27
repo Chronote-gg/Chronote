@@ -735,7 +735,7 @@ test.each(["failed", "skipped"] as const)(
               reason: "non_speech",
               coverage: {
                 pcmSha256: "a".repeat(64),
-                audioBytes: 65280,
+                audioBytes: 138240,
                 policyFingerprint: "saved-policy",
               },
             },
@@ -750,7 +750,7 @@ test.each(["failed", "skipped"] as const)(
       await jest.advanceTimersByTimeAsync(
         meeting.runtimeConfig!.transcription.fastSilenceMs,
       );
-      stream.write(Buffer.alloc(3840, 2));
+      stream.write(Buffer.alloc(76800, 2));
       resolveFast({
         status: "succeeded",
         text: "Saved immutable prefix",
@@ -784,7 +784,7 @@ test.each(["failed", "skipped"] as const)(
               sourceId: "user:speaker",
               sequence: 0,
               startByte: 0,
-              endByte: 65280,
+              endByte: 138240,
             },
           ],
         });
@@ -840,7 +840,7 @@ test.each(["failed", "skipped"] as const)(
       if (status === "failed") {
         expect(
           jest.mocked(transcribeContentSnippet).mock.calls.at(-1)![1].chunks[0],
-        ).toEqual(Buffer.alloc(3840, 2));
+        ).toEqual(Buffer.alloc(76800, 2));
         expect(result.text.match(/Saved immutable prefix/g)).toHaveLength(1);
         expect(result.segments).toHaveLength(2);
       } else {

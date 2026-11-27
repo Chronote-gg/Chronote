@@ -18,11 +18,14 @@ export const TRANSCRIPTION_RETRY_INITIAL_DELAY_MS = 128;
 export const TRANSCRIPTION_RETRY_EXPONENT = 2;
 export const TRANSCRIPTION_RETRY_MAX_DELAY_MS = 30_000;
 export const TRANSCRIPTION_RETRY_AFTER_MAX_MS = 60_000;
-export const TRANSCRIPTION_MAX_CONCURRENT = 2;
+// The development key read 30,000 gpt-transcribe requests a minute on 2026-11-27; 4 and 300 ms send about 200.
+export const TRANSCRIPTION_MAX_CONCURRENT = 4;
 export const TRANSCRIPTION_MAX_QUEUE = 100;
+// A fast pass is shed once this many jobs wait, keeping the rest of the queue for slow snippets.
+export const TRANSCRIPTION_FAST_MAX_QUEUED = 50;
 export const TRANSCRIPTION_BREAK_AFTER_CONSECUTIVE_FAILURES = 5;
 export const TRANSCRIPTION_BREAK_DURATION = 10_000;
-export const TRANSCRIPTION_RATE_MIN_TIME = 800; // Rate limit in minimum milliseconds between requests
+export const TRANSCRIPTION_RATE_MIN_TIME = 300; // Minimum milliseconds between request starts
 
 export const LANGFUSE_AUDIO_ATTACHMENT_MAX_CONCURRENT = 1;
 export const LANGFUSE_AUDIO_ATTACHMENT_MIN_TIME = 0;
