@@ -521,19 +521,21 @@ it.each<[string, MetricCase, number]>([
     },
     1,
   ],
-  [
-    "invalid_input from the child",
-    async (r, worker) => async () => {
-      const job = assessFast(r);
-      reply(worker, worker.requests.length - 1, {
-        kind: "unavailable",
-        reason: "invalid_input",
-        policyFingerprint: fingerprint,
-      });
-      await job;
-    },
-    0,
-  ],
+  ...(["invalid_input", "channel_cancellation"] as const).map(
+    (reason): [string, MetricCase, number] => [
+      `${reason} from the child`,
+      async (r, worker) => async () => {
+        const job = assessFast(r);
+        reply(worker, worker.requests.length - 1, {
+          kind: "unavailable",
+          reason,
+          policyFingerprint: fingerprint,
+        });
+        await job;
+      },
+      0,
+    ],
+  ),
 ])(
   "counts a %s result as attempted once",
   async (_, prepare, unavailableCount) => {

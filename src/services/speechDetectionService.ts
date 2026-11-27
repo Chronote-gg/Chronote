@@ -401,16 +401,23 @@ export function createSpeechDetector(
   };
 }
 
+/**
+ * Results about the submitted audio rather than the detector's availability,
+ * both from the input check in `assessWavSpeech`.
+ */
+const AUDIO_REASONS: ReadonlySet<SpeechUnavailableReason> = new Set([
+  "invalid_input",
+  "channel_cancellation",
+]);
 /** Every assessment result passes through here, whatever settled it. */
 async function counted(
   result: Promise<SpeechAssessment>,
 ): Promise<SpeechAssessment> {
   const assessment = await result;
   emitMetric(LIFECYCLE_METRICS.speechAssessmentAttempted);
-  // Invalid input is about the caller's audio, not the detector's availability.
   if (
     assessment.kind === "unavailable" &&
-    assessment.reason !== "invalid_input"
+    !AUDIO_REASONS.has(assessment.reason)
   )
     emitMetric(LIFECYCLE_METRICS.speechAssessmentUnavailable);
   return assessment;
