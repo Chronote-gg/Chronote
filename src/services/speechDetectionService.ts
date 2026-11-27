@@ -131,6 +131,8 @@ export function createSpeechDetector(
   let nextId = 0;
   let cooldownUntil = 0;
   // One breaker per phase: a fast budget can be missed while slow work fits.
+  /** The most recent dispatch-to-reply time; unknown until the child answers. */
+  let lastInferenceMs: number | undefined;
   const breakers = {
     fast: createSpeechBreaker(bindings.now),
     slow: createSpeechBreaker(bindings.now),
@@ -165,6 +167,7 @@ export function createSpeechDetector(
   const judge = (slot: Running): void => {
     const breaker = breakers[slot.phase];
     const inference = bindings.now() - slot.dispatchedAt;
+    lastInferenceMs = inference;
     if (inference <= JOB_BUDGET_MS[slot.phase]) {
       breaker.success();
       return;
@@ -182,6 +185,7 @@ export function createSpeechDetector(
     cooldownUntil = bindings.now() + RETIREMENT_COOLDOWN_MS;
     breakers.fast.reset();
     breakers.slow.reset();
+    lastInferenceMs = undefined;
     if (running) {
       running.hang.cancel();
       if (running.job) settle(running.job, unavailable(reason));
@@ -208,15 +212,9 @@ export function createSpeechDetector(
     if (!generation?.ready || running) return;
     for (const expired of waiting.filter((queued) => isExpired(queued)))
       drop(take(expired), "timeout");
-    // Most budget first: work is deadline-bound, and the job with the least
-    // budget left is the least likely to finish in time. Ties go to the newest.
-    const latest = waiting.reduce<Job | undefined>(
-      (best, queued) =>
-        best && best.deadline > queued.deadline ? best : queued,
-      undefined,
-    );
-    if (!latest) return;
-    const job = take(latest);
+    const next = nextJob(waiting, bindings.now(), lastInferenceMs);
+    if (!next) return;
+    const job = take(next);
     const slot: Running = {
       requestId: job.requestId,
       phase: job.phase,
@@ -363,14 +361,10 @@ export function createSpeechDetector(
     if (!current?.ready) return Promise.resolve(unavailable("not_ready"));
     if (!breakers[phase].admit())
       return Promise.resolve(unavailable("not_ready"));
-    // A full queue drops the job with the earliest deadline, consistent with
-    // dispatch; on ties that is the oldest.
-    if (running && waiting.length >= MAX_WAITING_JOBS) {
-      const earliest = waiting.reduce((best, queued) =>
-        queued.deadline < best.deadline ? queued : best,
-      );
-      drop(take(earliest), "queue_full");
-    }
+    // A full queue drops the job with the least budget left, the least likely
+    // to finish: an infeasible one whenever any is queued, the oldest on ties.
+    if (running && waiting.length >= MAX_WAITING_JOBS)
+      drop(take(earliestDeadline(waiting)), "queue_full");
     const ownedWav = new Uint8Array(wav).buffer;
     const budget = JOB_BUDGET_MS[phase];
     return new Promise((resolve) => {
@@ -399,6 +393,30 @@ export function createSpeechDetector(
       await Promise.all(terminations);
     },
   };
+}
+
+const earliestDeadline = (jobs: Job[]): Job =>
+  jobs.reduce((best, job) => (job.deadline < best.deadline ? job : best));
+
+/**
+ * Earliest deadline first among jobs that can still finish if the next
+ * inference takes as long as the last one, so a live fast job is not starved
+ * behind slow work with slack. With none feasible, the latest deadline runs as
+ * the best chance, which also refreshes a stale estimate.
+ */
+function nextJob(
+  queue: Job[],
+  now: number,
+  estimateMs: number | undefined,
+): Job | undefined {
+  if (!queue.length) return undefined;
+  const feasible = queue.filter(
+    (job) => estimateMs === undefined || job.deadline - now >= estimateMs,
+  );
+  if (feasible.length) return earliestDeadline(feasible);
+  return queue.reduce((best, job) =>
+    job.deadline > best.deadline ? job : best,
+  );
 }
 
 /**

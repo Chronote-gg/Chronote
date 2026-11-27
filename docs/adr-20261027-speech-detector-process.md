@@ -34,8 +34,8 @@ All nine controlled native fixtures retained classification and deterministic re
 
 Register parent-disconnection handling before model initialization. A responsive child exits immediately on owner loss; the owner kills a stuck child on timeout. Revised 2026-11-27: killing the child on every missed deadline looped under CPU load, leaving the detector unavailable for most of each busy period. The policy is now:
 
-1. Each job has one budget from enqueue (500 ms fast, 1500 ms slow); no caller waits longer. An expired queued job fails as `timeout` and is never dispatched; a full queue drops its job with the earliest deadline as `queue_full` to admit the new one.
-2. The queue is served latest deadline first: work is deadline-bound, and with 500 ms and 1500 ms budgets mixed the newest job is not always the one with the most budget left.
+1. Each job has one budget from enqueue (500 ms fast, 1500 ms slow); no caller waits longer. An expired queued job fails as `timeout` and is never dispatched; a full queue drops the job with the least budget left (an infeasible one whenever any is queued) as `queue_full` to admit the new one.
+2. The queue is served earliest deadline first among jobs that can still finish if the next inference takes as long as the last one, so live fast jobs are not starved behind slow work with slack; with none feasible the latest deadline runs as the best chance and refreshes the estimate.
 3. A running job past its budget fails alone; the child keeps its slot until the late reply, which is dropped by id.
 4. Each phase has its own breaker, judged on the child's inference time (dispatch to reply) against that phase's budget; queue time never counts. Two slow inferences in a row open it: that phase's queued jobs and new work get `not_ready`, the other phase is unaffected.
 5. The window starts at the reply and grows 5, 10, 20, then 30 s per consecutive reopening. One probe per phase follows; in time resets everything, slow reopens.

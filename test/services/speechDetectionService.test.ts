@@ -4,7 +4,10 @@ import {
   createSpeechDetector,
 } from "../../src/services/speechDetectionService";
 import { DEFAULT_SPEECH_POLICY } from "../../src/services/speechDetectionPolicy";
-import type { SpeechPhase } from "../../src/services/speechDetectionTypes";
+import type {
+  SpeechAssessment,
+  SpeechPhase,
+} from "../../src/services/speechDetectionTypes";
 import {
   ControlledSpeechWorker,
   FakeSpeechClock,
@@ -396,34 +399,182 @@ it("settles a phase's queued jobs as not_ready when its breaker opens", async ()
   await expect(queuedFast).resolves.toEqual(scored);
   await refused(r, "slow");
 });
-it("dispatches the queued job with the most budget left, newest on ties", async () => {
+/** The request id the child was sent at `index`. */
+const sentId = (worker: ControlledSpeechWorker, index: number) =>
+  worker.requests[index].requestId;
+/** A slow job that runs for `ms`, so the last inference time becomes `ms`. */
+async function lastInferenceTakes<T>(
+  r: Rig,
+  worker: ControlledSpeechWorker,
+  ms: number,
+  queue: () => T,
+): Promise<T> {
+  const index = worker.requests.length;
+  const running = r.detector.assess(Uint8Array.of(9), "slow");
+  const queued = queue();
+  r.clock.advance(ms);
+  reply(worker, index);
+  await expect(running).resolves.toEqual(scored);
+  return queued;
+}
+it("serves a fast job before a slow one with slack, so both finish", async () => {
   const r = rig();
   const worker = await r.ready();
-  void r.detector.assess(Uint8Array.of(1), "slow");
-  for (let i = 0; i < 3; i++) void r.detector.assess(Uint8Array.of(1), "slow");
-  for (let i = 0; i < 4; i++) reply(worker, i);
-  const first = worker.requests[0].requestId;
-  expect(worker.requests.map((request) => request.requestId)).toEqual([
-    first,
-    first + 3,
-    first + 2,
-    first + 1,
+  const [fast, slow] = await lastInferenceTakes(r, worker, 200, () => [
+    assessFast(r),
+    r.detector.assess(Uint8Array.of(2), "slow"),
   ]);
+  expect(sentId(worker, 1)).toBe(sentId(worker, 0) + 1);
+  r.clock.advance(200);
+  reply(worker, 1);
+  await expect(fast).resolves.toEqual(scored);
+  r.clock.advance(200);
+  reply(worker, 2);
+  await expect(slow).resolves.toEqual(scored);
 });
-it("dispatches an older slow job before a newer fast one with less budget left", async () => {
+it("skips a job that cannot finish by the last inference time for a later feasible one", async () => {
   const r = rig();
   const worker = await r.ready();
-  void r.detector.assess(Uint8Array.of(1), "slow");
-  const slow = r.detector.assess(Uint8Array.of(2), "slow");
-  r.clock.advance(100);
-  const fast = assessFast(r);
+  await lastInferenceTakes(r, worker, 400, () => {
+    void assessFast(r);
+    void r.detector.assess(Uint8Array.of(2), "slow");
+  });
+  expect(sentId(worker, 1)).toBe(sentId(worker, 0) + 2);
+});
+it("runs the latest deadline when nothing is feasible, then uses the refreshed estimate", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  const running = r.detector.assess(Uint8Array.of(9), "slow");
+  r.clock.advance(800);
+  void assessFast(r);
+  r.clock.advance(200);
+  void assessFast(r);
+  r.clock.advance(200);
   reply(worker, 0);
-  expect(worker.requests[1].requestId).toBe(worker.requests[0].requestId + 1);
+  await expect(running).resolves.toEqual(scored);
+  // A 1200 ms estimate leaves both fast jobs infeasible; the later one runs.
+  expect(sentId(worker, 1)).toBe(sentId(worker, 0) + 2);
+  r.clock.advance(50);
+  const fast = assessFast(r);
+  void r.detector.assess(Uint8Array.of(3), "slow");
+  r.clock.advance(50);
+  // That 100 ms inference refreshes the estimate, so the new fast job is feasible.
   reply(worker, 1);
-  await expect(slow).resolves.toEqual(scored);
+  expect(sentId(worker, 2)).toBe(sentId(worker, 0) + 3);
   reply(worker, 2);
   await expect(fast).resolves.toEqual(scored);
 });
+type LoadPlan = {
+  inferenceMs: number;
+  stepMs: number;
+  steps: number;
+  arrival: (step: number) => SpeechPhase | undefined;
+};
+/** Drives arrivals against a child with a fixed inference time. */
+function runLoad(r: Rig, worker: ControlledSpeechWorker, plan: LoadPlan) {
+  const results: Promise<SpeechAssessment>[] = [];
+  const dispatchedAt: number[] = [];
+  const record = () => {
+    while (dispatchedAt.length < worker.requests.length)
+      dispatchedAt.push(r.clock.now());
+  };
+  let replied = 0;
+  for (let step = 0; step < plan.steps; step++) {
+    const phase = plan.arrival(step);
+    if (phase) results.push(r.detector.assess(Uint8Array.of(1), phase));
+    record();
+    if (
+      replied < worker.requests.length &&
+      r.clock.now() >= dispatchedAt[replied] + plan.inferenceMs
+    )
+      reply(worker, replied++);
+    record();
+    r.clock.advance(plan.stepMs);
+  }
+  return { results: Promise.all(results), dispatchedAt };
+}
+const kinds = (results: SpeechAssessment[]) =>
+  results.map((result) =>
+    result.kind === "unavailable" ? result.reason : result.kind,
+  );
+it("serves a five-snippet burst within 100 ms in full", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  const { results } = runLoad(r, worker, {
+    inferenceMs: 100,
+    stepMs: 25,
+    steps: 40,
+    arrival: (step) => (step < 5 ? "fast" : undefined),
+  });
+  expect(kinds(await results)).toEqual(Array(5).fill("non_speech"));
+});
+it("never opens a breaker under mixed-phase steady load with in-time inferences", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  const { results } = runLoad(r, worker, {
+    inferenceMs: 300,
+    stepMs: 100,
+    steps: 630,
+    arrival: (step) =>
+      step >= 600 || step % 3 ? undefined : step % 6 ? "slow" : "fast",
+  });
+  const outcomes = kinds(await results);
+  expect(outcomes).not.toContain("not_ready");
+  expect(
+    outcomes.filter((kind) => kind === "non_speech").length,
+  ).toBeGreaterThan(outcomes.length / 2);
+});
+it("bounds dispatches under a persistent 5 s inference to about one per 35 s", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  const { dispatchedAt } = runLoad(r, worker, {
+    inferenceMs: 5000,
+    stepMs: 100,
+    steps: 3000,
+    arrival: (step) => (step % 3 ? undefined : "fast"),
+  });
+  const lastMinute = dispatchedAt.filter((at) => at >= r.clock.now() - 60000);
+  expect(lastMinute.length).toBeLessThanOrEqual(2);
+  expect(dispatchedAt.length).toBeLessThanOrEqual(12);
+  expect(worker.terminated).toBe(false);
+});
+it("opens both breakers at once when both phases miss", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  for (const phase of ["fast", "fast", "slow", "slow"] as const)
+    await dispatchedMiss(r, worker, phase);
+  await refused(r, "fast");
+  await refused(r, "slow");
+  expect(worker.terminated).toBe(false);
+});
+it.each<[string, (r: Rig) => void]>([
+  ["timeout", (r) => r.clock.advance(500)],
+  [
+    "queue_full",
+    (r) => {
+      for (let i = 0; i < 4; i++)
+        void r.detector.assess(Uint8Array.of(3), "slow");
+    },
+  ],
+])(
+  "lets the next arrival probe after a queued probe is lost to %s",
+  async (reason, lose) => {
+    const r = rig();
+    const worker = await r.ready();
+    await dispatchedMiss(r, worker);
+    await dispatchedMiss(r, worker);
+    await opensFor(r, 5000);
+    const holder = worker.requests.length;
+    void r.detector.assess(Uint8Array.of(2), "slow");
+    const probe = assessFast(r);
+    lose(r);
+    await expect(probe).resolves.toMatchObject({ reason });
+    // The next arrival is admitted as the new probe, so a further one waits.
+    expect(await settled(assessFast(r))).toBe(false);
+    await refused(r);
+    expect(worker.requests).toHaveLength(holder + 1);
+  },
+);
 it("drops the queued job with the earliest deadline when the queue is full", async () => {
   const r = rig();
   const worker = await r.ready();
@@ -435,32 +586,6 @@ it("drops the queued job with the earliest deadline when the queue is full", asy
   await expect(queuedFast).resolves.toMatchObject({ reason: "queue_full" });
   expect(await settled(queuedSlow)).toBe(false);
   expect(worker.requests).toHaveLength(1);
-});
-it("bounds dispatches under a persistent 5 s inference to about one per 35 s", async () => {
-  const r = rig();
-  const worker = await r.ready();
-  const inferenceMs = 5000;
-  const dispatchedAt: number[] = [];
-  const record = () => {
-    while (dispatchedAt.length < worker.requests.length)
-      dispatchedAt.push(r.clock.now());
-  };
-  let replied = 0;
-  for (let step = 0; step < 3000; step++) {
-    if (step % 3 === 0) void assessFast(r);
-    record();
-    if (
-      replied < worker.requests.length &&
-      r.clock.now() >= dispatchedAt[replied] + inferenceMs
-    )
-      reply(worker, replied++);
-    record();
-    r.clock.advance(100);
-  }
-  const lastMinute = dispatchedAt.filter((at) => at >= r.clock.now() - 60000);
-  expect(lastMinute.length).toBeLessThanOrEqual(2);
-  expect(dispatchedAt.length).toBeLessThanOrEqual(12);
-  expect(worker.terminated).toBe(false);
 });
 it("resets the miss count and escalation when the child retires", async () => {
   const r = rig();
