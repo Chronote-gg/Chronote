@@ -29,7 +29,7 @@ jobs:
       contents: read
       id-token: write
     outputs:
-      failures: ${{ steps.role.outputs.failures }}${{ steps.checks.outputs.failures }}
+      failures: ${{ steps.role.outputs.failures }}${{ steps.assume.outputs.failures }}${{ steps.checks.outputs.failures }}
     env:
       ROLE_ARN: ${{ vars.ALARM_DELIVERY_CHECK_ROLE_ARN }}
       NAME_PREFIX: meeting-notes-prod
@@ -48,13 +48,22 @@ jobs:
             exit 1
           fi
 
+      # The role trusts master only, so a dispatch from another branch fails here.
       - name: Configure read-only credentials with OIDC
+        id: credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.ROLE_ARN }}
           role-session-name: chronote-alarm-delivery-${{ github.run_id }}
           aws-region: us-east-1
           mask-aws-account-id: true
+
+      - name: Name a role that could not be assumed
+        id: assume
+        if: failure() && steps.credentials.outcome == 'failure'
+        run: |
+          echo "failures=could not assume the check role (a dispatch must run from master)" >> "$GITHUB_OUTPUT"
+          exit 1
 
       # Covers a day plus overlap, so a fixed fault clears on the next run
       # instead of staying red for the 30 days alarm history is retained.
@@ -121,6 +130,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read
       issues: write
     env:
       GH_TOKEN: ${{ github.token }}
@@ -130,20 +140,10 @@ jobs:
       FAILURES: ${{ needs.check.outputs.failures }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Only a failed check reports lost alarms; a cancelled or timed-out run
+      # comments at most once on an open issue. See scripts/alarm-delivery-report.js.
       - name: Open, update or close the tracking issue
-        run: |
-          set -euo pipefail
-          number=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title \
-            --jq "map(select(.title == \"$TITLE\")) | first | .number // empty")
-          if [ "$RESULT" = "success" ]; then
-            if [ -n "$number" ]; then
-              gh issue close "$number" --comment "[AGENT] The alarm delivery check passed again: $RUN_URL"
-            fi
-            exit 0
-          fi
-          body="[AGENT] The daily alarm delivery check failed, so production alarm notifications may not be reaching anyone. Failure: ${FAILURES:-the check job did not complete}. Run: $RUN_URL. What each failure means and what to do: docs/deployment.md#alarm-delivery."
-          if [ -n "$number" ]; then
-            gh issue comment "$number" --body "$body"
-          else
-            gh issue create --title "$TITLE" --body "$body"
-          fi
+        run: node scripts/alarm-delivery-report.js

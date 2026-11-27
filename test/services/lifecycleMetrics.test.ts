@@ -1,19 +1,8 @@
-import { afterEach, beforeEach, expect, jest, test } from "@jest/globals";
+import { expect, jest, test } from "@jest/globals";
 import { emitMetric, LIFECYCLE_METRICS } from "../../src/lifecycleMetrics";
+import { captureMetricLines } from "../helpers/metricLines";
 
-let written: string[];
-beforeEach(() => {
-  written = [];
-  jest.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-    written.push(String(chunk));
-    return true;
-  });
-  process.env.METRICS_NAMESPACE = "meeting-notes-test/Lifecycle";
-});
-afterEach(() => {
-  jest.restoreAllMocks();
-  delete process.env.METRICS_NAMESPACE;
-});
+const written = captureMetricLines();
 
 const parsed = () => {
   expect(written).toHaveLength(1);

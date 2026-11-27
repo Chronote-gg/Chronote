@@ -87,3 +87,29 @@ it("marks the parent trace degraded after a caught delivery failure while lettin
   );
   expect(meeting.langfuseParentSpanContext).toBeUndefined();
 });
+
+it.each([
+  [{ summary: "failed" }, "WARNING", "Meeting summary failed"],
+  [
+    { notes: "failed", summary: "failed" },
+    "ERROR",
+    "Meeting processing failed",
+  ],
+] as const)(
+  "grades processing %p as %s",
+  async (failed, level, statusMessage) => {
+    const meeting = {
+      meetingId: "meeting",
+      guildId: "guild",
+      creator: { id: "creator" },
+      voiceChannel: { id: "voice", name: "Voice" },
+      startTime: new Date(),
+      processing: { transcription: "ready", notes: "generated", ...failed },
+    } as unknown as MeetingData;
+    await withMeetingEndTrace(meeting, async () => {});
+    expect(updateActiveObservation).toHaveBeenLastCalledWith(
+      expect.objectContaining({ level, statusMessage }),
+      { asType: "chain" },
+    );
+  },
+);

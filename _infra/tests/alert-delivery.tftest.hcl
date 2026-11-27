@@ -77,6 +77,7 @@ run "every_alarm_notifies_the_critical_topic" {
       aws_cloudwatch_metric_alarm.processing_retry_worker_failed,
       aws_cloudwatch_metric_alarm.voice_settlement_unresolved,
       aws_cloudwatch_metric_alarm.voice_admission_blocked,
+      aws_cloudwatch_metric_alarm.speech_detector_unavailable_share,
     ]
   }
 
@@ -97,6 +98,7 @@ run "every_alarm_notifies_the_critical_topic" {
         aws_cloudwatch_metric_alarm.processing_retry_worker_failed,
         aws_cloudwatch_metric_alarm.voice_settlement_unresolved,
         aws_cloudwatch_metric_alarm.voice_admission_blocked,
+        aws_cloudwatch_metric_alarm.speech_detector_unavailable_share,
       ) :
       a.alarm_actions == toset(["arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${aws_sns_topic.critical_alerts[0].name}"])
       && a.ok_actions == toset(["arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${aws_sns_topic.critical_alerts[0].name}"])

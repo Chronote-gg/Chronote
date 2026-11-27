@@ -85,28 +85,34 @@ the daily delivery check are in
 
 ### What triggers an alert
 
-| Alarm                       | Condition                                      | Period    |
-| --------------------------- | ---------------------------------------------- | --------- |
-| ECS no running tasks        | Bot service running task count < 1 for 10 min  | 5 min x 2 |
-| ECS disk leak               | Bot task disk minimum above 75% for 3 h        | 1 h x 3   |
-| ECS disk critical           | Bot task disk at or above 95% of reserved      | 5 min x 1 |
-| ALB target 5xx errors       | 10+ target HTTP 5xx responses in 10 min        | 5 min x 2 |
-| ALB ELB 5xx errors          | 5+ load-balancer HTTP 5xx responses in 5 min   | 5 min x 1 |
-| ALB ELB 5xx sustained       | 5+ load-balancer HTTP 5xx responses in 1 h     | 1 h x 1   |
-| ALB unhealthy hosts         | Any unhealthy target in `api-tg` for 10 min    | 5 min x 2 |
-| ALB spare unhealthy hosts   | Any unhealthy target in `api-spare` for 10 min | 5 min x 2 |
-| Checkout lock stuck         | `Checkout lock stuck` app log line in 1 h      | 1 h x 1   |
-| OpenAI requests rejected    | Any OpenAI quota, credit, or 429 log line      | 5 min x 1 |
-| Processing retry worker     | `Processing retry worker failed` log line      | 5 min x 1 |
-| Voice settlement unresolved | Unreleased voice session or lease log line     | 5 min x 1 |
-| Voice admission blocked     | Recording refused for uncertain voice state    | 5 min x 1 |
-| Meeting lifecycle stuck     | `MeetingStuck` metric, any phase               | 5 min x 1 |
-| Meeting finish failed       | `MeetingFailed` metric, finish or delivery     | 5 min x 1 |
-| Task protection failing     | 3+ `TaskProtectionFailed` in 5 min             | 5 min x 1 |
-| No eligible worker          | No `WorkerEligibleHeartbeat` in 5 min          | 5 min x 1 |
-| Finisher scan missing       | No `FinisherScanCompleted` in 10 min           | 5 min x 2 |
-| Renewal recovery stalled    | `RenewalRecoveryStalled` in each of 3 periods  | 5 min x 3 |
-| Deploy drain timeout        | Deploy `DrainWaitTimedOut` metric published    | 5 min x 1 |
+| Alarm                       | Condition                                       | Period     |
+| --------------------------- | ----------------------------------------------- | ---------- |
+| ECS no running tasks        | Bot service running task count < 1 for 10 min   | 5 min x 2  |
+| ECS disk leak               | Bot task disk minimum above 75% for 3 h         | 1 h x 3    |
+| ECS disk critical           | Bot task disk at or above 95% of reserved       | 5 min x 1  |
+| ALB target 5xx errors       | 10+ target HTTP 5xx responses in 10 min         | 5 min x 2  |
+| ALB ELB 5xx errors          | 5+ load-balancer HTTP 5xx responses in 5 min    | 5 min x 1  |
+| ALB ELB 5xx sustained       | 5+ load-balancer HTTP 5xx responses in 1 h      | 1 h x 1    |
+| ALB unhealthy hosts         | Any unhealthy target in `api-tg` for 10 min     | 5 min x 2  |
+| ALB spare unhealthy hosts   | Any unhealthy target in `api-spare` for 10 min  | 5 min x 2  |
+| Checkout lock stuck         | `Checkout lock stuck` app log line in 1 h       | 1 h x 1    |
+| OpenAI requests rejected    | Any OpenAI quota, credit, or 429 log line       | 5 min x 1  |
+| Processing retry worker     | `Processing retry worker failed` log line       | 5 min x 1  |
+| Voice settlement unresolved | Unreleased voice session or lease log line      | 5 min x 1  |
+| Voice admission blocked     | Recording refused for uncertain voice state     | 5 min x 1  |
+| Meeting lifecycle stuck     | `MeetingStuck` metric, any phase                | 5 min x 1  |
+| Meeting finish failed       | `MeetingFailed` metric, finish or delivery      | 5 min x 1  |
+| Task protection failing     | 3+ `TaskProtectionFailed` in 5 min              | 5 min x 1  |
+| No eligible worker          | No `WorkerEligibleHeartbeat` in 5 min           | 5 min x 1  |
+| Finisher scan missing       | No `FinisherScanCompleted` in 10 min            | 5 min x 2  |
+| Renewal recovery stalled    | `RenewalRecoveryStalled` in each of 3 periods   | 5 min x 3  |
+| Slow pass rejected          | Any `TranscriptionSlowPassRejected` in 5 min    | 5 min x 1  |
+| Summary dropped             | 3+ `MeetingSummaryDropped` in 1 h               | 1 h x 1    |
+| Speech detector retiring    | 3+ `SpeechDetectorRetired` in each of 3 periods | 5 min x 3  |
+| Speech unavailable share    | Over 20% unavailable, 50+ assessments           | 15 min x 2 |
+| Missing logprobs            | 6+ `TranscriptionMissingLogprobs` in 15 min     | 15 min x 1 |
+| Keywords rejected           | 6+ `TranscriptionKeywordsRejected` in 15 min    | 15 min x 1 |
+| Deploy drain timeout        | Deploy `DrainWaitTimedOut` metric published     | 5 min x 1  |
 
 All alarms also send an OK notification when the condition clears.
 

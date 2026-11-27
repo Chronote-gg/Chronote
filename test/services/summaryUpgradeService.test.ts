@@ -103,6 +103,14 @@ test.each([
   { processing: { transcription: "empty", notes: "skipped" } },
   { processing: { transcription: "partial", notes: "generated" } },
   { processing: { transcription: "ready", notes: "failed" } },
+  // The offer rides on the summary card, so a card without a summary waits.
+  {
+    processing: {
+      transcription: "ready",
+      notes: "generated",
+      summary: "failed",
+    },
+  },
   { processing: undefined },
   { endTime: undefined },
 ])("skips canceled or unsuccessful meetings: %j", async (override) => {

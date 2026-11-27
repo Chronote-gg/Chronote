@@ -1,11 +1,23 @@
 /** @jest-environment node */
-import { createSpeechDetector } from "../../src/services/speechDetectionService";
+import {
+  SPEECH_HANG_CEILING_MS,
+  createSpeechDetector,
+} from "../../src/services/speechDetectionService";
 import { DEFAULT_SPEECH_POLICY } from "../../src/services/speechDetectionPolicy";
 import {
   ControlledSpeechWorker,
   FakeSpeechClock,
 } from "../helpers/speechDetectionHarness";
 import { metricsRegistry } from "../../src/metrics";
+import {
+  fingerprint,
+  scored,
+  rig,
+  speech,
+  reply,
+  countMetric,
+  settled,
+} from "../helpers/speechDetectorRig";
 
 it("settlesTimedOutWorkWithoutRejectingSpeech", async () => {
   const clock = new FakeSpeechClock();
@@ -31,54 +43,6 @@ it("settlesTimedOutWorkWithoutRejectingSpeech", async () => {
   await detector.shutdown();
 });
 
-const fingerprint = DEFAULT_SPEECH_POLICY.policyFingerprint;
-const scored = {
-  kind: "non_speech",
-  policyFingerprint: fingerprint,
-  metrics: {
-    peakSpeechProbability: 0.01,
-    maxConsecutiveSpeechFrames: 0,
-    scannedFrames: 1,
-    totalFrames: 1,
-    gain: 1,
-  },
-} satisfies import("../../src/services/speechDetectionTypes").SpeechAssessment;
-const rigs: ReturnType<typeof rig>[] = [];
-function rig() {
-  const clock = new FakeSpeechClock();
-  const workers: ControlledSpeechWorker[] = [];
-  const detector = createSpeechDetector({
-    policy: DEFAULT_SPEECH_POLICY,
-    spawn: () => {
-      const worker = new ControlledSpeechWorker();
-      workers.push(worker);
-      return worker;
-    },
-    now: clock.now,
-    schedule: clock.schedule,
-  });
-  const result = {
-    clock,
-    workers,
-    detector,
-    async ready() {
-      const warm = detector.warm();
-      const worker = workers[workers.length - 1];
-      worker.reply({ type: "ready", policyFingerprint: fingerprint });
-      expect(await warm).toBe(true);
-      return worker;
-    },
-  };
-  rigs.push(result);
-  return result;
-}
-afterEach(async () => {
-  for (const { detector, clock } of rigs.splice(0)) {
-    await detector.shutdown();
-    expect(clock.pendingTimers).toBe(0);
-  }
-});
-
 it("starts lazily and returns immediately while not ready", async () => {
   const { detector, workers } = rig();
   expect(workers).toHaveLength(0);
@@ -87,16 +51,19 @@ it("starts lazily and returns immediately while not ready", async () => {
   ).resolves.toMatchObject({ kind: "unavailable", reason: "not_ready" });
   expect(workers).toHaveLength(1);
 });
-it("admits one active and four waiting jobs with immediate sixth-job queue_full", async () => {
+it("drops the oldest of four waiting jobs as queue_full to admit a new arrival", async () => {
   const r = rig();
   const worker = await r.ready();
-  const jobs = Array.from({ length: 5 }, () =>
+  const [active, oldest, ...rest] = Array.from({ length: 5 }, () =>
     r.detector.assess(Uint8Array.of(1), "slow"),
   );
-  await expect(
-    r.detector.assess(Uint8Array.of(1), "slow"),
-  ).resolves.toMatchObject({ kind: "unavailable", reason: "queue_full" });
+  const newest = r.detector.assess(Uint8Array.of(1), "slow");
+  await expect(oldest).resolves.toMatchObject({
+    kind: "unavailable",
+    reason: "queue_full",
+  });
   expect(worker.requests).toHaveLength(1);
+  const jobs = [active, ...rest, newest];
   for (let i = 0; i < 5; i++) {
     worker.reply({
       type: "assessment",
@@ -108,40 +75,98 @@ it("admits one active and four waiting jobs with immediate sixth-job queue_full"
     Array(5).fill("non_speech"),
   );
 });
-it("removes expired queued work without killing the active worker", async () => {
-  const r = rig();
-  const worker = await r.ready();
-  const active = r.detector.assess(Uint8Array.of(1), "slow");
-  const queued = r.detector.assess(Uint8Array.of(2), "fast");
-  r.clock.advance(500);
-  await expect(queued).resolves.toMatchObject({ reason: "timeout" });
-  expect(worker.terminated).toBe(false);
-  worker.reply({
-    type: "assessment",
-    requestId: worker.requests[0].requestId,
-    assessment: scored,
-  });
-  await expect(active).resolves.toEqual(scored);
-  expect(worker.requests).toHaveLength(1);
-});
-it("includes queue time in the slow 1500ms deadline", async () => {
+it.each(["fast", "slow"] as const)(
+  "answers every %s caller within its budget and never dispatches an expired queued job",
+  async (phase) => {
+    const r = rig();
+    const worker = await r.ready();
+    const budget = phase === "fast" ? 500 : 1500;
+    const jobs = Array.from({ length: 4 }, () =>
+      r.detector.assess(Uint8Array.of(1), phase),
+    );
+    r.clock.advance(budget - 1);
+    expect(await settled(jobs[0])).toBe(false);
+    r.clock.advance(1);
+    expect((await Promise.all(jobs)).map((job) => job.kind)).toEqual(
+      Array(jobs.length).fill("unavailable"),
+    );
+    reply(worker, 0);
+    expect(worker.requests).toHaveLength(1);
+    expect(worker.terminated).toBe(false);
+  },
+);
+it("counts the budget from enqueue, including time spent queued", async () => {
   const r = rig();
   const worker = await r.ready();
   const first = r.detector.assess(Uint8Array.of(1), "slow");
   r.clock.advance(100);
   const second = r.detector.assess(Uint8Array.of(2), "slow");
   r.clock.advance(1300);
-  worker.reply({
-    type: "assessment",
-    requestId: worker.requests[0].requestId,
-    assessment: scored,
-  });
+  reply(worker, 0);
   await expect(first).resolves.toEqual(scored);
+  expect(worker.requests).toHaveLength(2);
   r.clock.advance(199);
-  expect(worker.terminated).toBe(false);
+  expect(await settled(second)).toBe(false);
   r.clock.advance(1);
   await expect(second).resolves.toMatchObject({ reason: "timeout" });
-  expect(worker.terminated).toBe(true);
+  expect(worker.terminated).toBe(false);
+});
+it("times out a slow running job alone and completes the next job on the same child", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  const slow = r.detector.assess(Uint8Array.of(1), "fast");
+  r.clock.advance(500);
+  await expect(slow).resolves.toMatchObject({ reason: "timeout" });
+  const next = r.detector.assess(Uint8Array.of(2), "fast");
+  expect(worker.terminated).toBe(false);
+  // The child is still busy with the timed-out job, so nothing else is sent.
+  expect(worker.requests).toHaveLength(1);
+  reply(worker, 0, speech);
+  expect(worker.requests).toHaveLength(2);
+  reply(worker, 1);
+  await expect(next).resolves.toEqual(scored);
+  expect(r.workers).toHaveLength(1);
+});
+it("ignores a late reply for a timed-out job so it cannot answer the next job", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  const timedOut = r.detector.assess(Uint8Array.of(1), "fast");
+  r.clock.advance(500);
+  await expect(timedOut).resolves.toMatchObject({ reason: "timeout" });
+  reply(worker, 0);
+  const next = r.detector.assess(Uint8Array.of(2), "fast");
+  // A duplicate of the stale reply carries the old id, never the next job's.
+  reply(worker, 0, speech);
+  reply(worker, 1);
+  await expect(next).resolves.toEqual(scored);
+  expect(worker.terminated).toBe(false);
+});
+it("retires a hung child exactly once and recovers the queue after respawn", async () => {
+  const count = countMetric();
+  const r = rig();
+  const hung = await r.ready();
+  const first = r.detector.assess(Uint8Array.of(1), "fast");
+  r.clock.advance(SPEECH_HANG_CEILING_MS - 200);
+  const queued = r.detector.assess(Uint8Array.of(2), "fast");
+  r.clock.advance(200);
+  await expect(first).resolves.toMatchObject({ reason: "timeout" });
+  await expect(queued).resolves.toMatchObject({
+    kind: "unavailable",
+    reason: "timeout",
+  });
+  expect(hung.terminated).toBe(true);
+  expect(count("SpeechDetectorRetired")).toBe(1);
+  reply(hung, 0);
+  r.clock.advance(SPEECH_HANG_CEILING_MS);
+  r.clock.advance(30000);
+  const worker = await r.ready();
+  const job = r.detector.assess(Uint8Array.of(3), "fast");
+  reply(worker, 0);
+  await expect(job).resolves.toEqual(scored);
+  r.clock.advance(SPEECH_HANG_CEILING_MS);
+  expect(worker.terminated).toBe(false);
+  expect(r.workers).toHaveLength(2);
+  expect(count("SpeechDetectorRetired")).toBe(1);
 });
 it("settles every pending job on worker crash", async () => {
   const r = rig();
@@ -180,7 +205,7 @@ it("doesNotRestartDuringCooldown", async () => {
   const r = rig();
   const worker = await r.ready();
   const job = r.detector.assess(Uint8Array.of(1), "fast");
-  r.clock.advance(500);
+  r.clock.advance(SPEECH_HANG_CEILING_MS);
   await expect(job).resolves.toMatchObject({ reason: "timeout" });
   for (let i = 0; i < 3; i++) {
     r.clock.advance(9999);
@@ -325,7 +350,7 @@ it("ignores a captured reply from a retired generation even with a current reque
   const old = await r.ready();
   const replay = old.captureReplies();
   const abandoned = r.detector.assess(Uint8Array.of(1), "fast");
-  r.clock.advance(500);
+  r.clock.advance(SPEECH_HANG_CEILING_MS);
   await abandoned;
   r.clock.advance(30000);
   const current = await r.ready();
@@ -400,7 +425,7 @@ it("retires a session returning engine failure before accepting more work", asyn
   expect(worker.terminated).toBe(true);
 });
 
-it("rejects a late negative reply even when the main thread has not fired its timer", async () => {
+it("rejects a late negative reply without retiring, even when the main thread has not fired its timer", async () => {
   const r = rig();
   const worker = await r.ready();
   const job = r.detector.assess(Uint8Array.of(1), "fast");
@@ -411,19 +436,15 @@ it("rejects a late negative reply even when the main thread has not fired its ti
     assessment: scored,
   });
   await expect(job).resolves.toMatchObject({ reason: "timeout" });
-  expect(worker.terminated).toBe(true);
+  expect(worker.terminated).toBe(false);
 });
-it("does not dispatch queued work after its absolute deadline", async () => {
+it("does not dispatch queued work after its budget", async () => {
   const r = rig();
   const worker = await r.ready();
   const active = r.detector.assess(Uint8Array.of(1), "slow");
   const queued = r.detector.assess(Uint8Array.of(2), "fast");
   r.clock.elapseWithoutTimers(600);
-  worker.reply({
-    type: "assessment",
-    requestId: worker.requests[0].requestId,
-    assessment: scored,
-  });
+  reply(worker, 0);
   await expect(active).resolves.toEqual(scored);
   await expect(queued).resolves.toMatchObject({ reason: "timeout" });
   expect(worker.requests).toHaveLength(1);
