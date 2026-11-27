@@ -1,0 +1,149 @@
+name: Alarm Delivery Check
+
+# Reports through GitHub, not through the topic key or topic it watches: a
+# failed run opens or comments on the issue "Alarm delivery check is failing",
+# because GitHub emails a scheduled failure only to whoever last edited the
+# cron line. Until the read-only role in docs/deployment.md ("Alarm delivery")
+# is installed and ALARM_DELIVERY_CHECK_ROLE_ARN is set, every run fails,
+# because nothing is watching alarm delivery. This repository is public: the
+# issue carries failure kinds and alarm names only, never ids or ARNs.
+
+on:
+  schedule:
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alarm-delivery-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Alarm actions delivered
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      failures: ${{ steps.role.outputs.failures }}${{ steps.checks.outputs.failures }}
+    env:
+      ROLE_ARN: ${{ vars.ALARM_DELIVERY_CHECK_ROLE_ARN }}
+      NAME_PREFIX: meeting-notes-prod
+      # Production sets alert_discord_channel_id, so the topic must also feed
+      # the Discord Lambda. Change with that variable in the production tfvars.
+      REQUIRE_DISCORD_SUBSCRIPTION: "true"
+    steps:
+      - name: Require the check role
+        id: role
+        run: |
+          if [ -z "$ROLE_ARN" ]; then
+            message="ALARM_DELIVERY_CHECK_ROLE_ARN is not set, so nothing is checking that production alarms reach their topic. Install the role in docs/deployment.md#alarm-delivery and set the repository variable, or disable this workflow."
+            echo "::error::$message"
+            echo "$message" >> "$GITHUB_STEP_SUMMARY"
+            echo "failures=check role is not configured (ALARM_DELIVERY_CHECK_ROLE_ARN is empty)" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Configure read-only credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: chronote-alarm-delivery-${{ github.run_id }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      # Covers a day plus overlap, so a fixed fault clears on the next run
+      # instead of staying red for the 30 days alarm history is retained.
+      # Every check runs and records its failure; the step fails at the end.
+      - name: Fail on failed alarm actions, failed deliveries or unconfirmed subscriptions
+        id: checks
+        run: |
+          set -uo pipefail
+          topic="$NAME_PREFIX-critical-alerts"
+          since=$(date -u -d '26 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          failures=()
+
+          if aws cloudwatch describe-alarm-history --history-item-type Action --start-date "$since" \
+            --query "AlarmHistoryItems[?starts_with(AlarmName, '$NAME_PREFIX-') && starts_with(HistorySummary, 'Failed')]" \
+            --output json > failed.json; then
+            if [ "$(jq length failed.json)" -gt 0 ]; then
+              jq -r '.[] | "\(.Timestamp) \(.AlarmName): \((.HistoryData | fromjson? | .error) // (.HistorySummary | split(" arn:")[0]))"' failed.json
+              failures+=("alarm actions failed to publish since $since: $(jq -r '[.[].AlarmName] | unique | join(", ")' failed.json)")
+            fi
+          else
+            failures+=("could not read alarm history")
+          fi
+
+          if undelivered=$(aws cloudwatch get-metric-statistics --namespace AWS/SNS \
+            --metric-name NumberOfNotificationsFailed --dimensions "Name=TopicName,Value=$topic" \
+            --start-time "$since" --end-time "$now" --period 86400 --statistics Sum \
+            --query "sum(Datapoints[].Sum)" --output text); then
+            if [ "${undelivered%.*}" != "0" ]; then
+              failures+=("$undelivered notifications from $topic failed to reach a subscriber since $since")
+            fi
+          else
+            failures+=("could not read NumberOfNotificationsFailed")
+          fi
+
+          if account=$(aws sts get-caller-identity --query Account --output text) &&
+            subscriptions=$(aws sns list-subscriptions-by-topic --topic-arn "arn:aws:sns:us-east-1:$account:$topic" \
+              --query "Subscriptions[].[Protocol, SubscriptionArn == 'PendingConfirmation']" --output text); then
+            echo "$subscriptions" | awk '{print "subscription:", $1, ($2 == "True" ? "pending confirmation" : "confirmed")}'
+            if ! echo "$subscriptions" | grep -q "^email[[:space:]]False$"; then
+              failures+=("$topic has no confirmed email subscription")
+            fi
+            if [ "$REQUIRE_DISCORD_SUBSCRIPTION" = "true" ] && ! echo "$subscriptions" | grep -q "^lambda[[:space:]]False$"; then
+              failures+=("$topic has no Lambda subscription feeding the Discord alerts channel")
+            fi
+          else
+            failures+=("could not list subscriptions of $topic")
+          fi
+
+          for failure in "${failures[@]}"; do
+            echo "::error::$failure"
+            echo "- $failure" >> "$GITHUB_STEP_SUMMARY"
+          done
+          if [ "${#failures[@]}" -gt 0 ]; then
+            joined=$(printf '%s; ' "${failures[@]}")
+            echo "failures=${joined%; }" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+  report:
+    name: Track the result in an issue
+    needs: check
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: Alarm delivery check is failing
+      RESULT: ${{ needs.check.result }}
+      FAILURES: ${{ needs.check.outputs.failures }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, update or close the tracking issue
+        run: |
+          set -euo pipefail
+          number=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | first | .number // empty")
+          if [ "$RESULT" = "success" ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --comment "[AGENT] The alarm delivery check passed again: $RUN_URL"
+            fi
+            exit 0
+          fi
+          body="[AGENT] The daily alarm delivery check failed, so production alarm notifications may not be reaching anyone. Failure: ${FAILURES:-the check job did not complete}. Run: $RUN_URL. What each failure means and what to do: docs/deployment.md#alarm-delivery."
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$TITLE" --body "$body"
+          fi
