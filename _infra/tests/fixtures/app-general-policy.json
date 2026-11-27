@@ -109,7 +109,7 @@
           "sns.amazonaws.com"
         ]
       },
-      "Action": ["kms:Decrypt", "kms:GenerateDataKey*", "kms:DescribeKey"],
+      "Action": ["kms:Decrypt", "kms:GenerateDataKey*"],
       "Resource": "*",
       "Condition": {
         "StringEquals": {

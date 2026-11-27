@@ -25,8 +25,9 @@ variables {
   alert_email        = "alerts@example.com"
 }
 
-# Alarm notifications failed for months because this statement carried a
-# kms:CallerAccount condition, which never matches a service principal.
+# Alarm publishes failed while this statement carried kms:CallerAccount, which
+# does not match a service principal. DescribeKey is excluded because a request
+# for it carries no encryption context, so the condition could never grant it.
 run "key_policy_lets_alarms_use_the_topic_key" {
   command = plan
   plan_options { target = [aws_kms_key_policy.app_general] }
@@ -46,11 +47,11 @@ run "key_policy_lets_alarms_use_the_topic_key" {
       for s in jsondecode(aws_kms_key_policy.app_general.policy).Statement : s
       if s.Effect == "Allow"
       && contains(flatten([try(s.Principal.Service, [])]), "cloudwatch.amazonaws.com")
-      && length(setsubtract(["kms:Decrypt", "kms:GenerateDataKey*"], flatten([s.Action]))) == 0
+      && toset(flatten([s.Action])) == toset(["kms:Decrypt", "kms:GenerateDataKey*"])
       && !contains(keys(merge(values(try(s.Condition, {}))...)), "kms:CallerAccount")
       && try(s.Condition.StringEquals["kms:EncryptionContext:aws:sns:topicArn"], "") == "arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts"
     ]) == 1
-    error_message = "Exactly one statement must let cloudwatch.amazonaws.com Decrypt and GenerateDataKey* for the critical alerts topic, without kms:CallerAccount."
+    error_message = "Exactly one statement must let cloudwatch.amazonaws.com exactly Decrypt and GenerateDataKey* for the critical alerts topic, without kms:CallerAccount."
   }
 }
 

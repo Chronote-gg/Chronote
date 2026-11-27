@@ -999,15 +999,16 @@ resource "aws_kms_key_policy" "app_general" {
         },
         Action = [
           "kms:Decrypt",
-          "kms:GenerateDataKey*",
-          "kms:DescribeKey"
+          "kms:GenerateDataKey*"
         ],
         Resource = "*",
-        # Not kms:CallerAccount: it matches account identities, not service
-        # principals, and denied every alarm publish from February 2026 to the
-        # fix. SNS sets the topic ARN as encryption context on every publish,
-        # which scopes all three principals to this one topic, and unlike
-        # aws:SourceArn it is supported for EventBridge publishers too.
+        # Not kms:CallerAccount: it does not match service principals, and
+        # alarm publishes failed under it (docs/deployment.md#alarm-delivery).
+        # SNS sets the topic ARN as encryption context on every publish, which
+        # scopes these principals to this topic and, unlike aws:SourceArn, also
+        # works for EventBridge. No kms:DescribeKey: it carries no encryption
+        # context, so this condition could never grant it, and publishing to an
+        # encrypted topic needs only these two actions.
         Condition = {
           StringEquals = {
             "kms:EncryptionContext:aws:sns:topicArn" = local.critical_alerts_topic_arn
