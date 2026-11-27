@@ -67,6 +67,26 @@ locals {
       treat_missing_data = "notBreaching"
       description        = "Renewal recovery has skipped its polls on lease errors for fifteen minutes, so stuck billing renewals are not being recovered. Check the bot logs for \"Renewal recovery poll skipped after a lease error\"."
     }
+    # Both transcription guards expect zero; one 15 minute period makes the
+    # threshold a sum over the whole window rather than per five minutes.
+    transcription_missing_logprobs = {
+      metric             = "TranscriptionMissingLogprobs"
+      threshold          = 5
+      comparison         = "GreaterThanThreshold"
+      period             = 900
+      evaluation_periods = 1
+      treat_missing_data = "notBreaching"
+      description        = "More than five transcription responses in fifteen minutes came back with text but no logprobs. The provider stopped returning confidence data, so the quiet-audio guard is inactive and hallucinated lines can pass into transcripts and notes. Check the bot logs for \"Transcription response has no logprobs\" and the transcription model."
+    }
+    transcription_keywords_rejected = {
+      metric             = "TranscriptionKeywordsRejected"
+      threshold          = 5
+      comparison         = "GreaterThanThreshold"
+      period             = 900
+      evaluation_periods = 1
+      treat_missing_data = "notBreaching"
+      description        = "More than five transcription requests in fifteen minutes were refused with HTTP 400 while carrying dictionary keywords and were retried without them. A server's dictionary terms are being rejected, so its dictionary spelling is silently lost from transcripts. Check the bot logs for \"Transcription keywords rejected\"."
+    }
   }
   # Alarms on a heartbeat only a running worker emits.
   worker_silence_alarms = ["no_eligible_worker", "finisher_scan_missing"]
@@ -86,7 +106,7 @@ resource "aws_cloudwatch_metric_alarm" "lifecycle" {
   namespace           = local.lifecycle_metrics_namespace
   metric_name         = each.value.metric
   statistic           = "Sum"
-  period              = 300
+  period              = try(each.value.period, 300)
   evaluation_periods  = each.value.evaluation_periods
   datapoints_to_alarm = each.value.evaluation_periods
   threshold           = each.value.threshold
