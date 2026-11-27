@@ -2,6 +2,7 @@ import path from "node:path";
 import { fork } from "node:child_process";
 import { DEFAULT_SPEECH_POLICY } from "./speechDetectionPolicy";
 import { recordSpeechWorkerRestart } from "../metrics";
+import { emitMetric, LIFECYCLE_METRICS } from "../lifecycleMetrics";
 import type {
   SpeechPolicy,
   SpeechWorkerReply,
@@ -143,6 +144,7 @@ export function createSpeechDetector(
   };
   const timeOut = (job: Job): void => {
     settle(job, unavailable("timeout"));
+    emitMetric(LIFECYCLE_METRICS.speechDetectorJobTimedOut);
   };
   /** Kills the child; every job it holds or has queued fails once with `reason`. */
   const retire = (reason: SpeechUnavailableReason): void => {
@@ -156,6 +158,8 @@ export function createSpeechDetector(
     }
     for (const job of waiting.splice(0)) settle(job, unavailable(reason));
     if (!old) return;
+    if (reason !== "shutdown")
+      emitMetric(LIFECYCLE_METRICS.speechDetectorRetired);
     old.initTimer.cancel();
     old.finishWarm(false);
     for (const detach of old.detach) detach();

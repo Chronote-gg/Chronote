@@ -27,7 +27,7 @@ run "lifecycle_alarms_route_by_name_and_notify" {
   variables { alert_email = "alerts@example.com" }
 
   assert {
-    condition     = length(aws_cloudwatch_metric_alarm.lifecycle) == 8 && alltrue([for a in values(aws_cloudwatch_metric_alarm.lifecycle) : a.namespace == "meeting-notes-prod/Lifecycle" && length(coalesce(a.dimensions, {})) == 0 && a.statistic == "Sum"])
+    condition     = length(aws_cloudwatch_metric_alarm.lifecycle) == 9 && alltrue([for a in values(aws_cloudwatch_metric_alarm.lifecycle) : a.namespace == "meeting-notes-prod/Lifecycle" && length(coalesce(a.dimensions, {})) == 0 && a.statistic == "Sum"])
     error_message = "Every lifecycle alarm must sum the dimensionless metric in the environment's Lifecycle namespace."
   }
 
@@ -49,6 +49,11 @@ run "lifecycle_alarms_route_by_name_and_notify" {
   assert {
     condition     = aws_cloudwatch_metric_alarm.lifecycle["renewal_recovery_stalled"].evaluation_periods == 3 && aws_cloudwatch_metric_alarm.lifecycle["renewal_recovery_stalled"].datapoints_to_alarm == 3 && aws_cloudwatch_metric_alarm.lifecycle["renewal_recovery_stalled"].treat_missing_data == "notBreaching"
     error_message = "Renewal recovery must alarm only on a stall across three whole periods."
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.lifecycle["speech_detector_retiring"].threshold == 3 && aws_cloudwatch_metric_alarm.lifecycle["speech_detector_retiring"].comparison_operator == "GreaterThanOrEqualToThreshold" && aws_cloudwatch_metric_alarm.lifecycle["speech_detector_retiring"].period == 300 && aws_cloudwatch_metric_alarm.lifecycle["speech_detector_retiring"].evaluation_periods == 3 && aws_cloudwatch_metric_alarm.lifecycle["speech_detector_retiring"].datapoints_to_alarm == 3 && aws_cloudwatch_metric_alarm.lifecycle["speech_detector_retiring"].treat_missing_data == "notBreaching"
+    error_message = "The detector alarm must fire on three or more retirements in each of three five minute periods."
   }
 
   assert {
@@ -84,7 +89,7 @@ run "parked_environment_has_no_worker_silence_alarms" {
     ECS_DESIRED_COUNT = 0
   }
   assert {
-    condition     = length(aws_cloudwatch_metric_alarm.lifecycle) == 6 && length(setintersection(keys(aws_cloudwatch_metric_alarm.lifecycle), ["no_eligible_worker", "finisher_scan_missing"])) == 0
+    condition     = length(aws_cloudwatch_metric_alarm.lifecycle) == 7 && length(setintersection(keys(aws_cloudwatch_metric_alarm.lifecycle), ["no_eligible_worker", "finisher_scan_missing"])) == 0
     error_message = "A parked environment must keep every lifecycle alarm except the two that alarm on worker silence."
   }
 }

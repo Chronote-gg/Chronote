@@ -98,7 +98,18 @@ function reply(
     assessment,
   });
 }
+/** Counts the retirement metric lines the detector writes. */
+function countRetirements() {
+  process.env.METRICS_NAMESPACE = "meeting-notes-test/Lifecycle";
+  const write = jest.spyOn(process.stdout, "write").mockReturnValue(true);
+  return () =>
+    write.mock.calls.filter(([line]) =>
+      String(line).includes('"SpeechDetectorRetired":1'),
+    ).length;
+}
 afterEach(async () => {
+  delete process.env.METRICS_NAMESPACE;
+  jest.restoreAllMocks();
   for (const { detector, clock } of rigs.splice(0)) {
     await detector.shutdown();
     expect(clock.pendingTimers).toBe(0);
@@ -199,6 +210,7 @@ it("fails a queued job past the total wait cap alone while the others complete",
   await expect(later).resolves.toEqual(scored);
 });
 it("retires a hung child exactly once and recovers the queue after respawn", async () => {
+  const retirements = countRetirements();
   const r = rig();
   const hung = await r.ready();
   const first = r.detector.assess(Uint8Array.of(1), "fast");
@@ -211,6 +223,7 @@ it("retires a hung child exactly once and recovers the queue after respawn", asy
     reason: "timeout",
   });
   expect(hung.terminated).toBe(true);
+  expect(retirements()).toBe(1);
   reply(hung, 0);
   r.clock.advance(SPEECH_HANG_CEILING_MS);
   r.clock.advance(30000);
@@ -221,6 +234,7 @@ it("retires a hung child exactly once and recovers the queue after respawn", asy
   r.clock.advance(SPEECH_HANG_CEILING_MS);
   expect(worker.terminated).toBe(false);
   expect(r.workers).toHaveLength(2);
+  expect(retirements()).toBe(1);
 });
 it("settles every pending job on worker crash", async () => {
   const r = rig();

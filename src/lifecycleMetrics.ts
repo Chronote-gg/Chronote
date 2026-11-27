@@ -21,6 +21,10 @@ export const LIFECYCLE_METRICS = {
   transcriptionMissingLogprobs: "TranscriptionMissingLogprobs",
   // HTTP 400 to a request carrying dictionary keywords, retried without them.
   transcriptionKeywordsRejected: "TranscriptionKeywordsRejected",
+  // The speech detector killed its child (a hang, crash or invalid output).
+  speechDetectorRetired: "SpeechDetectorRetired",
+  // A detector job failed alone on its inference deadline or queue wait cap.
+  speechDetectorJobTimedOut: "SpeechDetectorJobTimedOut",
 } as const;
 
 export type LifecycleMetric =

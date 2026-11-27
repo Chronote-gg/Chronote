@@ -30,9 +30,17 @@ const emitted = new Set(
   ),
 );
 const alarmMetrics = capture(terraform, /^\s+metric\s+= "(\w+)"$/gm);
+// Emitted to collect data before a threshold is chosen; each needs an alarm or
+// a reason to stay here.
+const METRICS_WITHOUT_ALARM: string[] = [
+  // Per-job detector timeouts: no baseline yet for a meaningful threshold.
+  LIFECYCLE_METRICS.speechDetectorJobTimedOut,
+];
 
 test("every alarm reads a metric the code emits, and every emitted metric has an alarm", () => {
-  const names = Object.values(LIFECYCLE_METRICS);
+  const names = Object.values(LIFECYCLE_METRICS).filter(
+    (name) => !METRICS_WITHOUT_ALARM.includes(name),
+  );
   expect([...alarmMetrics].sort()).toEqual([...names].sort());
   expect([...emitted].sort()).toEqual(Object.keys(LIFECYCLE_METRICS).sort());
 });

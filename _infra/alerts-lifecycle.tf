@@ -67,6 +67,16 @@ locals {
       treat_missing_data = "notBreaching"
       description        = "Renewal recovery has skipped its polls on lease errors for fifteen minutes, so stuck billing renewals are not being recovered. Check the bot logs for \"Renewal recovery poll skipped after a lease error\"."
     }
+    speech_detector_retiring = {
+      # A single hang or crash retires the child once and recovers after the
+      # cooldown; three or more in every period for fifteen minutes is a loop.
+      metric             = "SpeechDetectorRetired"
+      threshold          = 3
+      comparison         = "GreaterThanOrEqualToThreshold"
+      evaluation_periods = 3
+      treat_missing_data = "notBreaching"
+      description        = "The speech detector killed and restarted its child three or more times in each of three five minute periods. Each retirement makes the detector unavailable for at least 30 seconds, so snippets are transcribed without the speech gate. Check the bot logs and task CPU for a hang, crash or invalid output loop."
+    }
     # Both transcription guards expect zero; one 15 minute period makes the
     # threshold a sum over the whole window rather than per five minutes.
     transcription_missing_logprobs = {
