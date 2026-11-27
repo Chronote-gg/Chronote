@@ -7,6 +7,10 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Notes arrive even when the summary fails (November 27)
+
+- If only the one-sentence summary cannot be generated, the meeting now completes and its notes and transcript are posted as usual, with "Summary unavailable." on the summary card. Previously the whole meeting could end as failed. Use **Retry processing** on the meeting page to generate the summary later. See [Interrupted recordings](/core-concepts/meeting-lifecycle/#interrupted-recordings).
+
 ### Meeting search privacy notice (November 17)
 
 - We are preparing Ask search across accessible retained history on every plan. Search uses a private derived copy of titles, summaries, meeting identifiers and dates, tags, archive status, current notes and transcript passages in Amazon S3 Vectors, with embeddings produced by OpenAI. This notice must be published before the new indexing or embedding processing begins. It does not mean full-library indexing is complete.
