@@ -45,7 +45,7 @@ run "key_policy_lets_alarms_use_the_topic_key" {
     condition = length([
       for s in jsondecode(aws_kms_key_policy.app_general.policy).Statement : s
       if s.Effect == "Allow"
-      && contains(flatten([s.Principal.Service]), "cloudwatch.amazonaws.com")
+      && contains(flatten([try(s.Principal.Service, [])]), "cloudwatch.amazonaws.com")
       && length(setsubtract(["kms:Decrypt", "kms:GenerateDataKey*"], flatten([s.Action]))) == 0
       && !contains(keys(merge(values(try(s.Condition, {}))...)), "kms:CallerAccount")
       && try(s.Condition.StringEquals["kms:EncryptionContext:aws:sns:topicArn"], "") == "arn:aws:sns:us-east-1:123456789012:meeting-notes-prod-critical-alerts"
