@@ -84,6 +84,7 @@ describe("audio transcript selection", () => {
       expect(getAudioTranscriptionFacts(audio)).toEqual({
         usableSegments: 1,
         failedSegments: 0,
+        queueRejectedSegments: 0,
         captureIncomplete,
       });
     },
@@ -108,6 +109,7 @@ describe("audio transcript selection", () => {
     expect(getAudioTranscriptionFacts(audio)).toEqual({
       usableSegments: 0,
       failedSegments: 1,
+      queueRejectedSegments: 0,
       captureIncomplete: false,
     });
   });
@@ -126,6 +128,7 @@ describe("audio transcript selection", () => {
     expect(getAudioTranscriptionFacts(audio)).toEqual({
       usableSegments: 1,
       failedSegments: 1,
+      queueRejectedSegments: 0,
       captureIncomplete: true,
     });
   });

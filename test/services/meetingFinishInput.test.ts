@@ -100,8 +100,9 @@ const cancelledPolicy: CompletionPolicy = {
   decision: "cancel",
 };
 
-const PIECE_BYTES = 3840;
-const PIECE_MS = 20;
+// Each piece is longer than the live transcription minimum (0.3 s).
+const PIECE_MS = 400;
+const PIECE_BYTES = 192 * PIECE_MS;
 const LARGE_MANIFEST_PIECES = 240;
 const SAVED_TEXT = "We agreed to finish the release testing tomorrow.";
 

@@ -40,6 +40,14 @@ test("a couple of lost snippets keep normal finalization", () => {
   ).toThrow("incomplete");
 });
 
+test("one snippet the queue refused sends the meeting to recovery despite the floor", () => {
+  const meeting = meetingWithSnippets(153, 1);
+  meeting.audioData.audioFiles[153].transcriptionQueueRejected = true;
+  expect(() => assertMeetingProcessingSucceeded(meeting)).toThrow("incomplete");
+  meeting.audioData.audioFiles[153].transcriptionFailed = false;
+  expect(() => assertMeetingProcessingSucceeded(meeting)).not.toThrow();
+});
+
 test.each([undefined, "partial"] as const)(
   "usable incomplete capture can finalize with transcription=%s",
   (transcription) => {

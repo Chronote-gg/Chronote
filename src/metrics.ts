@@ -186,7 +186,8 @@ export function recordSpeechSnippetOutcome(input: {
     | "reused"
     | "vad_skipped"
     | "conversion_error"
-    | "provider_error";
+    | "provider_error"
+    | "queue_rejected";
   audioSeconds: number;
   durationMs: number;
 }): void {

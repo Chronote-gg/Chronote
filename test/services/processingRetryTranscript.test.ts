@@ -43,28 +43,28 @@ const signal = new AbortController().signal;
 const run = <T>(effect: () => Promise<T>) => effect();
 const coverage = {
   pcmSha256: "sha",
-  audioBytes: 1920,
+  audioBytes: 76800,
   policyFingerprint: "policy",
 };
 const savedSpan = {
   sourceId: "user:123",
   sequence: 0,
   startByte: 0,
-  endByte: 1920,
+  endByte: 76800,
 };
 
 async function checkpointContent() {
   const f = await recoveryFixture("Saved words.", {
     artifacts: [
-      pcmArtifact("user:123", 0, Buffer.alloc(3840, 1), [
-        { startOffsetMs: 0, durationMs: 20 },
+      pcmArtifact("user:123", 0, Buffer.alloc(153600, 1), [
+        { startOffsetMs: 0, durationMs: 800 },
       ]),
     ],
     transcript: (payload) => {
       payload.entries[0].correspondence = { kind: "pcm", spans: [savedSpan] };
       payload.omitted = {
         kind: "pcm",
-        spans: [{ ...savedSpan, startByte: 1920, endByte: 3840 }],
+        spans: [{ ...savedSpan, startByte: 76800, endByte: 153600 }],
       };
       payload.processing = {
         finalPass: "acknowledged",
