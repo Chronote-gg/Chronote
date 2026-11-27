@@ -1,12 +1,16 @@
 /** @jest-environment node */
 import { history, pending, pointers } from "./meetingUpdateDelivery.fixture";
-import { runningJob } from "../repositories/meetingRegenerationContract";
+import {
+  runningJob,
+  runningRepair,
+} from "../repositories/meetingRegenerationContract";
 import type { MeetingHistory } from "../../src/types/db";
 import type { DeliveryResult } from "../../src/types/meetingDelivery";
 import { DELIVERY_DONE } from "../../src/services/meetingDelivery";
 import {
   armRetryPublication,
   awaitsRetryPublication,
+  deliversRetriedNotes,
   publishesAfterRetry,
   originalPublicationSettled,
   publicationSnapshot,
@@ -165,6 +169,7 @@ describe("publication after a processing retry", () => {
     ["no succeeded retry", { processingRetry: runningJob }],
     ["an active policy", { updateDelivery: pending() }],
     ["no notes", { notes: " " }],
+    ["a publication repair in flight", { publicationRepair: runningRepair }],
   ] as [string, Partial<MeetingHistory>][])(
     "does not find a retried meeting with %s",
     (_, patch) => {
@@ -179,5 +184,52 @@ describe("publication after a processing retry", () => {
         policy: { kind: "held", reason: "initial_publication_unsettled" },
       },
     });
+  });
+  const handedBack = () => armRetryPublication(retried(), unpublished());
+  it.each<[string, () => MeetingHistory]>([
+    ["a row the hand-back armed", handedBack],
+    [
+      "a row as the deployed code armed it, with no added marker",
+      () => ({
+        ...retried(),
+        finish: { attempts: 0, phase: "deliver" },
+        updateDelivery: {
+          ...unpublished(),
+          policy: { kind: "held", reason: "initial_publication_unsettled" },
+        },
+      }),
+    ],
+    [
+      "a handed-back row whose delivery is being retried",
+      () => ({
+        ...retried(),
+        finish: {
+          attempts: 2,
+          nextAttemptAt: 2_000,
+          deliverSince: 1_000,
+          phase: "deliver",
+        },
+      }),
+    ],
+  ])("delivers retried notes for %s", (_, row) => {
+    expect(deliversRetriedNotes(row())).toBe(true);
+  });
+  it.each<[string, Partial<MeetingHistory>]>([
+    [
+      "a stranded legacy row with an old summary-only retry",
+      {
+        lifecycleVersion: undefined,
+        processingRetry: {
+          ...runningJob,
+          stages: ["summary"],
+          status: "succeeded",
+          claim: undefined,
+        },
+      },
+    ],
+    ["no finish marker", { finish: undefined }],
+    ["no succeeded retry", { processingRetry: runningJob }],
+  ])("does not deliver retried notes for %s", (_, patch) => {
+    expect(deliversRetriedNotes({ ...handedBack(), ...patch })).toBe(false);
   });
 });

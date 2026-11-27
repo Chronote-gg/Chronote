@@ -18,13 +18,12 @@ import { MEETING_STATUS, type MeetingStatus } from "../types/meetingLifecycle";
 import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
 import type { NotesDeliveryTiming } from "../types/meetingNotesTiming";
 import {
-  abandonedLifecycleDelivery,
   deliversRetriedNotes,
   publicationSnapshot,
-  settledLifecycleDelivery,
+  releasedHold,
+  releasedHoldFields,
   unpublishedLifecycleDelivery,
 } from "../types/meetingPublication";
-import { MEETING_UPDATE_DELIVERY_QUEUE } from "../types/meetingUpdateDelivery";
 import {
   MEETING_DELIVERY_FAILED_LOG,
   MEETING_FINISH_FAILED_LOG,
@@ -205,32 +204,6 @@ function failedDeliveryError(error: unknown): DeliveryResult["errors"][number] {
     : {};
 }
 
-function releasedHoldFields(
-  released: NonNullable<ReturnType<typeof settledLifecycleDelivery>>,
-): Partial<MeetingHistory> {
-  return {
-    updateDelivery: released.delivery,
-    ...(released.dueAt === undefined
-      ? {}
-      : {
-          updateDeliveryQueue: MEETING_UPDATE_DELIVERY_QUEUE,
-          updateDeliveryDueAt: released.dueAt,
-        }),
-  };
-}
-
-/** The completing or abandoning delivery save releases a lifecycle hold on a correction. */
-function releasedHold(row: MeetingHistory, patch: Partial<MeetingHistory>) {
-  const before = {
-    ...publicationSnapshot(row),
-    lifecycleVersion: row.lifecycleVersion,
-  };
-  const released =
-    settledLifecycleDelivery(before, patch) ??
-    abandonedLifecycleDelivery(before, patch);
-  return released ? releasedHoldFields(released) : {};
-}
-
 /**
  * The notes chunk count, or undefined when rendering fails, so a give-up or a
  * delivered event never depends on the renderer that may be what failed.
@@ -272,6 +245,8 @@ type Attempt = {
   keepLocal: boolean;
   /** The content revision the input reflects; acknowledged edits past it are kept. */
   contentBaseline: number;
+  /** The row retried notes are delivered from, when nothing reached Discord before this attempt. */
+  retriedFrom?: MeetingHistory;
 };
 
 export function createMeetingFinisher(deps: MeetingFinishDeps) {
@@ -340,7 +315,12 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
       patch.delivery?.notes?.outcome === "failed";
     const saved = await deps.repository.save(
       a.claim,
-      { ...patch, ...(settling ? releasedHold(a.row, patch) : {}) },
+      {
+        ...patch,
+        ...(settling
+          ? releasedHold(a.row, patch, a.retriedFrom, nowSeconds())
+          : {}),
+      },
       nowSeconds(),
       undefined,
       settling ? { updateDelivery: a.row.updateDelivery } : undefined,
@@ -661,6 +641,8 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     a.signal.throwIfAborted();
     // Retried notes land on a card edited into an old message, so they do not spend the offer.
     const retried = deliversRetriedNotes(row);
+    // Delivery saves the summary before any notes, so no record means nothing was posted yet.
+    if (retried && row.delivery === undefined) a.retriedFrom = row;
     const upgrade = retried ? undefined : await claimUpgrade(a);
     const outcome = await deliverMeeting({
       history: row,

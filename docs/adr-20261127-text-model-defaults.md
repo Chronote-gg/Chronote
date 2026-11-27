@@ -39,6 +39,9 @@ owner changes or removes the global AppConfig `models.*` pins. The global
 config must never name a model the deployed code does not list, so a new model
 lands in code first and in config second. Until the Terraform variables
 change, production notes default to `gpt-5.2` when `models.notes` is unpinned.
+Production's global config pins `models.ask` and `models.liveVoiceResponder`,
+so ignoring the retired `gpt-4o-mini` in `LIVE_VOICE_RESPONDER_MODEL` changes
+nothing at deploy.
 
 ## Alternatives Considered
 
