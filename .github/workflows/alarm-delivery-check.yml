@@ -1,0 +1,76 @@
+name: Alarm Delivery Check
+
+# Alarm notifications failed silently from February to November 2026 because
+# the topic key refused CloudWatch. This check reports through GitHub, not
+# through that key or topic: a failed scheduled run emails the repository
+# owner. It stays skipped until the read-only role in docs/deployment.md
+# ("Alarm delivery") is installed and ALARM_DELIVERY_CHECK_ROLE_ARN is set.
+
+on:
+  schedule:
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: alarm-delivery-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Alarm actions delivered
+    if: vars.ALARM_DELIVERY_CHECK_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TOPIC_NAME: meeting-notes-prod-critical-alerts
+    steps:
+      - name: Configure read-only credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.ALARM_DELIVERY_CHECK_ROLE_ARN }}
+          role-session-name: chronote-alarm-delivery-${{ github.run_id }}
+          aws-region: us-east-1
+          mask-aws-account-id: true
+
+      # Covers a day plus overlap, so a fixed fault clears on the next run
+      # instead of staying red for the 30 days alarm history is retained.
+      - name: Fail on failed alarm actions, failed deliveries or unconfirmed subscriptions
+        run: |
+          set -euo pipefail
+          since=$(date -u -d '26 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          status=0
+
+          aws cloudwatch describe-alarm-history --history-item-type Action --start-date "$since" \
+            --query "AlarmHistoryItems[?starts_with(AlarmName, 'meeting-notes-') && starts_with(HistorySummary, 'Failed')]" \
+            --output json > failed.json
+          if [ "$(jq length failed.json)" -gt 0 ]; then
+            echo "::error::Alarm actions failed to publish since $since"
+            jq -r '.[] | "\(.Timestamp) \(.AlarmName): \(.HistoryData | fromjson | .error)"' failed.json
+            status=1
+          fi
+
+          undelivered=$(aws cloudwatch get-metric-statistics --namespace AWS/SNS \
+            --metric-name NumberOfNotificationsFailed --dimensions "Name=TopicName,Value=$TOPIC_NAME" \
+            --start-time "$since" --end-time "$now" --period 86400 --statistics Sum \
+            --query "sum(Datapoints[].Sum)" --output text)
+          if [ "${undelivered%.*}" != "0" ]; then
+            echo "::error::$undelivered notifications from $TOPIC_NAME failed to reach a subscriber since $since"
+            status=1
+          fi
+
+          account=$(aws sts get-caller-identity --query Account --output text)
+          subscriptions=$(aws sns list-subscriptions-by-topic \
+            --topic-arn "arn:aws:sns:us-east-1:$account:$TOPIC_NAME" \
+            --query "Subscriptions[].[Protocol, SubscriptionArn == 'PendingConfirmation']" --output text)
+          echo "$subscriptions" | awk '{print "subscription:", $1, ($2 == "True" ? "pending confirmation" : "confirmed")}'
+          if ! echo "$subscriptions" | grep -q "^email[[:space:]]False$"; then
+            echo "::error::$TOPIC_NAME has no confirmed email subscription"
+            status=1
+          fi
+
+          exit "$status"
