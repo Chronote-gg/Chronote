@@ -4,6 +4,7 @@ import {
   createSpeechDetector,
 } from "../../src/services/speechDetectionService";
 import { DEFAULT_SPEECH_POLICY } from "../../src/services/speechDetectionPolicy";
+import type { SpeechPhase } from "../../src/services/speechDetectionTypes";
 import {
   ControlledSpeechWorker,
   FakeSpeechClock,
@@ -131,16 +132,19 @@ it("starts lazily and returns immediately while not ready", async () => {
   ).resolves.toMatchObject({ kind: "unavailable", reason: "not_ready" });
   expect(workers).toHaveLength(1);
 });
-it("admits one active and four waiting jobs with immediate sixth-job queue_full", async () => {
+it("drops the oldest of four waiting jobs as queue_full to admit a new arrival", async () => {
   const r = rig();
   const worker = await r.ready();
-  const jobs = Array.from({ length: 5 }, () =>
+  const [active, oldest, ...rest] = Array.from({ length: 5 }, () =>
     r.detector.assess(Uint8Array.of(1), "slow"),
   );
-  await expect(
-    r.detector.assess(Uint8Array.of(1), "slow"),
-  ).resolves.toMatchObject({ kind: "unavailable", reason: "queue_full" });
+  const newest = r.detector.assess(Uint8Array.of(1), "slow");
+  await expect(oldest).resolves.toMatchObject({
+    kind: "unavailable",
+    reason: "queue_full",
+  });
   expect(worker.requests).toHaveLength(1);
+  const jobs = [active, ...rest, newest];
   for (let i = 0; i < 5; i++) {
     worker.reply({
       type: "assessment",
@@ -220,22 +224,34 @@ it("ignores a late reply for a timed-out job so it cannot answer the next job", 
 });
 type Rig = ReturnType<typeof rig>;
 const assessFast = (r: Rig) => r.detector.assess(Uint8Array.of(1), "fast");
-/** One dispatched fast job whose inference outlives its budget, then replies late. */
-async function dispatchedMiss(r: Rig, worker: ControlledSpeechWorker) {
+const budgetOf = { fast: 500, slow: 1500 } as const;
+/** One dispatched job whose inference outlives its phase budget, then replies late. */
+async function dispatchedMiss(
+  r: Rig,
+  worker: ControlledSpeechWorker,
+  phase: SpeechPhase = "fast",
+) {
   const index = worker.requests.length;
-  const job = assessFast(r);
+  const job = r.detector.assess(Uint8Array.of(1), phase);
   expect(worker.requests).toHaveLength(index + 1);
-  r.clock.advance(500);
+  r.clock.advance(budgetOf[phase]);
   await expect(job).resolves.toMatchObject({ reason: "timeout" });
+  r.clock.advance(1);
   reply(worker, index);
 }
-async function inBudget(r: Rig, worker: ControlledSpeechWorker) {
-  const job = assessFast(r);
+async function inBudget(
+  r: Rig,
+  worker: ControlledSpeechWorker,
+  phase: SpeechPhase = "fast",
+) {
+  const job = r.detector.assess(Uint8Array.of(1), phase);
   reply(worker, worker.requests.length - 1);
   await expect(job).resolves.toEqual(scored);
 }
-async function refused(r: Rig) {
-  await expect(assessFast(r)).resolves.toMatchObject({ reason: "not_ready" });
+async function refused(r: Rig, phase: SpeechPhase = "fast") {
+  await expect(
+    r.detector.assess(Uint8Array.of(1), phase),
+  ).resolves.toMatchObject({ reason: "not_ready" });
 }
 /** The breaker stays open for `windowMs` from now, then admits a probe. */
 async function opensFor(r: Rig, windowMs: number) {
@@ -288,18 +304,97 @@ it("escalates the window 5, 10, 20, 30 s on failed probes and resets after a suc
   await opensFor(r, 5000);
   await inBudget(r, worker);
 });
-it("does not close while a timed-out inference still holds the slot", async () => {
+it("starts the window only when the slow inference replies", async () => {
   const r = rig();
   const worker = await r.ready();
   await dispatchedMiss(r, worker);
   const held = assessFast(r);
-  r.clock.advance(500);
-  await expect(held).resolves.toMatchObject({ reason: "timeout" });
   r.clock.advance(SPEECH_HANG_CEILING_MS - 1000);
-  await refused(r);
+  await expect(held).resolves.toMatchObject({ reason: "timeout" });
   reply(worker, 1);
   await opensFor(r, 5000);
   await inBudget(r, worker);
+});
+// A job settled in budget always had an in-budget inference, so only a job
+// that already timed out can be a miss; these check that queue time is not.
+it("does not count a queue-delayed job with an in-time inference as a miss", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  const slow = assessFast(r);
+  r.clock.advance(450);
+  const delayed = assessFast(r);
+  r.clock.advance(150);
+  await expect(slow).resolves.toMatchObject({ reason: "timeout" });
+  reply(worker, 0);
+  r.clock.advance(400);
+  await expect(delayed).resolves.toMatchObject({ reason: "timeout" });
+  // Dispatched with 350 ms left, a 400 ms inference is in time for the child.
+  reply(worker, 1);
+  await dispatchedMiss(r, worker);
+  await inBudget(r, worker);
+});
+it("counts an in-budget invalid_input reply as an in-time inference", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  await dispatchedMiss(r, worker);
+  const job = assessFast(r);
+  reply(worker, 1, {
+    kind: "unavailable",
+    reason: "invalid_input",
+    policyFingerprint: fingerprint,
+  });
+  await expect(job).resolves.toMatchObject({ reason: "invalid_input" });
+  await dispatchedMiss(r, worker);
+  await inBudget(r, worker);
+});
+it("opens only the fast breaker when 0.6 s inferences miss fast budgets but fit slow ones", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  const inference = async (phase: SpeechPhase) => {
+    const job = r.detector.assess(Uint8Array.of(1), phase);
+    r.clock.advance(600);
+    reply(worker, worker.requests.length - 1);
+    return job;
+  };
+  await expect(inference("fast")).resolves.toMatchObject({ reason: "timeout" });
+  await expect(inference("fast")).resolves.toMatchObject({ reason: "timeout" });
+  await refused(r, "fast");
+  for (let i = 0; i < 3; i++)
+    await expect(inference("slow")).resolves.toEqual(scored);
+  await refused(r, "fast");
+});
+it("refuses a second arrival in the probing phase only", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  await dispatchedMiss(r, worker);
+  await dispatchedMiss(r, worker);
+  await opensFor(r, 5000);
+  const probe = assessFast(r);
+  await refused(r, "fast");
+  const slow = r.detector.assess(Uint8Array.of(2), "slow");
+  expect(await settled(slow)).toBe(false);
+  reply(worker, 2);
+  await expect(probe).resolves.toEqual(scored);
+  reply(worker, 3);
+  await expect(slow).resolves.toEqual(scored);
+  await inBudget(r, worker);
+});
+it("settles a phase's queued jobs as not_ready when its breaker opens", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  await dispatchedMiss(r, worker, "slow");
+  const held = r.detector.assess(Uint8Array.of(1), "slow");
+  r.clock.advance(1400);
+  const queuedSlow = r.detector.assess(Uint8Array.of(2), "slow");
+  const queuedFast = assessFast(r);
+  r.clock.advance(101);
+  reply(worker, 1);
+  await expect(held).resolves.toMatchObject({ reason: "timeout" });
+  await expect(queuedSlow).resolves.toMatchObject({ reason: "not_ready" });
+  expect(worker.requests).toHaveLength(3);
+  reply(worker, 2);
+  await expect(queuedFast).resolves.toEqual(scored);
+  await refused(r, "slow");
 });
 it("dispatches the newest queued job first", async () => {
   const r = rig();
@@ -375,8 +470,11 @@ it.each<[string, MetricCase, number]>([
   [
     "queue_full",
     async (r) => {
-      for (let i = 0; i < 5; i++) void assessFast(r);
-      return () => assessFast(r);
+      const [, oldest] = Array.from({ length: 5 }, () => assessFast(r));
+      return async () => {
+        void assessFast(r);
+        await oldest;
+      };
     },
     1,
   ],

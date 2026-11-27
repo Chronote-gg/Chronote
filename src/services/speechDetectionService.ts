@@ -94,6 +94,7 @@ type Timer = ReturnType<SpeechDetectorBindings["schedule"]>;
 type Job = {
   requestId: number;
   wav: ArrayBuffer;
+  phase: SpeechPhase;
   deadline: number;
   resolve: (assessment: SpeechAssessment) => void;
   timer: Timer;
@@ -105,6 +106,8 @@ type Job = {
  */
 type Running = {
   requestId: number;
+  phase: SpeechPhase;
+  dispatchedAt: number;
   job?: Job;
   hang: Timer;
 };
@@ -127,7 +130,11 @@ export function createSpeechDetector(
   const terminations = new Set<Promise<void>>();
   let nextId = 0;
   let cooldownUntil = 0;
-  const breaker = createSpeechBreaker(bindings.now);
+  // One breaker per phase: a fast budget can be missed while slow work fits.
+  const breakers = {
+    fast: createSpeechBreaker(bindings.now),
+    slow: createSpeechBreaker(bindings.now),
+  };
   let stopped = false;
   let hasStartedWorker = false;
   const unavailable = (reason: SpeechUnavailableReason): SpeechAssessment => ({
@@ -139,20 +146,36 @@ export function createSpeechDetector(
     job.timer.cancel();
     job.resolve(assessment);
   };
-  const expire = (job: Job): void => {
-    settle(job, unavailable("timeout"));
+  /** Settles a queued job that will never run; a lost probe lets the next arrival probe. */
+  const drop = (job: Job, reason: SpeechUnavailableReason): void => {
+    settle(job, unavailable(reason));
+    breakers[job.phase].probeLost();
   };
-  /** A dispatched job outlived its budget, which is what the breaker counts. */
-  const missed = (job: Job): void => {
-    expire(job);
-    breaker.miss();
+  /**
+   * The breaker judges the child's inference time against the phase budget.
+   * A job settled in budget always had an in-budget inference, so only a job
+   * that already timed out can be a miss, and queue time alone never is.
+   */
+  const judge = (slot: Running): void => {
+    const breaker = breakers[slot.phase];
+    const inference = bindings.now() - slot.dispatchedAt;
+    if (inference <= JOB_BUDGET_MS[slot.phase]) {
+      breaker.success();
+      return;
+    }
+    if (!breaker.miss()) return;
+    for (const job of waiting.filter((queued) => queued.phase === slot.phase)) {
+      waiting.splice(waiting.indexOf(job), 1);
+      settle(job, unavailable("not_ready"));
+    }
   };
   /** Kills the child; every job it holds or has queued fails once with `reason`. */
   const retire = (reason: SpeechUnavailableReason): void => {
     const old = generation;
     generation = undefined;
     cooldownUntil = bindings.now() + RETIREMENT_COOLDOWN_MS;
-    breaker.reset();
+    breakers.fast.reset();
+    breakers.slow.reset();
     if (running) {
       running.hang.cancel();
       if (running.job) settle(running.job, unavailable(reason));
@@ -176,17 +199,19 @@ export function createSpeechDetector(
     terminations.add(termination);
   };
   const dispatch = (): void => {
-    if (!generation?.ready || running || !breaker.dispatching()) return;
+    if (!generation?.ready || running) return;
     // Newest first: work is deadline-bound, and the oldest job has the least
     // budget left, so it is the least likely to finish in time.
     let job = waiting.pop();
     while (job && bindings.now() >= job.deadline) {
-      expire(job);
+      drop(job, "timeout");
       job = waiting.pop();
     }
     if (!job) return;
     const slot: Running = {
       requestId: job.requestId,
+      phase: job.phase,
+      dispatchedAt: bindings.now(),
       job,
       hang: bindings.schedule(() => {
         if (running === slot) retire("timeout");
@@ -221,12 +246,10 @@ export function createSpeechDetector(
     slot.hang.cancel();
     running = undefined;
     const { job } = slot;
-    if (job && bindings.now() >= job.deadline) missed(job);
-    else if (job) {
-      breaker.success();
-      settle(job, assessment);
-    }
-    breaker.slotFreed();
+    if (job && bindings.now() >= job.deadline)
+      settle(job, unavailable("timeout"));
+    else if (job) settle(job, assessment);
+    judge(slot);
     dispatch();
   };
   const acceptReady = (current: Generation, fingerprint: string): void => {
@@ -316,10 +339,10 @@ export function createSpeechDetector(
     const index = waiting.indexOf(job);
     if (index >= 0) {
       waiting.splice(index, 1);
-      expire(job);
+      drop(job, "timeout");
     } else if (running?.job === job) {
       running.job = undefined;
-      missed(job);
+      settle(job, unavailable("timeout"));
     }
   };
   const enqueue = (
@@ -329,15 +352,21 @@ export function createSpeechDetector(
     if (stopped) return Promise.resolve(unavailable("shutdown"));
     const current = start();
     if (!current?.ready) return Promise.resolve(unavailable("not_ready"));
-    if (running && waiting.length >= MAX_WAITING_JOBS)
-      return Promise.resolve(unavailable("queue_full"));
-    if (!breaker.admit()) return Promise.resolve(unavailable("not_ready"));
+    if (!breakers[phase].admit())
+      return Promise.resolve(unavailable("not_ready"));
+    // A full queue drops its oldest job, the least likely to finish in time.
+    const oldest =
+      running && waiting.length >= MAX_WAITING_JOBS
+        ? waiting.shift()
+        : undefined;
+    if (oldest) drop(oldest, "queue_full");
     const ownedWav = new Uint8Array(wav).buffer;
     const budget = JOB_BUDGET_MS[phase];
     return new Promise((resolve) => {
       const job: Job = {
         requestId: ++nextId,
         wav: ownedWav,
+        phase,
         deadline: bindings.now() + budget,
         resolve,
         timer: bindings.schedule(() => expireFromTimer(job), budget),

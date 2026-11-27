@@ -34,14 +34,16 @@ All nine controlled native fixtures retained classification and deterministic re
 
 Register parent-disconnection handling before model initialization. A responsive child exits immediately on owner loss; the owner kills a stuck child on timeout. Revised 2026-11-27: killing the child on every missed deadline looped under CPU load, leaving the detector unavailable for most of each busy period. The policy is now:
 
-1. Each job has one budget from enqueue (500 ms fast, 1500 ms slow); no caller waits longer. An expired queued job fails as `timeout` and is never dispatched.
+1. Each job has one budget from enqueue (500 ms fast, 1500 ms slow); no caller waits longer. An expired queued job fails as `timeout` and is never dispatched; a full queue drops its oldest job as `queue_full` to admit the new one.
 2. The queue is served newest first: work is deadline-bound, so the oldest job has the least budget left and is the least likely to finish in time.
 3. A running job past its budget fails alone; the child keeps its slot until the late reply, which is dropped by id.
-4. Two such dispatched misses in a row open a breaker: new work gets `not_ready` and nothing is dispatched. Queued expiries never count.
-5. The window starts when the slot frees and grows 5, 10, 20, then 30 s per consecutive reopening. One probe follows; in budget resets everything, a miss reopens.
-6. Only an inference running 10 s past dispatch retires the child (30 s cooldown); retirement also resets the breaker.
+4. Each phase has its own breaker, judged on the child's inference time (dispatch to reply) against that phase's budget; queue time never counts. Two slow inferences in a row open it: that phase's queued jobs and new work get `not_ready`, the other phase is unaffected.
+5. The window starts at the reply and grows 5, 10, 20, then 30 s per consecutive reopening. One probe per phase follows; in time resets everything, slow reopens.
+6. Only an inference running 10 s past dispatch retires the child (30 s cooldown); retirement also resets both breakers.
 
-Regimes. A single slow inference fails that job (and queued jobs whose own budget passed) without opening the breaker. Moderate overload, for example 0.4 s inferences at 3 arrivals a second, serves the freshest job each time: slow-phase jobs finish in budget while stale ones time out, and fast-phase jobs open the breaker only if two dispatched jobs really miss in a row. Persistent slow inference wastes two inferences, then one probe per window: at 2 s per inference the steady CPU share is 2 / 32 s, about 6 percent, and at 5 s it is 5 / 35 s, about 14 percent. The old kill-and-cooldown spent a 1.6 to 5 s model load plus one inference per 30 s cooldown, about 7 to 18 percent, and failed every queued job each time.
+Regimes. A single slow inference fails that job (and queued jobs whose own budget passed) without opening a breaker. At 0.3 s inferences nothing opens even at 3 arrivals a second; fast jobs that wait too long time out on queue time alone. At 0.6 s every fast inference misses, so the fast breaker opens and probes about every 30 s while slow work keeps succeeding. At 2 s or 5 s both phases miss; each wastes two inferences, then probes once per window, so the steady worst case is two probes per about 30 s: about 4 / 34 s (12 percent of a core) at 2 s and 10 / 40 s (25 percent) at 5 s. The old kill-and-cooldown spent a 1.6 to 5 s model load plus one inference per 30 s cooldown, about 7 to 18 percent, and failed every queued job each time.
+
+Known limits. While a slow inference holds the slot, newly queued work waits out its budget before the breaker can judge it. Recovery assesses in the slow phase with the same 1500 ms budget, so under live load it may be assessed unavailable and transcribed unguarded.
 
 Count the parent's and every descendant's RSS. Process isolation is a failure boundary, not an independent memory allocation. Keep the original workload, CPU/memory limits, phase deadlines and acceptance thresholds. Missing resource evidence remains unknown and fails acceptance.
 
