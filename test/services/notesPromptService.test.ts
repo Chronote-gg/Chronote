@@ -231,22 +231,22 @@ describe("notesPromptService", () => {
     expect(call.variables.chatContextBlock).toBe("");
   });
 
+  const CAPTIONED_IMAGE = {
+    id: "att-1",
+    name: "diagram.png",
+    size: 1234,
+    url: "https://cdn.discordapp.com/attachments/mock/diagram.png",
+    contentType: "image/png",
+    aiCaption: "A sketch of the architecture.",
+    aiVisibleText: "API -> Worker -> DB",
+    aiCaptionModel: "gpt-6-luna",
+    aiCaptionedAt: "2025-01-01T00:00:01.000Z",
+  };
+
   test("getNotesPrompt includes shared image captions when available", async () => {
     const { module, getLangfuseChatPrompt } = await loadModule();
     const meeting = buildMeeting();
-    meeting.chatLog[0].attachments = [
-      {
-        id: "att-1",
-        name: "diagram.png",
-        size: 1234,
-        url: "https://cdn.discordapp.com/attachments/mock/diagram.png",
-        contentType: "image/png",
-        aiCaption: "A sketch of the architecture.",
-        aiVisibleText: "API -> Worker -> DB",
-        aiCaptionModel: "gpt-6-luna",
-        aiCaptionedAt: "2025-01-01T00:00:01.000Z",
-      },
-    ];
+    meeting.chatLog[0].attachments = [{ ...CAPTIONED_IMAGE }];
 
     await module.prepareLiveNotesPrompt(meeting);
 
@@ -263,19 +263,7 @@ describe("notesPromptService", () => {
     const { module, getLangfuseChatPrompt } = await loadModule();
     const meeting = buildMeeting();
     meeting.runtimeConfig!.visionCaptions.enabled = false;
-    meeting.chatLog[0].attachments = [
-      {
-        id: "att-1",
-        name: "diagram.png",
-        size: 1234,
-        url: "https://cdn.discordapp.com/attachments/mock/diagram.png",
-        contentType: "image/png",
-        aiCaption: "A sketch of the architecture.",
-        aiVisibleText: "API -> Worker -> DB",
-        aiCaptionModel: "gpt-6-luna",
-        aiCaptionedAt: "2025-01-01T00:00:01.000Z",
-      },
-    ];
+    meeting.chatLog[0].attachments = [{ ...CAPTIONED_IMAGE }];
 
     await module.prepareLiveNotesPrompt(meeting);
 
