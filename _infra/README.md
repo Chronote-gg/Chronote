@@ -91,6 +91,7 @@ that address.
 | No eligible worker          | No `WorkerEligibleHeartbeat` in 5 min           | 5 min x 1  |
 | Finisher scan missing       | No `FinisherScanCompleted` in 10 min            | 5 min x 2  |
 | Renewal recovery stalled    | `RenewalRecoveryStalled` in each of 3 periods   | 5 min x 3  |
+| Summary dropped             | 3+ `MeetingSummaryDropped` in 1 h               | 1 h x 1    |
 | Speech detector retiring    | 3+ `SpeechDetectorRetired` in each of 3 periods | 5 min x 3  |
 | Speech unavailable share    | Over 20% unavailable, 50+ assessments           | 15 min x 2 |
 | Missing logprobs            | 6+ `TranscriptionMissingLogprobs` in 15 min     | 15 min x 1 |

@@ -100,6 +100,16 @@ export function processingOutcome(
     : processing;
 }
 
+/** Clears a recorded summary outcome so summary generation runs again. */
+export function withoutSummaryOutcome(
+  notes: FinishInput["notesInput"],
+): FinishInput["notesInput"] {
+  const processing = { ...notes.processing };
+  delete processing.summary;
+  notes.processing = processing;
+  return notes;
+}
+
 /**
  * The stages as stored when steps 1 to 3 gave up, so a portal retry can rerun
  * them: generation outcomes as recorded, else a failure before notes (loading,

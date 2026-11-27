@@ -88,8 +88,10 @@ Decisions settled during implementation:
 - The `ProcessingRetryWorkerFailed` alarm emails through the critical alerts
   topic when the worker itself fails. Individual job failures are not alarmed;
   they are recorded on the row and shown to the owner.
-- Since 2026-11-27 a failed summary alone no longer fails the meeting: it
-  completes with its notes and records `summary: failed`. Retry processing
+- Since 2026-11-27 a failed summary alone no longer fails the meeting: after
+  one retry 2 seconds later in the same attempt (notes are not rerun), it
+  completes with its notes, records `summary: failed` and emits
+  `MeetingSummaryDropped`. Retry processing
   then regenerates only the summary, from the stored notes, when transcription
   is `ready` or an already-probed `partial`. A `partial` row not yet probed
   reruns all three stages, as any unprobed `partial` does.

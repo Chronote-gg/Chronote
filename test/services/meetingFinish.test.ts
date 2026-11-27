@@ -15,7 +15,11 @@ import { getNotes } from "../../src/services/notesService";
 import { generateMeetingSummaries } from "../../src/services/meetingSummaryService";
 import { INTERRUPTED_CAPTURE_NOTICE } from "../../src/services/meetingRecoveryContent";
 import { MEETING_FINISH_FAILED_LOG } from "../../src/metrics";
-import { SUMMARY_DROPPED_LOG } from "../../src/services/meetingFinish";
+import {
+  SUMMARY_DROPPED_LOG,
+  SUMMARY_RETRY_DELAY_MS,
+} from "../../src/services/meetingFinish";
+import { captureMetricLines } from "../helpers/metricLines";
 import type { MeetingHistory } from "../../src/types/db";
 import { PROCESSING_FAILED_NOTICE } from "../../src/utils/meetingProcessing";
 import { storedObject } from "../fixtures/meetingFinishPipeline";
@@ -50,6 +54,10 @@ useMeetingFinishHooks();
 
 const ABANDONED_LOG = "Meeting finish attempt abandoned while still running";
 const STOPPED_LOG = "Meeting finish attempt stopped";
+const metricLines = captureMetricLines();
+const summariesDropped = () =>
+  metricLines.filter((line) => line.includes('"MeetingSummaryDropped":1'))
+    .length;
 const warned = (line: string) =>
   jest.mocked(console.warn).mock.calls.filter(([first]) => first === line)
     .length;
@@ -415,7 +423,7 @@ test.each([
   "a summary generation that %s alone completes the meeting with its notes",
   async (_, summary) => {
     const world = setup(processingRow({ checkpoint: CHECKPOINT }));
-    jest.mocked(generateMeetingSummaries).mockImplementationOnce(summary);
+    jest.mocked(generateMeetingSummaries).mockImplementation(summary);
     const retry = jest.spyOn(world.deps.repository, "releaseForRetry");
     await world.finish(loads(finishInput()));
     expect(world.current()).toMatchObject({
@@ -427,7 +435,12 @@ test.each([
     expect(world.current().finish).toBeUndefined();
     expect(world.current().summarySentence).toBeUndefined();
     expect(retry).not.toHaveBeenCalled();
+    // One in-attempt retry after a pause, then dropped; notes are not rerun.
+    expect(world.deps.pause).toHaveBeenCalledTimes(1);
+    expect(generateMeetingSummaries).toHaveBeenCalledTimes(2);
+    expect(getNotes).toHaveBeenCalledTimes(1);
     expect(warned(SUMMARY_DROPPED_LOG)).toBe(1);
+    expect(summariesDropped()).toBe(1);
     // The summary card keeps its existing no-summary form; stored notes carry no notice.
     expect(startMessage(world).embeds[0].description).toContain(
       "Summary unavailable.",
@@ -442,6 +455,47 @@ test.each([
     });
   },
 );
+
+test("a summary that fails once is retried in the same attempt and delivered", async () => {
+  const world = setup(processingRow());
+  jest
+    .mocked(generateMeetingSummaries)
+    .mockRejectedValueOnce(new Error("Synthetic outage"));
+  await world.finish(loads(finishInput()));
+  expect(world.current()).toMatchObject({
+    status: "complete",
+    summarySentence: GENERATED_SUMMARY,
+    processing: { summary: "generated" },
+  });
+  expect(world.deps.pause).toHaveBeenCalledWith(
+    SUMMARY_RETRY_DELAY_MS,
+    expect.any(AbortSignal),
+  );
+  expect(getNotes).toHaveBeenCalledTimes(1);
+  expect(warned(SUMMARY_DROPPED_LOG)).toBe(0);
+  expect(summariesDropped()).toBe(0);
+});
+
+test("an abort during the summary retry pause stops the attempt as before", async () => {
+  const world = setup(processingRow());
+  const external = new AbortController();
+  jest
+    .mocked(generateMeetingSummaries)
+    .mockRejectedValueOnce(new Error("Synthetic outage"));
+  jest.mocked(world.deps.pause).mockImplementationOnce(async (_, signal) => {
+    external.abort(new Error("Synthetic shutdown"));
+    await Promise.resolve();
+    signal.throwIfAborted();
+  });
+  await world.finish(loads(finishInput()), { signal: external.signal });
+  expect(world.current()).toMatchObject({
+    status: "processing",
+    finish: { owner: OWNER, attempts: 0, phase: "process" },
+  });
+  expect(generateMeetingSummaries).toHaveBeenCalledTimes(1);
+  expect(world.discord.requests).toHaveLength(0);
+  expect(summariesDropped()).toBe(0);
+});
 
 type World = ReturnType<typeof setup>;
 

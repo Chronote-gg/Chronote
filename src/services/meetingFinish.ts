@@ -1,5 +1,6 @@
 import { emitMetric, LIFECYCLE_METRICS } from "../lifecycleMetrics";
 import { promises as fs } from "node:fs";
+import { setTimeout as pause } from "node:timers/promises";
 import type {
   FinishClaim,
   FinishState,
@@ -62,6 +63,7 @@ import {
   MS_PER_SECOND,
   failedProcessing,
   processingOutcome,
+  withoutSummaryOutcome,
   terminalPatch,
   withRowDecision,
 } from "./meetingFinishTerminal";
@@ -105,6 +107,8 @@ export type MeetingFinishDeps = {
   ): Promise<SummaryUpgradeOffer | undefined>;
   followOns: FinishFollowOns;
   nowMs(): number;
+  /** Waits `delayMs`; rejects when `signal` aborts. */
+  pause(delayMs: number, signal: AbortSignal): Promise<void>;
   /** Runs `run` once after `delayMs` and returns a function that cancels it. */
   schedule(run: () => Promise<void>, delayMs: number): () => void;
 };
@@ -125,6 +129,8 @@ class FinishClaimLost extends Error {
 }
 
 /** Epoch seconds of the next process attempt, or undefined when this failure is final. */
+/** One in-attempt retry outlasts a short provider blip without rerunning notes. */
+export const SUMMARY_RETRY_DELAY_MS = 2000;
 export const SUMMARY_DROPPED_LOG =
   "Meeting summary failed; finishing with notes and no summary";
 
@@ -387,13 +393,19 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     a.signal.throwIfAborted();
     // Generation reports failure as an outcome rather than throwing. A failed
     // transcription or notes outcome is retried, never saved as terminal. A
-    // failed summary alone is kept as recorded: a retry would rerun notes too,
-    // and giving up would cost the notes, while the portal can retry it alone.
+    // failed summary is retried once here, then kept as recorded: an attempt
+    // retry would rerun notes too, and giving up would cost the notes, while
+    // the portal can retry the summary alone.
     const { summary, ...required } = processingOutcome(input);
     if (Object.values(required).includes("failed"))
       throw new Error("Meeting transcription or notes failed");
-    if (summary === "failed")
-      console.warn(SUMMARY_DROPPED_LOG, logContext(a.row));
+    if (summary !== "failed") return;
+    await deps.pause(SUMMARY_RETRY_DELAY_MS, a.signal);
+    await deps.summaries(withoutSummaryOutcome(input.notesInput), notes);
+    a.signal.throwIfAborted();
+    if (processingOutcome(input).summary !== "failed") return;
+    console.warn(SUMMARY_DROPPED_LOG, logContext(a.row));
+    emitMetric(LIFECYCLE_METRICS.meetingSummaryDropped);
   }
 
   /**
@@ -948,6 +960,9 @@ function defaultDeps(): MeetingFinishDeps {
     claimUpgrade: claimHistoryUpgrade,
     followOns: defaultFinishFollowOns(transport),
     nowMs: Date.now,
+    pause: async (delayMs, signal) => {
+      await pause(delayMs, undefined, { signal });
+    },
     schedule(run, delayMs) {
       const timer = setTimeout(() => void run(), delayMs);
       timer.unref();

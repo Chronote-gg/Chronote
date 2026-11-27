@@ -67,6 +67,19 @@ locals {
       treat_missing_data = "notBreaching"
       description        = "Renewal recovery has skipped its polls on lease errors for fifteen minutes, so stuck billing renewals are not being recovered. Check the bot logs for \"Renewal recovery poll skipped after a lease error\"."
     }
+    meeting_summary_dropped = {
+      # About one summary per meeting and a few dozen meetings a day, so 15
+      # minutes rarely holds three meetings even when every summary fails.
+      # Each drop already survived one in-attempt retry; three in an hour is a
+      # broken stage rather than a provider blip.
+      metric             = "MeetingSummaryDropped"
+      threshold          = 3
+      comparison         = "GreaterThanOrEqualToThreshold"
+      period             = 3600
+      evaluation_periods = 1
+      treat_missing_data = "notBreaching"
+      description        = "Three or more meetings in an hour completed without a summary after the in-attempt retry. Their notes and transcripts were delivered with \"Summary unavailable.\" on the summary card. Check the bot logs for \"Meeting summary failed; finishing with notes and no summary\" and the summary model, prompt and parameters; Retry processing on each meeting can generate the summary later."
+    }
     speech_detector_retiring = {
       # A single hang or crash retires the child once and recovers after the
       # cooldown; three or more in every period for fifteen minutes is a loop.
