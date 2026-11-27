@@ -396,7 +396,7 @@ it("settles a phase's queued jobs as not_ready when its breaker opens", async ()
   await expect(queuedFast).resolves.toEqual(scored);
   await refused(r, "slow");
 });
-it("dispatches the newest queued job first", async () => {
+it("dispatches the queued job with the most budget left, newest on ties", async () => {
   const r = rig();
   const worker = await r.ready();
   void r.detector.assess(Uint8Array.of(1), "slow");
@@ -409,6 +409,32 @@ it("dispatches the newest queued job first", async () => {
     first + 2,
     first + 1,
   ]);
+});
+it("dispatches an older slow job before a newer fast one with less budget left", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  void r.detector.assess(Uint8Array.of(1), "slow");
+  const slow = r.detector.assess(Uint8Array.of(2), "slow");
+  r.clock.advance(100);
+  const fast = assessFast(r);
+  reply(worker, 0);
+  expect(worker.requests[1].requestId).toBe(worker.requests[0].requestId + 1);
+  reply(worker, 1);
+  await expect(slow).resolves.toEqual(scored);
+  reply(worker, 2);
+  await expect(fast).resolves.toEqual(scored);
+});
+it("drops the queued job with the earliest deadline when the queue is full", async () => {
+  const r = rig();
+  const worker = await r.ready();
+  void r.detector.assess(Uint8Array.of(1), "slow");
+  const queuedSlow = r.detector.assess(Uint8Array.of(2), "slow");
+  const queuedFast = assessFast(r);
+  for (let i = 0; i < 2; i++) void r.detector.assess(Uint8Array.of(3), "slow");
+  void r.detector.assess(Uint8Array.of(4), "slow");
+  await expect(queuedFast).resolves.toMatchObject({ reason: "queue_full" });
+  expect(await settled(queuedSlow)).toBe(false);
+  expect(worker.requests).toHaveLength(1);
 });
 it("bounds dispatches under a persistent 5 s inference to about one per 35 s", async () => {
   const r = rig();

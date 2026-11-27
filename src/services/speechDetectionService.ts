@@ -146,6 +146,12 @@ export function createSpeechDetector(
     job.timer.cancel();
     job.resolve(assessment);
   };
+  const isExpired = (job: Job): boolean => bindings.now() >= job.deadline;
+  /** Removes a job from the queue and returns it. */
+  const take = (job: Job): Job => {
+    waiting.splice(waiting.indexOf(job), 1);
+    return job;
+  };
   /** Settles a queued job that will never run; a lost probe lets the next arrival probe. */
   const drop = (job: Job, reason: SpeechUnavailableReason): void => {
     settle(job, unavailable(reason));
@@ -200,14 +206,17 @@ export function createSpeechDetector(
   };
   const dispatch = (): void => {
     if (!generation?.ready || running) return;
-    // Newest first: work is deadline-bound, and the oldest job has the least
-    // budget left, so it is the least likely to finish in time.
-    let job = waiting.pop();
-    while (job && bindings.now() >= job.deadline) {
-      drop(job, "timeout");
-      job = waiting.pop();
-    }
-    if (!job) return;
+    for (const expired of waiting.filter((queued) => isExpired(queued)))
+      drop(take(expired), "timeout");
+    // Most budget first: work is deadline-bound, and the job with the least
+    // budget left is the least likely to finish in time. Ties go to the newest.
+    const latest = waiting.reduce<Job | undefined>(
+      (best, queued) =>
+        best && best.deadline > queued.deadline ? best : queued,
+      undefined,
+    );
+    if (!latest) return;
+    const job = take(latest);
     const slot: Running = {
       requestId: job.requestId,
       phase: job.phase,
@@ -354,12 +363,14 @@ export function createSpeechDetector(
     if (!current?.ready) return Promise.resolve(unavailable("not_ready"));
     if (!breakers[phase].admit())
       return Promise.resolve(unavailable("not_ready"));
-    // A full queue drops its oldest job, the least likely to finish in time.
-    const oldest =
-      running && waiting.length >= MAX_WAITING_JOBS
-        ? waiting.shift()
-        : undefined;
-    if (oldest) drop(oldest, "queue_full");
+    // A full queue drops the job with the earliest deadline, consistent with
+    // dispatch; on ties that is the oldest.
+    if (running && waiting.length >= MAX_WAITING_JOBS) {
+      const earliest = waiting.reduce((best, queued) =>
+        queued.deadline < best.deadline ? queued : best,
+      );
+      drop(take(earliest), "queue_full");
+    }
     const ownedWav = new Uint8Array(wav).buffer;
     const budget = JOB_BUDGET_MS[phase];
     return new Promise((resolve) => {
