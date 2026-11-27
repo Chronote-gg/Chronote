@@ -3,7 +3,11 @@ import {
   PCM_RESERVED_COPIES,
 } from "./recordingCheckpointCapture";
 import { LIFECYCLE } from "./lifecycleTiming";
-import { PROCESSING_RETRY_MAX_CONCURRENT } from "../constants";
+import {
+  MINIMUM_TRANSCRIPTION_LENGTH,
+  PROCESSING_RETRY_MAX_CONCURRENT,
+  RECORD_SAMPLE_RATE,
+} from "../constants";
 import { processRecoveryTranscript } from "./recoveryTranscriptionProcessing";
 import {
   createRecoveryArtifactScope,
@@ -377,6 +381,13 @@ async function transcribeAudioGroup(
   timestamp: number,
 ) {
   input.signal.throwIfAborted();
+  // Live capture never sends audio this short, and the provider rejects such a
+  // sliver as corrupt on every attempt, so it is covered as empty text.
+  if (
+    (group.endFrame - group.startFrame) / RECORD_SAMPLE_RATE <=
+    MINIMUM_TRANSCRIPTION_LENGTH
+  )
+    return "";
   const length = (group.endFrame - group.startFrame) * PCM_FRAME_BYTES;
   if (!recoveryPcmBudget.reserve(length))
     throw new Error("Recovery PCM budget unavailable");

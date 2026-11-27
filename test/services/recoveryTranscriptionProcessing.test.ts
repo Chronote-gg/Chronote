@@ -353,14 +353,14 @@ test("long intervals and long gaps split into at most 30s scratch with an exact 
   const f = await fixture();
   addIntervalAudio(f, [
     { startOffsetMs: 0, durationMs: 31000 },
-    { startOffsetMs: 90000, durationMs: 20 },
+    { startOffsetMs: 90000, durationMs: 400 },
   ]);
   await recoverTranscript(f.content, f.reader, f.signal, (run) => run());
   const calls = jest.mocked(transcribeContentSnippet).mock.calls;
   expect(calls.map(([, snippet]) => snippet.chunks[0].length)).toEqual([
     30000 * 192,
     1000 * 192,
-    20 * 192,
+    400 * 192,
   ]);
   expect(
     calls.map(
@@ -368,15 +368,15 @@ test("long intervals and long gaps split into at most 30s scratch with an exact 
         snippet.timestamp - Date.parse(f.claim.history.timestamp),
     ),
   ).toEqual([0, 30000, 90000]);
-  expect(calls.at(-1)![1].chunks[0]).toEqual(Buffer.alloc(3840, 2));
+  expect(calls.at(-1)![1].chunks[0]).toEqual(Buffer.alloc(76800, 2));
   expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
 });
 
 test("scratch ownership remains charged until an aborted actual call settles", async () => {
   const f = await fixture();
   addIntervalAudio(f, [
-    { startOffsetMs: 0, durationMs: 20 },
-    { startOffsetMs: 90000, durationMs: 20 },
+    { startOffsetMs: 0, durationMs: 400 },
+    { startOffsetMs: 90000, durationMs: 400 },
   ]);
   const controller = new AbortController();
   let settle!: () => void;
@@ -401,7 +401,7 @@ test("scratch ownership remains charged until an aborted actual call settles", a
   const rejection = expect(work).rejects.toThrow("stopped");
   await started;
   controller.abort(new Error("stopped"));
-  expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(3840 * 4);
+  expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(76800 * 4);
   settle();
   await rejection;
   expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
@@ -411,8 +411,8 @@ test("scratch ownership remains charged until an aborted actual call settles", a
 test("provider failure releases scratch and cannot start the later group", async () => {
   const f = await fixture();
   addIntervalAudio(f, [
-    { startOffsetMs: 0, durationMs: 20 },
-    { startOffsetMs: 90000, durationMs: 20 },
+    { startOffsetMs: 0, durationMs: 400 },
+    { startOffsetMs: 90000, durationMs: 400 },
   ]);
   jest
     .mocked(transcribeContentSnippet)
@@ -441,7 +441,7 @@ async function whileFull(
 
 test("an exhausted recovery PCM budget refuses allocation and transcription", async () => {
   const f = await fixture();
-  addIntervalAudio(f, [{ startOffsetMs: 0, durationMs: 20 }]);
+  addIntervalAudio(f, [{ startOffsetMs: 0, durationMs: 400 }]);
   await whileFull(recoveryPcmBudget, async () => {
     await expect(
       recoverTranscript(f.content, f.reader, f.signal, (run) => run()),
@@ -463,7 +463,7 @@ test("the recovery budget holds one largest group for every concurrent load", ()
 
 test("a full capture budget does not refuse a recovery group", async () => {
   const f = await fixture();
-  addIntervalAudio(f, [{ startOffsetMs: 0, durationMs: 20 }]);
+  addIntervalAudio(f, [{ startOffsetMs: 0, durationMs: 400 }]);
   await whileFull(capturePcmBudget, async () => {
     await recoverTranscript(f.content, f.reader, f.signal, (run) => run());
     expect(transcribeContentSnippet).toHaveBeenCalledTimes(1);
@@ -545,17 +545,17 @@ const span = (startByte: number, endByte: number, sequence = 0) => ({
 test("mapped saved prefix is retained once and only its real PCM tail reaches ASR", async () => {
   const f = await fixture();
   addIntervalAudio(f, [
-    { startOffsetMs: 0, durationMs: 20 },
-    { startOffsetMs: 20, durationMs: 20 },
+    { startOffsetMs: 0, durationMs: 400 },
+    { startOffsetMs: 400, durationMs: 400 },
   ]);
-  f.content.entries = [representedEntry(f, "Saved prefix.", [span(0, 3840)])];
+  f.content.entries = [representedEntry(f, "Saved prefix.", [span(0, 76800)])];
   const result = await recoverTranscript(f.content, f.reader, f.signal, (run) =>
     run(),
   );
   expect(transcribeContentSnippet).toHaveBeenCalledTimes(1);
   expect(
     jest.mocked(transcribeContentSnippet).mock.calls[0][1].chunks[0],
-  ).toEqual(Buffer.alloc(3840, 2));
+  ).toEqual(Buffer.alloc(76800, 2));
   expect(result.text.match(/Saved prefix\./g)).toHaveLength(1);
   expect(result.segments).toHaveLength(2);
 });
@@ -577,22 +577,22 @@ test("equal words and timestamps remain separate disjoint utterances", async () 
 test("represented middle input splits residual runs while preserving observed gap positions", async () => {
   const f = await fixture();
   addIntervalAudio(f, [
-    { startOffsetMs: 0, durationMs: 20 },
-    { startOffsetMs: 21, durationMs: 20 },
-    { startOffsetMs: 42, durationMs: 20 },
+    { startOffsetMs: 0, durationMs: 400 },
+    { startOffsetMs: 401, durationMs: 400 },
+    { startOffsetMs: 802, durationMs: 400 },
   ]);
-  f.content.entries = [representedEntry(f, "middle", [span(3840, 7680)])];
+  f.content.entries = [representedEntry(f, "middle", [span(76800, 153600)])];
   await recoverTranscript(f.content, f.reader, f.signal, (run) => run());
   const calls = jest.mocked(transcribeContentSnippet).mock.calls;
   expect(calls.map(([, item]) => item.chunks[0])).toEqual([
-    Buffer.alloc(3840, 1),
-    Buffer.alloc(3840, 3),
+    Buffer.alloc(76800, 1),
+    Buffer.alloc(76800, 3),
   ]);
   expect(
     calls.map(
       ([, item]) => item.timestamp - Date.parse(f.claim.history.timestamp),
     ),
-  ).toEqual([0, 42]);
+  ).toEqual([0, 802]);
   expect(recoveryPcmBudget.snapshot().reservedBytes).toBe(0);
 });
 
@@ -629,8 +629,8 @@ test.each(["complete", "tail", "empty", "supplemental"] as const)(
 
 test("terminal omitted input is not resurrected and a pending piece cannot cover a different sequence", async () => {
   const f = await fixture();
-  addIntervalAudio(f, [{ startOffsetMs: 0, durationMs: 20 }]);
-  f.content.omitted = { kind: "pcm", spans: [span(0, 3840)] };
+  addIntervalAudio(f, [{ startOffsetMs: 0, durationMs: 400 }]);
+  f.content.omitted = { kind: "pcm", spans: [span(0, 76800)] };
   expect(
     (await recoverTranscript(f.content, f.reader, f.signal, (run) => run()))
       .text,
@@ -638,7 +638,7 @@ test("terminal omitted input is not resurrected and a pending piece cannot cover
   expect(transcribeContentSnippet).not.toHaveBeenCalled();
   delete f.content.omitted;
   f.content.entries = [
-    representedEntry(f, "Open piece text", [span(0, 3840, 99)]),
+    representedEntry(f, "Open piece text", [span(0, 76800, 99)]),
   ];
   await recoverTranscript(f.content, f.reader, f.signal, (run) => run());
   expect(transcribeContentSnippet).toHaveBeenCalledTimes(1);
@@ -674,7 +674,7 @@ test.each(["text_only", "disjoint", "audio_only", "missing_pcm"] as const)(
   async (kind) => {
     const f = await fixture();
     if (kind !== "missing_pcm")
-      addIntervalAudio(f, [{ startOffsetMs: 0, durationMs: 20 }]);
+      addIntervalAudio(f, [{ startOffsetMs: 0, durationMs: 400 }]);
     if (kind === "text_only")
       f.content.entries = [
         {
