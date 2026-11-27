@@ -12,6 +12,7 @@ import type {
   SpeechDetector,
   SpeechDetectorBindings,
   SpeechAssessment,
+  SpeechPhase,
   SpeechUnavailableReason,
   SpeechWorkerTransport,
 } from "./speechDetectionTypes";
@@ -73,13 +74,42 @@ const replySchema = z.discriminatedUnion("type", [
     assessment: assessmentSchema,
   }),
 ]);
+/** One inference's own budget, counted from dispatch. */
+const INFERENCE_DEADLINE_MS = { fast: 500, slow: 1500 } as const;
+/**
+ * How long a job may wait from enqueue before it fails alone, so a snippet
+ * never waits unboundedly to be transcribed. Two slow inferences: a job can
+ * wait out one full slow inference ahead of it plus a slower overrun.
+ */
+export const SPEECH_QUEUE_WAIT_CAP_MS = 3000;
+/**
+ * A running inference past this is hung rather than slow, and only this
+ * retires the child. It is twice the slowest measured cold model load (5 s)
+ * and over six times the slow inference budget.
+ */
+export const SPEECH_HANG_CEILING_MS = 10000;
+const RETIREMENT_COOLDOWN_MS = 30000;
+const INITIALIZATION_DEADLINE_MS = 30000;
+const MAX_WAITING_JOBS = 4;
 type Timer = ReturnType<SpeechDetectorBindings["schedule"]>;
 type Job = {
   requestId: number;
   wav: ArrayBuffer;
-  deadline: number;
+  phase: SpeechPhase;
+  waitUntil: number;
   resolve: (assessment: SpeechAssessment) => void;
   timer: Timer;
+};
+/**
+ * The child's single slot. It stays occupied until the child replies, even
+ * after its job timed out and was settled (`job` cleared), so the late reply
+ * is matched by id and discarded instead of answering the next job.
+ */
+type Running = {
+  requestId: number;
+  job?: Job;
+  deadline: number;
+  hang: Timer;
 };
 type Generation = {
   transport: SpeechWorkerTransport;
@@ -95,7 +125,7 @@ export function createSpeechDetector(
   bindings: SpeechDetectorBindings,
 ): SpeechDetector {
   let generation: Generation | undefined;
-  let active: Job | undefined;
+  let running: Running | undefined;
   const waiting: Job[] = [];
   const terminations = new Set<Promise<void>>();
   let nextId = 0;
@@ -111,13 +141,18 @@ export function createSpeechDetector(
     job.timer.cancel();
     job.resolve(assessment);
   };
+  const timeOut = (job: Job): void => {
+    settle(job, unavailable("timeout"));
+  };
+  /** Kills the child; every job it holds or has queued fails once with `reason`. */
   const retire = (reason: SpeechUnavailableReason): void => {
     const old = generation;
     generation = undefined;
-    cooldownUntil = bindings.now() + 30000;
-    if (active) {
-      settle(active, unavailable(reason));
-      active = undefined;
+    cooldownUntil = bindings.now() + RETIREMENT_COOLDOWN_MS;
+    if (running) {
+      running.hang.cancel();
+      if (running.job) settle(running.job, unavailable(reason));
+      running = undefined;
     }
     for (const job of waiting.splice(0)) settle(job, unavailable(reason));
     if (!old) return;
@@ -135,14 +170,30 @@ export function createSpeechDetector(
     terminations.add(termination);
   };
   const dispatch = (): void => {
-    if (!generation?.ready || active) return;
+    if (!generation?.ready || running) return;
     let job = waiting.shift();
-    while (job && bindings.now() >= job.deadline) {
-      settle(job, unavailable("timeout"));
+    while (job && bindings.now() >= job.waitUntil) {
+      timeOut(job);
       job = waiting.shift();
     }
     if (!job) return;
-    active = job;
+    job.timer.cancel();
+    const budget = INFERENCE_DEADLINE_MS[job.phase];
+    const slot: Running = {
+      requestId: job.requestId,
+      job,
+      deadline: bindings.now() + budget,
+      hang: bindings.schedule(() => {
+        if (running === slot) retire("timeout");
+      }, SPEECH_HANG_CEILING_MS),
+    };
+    const dispatched = job;
+    job.timer = bindings.schedule(() => {
+      if (slot.job !== dispatched) return;
+      slot.job = undefined;
+      timeOut(dispatched);
+    }, budget);
+    running = slot;
     try {
       generation.transport.post({
         type: "assess",
@@ -153,6 +204,27 @@ export function createSpeechDetector(
     } catch {
       retire("worker_error");
     }
+  };
+  /** Frees the slot with the child's reply; a job that already timed out drops it. */
+  const acceptAssessment = (
+    slot: Running,
+    assessment: SpeechAssessment,
+  ): void => {
+    const engineFailure = engineFailureReason(assessment);
+    if (engineFailure) {
+      retire(engineFailure);
+      return;
+    }
+    if (!hasValidAssessmentMetrics(assessment, bindings.policy)) {
+      retire("invalid_output");
+      return;
+    }
+    slot.hang.cancel();
+    running = undefined;
+    const { job } = slot;
+    if (job && bindings.now() >= slot.deadline) timeOut(job);
+    else if (job) settle(job, assessment);
+    dispatch();
   };
   const acceptReady = (current: Generation, fingerprint: string): void => {
     if (bindings.now() >= current.initDeadline) {
@@ -171,12 +243,12 @@ export function createSpeechDetector(
     if (generation) return generation;
     if (stopped || bindings.now() < cooldownUntil || terminations.size > 0)
       return undefined;
-    const initDeadline = bindings.now() + 30000;
+    const initDeadline = bindings.now() + INITIALIZATION_DEADLINE_MS;
     let transport: SpeechWorkerTransport;
     try {
       transport = bindings.spawn(bindings.policy);
     } catch {
-      cooldownUntil = bindings.now() + 30000;
+      cooldownUntil = bindings.now() + RETIREMENT_COOLDOWN_MS;
       return undefined;
     }
     if (hasStartedWorker) recordSpeechWorkerRestart();
@@ -230,29 +302,8 @@ export function createSpeechDetector(
           retire("invalid_output");
           return;
         }
-        if (!active || active.requestId !== reply.requestId) return;
-        if (bindings.now() >= active.deadline) {
-          retire("timeout");
-          return;
-        }
-        const assessment = reply.assessment;
-        if (
-          assessment.kind === "unavailable" &&
-          (assessment.reason === "worker_error" ||
-            assessment.reason === "invalid_output" ||
-            assessment.reason === "asset_error")
-        ) {
-          retire(assessment.reason);
-          return;
-        }
-        if (!hasValidAssessmentMetrics(assessment, bindings.policy)) {
-          retire("invalid_output");
-          return;
-        }
-        const completed = active;
-        active = undefined;
-        settle(completed, assessment);
-        dispatch();
+        if (running?.requestId === reply.requestId)
+          acceptAssessment(running, reply.assessment);
       }),
     );
     return current;
@@ -265,29 +316,22 @@ export function createSpeechDetector(
       if (stopped) return Promise.resolve(unavailable("shutdown"));
       const current = start();
       if (!current?.ready) return Promise.resolve(unavailable("not_ready"));
-      if (active && waiting.length >= 4)
+      if (running && waiting.length >= MAX_WAITING_JOBS)
         return Promise.resolve(unavailable("queue_full"));
-      const deadline = bindings.now() + (phase === "fast" ? 500 : 1500);
       const ownedWav = new Uint8Array(wav).buffer;
       return new Promise((resolve) => {
         const job: Job = {
           requestId: ++nextId,
           wav: ownedWav,
-          deadline,
+          phase,
+          waitUntil: bindings.now() + SPEECH_QUEUE_WAIT_CAP_MS,
           resolve,
-          timer: bindings.schedule(
-            () => {
-              if (active === job) retire("timeout");
-              else {
-                const index = waiting.indexOf(job);
-                if (index >= 0) {
-                  waiting.splice(index, 1);
-                  settle(job, unavailable("timeout"));
-                }
-              }
-            },
-            Math.max(0, deadline - bindings.now()),
-          ),
+          timer: bindings.schedule(() => {
+            const index = waiting.indexOf(job);
+            if (index < 0) return;
+            waiting.splice(index, 1);
+            timeOut(job);
+          }, SPEECH_QUEUE_WAIT_CAP_MS),
         };
         waiting.push(job);
         dispatch();
@@ -299,6 +343,18 @@ export function createSpeechDetector(
       await Promise.all(terminations);
     },
   };
+}
+
+function engineFailureReason(
+  assessment: SpeechAssessment,
+): SpeechUnavailableReason | undefined {
+  if (assessment.kind !== "unavailable") return undefined;
+  const { reason } = assessment;
+  return reason === "worker_error" ||
+    reason === "invalid_output" ||
+    reason === "asset_error"
+    ? reason
+    : undefined;
 }
 
 function hasValidAssessmentMetrics(

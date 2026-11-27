@@ -2,7 +2,7 @@
 
 Status: Accepted for implementation. Final image resource acceptance remains required. Detection stays off pending separate quality acceptance and activation approval.
 
-Date: 2026-10-27. Revised: 2026-10-28.
+Date: 2026-10-27. Revised: 2026-10-28, 2026-11-27.
 
 Owners: Audio pipeline
 
@@ -32,7 +32,7 @@ All nine controlled native fixtures retained classification and deterministic re
 
 ## Lifecycle and resource boundaries
 
-Register parent-disconnection handling before model initialization. A responsive child exits immediately on owner loss; the owner kills a stuck child on timeout. Production container exit reaps descendants, including a child synchronously stuck in native code. Outside that container, a synchronous hang cannot process IPC disconnect after owner death. No independent watchdog is included for that unsupported lifecycle.
+Register parent-disconnection handling before model initialization. A responsive child exits immediately on owner loss; the owner kills a stuck child on timeout. Revised 2026-11-27: a missed phase deadline (counted from dispatch) or a queue wait past 3 seconds (counted from enqueue) fails only that job, and the child keeps its slot until its late reply arrives, which is discarded. Only an inference running past 10 seconds is a hang that kills the child and starts the restart cooldown. Killing on every missed deadline looped under CPU load, leaving the detector unavailable for most of each busy period. Production container exit reaps descendants, including a child synchronously stuck in native code. Outside that container, a synchronous hang cannot process IPC disconnect after owner death. No independent watchdog is included for that unsupported lifecycle.
 
 Count the parent's and every descendant's RSS. Process isolation is a failure boundary, not an independent memory allocation. Keep the original workload, CPU/memory limits, phase deadlines and acceptance thresholds. Missing resource evidence remains unknown and fails acceptance.
 
