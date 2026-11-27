@@ -49,7 +49,24 @@ with exponent 2 and a 30,000 ms cap. Valid Retry-After values from 0 through
 dispatches; issued requests and streams still settle before cleanup.
 
 The shared bulkhead holds two complete logical transcriptions with up to
-100 queued jobs. Logical starts remain spaced by 800 ms. The breaker counts
+100 queued jobs, for every meeting on the task. Logical starts remain spaced
+by 800 ms, so the task sends at most about 75 requests a minute. A full queue
+refuses a job at once without reaching the provider; the failure log line
+carries `reason: "queue_full"` and the `passMode`.
+
+The fast pass makes most of the calls and its text is only a live preview, so
+it gives way first: once 50 jobs (`TRANSCRIPTION_FAST_MAX_QUEUED`) are waiting,
+a fast request is shed before it enters the queue (`reason: "fast_shed"`) and
+the remaining slots stay free for slow snippets. A shed or failed fast pass
+leaves the snippet untouched: it sets no `transcriptionFailed`, so it never
+counts toward the three-failed-segment floor, and the slow pass still
+transcribes the snippet. A refused slow snippet is marked failed and is not
+retried live; its saved audio is re-transcribed only when the finish hands the
+meeting to recovery.
+Waiting in the queue has no deadline of its own: an aborted meeting's queued
+jobs are dropped only when they reach the front.
+
+The breaker counts
 five exhausted transient ASR operations before opening for 10,000 ms;
 unrelated guard errors cannot trip it. Text Responses and personal upload
 retry policies are separate.
@@ -176,6 +193,10 @@ re-transcribes uncovered audio with the frozen model (a retired one runs on
 `gpt-transcribe`, logged once) and language, no prompt,
 and keywords rebuilt from the saved dictionary entries and saved
 `dictionary.maxChars.transcription` budget when the frozen model accepts them.
+Recovery never sends a piece of `MINIMUM_TRANSCRIPTION_LENGTH` (0.3 s) or
+less, the same floor live capture uses: the provider rejects such a sliver as
+corrupt audio on every attempt, and one failed piece fails the whole recovery
+attempt, so the sliver is covered as empty text instead.
 
 ## Interjection behavior
 

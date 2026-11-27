@@ -372,7 +372,10 @@ export async function buildTracingFixture(options: FixtureOptions = {}) {
     effect: (run) => lifetime.runMeetingProcessingEffect(owner, run),
   };
   const tasks: Promise<SnippetTranscriptionResult>[] = [];
-  const transcribe = (overrides: Partial<TranscriptionContentInput> = {}) => {
+  const transcribe = (
+    overrides: Partial<TranscriptionContentInput> = {},
+    options: Parameters<typeof service.transcribeContentSnippet>[2] = {},
+  ) => {
     const task = lifetime.runMeetingProcessingEffect(owner, () =>
       service.transcribeContentSnippet(
         { ...input, ...overrides },
@@ -384,6 +387,7 @@ export async function buildTracingFixture(options: FixtureOptions = {}) {
         {
           noiseGateEnabledOverride: false,
           suppressionEnabledOverride: false,
+          ...options,
         },
       ),
     );

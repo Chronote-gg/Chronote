@@ -20,6 +20,8 @@ export const TRANSCRIPTION_RETRY_MAX_DELAY_MS = 30_000;
 export const TRANSCRIPTION_RETRY_AFTER_MAX_MS = 60_000;
 export const TRANSCRIPTION_MAX_CONCURRENT = 2;
 export const TRANSCRIPTION_MAX_QUEUE = 100;
+// A fast pass is shed once this many jobs wait, keeping the rest of the queue for slow snippets.
+export const TRANSCRIPTION_FAST_MAX_QUEUED = 50;
 export const TRANSCRIPTION_BREAK_AFTER_CONSECUTIVE_FAILURES = 5;
 export const TRANSCRIPTION_BREAK_DURATION = 10_000;
 export const TRANSCRIPTION_RATE_MIN_TIME = 800; // Rate limit in minimum milliseconds between requests

@@ -218,6 +218,7 @@ test("real bulkhead admits two active and one hundred queued jobs", async () => 
     transport: provider.fetch,
   });
   const controllers = Array.from({ length: 101 }, () => new AbortController());
+  const error = jest.spyOn(console, "error").mockImplementation(() => {});
   try {
     f.attachment.resolve();
     const active = [f.transcribe(), f.transcribe()];
@@ -226,6 +227,17 @@ test("real bulkhead admits two active and one hundred queued jobs", async () => 
       f.transcribe({ signal: controller.signal }),
     );
     await expect(queued[100]).resolves.toMatchObject({ status: "failed" });
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to transcribe snippet"),
+      expect.objectContaining({ reason: "queue_full", passMode: "slow" }),
+    );
+    await expect(
+      f.transcribe({}, { noiseGateMode: "fast" }),
+    ).resolves.toMatchObject({ status: "failed" });
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to transcribe snippet"),
+      expect.objectContaining({ reason: "fast_shed", passMode: "fast" }),
+    );
     expect(provider.calls).toHaveLength(2);
     controllers.forEach((controller) => controller.abort());
     release.resolve();
@@ -235,6 +247,7 @@ test("real bulkhead admits two active and one hundred queued jobs", async () => 
     controllers.forEach((controller) => controller.abort());
     release.resolve();
     await f.dispose();
+    error.mockRestore();
   }
 });
 

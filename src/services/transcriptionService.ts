@@ -11,6 +11,7 @@ import { meetingTranscriptionLanguage } from "../config/transcriptionLanguage";
 import path from "node:path";
 import {
   bulkhead,
+  BulkheadRejectedError,
   circuitBreaker,
   ConsecutiveBreaker,
   handleWhen,
@@ -39,6 +40,7 @@ import {
   TRANSCRIPTION_RATE_MAX_SYLLABLES_PER_SECOND,
   TRANSCRIPTION_RATE_MIN_SYLLABLES,
   TRANSCRIPTION_RATE_MIN_WORDS,
+  TRANSCRIPTION_FAST_MAX_QUEUED,
   TRANSCRIPTION_MAX_CONCURRENT,
   TRANSCRIPTION_MAX_QUEUE,
   TRANSCRIPTION_RATE_MIN_TIME,
@@ -497,11 +499,27 @@ const langfuseAttachmentLimiter = new Bottleneck({
   minTime: LANGFUSE_AUDIO_ATTACHMENT_MIN_TIME,
 });
 
+class TranscriptionShedError extends Error {}
+
+function queueRejectionReason(error: unknown) {
+  if (error instanceof TranscriptionShedError) return "fast_shed";
+  if (error instanceof BulkheadRejectedError) return "queue_full";
+  return undefined;
+}
+
 async function transcribe(
   meeting: TranscriptionContentInput,
   file: string,
   context: TranscriptionTraceContext,
 ): Promise<string> {
+  // Fast text is only a live preview, so it gives way before the queue can
+  // refuse a slow snippet, which is the authoritative transcript.
+  if (
+    context.noiseGateMode === "fast" &&
+    TRANSCRIPTION_MAX_QUEUE - bulkheadPolicy.queueSlots >=
+      TRANSCRIPTION_FAST_MAX_QUEUED
+  )
+    throw new TranscriptionShedError("Fast transcription shed");
   const queuedAt = performance.now();
   const scope = createTranscriptionFailureScope();
   return bulkheadPolicy.execute(() =>
@@ -718,6 +736,8 @@ export async function transcribeContentSnippet(
           typeof providerError.code === "number"
             ? providerError.code
             : undefined,
+        reason: queueRejectionReason(error),
+        passMode: phase,
       },
     );
     return {
