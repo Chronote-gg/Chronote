@@ -11,6 +11,8 @@ export type MeetingProcessingOutcome = {
 export type TranscriptionFacts = {
   usableSegments: number;
   failedSegments: number;
+  /** Live snippets the transcription queue refused; only Discord capture has them. */
+  queueRejectedSegments?: number;
   captureIncomplete: boolean;
 };
 

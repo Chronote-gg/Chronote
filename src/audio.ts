@@ -371,6 +371,8 @@ export function startProcessingSnippet(
               if (getMeetingProcessingSignal(meeting).aborted) return;
               if (result.status === "failed") {
                 audioFileData.transcriptionFailed = true;
+                audioFileData.transcriptionQueueRejected =
+                  result.reason === "queue_rejected";
                 return;
               }
               if (result.status === "skipped") {

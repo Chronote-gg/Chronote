@@ -38,7 +38,7 @@ export type SnippetTranscriptionResult =
   | { status: "skipped"; reason: "non_speech"; coverage: SpeechCoverage }
   | {
       status: "failed";
-      reason: "transcription_error" | "conversion_error";
+      reason: "transcription_error" | "conversion_error" | "queue_rejected";
     };
 
 export type AudioSegmentSource = "voice" | "chat_tts" | "bot";
@@ -65,6 +65,8 @@ export interface AudioFileData {
   fastTranscripts?: TranscriptVariant[];
   slowTranscript?: string;
   transcriptionFailed?: boolean;
+  /** The transcription queue refused the slow pass, so no provider ever heard it. */
+  transcriptionQueueRejected?: boolean;
   finalSpeechRejection?: SpeechCoverage;
   source?: AudioSegmentSource;
   messageId?: string;

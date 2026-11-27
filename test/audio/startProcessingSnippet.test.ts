@@ -269,9 +269,39 @@ describe("startProcessingSnippet", () => {
     await waitForSnippetWork(meeting, audioFileData);
 
     expect(audioFileData.transcriptionFailed).toBe(true);
+    expect(audioFileData.transcriptionQueueRejected).toBe(false);
     expect(audioFileData.transcript ?? "").not.toContain(
       "[Transcription failed]",
     );
+    expect(audioFileData.processing).toBe(false);
+  });
+
+  it("marks a slow pass the queue refused", async () => {
+    const snippet: AudioSnippet = {
+      userId: "user-1",
+      timestamp: new Date("2025-01-01T00:00:01.000Z").getTime(),
+      chunks: [Buffer.alloc(60_000)],
+      audioBytes: 60_000,
+    };
+    const audioFileData: AudioFileData = {
+      userId: snippet.userId,
+      timestamp: snippet.timestamp,
+      source: "voice",
+      processing: true,
+      audioOnlyProcessing: false,
+    };
+    snippet.audioFileData = audioFileData;
+    const meeting = buildMeeting(snippet, audioFileData);
+    (transcribeSnippet as jest.Mock).mockResolvedValue({
+      status: "failed",
+      reason: "queue_rejected",
+    });
+
+    startProcessingSnippet(meeting, snippet.userId);
+    await waitForSnippetWork(meeting, audioFileData);
+
+    expect(audioFileData.transcriptionFailed).toBe(true);
+    expect(audioFileData.transcriptionQueueRejected).toBe(true);
     expect(audioFileData.processing).toBe(false);
   });
 

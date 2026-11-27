@@ -501,6 +501,19 @@ const langfuseAttachmentLimiter = new Bottleneck({
 
 class TranscriptionShedError extends Error {}
 
+/**
+ * Fast text is only a live preview, so it gives way before the queue can refuse
+ * a slow snippet, which is the authoritative transcript. Checked before any
+ * input is prepared, so a shed request spawns no conversion.
+ */
+function isFastPassShed(phase: SpeechPhase) {
+  return (
+    phase === "fast" &&
+    TRANSCRIPTION_MAX_QUEUE - bulkheadPolicy.queueSlots >=
+      TRANSCRIPTION_FAST_MAX_QUEUED
+  );
+}
+
 function queueRejectionReason(error: unknown) {
   if (error instanceof TranscriptionShedError) return "fast_shed";
   if (error instanceof BulkheadRejectedError) return "queue_full";
@@ -512,14 +525,6 @@ async function transcribe(
   file: string,
   context: TranscriptionTraceContext,
 ): Promise<string> {
-  // Fast text is only a live preview, so it gives way before the queue can
-  // refuse a slow snippet, which is the authoritative transcript.
-  if (
-    context.noiseGateMode === "fast" &&
-    TRANSCRIPTION_MAX_QUEUE - bulkheadPolicy.queueSlots >=
-      TRANSCRIPTION_FAST_MAX_QUEUED
-  )
-    throw new TranscriptionShedError("Fast transcription shed");
   const queuedAt = performance.now();
   const scope = createTranscriptionFailureScope();
   return bulkheadPolicy.execute(() =>
@@ -680,6 +685,10 @@ export async function transcribeContentSnippet(
         },
       };
     }
+    if (isFastPassShed(phase)) {
+      stage = "transcription";
+      throw new TranscriptionShedError("Fast transcription shed");
+    }
     return await withPreparedTranscriptionInput<SnippetTranscriptionResult>(
       {
         pcm: buffer,
@@ -723,6 +732,8 @@ export async function transcribeContentSnippet(
       },
     );
   } catch (error) {
+    const queueReason = queueRejectionReason(error);
+    if (queueReason) outcome = "queue_rejected";
     const providerError = error as { status?: unknown; code?: unknown };
     const failureLabel = stage === "conversion" ? "convert" : "transcribe";
     console.error(
@@ -736,10 +747,11 @@ export async function transcribeContentSnippet(
           typeof providerError.code === "number"
             ? providerError.code
             : undefined,
-        reason: queueRejectionReason(error),
+        reason: queueReason,
         passMode: phase,
       },
     );
+    if (queueReason) return { status: "failed", reason: "queue_rejected" };
     return {
       status: "failed",
       reason:

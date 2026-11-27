@@ -19,11 +19,15 @@ import { pcmArtifact, recoveryFixture } from "./meetingRecoveryFixtures";
 
 beforeEach(() => jest.clearAllMocks());
 
+type FixtureOptions = NonNullable<Parameters<typeof recoveryFixture>[1]>;
+
 async function recover(
-  artifacts: NonNullable<Parameters<typeof recoveryFixture>[1]>["artifacts"],
+  artifacts: FixtureOptions["artifacts"],
+  context?: FixtureOptions["context"],
 ) {
   const f = await recoveryFixture("", {
     artifacts,
+    context,
     transcript: (saved) => {
       saved.entries = [];
     },
@@ -173,6 +177,29 @@ test.each(["missing", "cancelled"])(
   },
 );
 
+const sliverRecording = () => [
+  pcmArtifact("user:456", 0, Buffer.alloc(192 * 1000, 1), [
+    { startOffsetMs: 0, durationMs: 1000 },
+  ]),
+  pcmArtifact("user:456", 1, Buffer.alloc(192 * 18, 2), [
+    { startOffsetMs: 5000, durationMs: 18 },
+  ]),
+  pcmArtifact("user:789", 0, Buffer.alloc(192 * 1000, 3), [
+    { startOffsetMs: 2000, durationMs: 1000 },
+  ]),
+];
+
+test("recovery sends a sliver when the meeting's saved minimum was lower", async () => {
+  const transcribe = jest.mocked(transcribeContentSnippet);
+  await recover(sliverRecording(), (context) => {
+    if (context.settings.availability === "available")
+      context.settings.value.transcription.minSnippetSeconds = 0.01;
+  });
+  expect(
+    transcribe.mock.calls.map(([, snippet]) => snippet.chunks[0][0]),
+  ).toEqual([1, 2, 3]);
+});
+
 test("recovery never sends a piece under the live minimum and still transcribes the rest", async () => {
   const minimumBytes = 192 * 300;
   const transcribe = jest.mocked(transcribeContentSnippet);
@@ -182,17 +209,7 @@ test("recovery never sends a piece under the live minimum and still transcribes 
       ? { status: "failed", reason: "transcription_error" }
       : { status: "succeeded", text: "Recovered discussion." },
   );
-  await recover([
-    pcmArtifact("user:456", 0, Buffer.alloc(192 * 1000, 1), [
-      { startOffsetMs: 0, durationMs: 1000 },
-    ]),
-    pcmArtifact("user:456", 1, Buffer.alloc(192 * 18, 2), [
-      { startOffsetMs: 5000, durationMs: 18 },
-    ]),
-    pcmArtifact("user:789", 0, Buffer.alloc(192 * 1000, 3), [
-      { startOffsetMs: 2000, durationMs: 1000 },
-    ]),
-  ]);
+  await recover(sliverRecording());
   expect(
     transcribe.mock.calls.map(([, snippet]) => snippet.chunks[0][0]),
   ).toEqual([1, 3]);

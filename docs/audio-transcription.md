@@ -56,24 +56,31 @@ a minute. Until 2026-11-27 it was two and 800 ms (about 75 a minute), below
 the roughly 120 a minute that three long meetings on one task demand. The
 account limit, 30,000 `gpt-transcribe` requests a minute with no audio or token
 limit header, was read on 2026-11-27 from the `x-ratelimit-*` headers of the
-development key, which may not be the production project. If production's
+development key, which may not be the production project; read the same
+header from a production response after deploy. If production's
 limit is lower, a 429 still retries with its Retry-After (up to 60 s) or
 backoff, and exhausted 429s count toward the breaker. PCM to WAV conversion
 and speech detection run before a job enters the bulkhead, and the Langfuse
 MP3 encode inside it is limited to one at a time, so the extra slots add
 waiting on the network rather than CPU work. A full queue
 refuses a job at once without reaching the provider; the failure log line
-carries `reason: "queue_full"` and the `passMode`.
+carries `reason: "queue_full"` and the `passMode`, and the snippet outcome
+metric records `queue_rejected` rather than `provider_error`.
 
 The fast pass makes most of the calls and its text is only a live preview, so
 it gives way first: once 50 jobs (`TRANSCRIPTION_FAST_MAX_QUEUED`) are waiting,
-a fast request is shed before it enters the queue (`reason: "fast_shed"`) and
-the remaining slots stay free for slow snippets. A shed or failed fast pass
+a fast request is shed before its audio is converted or assessed
+(`reason: "fast_shed"`) and the remaining slots stay free for slow snippets.
+The queue is shared by the whole worker, so one heavy meeting also sheds the
+live previews, and delays live voice replies to the slow pass, in every other
+meeting on that task. A shed or failed fast pass
 leaves the snippet untouched: it sets no `transcriptionFailed`, so it never
 counts toward the three-failed-segment floor, and the slow pass still
-transcribes the snippet. A refused slow snippet is marked failed and is not
-retried live; its saved audio is re-transcribed only when the finish hands the
-meeting to recovery.
+transcribes the snippet. A refused slow snippet is marked failed and
+`transcriptionQueueRejected`, and is not retried live. One such snippet is
+enough for the finish to hand the meeting to recovery, bypassing the
+three-failed-segment floor, because no provider heard that speech and its
+saved audio is intact; recovery then re-transcribes it.
 Waiting in the queue has no deadline of its own: an aborted meeting's queued
 jobs are dropped only when they reach the front.
 
@@ -204,8 +211,9 @@ re-transcribes uncovered audio with the frozen model (a retired one runs on
 `gpt-transcribe`, logged once) and language, no prompt,
 and keywords rebuilt from the saved dictionary entries and saved
 `dictionary.maxChars.transcription` budget when the frozen model accepts them.
-Recovery never sends a piece of `MINIMUM_TRANSCRIPTION_LENGTH` (0.3 s) or
-less, the same floor live capture uses: the provider rejects such a sliver as
+Recovery never sends a piece at or under the meeting's saved
+`transcription.minSnippetSeconds` (default `MINIMUM_TRANSCRIPTION_LENGTH`,
+0.3 s), the same floor live capture used: the provider rejects such a sliver as
 corrupt audio on every attempt, and one failed piece fails the whole recovery
 attempt, so the sliver is covered as empty text instead.
 

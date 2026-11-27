@@ -226,18 +226,36 @@ test("real bulkhead admits its active jobs and one hundred queued jobs", async (
     const queued = controllers.map((controller) =>
       f.transcribe({ signal: controller.signal }),
     );
-    await expect(queued[100]).resolves.toMatchObject({ status: "failed" });
+    await expect(queued[100]).resolves.toEqual({
+      status: "failed",
+      reason: "queue_rejected",
+    });
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining("Failed to transcribe snippet"),
       expect.objectContaining({ reason: "queue_full", passMode: "slow" }),
     );
-    await expect(
-      f.transcribe({}, { noiseGateMode: "fast" }),
-    ).resolves.toMatchObject({ status: "failed" });
+    const conversions = f.conversionStarted.mock.calls.length;
+    await expect(f.transcribe({}, { noiseGateMode: "fast" })).resolves.toEqual({
+      status: "failed",
+      reason: "queue_rejected",
+    });
+    expect(f.conversionStarted).toHaveBeenCalledTimes(conversions);
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining("Failed to transcribe snippet"),
       expect.objectContaining({ reason: "fast_shed", passMode: "fast" }),
     );
+    const { metricsRegistry } = await import("../../src/metrics");
+    const outcomes = await metricsRegistry
+      .getSingleMetric("chronote_speech_detection_snippet_outcomes_total")
+      ?.get();
+    const queueRejected = (phase: string) =>
+      outcomes?.values.find(
+        (value) =>
+          value.labels.outcome === "queue_rejected" &&
+          value.labels.phase === phase,
+      )?.value;
+    expect(queueRejected("slow")).toBe(1);
+    expect(queueRejected("fast")).toBe(1);
     expect(provider.calls).toHaveLength(ACTIVE);
     controllers.forEach((controller) => controller.abort());
     release.resolve();

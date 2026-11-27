@@ -381,11 +381,15 @@ async function transcribeAudioGroup(
   timestamp: number,
 ) {
   input.signal.throwIfAborted();
-  // Live capture never sends audio this short, and the provider rejects such a
-  // sliver as corrupt on every attempt, so it is covered as empty text.
+  // Live capture never sent audio at or under the meeting's saved minimum, and
+  // the provider rejects such a sliver as corrupt on every attempt, so it is
+  // covered as empty text.
+  const minimumSeconds =
+    input.runtimeConfig?.transcription.minSnippetSeconds ??
+    MINIMUM_TRANSCRIPTION_LENGTH;
   if (
     (group.endFrame - group.startFrame) / RECORD_SAMPLE_RATE <=
-    MINIMUM_TRANSCRIPTION_LENGTH
+    minimumSeconds
   )
     return "";
   const length = (group.endFrame - group.startFrame) * PCM_FRAME_BYTES;

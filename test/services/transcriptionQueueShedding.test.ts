@@ -11,6 +11,8 @@ const PROVIDER_LATENCY_MS = 1_000;
 const SPEAKERS_PER_MEETING = 4;
 const TURN_PERIOD_MS = 20_000;
 const SIMULATED_MS = 8 * 60_000;
+// Every job must settle within this much simulated time after the last arrival.
+const DRAIN_LIMIT_MS = 30 * 60_000;
 // Fast revisions per turn cycle through 2, 2, 3: about 2.3 fast calls per slow call.
 const FAST_PER_TURN = [2, 2, 3];
 
@@ -57,28 +59,33 @@ async function simulate(meetings: number, overrides: Partial<Constants> = {}) {
       { realPolicies: true, transport: fetch },
       async (f) => {
         f.attachment.resolve();
-        const results: Promise<void>[] = [];
-        for (const call of arrivals(meetings))
+        const calls = arrivals(meetings);
+        let settled = 0;
+        for (const call of calls)
           setTimeout(() => {
             const queuedAt = Date.now();
-            results.push(
-              f.transcribe({}, { noiseGateMode: call.mode }).then((result) => {
+            void f
+              .transcribe({}, { noiseGateMode: call.mode })
+              .then((result) => {
+                settled += 1;
                 if (result.status === "failed") failed[call.mode] += 1;
                 else
                   maxQueueWaitMs = Math.max(
                     maxQueueWaitMs,
                     Date.now() - queuedAt - PROVIDER_LATENCY_MS,
                   );
-              }),
-            );
+              });
           }, call.at);
         for (
           let elapsed = 0;
-          elapsed < SIMULATED_MS + 180_000;
+          settled < calls.length && elapsed < SIMULATED_MS + DRAIN_LIMIT_MS;
           elapsed += 1_000
         )
           await jest.advanceTimersByTimeAsync(1_000);
-        await Promise.all(results);
+        if (settled < calls.length)
+          throw new Error(
+            `${calls.length - settled} of ${calls.length} jobs never settled`,
+          );
       },
     );
     return { slowRejected: failed.slow, fastShed: failed.fast, maxQueueWaitMs };
@@ -98,9 +105,13 @@ test("three long meetings on one task fit the queue without refusing a snippet",
 });
 
 test("past capacity the queue sheds fast previews and keeps every slow snippet", async () => {
+  // About 320 calls a minute against about 200: roughly 830 of 1,790 fast calls
+  // are shed, while without shedding about 260 of 770 slow calls are refused.
   const shedding = await simulate(8);
   expect(shedding.slowRejected).toBe(0);
-  expect(shedding.fastShed).toBeGreaterThan(0);
+  expect(shedding.fastShed).toBeGreaterThan(600);
+  expect(shedding.fastShed).toBeLessThan(1_100);
   const unshed = await simulate(8, NO_SHEDDING);
-  expect(unshed.slowRejected).toBeGreaterThan(0);
+  expect(unshed.slowRejected).toBeGreaterThan(150);
+  expect(unshed.slowRejected).toBeLessThan(400);
 });
