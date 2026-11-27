@@ -76,7 +76,7 @@ locals {
       period             = 900
       evaluation_periods = 1
       treat_missing_data = "notBreaching"
-      description        = "More than five transcription responses in fifteen minutes came back with text but no logprobs. The provider stopped returning confidence data, so the quiet-audio guard is inactive and hallucinated lines can pass into transcripts and notes. Check the bot logs for \"Transcription response has no logprobs\" and the transcription model."
+      description        = "More than five transcription responses in fifteen minutes came back with text but no logprobs. The provider stopped returning confidence data, so the quiet-audio guard is inactive and hallucinated lines can pass into transcripts and notes. This counts the warning line \"Transcription response has no logprobs.\", logged only for a response with text; the guard's own logprobs_missing flag (quiet audio with no logprob metrics, the empty-output case) is not counted. Check those warning lines and the transcription model."
     }
     transcription_keywords_rejected = {
       metric             = "TranscriptionKeywordsRejected"
