@@ -385,8 +385,9 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     if (transcriptS3Key) await save(a, { transcriptS3Key });
   }
 
-  async function generate(a: Attempt, input: FinishInput) {
-    if (input.cancel) return;
+  /** Resolves true when the summary was dropped after its retry. */
+  async function generate(a: Attempt, input: FinishInput): Promise<boolean> {
+    if (input.cancel) return false;
     const notes = await deps.notes(input.notesInput);
     a.signal.throwIfAborted();
     await deps.summaries(input.notesInput, notes);
@@ -399,13 +400,11 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     const { summary, ...required } = processingOutcome(input);
     if (Object.values(required).includes("failed"))
       throw new Error("Meeting transcription or notes failed");
-    if (summary !== "failed") return;
+    if (summary !== "failed") return false;
     await deps.pause(SUMMARY_RETRY_DELAY_MS, a.signal);
     await deps.summaries(withoutSummaryOutcome(input.notesInput), notes);
     a.signal.throwIfAborted();
-    if (processingOutcome(input).summary !== "failed") return;
-    console.warn(SUMMARY_DROPPED_LOG, logContext(a.row));
-    emitMetric(LIFECYCLE_METRICS.meetingSummaryDropped);
+    return processingOutcome(input).summary === "failed";
   }
 
   /**
@@ -539,8 +538,13 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
         return input;
       }
       await uploadInputs(a, input);
-      await generate(a, input);
+      const summaryDropped = await generate(a, input);
       await saveTerminal(a, input);
+      // Reported once the drop is saved, so a failed save that retries does not count it twice.
+      if (summaryDropped) {
+        console.warn(SUMMARY_DROPPED_LOG, logContext(a.row));
+        emitMetric(LIFECYCLE_METRICS.meetingSummaryDropped);
+      }
       return input;
     } catch (error) {
       if (a.signal.aborted) throw error;

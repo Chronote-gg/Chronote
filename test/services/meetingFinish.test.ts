@@ -476,6 +476,29 @@ test("a summary that fails once is retried in the same attempt and delivered", a
   expect(summariesDropped()).toBe(0);
 });
 
+test("a dropped summary is reported once, after the attempt that saves it", async () => {
+  const world = setup(processingRow());
+  jest
+    .mocked(generateMeetingSummaries)
+    .mockRejectedValue(new Error("Synthetic outage"));
+  const save = world.deps.repository.save;
+  let failTerminal = true;
+  world.deps.repository.save = async (claim, patch, ...rest) => {
+    if (patch.status !== undefined && failTerminal) {
+      failTerminal = false;
+      throw new Error("Synthetic storage outage");
+    }
+    return save(claim, patch, ...rest);
+  };
+  await world.finish(loads(finishInput()));
+  expect(world.current()).toMatchObject({ status: "processing" });
+  expect(summariesDropped()).toBe(0);
+  await world.finish(loads(finishInput()));
+  expect(world.current()).toMatchObject({ status: "complete" });
+  expect(summariesDropped()).toBe(1);
+  expect(warned(SUMMARY_DROPPED_LOG)).toBe(1);
+});
+
 test("an abort during the summary retry pause stops the attempt as before", async () => {
   const world = setup(processingRow());
   const external = new AbortController();
