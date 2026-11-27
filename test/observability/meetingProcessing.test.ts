@@ -49,12 +49,14 @@ test("attaches a terminal generation outcome to its step", async () => {
   );
 });
 
+// A summary failure alone still delivers the notes, so it grades as a warning.
 test("records processing facts and failed stages on the root trace", async () => {
   const value = meeting();
   await withMeetingEndTrace(value, async () => undefined);
   expect(updateActiveObservation).toHaveBeenLastCalledWith(
     expect.objectContaining({
-      level: "ERROR",
+      level: "WARNING",
+      statusMessage: "Meeting summary failed",
       metadata: expect.objectContaining({
         processing: value.processing,
         usableSegments: 1,

@@ -29,7 +29,14 @@ const emitted = new Set(
     capture(read(path), /emitMetric\(\s*LIFECYCLE_METRICS\.(\w+)/g),
   ),
 );
-const alarmMetrics = capture(terraform, /^\s+metric\s+= "(\w+)"$/gm);
+// Lifecycle alarms in the shared map, plus the metric-math alarms' inputs.
+const alarmMetrics = [
+  ...capture(terraform, /^\s+metric\s+= "(\w+)"$/gm),
+  ...capture(
+    terraform,
+    /namespace\s+= local\.lifecycle_metrics_namespace\s+metric_name\s+= "(\w+)"/g,
+  ),
+];
 
 test("every alarm reads a metric the code emits, and every emitted metric has an alarm", () => {
   const names = Object.values(LIFECYCLE_METRICS);
@@ -73,7 +80,7 @@ test("the two heartbeats alarm on silence", () => {
 });
 
 test("every alarm notifies the critical alerts topic", () => {
-  expect(alarmBlocks).toHaveLength(2);
+  expect(alarmBlocks).toHaveLength(3);
   for (const block of alarmBlocks)
     expect(block).toMatch(
       /^\s*alarm_actions\s*=\s*\[local\.critical_alerts_topic_arn\]$/m,

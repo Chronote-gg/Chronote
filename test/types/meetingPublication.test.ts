@@ -126,12 +126,33 @@ describe("publication after a processing retry", () => {
       publishesAfterRetry({ ...failed(), updateDelivery: unpublished() }, "N"),
     ).toBe(true);
   });
-  it.each([...changes, ["another status", { status: "complete" }]] as [
-    string,
-    Partial<MeetingHistory>,
-  ][])("does not hand back %s", (_, patch) => {
-    expect(publishesAfterRetry({ ...failed(), ...patch }, "Notes")).toBe(false);
-  });
+  const summaryOnlyFailure: Partial<MeetingHistory> = {
+    status: "complete",
+    processing: {
+      transcription: "ready",
+      notes: "generated",
+      summary: "failed",
+    },
+  };
+  it.each([
+    ...changes,
+    ["another status", { status: "complete" }],
+    [
+      "a completed meeting whose only failure was its summary",
+      summaryOnlyFailure,
+    ],
+    [
+      "a published meeting whose only failure was its summary",
+      { ...summaryOnlyFailure, summaryMessageId: "summary" },
+    ],
+  ] as [string, Partial<MeetingHistory>][])(
+    "does not hand back %s",
+    (_, patch) => {
+      expect(publishesAfterRetry({ ...failed(), ...patch }, "Notes")).toBe(
+        false,
+      );
+    },
+  );
   it.each([undefined, "", "  "])("does not hand back notes %p", (notes) => {
     expect(publishesAfterRetry(failed(), notes)).toBe(false);
   });

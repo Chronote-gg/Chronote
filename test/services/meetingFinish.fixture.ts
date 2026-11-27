@@ -176,6 +176,7 @@ export function setup(initial: MeetingHistory) {
     claimUpgrade: jest.fn(async () => undefined),
     followOns: stubFollowOns(),
     nowMs: () => nowMs,
+    pause: jest.fn(async () => undefined),
     schedule(run, delayMs) {
       const entry = { run, delayMs };
       pending.add(entry);

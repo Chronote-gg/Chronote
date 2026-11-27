@@ -6,6 +6,7 @@ import {
   Gauge,
 } from "prom-client";
 import type { NextFunction, Request, Response } from "express";
+import { emitMetric, LIFECYCLE_METRICS } from "./lifecycleMetrics";
 import type { SpeechDetectionMode } from "./config/speechDetection";
 import type {
   SpeechAssessment,
@@ -211,10 +212,12 @@ export function recordSpeechProviderSubmission(input: {
 
 export function recordTranscriptionMissingLogprobs(model: string): void {
   transcriptionMissingLogprobs.inc({ model });
+  emitMetric(LIFECYCLE_METRICS.transcriptionMissingLogprobs);
 }
 
 export function recordTranscriptionKeywordsRejected(model: string): void {
   transcriptionKeywordsRejected.inc({ model });
+  emitMetric(LIFECYCLE_METRICS.transcriptionKeywordsRejected);
 }
 
 export function recordSpeechCapturedAudio(input: {

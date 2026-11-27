@@ -28,7 +28,8 @@ function hasReadyRecordedNotes(meeting: SummaryUpgradeMeeting): boolean {
     meeting.generateNotes &&
     Boolean(meeting.notesText?.trim()) &&
     meeting.processing?.notes === "generated" &&
-    meeting.processing.transcription === "ready"
+    meeting.processing.transcription === "ready" &&
+    meeting.processing.summary !== "failed"
   );
 }
 

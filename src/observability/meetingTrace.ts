@@ -85,12 +85,6 @@ export async function withMeetingEndTrace(
                   failedSegments: 0,
                   captureIncomplete: false,
                 };
-            const processingFailed =
-              meeting.processing?.transcription === "failed" ||
-              meeting.processing?.notes === "failed" ||
-              meeting.processing?.summary === "failed";
-            const processingPartial =
-              meeting.processing?.transcription === "partial";
             updateActiveObservation(
               {
                 metadata: {
@@ -98,20 +92,9 @@ export async function withMeetingEndTrace(
                   processing: meeting.processing,
                   ...facts,
                 },
-                ...((deliveryDegraded || processingFailed) &&
-                !finalizationFailed
-                  ? {
-                      level: "ERROR" as const,
-                      statusMessage: deliveryDegraded
-                        ? "Discord delivery degraded"
-                        : "Meeting processing failed",
-                    }
-                  : processingPartial && !finalizationFailed
-                    ? {
-                        level: "WARNING" as const,
-                        statusMessage: "Meeting transcription partial",
-                      }
-                    : {}),
+                ...(finalizationFailed
+                  ? {}
+                  : outcomeStatus(deliveryDegraded, meeting.processing)),
                 output: {
                   finishedAt: meeting.endTime?.toISOString(),
                   transcriptLength: meeting.finalTranscript?.length ?? 0,
@@ -196,4 +179,23 @@ export async function withMeetingEndStep<T>(
     },
     { asType: "chain" },
   );
+}
+
+/**
+ * The trace status for a finished meeting. A summary failure alone still
+ * delivers the notes, so it is a warning rather than a failed meeting.
+ */
+function outcomeStatus(
+  deliveryDegraded: boolean,
+  processing: MeetingData["processing"],
+): { level?: "ERROR" | "WARNING"; statusMessage?: string } {
+  if (deliveryDegraded)
+    return { level: "ERROR", statusMessage: "Discord delivery degraded" };
+  if (processing?.transcription === "failed" || processing?.notes === "failed")
+    return { level: "ERROR", statusMessage: "Meeting processing failed" };
+  if (processing?.summary === "failed")
+    return { level: "WARNING", statusMessage: "Meeting summary failed" };
+  if (processing?.transcription === "partial")
+    return { level: "WARNING", statusMessage: "Meeting transcription partial" };
+  return {};
 }
