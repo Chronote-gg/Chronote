@@ -128,12 +128,12 @@ class FinishClaimLost extends Error {
   }
 }
 
-/** Epoch seconds of the next process attempt, or undefined when this failure is final. */
 /** One in-attempt retry outlasts a short provider blip without rerunning notes. */
 export const SUMMARY_RETRY_DELAY_MS = 2000;
 export const SUMMARY_DROPPED_LOG =
   "Meeting summary failed; finishing with notes and no summary";
 
+/** Epoch seconds of the next process attempt, or undefined when this failure is final. */
 export function nextFinishRetry(
   attempts: number,
   now: number,
