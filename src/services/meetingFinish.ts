@@ -15,8 +15,10 @@ import { withoutSupersededCanonicalFields } from "../types/meetingCanonicalConte
 import type { DeliveryResult } from "../types/meetingDelivery";
 import { MEETING_STATUS, type MeetingStatus } from "../types/meetingLifecycle";
 import type { MeetingProcessingOutcome } from "../types/meetingProcessing";
+import type { NotesDeliveryTiming } from "../types/meetingNotesTiming";
 import {
   abandonedLifecycleDelivery,
+  deliversRetriedNotes,
   publicationSnapshot,
   settledLifecycleDelivery,
   unpublishedLifecycleDelivery,
@@ -148,6 +150,14 @@ export function nextDeliveryRetry(
     LIFECYCLE.deliveryBackoffSeconds.at(state.attempts) ??
     LIFECYCLE.deliveryHourlySeconds;
   return Math.min(now + delay, giveUpAt);
+}
+
+function notesDeliveryPath(
+  source: FinishInput["source"],
+  retried: boolean,
+): NotesDeliveryTiming["path"] {
+  if (retried) return "processing_retry";
+  return source === "normal" ? "live" : "recovery";
 }
 
 const isTerminal = (status: MeetingStatus | undefined) =>
@@ -625,13 +635,15 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
       return deliverCancelled(a, input);
     // The receipt spends the week's reminder, so an aborted attempt must not claim it.
     a.signal.throwIfAborted();
-    const upgrade = await claimUpgrade(a);
+    // Retried notes land on a card edited into an old message, so they do not spend the offer.
+    const retried = deliversRetriedNotes(row);
+    const upgrade = retried ? undefined : await claimUpgrade(a);
     const outcome = await deliverMeeting({
       history: row,
       save: (patch) => saveDelivery(a, patch),
       transport: deps.transport,
       signal: a.signal,
-      path: a.source === "normal" ? "live" : "recovery",
+      path: notesDeliveryPath(a.source, retried),
       extras: { upgrade },
     });
     a.signal.throwIfAborted();

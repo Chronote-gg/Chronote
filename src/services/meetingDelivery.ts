@@ -394,11 +394,12 @@ export async function deliverMeeting(input: {
     (channelRead ??= readChannel({ transport, channelId, history, signal }));
   try {
     const demoStarter = await resolveDemoStarter(history, channelId);
+    // An edit keeps omitted fields, so empty content clears a failure notice the card replaces.
     const placed = await placeSummary(
       transport,
       channelId,
       history,
-      demoStarter ? { ...summary, content: "" } : summary,
+      { ...summary, content: "" },
       signal,
       readback,
     );

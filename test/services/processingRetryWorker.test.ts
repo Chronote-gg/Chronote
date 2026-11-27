@@ -245,6 +245,25 @@ describe("a meeting the finish pipeline gave up on", () => {
       status: "failed",
       processingRetry: { status: "failed" },
     });
+    expect(stored().finish).toBeUndefined();
+  });
+
+  it("is handed to the finish pipeline's delivery step when it was never published", async () => {
+    seed({
+      ...pipelineFailed,
+      textChannelId: "999999999999999994",
+      notesChannelId: undefined,
+      notesMessageIds: undefined,
+      updateDelivery: undefined,
+    });
+    await pollOnce();
+    expect(stored()).toMatchObject({
+      status: "complete",
+      finish: { attempts: 0, phase: "deliver" },
+      updateDelivery: {
+        policy: { kind: "held", reason: "initial_publication_unsettled" },
+      },
+    });
   });
 });
 

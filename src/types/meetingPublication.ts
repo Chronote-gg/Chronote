@@ -271,6 +271,74 @@ export function unpublishedLifecycleDelivery(
   );
 }
 
+/** Discord shows at most the failure notice: no summary, notes or delivery was ever recorded. */
+function neverPublished(row: MeetingHistory): boolean {
+  return (
+    row.ownershipScope !== "personal" &&
+    row.textChannelId !== undefined &&
+    !row.summaryMessageId &&
+    !row.notesChannelId &&
+    row.delivery === undefined &&
+    row.recovery === undefined &&
+    row.finish === undefined
+  );
+}
+/**
+ * A failed meeting that a processing retry gives notes is published as a
+ * normal finish would have: the retry's own save hands it back to the finish
+ * pipeline's delivery step.
+ */
+export function publishesAfterRetry(
+  row: MeetingHistory,
+  notes: string | undefined,
+): boolean {
+  return (
+    row.lifecycleVersion === 2 &&
+    row.status === "failed" &&
+    neverPublished(row) &&
+    Boolean(notes?.trim())
+  );
+}
+/** A meeting a processing retry fixed before retries published, so its notes reached the portal only. */
+export function awaitsRetryPublication(
+  row: MeetingHistory,
+): row is MeetingHistory & { updateDelivery: MeetingUpdateDelivery } {
+  return (
+    row.lifecycleVersion === 2 &&
+    (row.status === "complete" || row.status === "interrupted") &&
+    row.processingRetry?.status === "succeeded" &&
+    row.updateDelivery?.policy.kind === "unpublished" &&
+    !("attempt" in row.updateDelivery.progress) &&
+    neverPublished(row) &&
+    Boolean(row.notes?.trim())
+  );
+}
+/**
+ * A finish attempt on a row whose notes a processing retry produced: only the
+ * hand-back above sends such a row to delivery, since every other retried
+ * meeting had already settled its delivery.
+ */
+export function deliversRetriedNotes(row: MeetingHistory): boolean {
+  return row.processingRetry?.status === "succeeded";
+}
+/**
+ * Sends a terminal row through the finish pipeline's delivery step, the shape
+ * a delivery retry leaves, with corrections held until that delivery settles.
+ */
+export function armRetryPublication(
+  row: MeetingHistory,
+  delivery: MeetingUpdateDelivery,
+): MeetingHistory & { updateDelivery: MeetingUpdateDelivery } {
+  return {
+    ...row,
+    finish: { attempts: 0, phase: "deliver" },
+    updateDelivery: {
+      ...delivery,
+      policy: { kind: "held", reason: "initial_publication_unsettled" },
+    },
+  };
+}
+
 export class PublicationArchiveConflict extends Error {
   constructor() {
     super(

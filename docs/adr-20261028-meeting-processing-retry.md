@@ -33,6 +33,17 @@ API-runtime worker.
   settings, and the job records which one it used.
 - The final write requires the notes version captured at request time. A
   retry never replaces notes with a human-sourced history entry.
+- Amended 2026-11-27: a successful retry of a failed, never-published,
+  non-personal lifecycle meeting is published through the normal finish
+  delivery. The retry's own save writes `finish` (`attempts: 0`, phase
+  `deliver`, guarded by `attribute_not_exists(finish)`) and replaces the
+  stored correction policy with `held` (`initial_publication_unsettled`), so
+  the finisher edits the failure notice into the summary card, posts the
+  notes and settles the hold to `active`, or to `unpublished` on a permanent
+  failure. `scripts/publish-retried-meetings.ts` makes the same change for
+  meetings retried before this amendment. Operator retries publish like
+  portal retries, and there is no age limit: both were explicit owner
+  decisions.
 
 ## Consequences
 
@@ -44,6 +55,12 @@ API-runtime worker.
   from the server's other meetings recorded at the same time.
 - Legacy rows without `processing` remain ineligible, consistent with
   ADR-20260916.
+- A retried meeting's notes can arrive days after the meeting. The card is
+  edited in place higher up the channel while the notes are posted at the
+  bottom. Its delivery uses the notes timing path `processing_retry`, spends
+  no upgrade offer, and does not render the mixed recording again from the
+  checkpoint. If the start message is gone, the summary is posted as a new
+  message and the separately posted failure notice stays.
 
 ## Alternatives Considered
 

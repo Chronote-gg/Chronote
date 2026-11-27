@@ -7,6 +7,11 @@ Notable product changes for Chronote users. For the full changelog, see the [Git
 
 ## 2026
 
+### Notes in Discord after a retry (November 27)
+
+- When processing failed and **Retry processing** later succeeds, Chronote now posts the notes to Discord as well. The failure notice turns into the usual summary card, and the notes are posted below the newest messages in the channel. Meetings retried before this change can be updated the same way. See [Retry processing](/troubleshooting/common-issues/#retry-processing).
+- The notes delivery timing in our product analytics can now record that the notes came from a processing retry. See the updated [Privacy Policy](/legal/privacy/#analytics).
+
 ### Meeting search privacy notice (November 17)
 
 - We are preparing Ask search across accessible retained history on every plan. Search uses a private derived copy of titles, summaries, meeting identifiers and dates, tags, archive status, current notes and transcript passages in Amazon S3 Vectors, with embeddings produced by OpenAI. This notice must be published before the new indexing or embedding processing begins. It does not mean full-library indexing is complete.

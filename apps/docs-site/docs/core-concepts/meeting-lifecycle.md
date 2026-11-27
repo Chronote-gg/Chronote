@@ -67,7 +67,7 @@ Partial notes from an interrupted recording keep an **Interrupted** status and s
 
 The server can start a new meeting within about a minute of the interruption. It does not wait for the interrupted meeting to finish processing.
 
-If processing keeps failing, Chronote retries a few times with growing pauses, then marks the meeting as failed, posts one notice and keeps the saved audio. Use **Retry processing** on the meeting page once the cause is fixed. If Discord rejects the notes post temporarily, Chronote keeps retrying for up to a day while the meeting and its notes stay available in the portal. If Chronote has lost access to the channel, it stops trying. In rare cases a meeting interrupted while its notes were being posted can show part of its notes twice.
+If processing keeps failing, Chronote retries a few times with growing pauses, then marks the meeting as failed, posts one notice and keeps the saved audio. Use **Retry processing** on the meeting page once the cause is fixed; when it succeeds, the notice becomes the summary card and the notes are posted. If Discord rejects the notes post temporarily, Chronote keeps retrying for up to a day while the meeting and its notes stay available in the portal. If Chronote has lost access to the channel, it stops trying. In rare cases a meeting interrupted while its notes were being posted can show part of its notes twice.
 
 Once the summary and notes are posted, later notes edits and meeting renames update those same Discord posts. Existing links to the meeting and interruption warnings stay in place.
 

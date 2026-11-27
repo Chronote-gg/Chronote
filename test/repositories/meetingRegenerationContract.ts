@@ -11,6 +11,7 @@ import {
 } from "../../src/types/meetingUpdateDelivery";
 import {
   history,
+  key,
   now,
   pending,
   pointers,
@@ -330,6 +331,107 @@ export function regenerationContract(make: () => Harness) {
         });
       },
     );
+    const neverPublished = (overrides: Partial<MeetingHistory> = {}) =>
+      failed({
+        notesChannelId: undefined,
+        notesMessageIds: undefined,
+        updateDelivery: undefined,
+        textChannelId: "999999999999999994",
+        ...overrides,
+      });
+    const held = { kind: "held", reason: "initial_publication_unsettled" };
+    it.each([
+      ["no stored policy", {}],
+      [
+        "a stored unpublished policy",
+        { updateDelivery: { ...pending(), policy: { kind: "unpublished" } } },
+      ],
+    ] satisfies [string, Partial<MeetingHistory>][])(
+      "a never-published meeting with %s is handed to delivery, held, in the same write",
+      async (_, overrides) => {
+        const before = neverPublished(overrides);
+        await h.seed(before);
+        const input = regenerationWrite(before);
+        expect(await save(input)).toMatchObject({ kind: "committed" });
+        const saved = await h.read();
+        expect(saved).toMatchObject({
+          status: "complete",
+          finish: { attempts: 0, phase: "deliver" },
+          updateDelivery: { policy: held },
+        });
+        expect(saved).not.toHaveProperty("updateDeliveryQueue");
+        expect(await save(input)).toMatchObject({ kind: "committed" });
+        expect(await h.read()).toEqual(saved);
+      },
+    );
+    it.each([
+      ["already published", failed()],
+      ["a personal meeting", neverPublished({ ownershipScope: "personal" })],
+      ["without a text channel", neverPublished({ textChannelId: undefined })],
+      [
+        "mid-finish",
+        neverPublished({ finish: { attempts: 1, phase: "process" } }),
+      ],
+    ] satisfies [string, MeetingHistory][])(
+      "a meeting %s is not handed to delivery",
+      async (_, before) => {
+        await h.seed(before);
+        await save(regenerationWrite(before));
+        const saved = await h.read();
+        expect(saved?.finish).toEqual(before.finish);
+        expect(saved?.updateDelivery?.policy).not.toEqual(held);
+      },
+    );
+    it("a never-published meeting the retry left without notes gets neither the hold nor the marker", async () => {
+      const before = neverPublished({ notes: undefined });
+      await h.seed(before);
+      await save(regenerationWrite(before, { notes: undefined }));
+      const saved = await h.read();
+      expect(saved).toMatchObject({ status: "failed" });
+      expect(saved?.finish).toBeUndefined();
+      expect(saved?.updateDelivery?.policy).not.toEqual(held);
+    });
+    describe("a meeting retried before retries published", () => {
+      const retried = (overrides: Partial<MeetingHistory> = {}) =>
+        neverPublished({
+          status: "complete",
+          processingRetry: regenerationPayload().job,
+          processingRetryQueue: undefined,
+          processingRetryDueAt: undefined,
+          updateDelivery: { ...pending(), policy: { kind: "unpublished" } },
+          ...overrides,
+        });
+      it("is handed to delivery once, held", async () => {
+        const before = retried();
+        await h.seed(before);
+        expect(await h.repository.armRetryPublication(key)).toBe("armed");
+        const saved = await h.read();
+        expect(saved).toMatchObject({
+          finish: { attempts: 0, phase: "deliver" },
+          updateDelivery: { policy: held },
+        });
+        expect(saved?.updateDelivery?.revision).not.toBe(
+          before.updateDelivery?.revision,
+        );
+        expect(await h.repository.armRetryPublication(key)).toBe("ineligible");
+        expect(await h.read()).toEqual(saved);
+      });
+      it.each([
+        ["already published", retried({ summaryMessageId: "summary" })],
+        ["a personal meeting", retried({ ownershipScope: "personal" })],
+        ["mid-finish", retried({ finish: { attempts: 0, phase: "process" } })],
+        ["active", retried({ updateDelivery: pending() })],
+      ] satisfies [string, MeetingHistory][])(
+        "a meeting %s is left alone",
+        async (_, before) => {
+          await h.seed(before);
+          expect(await h.repository.armRetryPublication(key)).toBe(
+            "ineligible",
+          );
+          expect(await h.read()).toEqual(before);
+        },
+      );
+    });
     it("a summary-only retry that leaves the meeting without notes keeps it failed", async () => {
       const before = failed({ notes: undefined });
       await h.seed(before);

@@ -108,7 +108,7 @@ export function summarizeRetryCandidates(
   return summary;
 }
 
-async function scanWindow(args: RetryProcessingArgs) {
+export async function scanWindow(args: RetryProcessingArgs) {
   const repository = getProcessingRetryRepository();
   const rows: MeetingHistory[] = [];
   let cursor: string | undefined;

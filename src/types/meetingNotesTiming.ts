@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const timingBase = z.object({
   notesVersion: z.literal(1),
-  path: z.enum(["live", "recovery"]),
+  path: z.enum(["live", "recovery", "processing_retry"]),
   firstAcknowledgedAt: z.iso.datetime({ offset: true }),
 });
 
