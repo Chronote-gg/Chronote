@@ -125,6 +125,9 @@ class FinishClaimLost extends Error {
 }
 
 /** Epoch seconds of the next process attempt, or undefined when this failure is final. */
+export const SUMMARY_DROPPED_LOG =
+  "Meeting summary failed; finishing with notes and no summary";
+
 export function nextFinishRetry(
   attempts: number,
   now: number,
@@ -382,10 +385,15 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     a.signal.throwIfAborted();
     await deps.summaries(input.notesInput, notes);
     a.signal.throwIfAborted();
-    // Generation reports failure as an outcome rather than throwing; a failed
-    // outcome is retried as today's paths do, never saved as terminal.
-    if (Object.values(processingOutcome(input)).includes("failed"))
-      throw new Error("Meeting transcription, notes or summary failed");
+    // Generation reports failure as an outcome rather than throwing. A failed
+    // transcription or notes outcome is retried, never saved as terminal. A
+    // failed summary alone is kept as recorded: a retry would rerun notes too,
+    // and giving up would cost the notes, while the portal can retry it alone.
+    const { summary, ...required } = processingOutcome(input);
+    if (Object.values(required).includes("failed"))
+      throw new Error("Meeting transcription or notes failed");
+    if (summary === "failed")
+      console.warn(SUMMARY_DROPPED_LOG, logContext(a.row));
   }
 
   /**

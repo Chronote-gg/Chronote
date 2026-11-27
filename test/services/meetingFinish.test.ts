@@ -15,6 +15,7 @@ import { getNotes } from "../../src/services/notesService";
 import { generateMeetingSummaries } from "../../src/services/meetingSummaryService";
 import { INTERRUPTED_CAPTURE_NOTICE } from "../../src/services/meetingRecoveryContent";
 import { MEETING_FINISH_FAILED_LOG } from "../../src/metrics";
+import { SUMMARY_DROPPED_LOG } from "../../src/services/meetingFinish";
 import type { MeetingHistory } from "../../src/types/db";
 import { PROCESSING_FAILED_NOTICE } from "../../src/utils/meetingProcessing";
 import { storedObject } from "../fixtures/meetingFinishPipeline";
@@ -388,17 +389,59 @@ test("the fourth failure posts one processing-failed notice", async () => {
   expect(errorsLogged(MEETING_FINISH_FAILED_LOG)).toBe(1);
 });
 
-test("a failed notes generation is retried rather than saved", async () => {
-  const world = setup(processingRow());
-  jest.mocked(getNotes).mockRejectedValueOnce(new Error("Synthetic outage"));
-  await world.finish(loads(finishInput()));
-  expect(world.current()).toMatchObject({
-    status: "processing",
-    finish: { attempts: 1, phase: "process" },
-  });
-  expect(world.current().notes).toBeUndefined();
-  expect(world.discord.requests).toHaveLength(0);
-});
+test.each([false, true])(
+  "a failed notes generation is retried rather than saved (summary also failing: %p)",
+  async (summaryFails) => {
+    const world = setup(processingRow());
+    jest.mocked(getNotes).mockRejectedValueOnce(new Error("Synthetic outage"));
+    if (summaryFails)
+      jest
+        .mocked(generateMeetingSummaries)
+        .mockRejectedValueOnce(new Error("Synthetic outage"));
+    await world.finish(loads(finishInput()));
+    expect(world.current()).toMatchObject({
+      status: "processing",
+      finish: { attempts: 1, phase: "process" },
+    });
+    expect(world.current().notes).toBeUndefined();
+    expect(world.discord.requests).toHaveLength(0);
+  },
+);
+
+test.each([
+  ["throws", () => Promise.reject(new Error("Synthetic outage"))],
+  ["returns nothing", () => Promise.resolve({})],
+])(
+  "a summary generation that %s alone completes the meeting with its notes",
+  async (_, summary) => {
+    const world = setup(processingRow({ checkpoint: CHECKPOINT }));
+    jest.mocked(generateMeetingSummaries).mockImplementationOnce(summary);
+    const retry = jest.spyOn(world.deps.repository, "releaseForRetry");
+    await world.finish(loads(finishInput()));
+    expect(world.current()).toMatchObject({
+      status: "complete",
+      notes: GENERATED_NOTE,
+      processing: { notes: "generated", summary: "failed" },
+      delivery: { notes: { outcome: "complete" } },
+    });
+    expect(world.current().finish).toBeUndefined();
+    expect(world.current().summarySentence).toBeUndefined();
+    expect(retry).not.toHaveBeenCalled();
+    expect(warned(SUMMARY_DROPPED_LOG)).toBe(1);
+    // The summary card keeps its existing no-summary form; stored notes carry no notice.
+    expect(startMessage(world).embeds[0].description).toContain(
+      "Summary unavailable.",
+    );
+    const notesPosts = world
+      .posts()
+      .filter((post) => JSON.stringify(post).includes(GENERATED_NOTE));
+    expect(notesPosts).toHaveLength(1);
+    expect(getProcessingRetryEligibility(world.current())).toMatchObject({
+      eligible: true,
+      stages: ["summary"],
+    });
+  },
+);
 
 type World = ReturnType<typeof setup>;
 
@@ -639,24 +682,6 @@ test("a meeting the pipeline gave up on is eligible for a portal retry of the fa
     processing: { transcription: "ready", notes: "failed" },
   });
   expect(getProcessingRetryEligibility(notesFailed.current())).toMatchObject({
-    eligible: true,
-    stages: ["notes", "summary"],
-  });
-
-  // Generated notes are not stored on a failed row, so they are recorded as failed too.
-  const summaryFailed = setup(processingRow({ checkpoint: CHECKPOINT }));
-  for (let attempt = 0; attempt < 4; attempt++) {
-    jest
-      .mocked(generateMeetingSummaries)
-      .mockRejectedValueOnce(new Error("Synthetic outage"));
-    await summaryFailed.finish(loads(finishInput()));
-  }
-  expect(summaryFailed.current()).toMatchObject({
-    status: "failed",
-    processing: { transcription: "ready", notes: "failed", summary: "failed" },
-  });
-  expect(summaryFailed.current().notes).toBeUndefined();
-  expect(getProcessingRetryEligibility(summaryFailed.current())).toMatchObject({
     eligible: true,
     stages: ["notes", "summary"],
   });
