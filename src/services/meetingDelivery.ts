@@ -378,6 +378,8 @@ export async function deliverMeeting(input: {
   /** Which finisher loader produced the input, for notes latency. */
   path: NotesDeliveryTiming["path"];
   extras?: { upgrade?: SummaryUpgradeOffer };
+  /** Told when chunks an earlier run posted are adopted as they stand, not rendered again. */
+  onAdopted?: () => void;
 }): Promise<DeliveryOutcome> {
   const { history, signal } = input;
   const channelId = history.textChannelId;
@@ -422,6 +424,7 @@ export async function deliverMeeting(input: {
     if (notesMessageIds.length < notes.length) {
       const adopted = unrecordedNotes(await readback(), history, placed.id);
       if (adopted.length) {
+        input.onAdopted?.();
         notesMessageIds.push(...adopted);
         await save({
           notesMessageIds: [...notesMessageIds],

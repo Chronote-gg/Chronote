@@ -245,7 +245,7 @@ type Attempt = {
   keepLocal: boolean;
   /** The content revision the input reflects; acknowledged edits past it are kept. */
   contentBaseline: number;
-  /** The row retried notes are delivered from, when nothing reached Discord before this attempt. */
+  /** The row retried notes are delivered from, while this attempt renders every message itself. */
   retriedFrom?: MeetingHistory;
 };
 
@@ -641,8 +641,14 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
     a.signal.throwIfAborted();
     // Retried notes land on a card edited into an old message, so they do not spend the offer.
     const retried = deliversRetriedNotes(row);
-    // Delivery saves the summary before any notes, so no record means nothing was posted yet.
-    if (retried && row.delivery === undefined) a.retriedFrom = row;
+    // Only a delivery that renders every message itself may acknowledge them.
+    if (
+      retried &&
+      row.delivery === undefined &&
+      !row.notesChannelId &&
+      !row.notesMessageIds?.length
+    )
+      a.retriedFrom = row;
     const upgrade = retried ? undefined : await claimUpgrade(a);
     const outcome = await deliverMeeting({
       history: row,
@@ -651,6 +657,9 @@ export function createMeetingFinisher(deps: MeetingFinishDeps) {
       signal: a.signal,
       path: notesDeliveryPath(a.source, retried),
       extras: { upgrade },
+      onAdopted: () => {
+        a.retriedFrom = undefined;
+      },
     });
     a.signal.throwIfAborted();
     if (outcome.kind === "delivered" && upgrade)

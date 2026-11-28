@@ -24,9 +24,12 @@ import {
   BOT_ID,
   DONE_MARKER,
   GUILD_ID,
+  POSTING_STARTS_AT,
   START_MESSAGE_ID,
   TEXT_CHANNEL_ID,
   UPGRADE,
+  discordMessage,
+  snowflake,
 } from "./meetingDelivery.fixture";
 import {
   CHECKPOINT,
@@ -361,6 +364,30 @@ describe("a failed meeting a processing retry handed back to delivery", () => {
     });
     expect(world.current().updateDeliveryDueAt).toBeUndefined();
     expect(updatePass(world)).toEqual({ kind: "idle" });
+  });
+
+  test("a chunk adopted from the channel is left for the update pass to rewrite", async () => {
+    const row = retriedRow();
+    const world = setup(row);
+    const [chunk] = meetingDelivery.renderMeetingDelivery(row).notes;
+    world.discord.messages.push(
+      discordMessage(snowflake(POSTING_STARTS_AT - 500), {
+        embeds: chunk.embeds.map((embed) => ({
+          ...embed,
+          description: "Synthetic pre-retry notes",
+        })),
+      }),
+    );
+    await world.finish(loads(finishInput()));
+    expect(world.current().notesMessageIds).toEqual([
+      snowflake(POSTING_STARTS_AT - 500),
+    ]);
+    expect(world.current().updateDelivery?.parts.notesBody).toEqual({
+      desired: 1,
+      acknowledged: 0,
+    });
+    expect(world.current().updateDeliveryDueAt).toBeDefined();
+    expect(updatePass(world)).toMatchObject({ kind: "ready" });
   });
 
   test("a correction saved while it posts stays pending for the update pass", async () => {

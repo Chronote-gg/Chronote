@@ -112,7 +112,7 @@ export async function uploadRecording(
  * render the mix without provider work: the transcript is already stored, or
  * transcription is off. Otherwise it would transcribe pieces again for a
  * meeting whose result is already delivered, so the recording is skipped.
- * A row whose notes a processing retry produced is skipped too: the retry
+ * A row a processing retry handed back to delivery is skipped too: the retry
  * did not need the mix, and rendering it again from the pieces is heavy work.
  */
 function recordingRecoverable(row: MeetingHistory): boolean {
