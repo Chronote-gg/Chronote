@@ -19,10 +19,17 @@ import { captureEvent } from "../../src/services/analyticsService";
 import { MEETING_DELIVERY_FAILED_LOG } from "../../src/metrics";
 import type { MeetingHistory } from "../../src/types/db";
 import { expectSettledAndUnpublished } from "../fixtures/meetingFinishPipeline";
+import { planMeetingUpdate } from "../../src/services/meetingUpdatePlan";
 import {
+  BOT_ID,
   DONE_MARKER,
+  GUILD_ID,
+  POSTING_STARTS_AT,
   START_MESSAGE_ID,
+  TEXT_CHANNEL_ID,
   UPGRADE,
+  discordMessage,
+  snowflake,
 } from "./meetingDelivery.fixture";
 import {
   CHECKPOINT,
@@ -302,8 +309,9 @@ describe("a failed meeting a processing retry handed back to delivery", () => {
       processingRetry: regenerationPayload().job,
     });
     const notes = { kind: "notes" as const, notes: row.notes! };
+    // The retry's content write leaves its own revision, as the parts it requests.
     return armRetryPublication(
-      row,
+      { ...row, contentRevision: 1 },
       requestMeetingUpdateDelivery({
         history: row,
         mutation: notes,
@@ -333,6 +341,71 @@ describe("a failed meeting a processing retry handed back to delivery", () => {
     expect(world.deps.followOns.captureCompleted).toHaveBeenCalledTimes(1);
     expect(world.deps.followOns.exportToNotion).toHaveBeenCalledTimes(1);
     expect(load).not.toHaveBeenCalled();
+  });
+
+  /** The update pass the released row is queued for, over the messages delivery left. */
+  const updatePass = (world: FinishWorld) =>
+    planMeetingUpdate({
+      history: world.current(),
+      attemptId: "synthetic-pass",
+      observedAt: START_SECONDS,
+      botId: BOT_ID,
+      channels: [{ id: TEXT_CHANNEL_ID, guild_id: GUILD_ID, type: 0 }],
+      messages: world.discord.messages,
+    });
+
+  test("acknowledges what it posted, so no update pass edits the notes", async () => {
+    const world = setup(retriedRow());
+    await world.finish(loads(finishInput()));
+    expect(world.current().updateDelivery).toMatchObject({
+      policy: { kind: "active" },
+      progress: { kind: "synced" },
+      lastSuccess: { contentRevision: 1 },
+    });
+    expect(world.current().updateDeliveryDueAt).toBeUndefined();
+    expect(updatePass(world)).toEqual({ kind: "idle" });
+  });
+
+  test("a chunk adopted from the channel is left for the update pass to rewrite", async () => {
+    const row = retriedRow();
+    const world = setup(row);
+    const [chunk] = meetingDelivery.renderMeetingDelivery(row).notes;
+    world.discord.messages.push(
+      discordMessage(snowflake(POSTING_STARTS_AT - 500), {
+        embeds: chunk.embeds.map((embed) => ({
+          ...embed,
+          description: "Synthetic pre-retry notes",
+        })),
+      }),
+    );
+    await world.finish(loads(finishInput()));
+    expect(world.current().notesMessageIds).toEqual([
+      snowflake(POSTING_STARTS_AT - 500),
+    ]);
+    expect(world.current().updateDelivery?.parts.notesBody).toEqual({
+      desired: 1,
+      acknowledged: 0,
+    });
+    expect(world.current().updateDeliveryDueAt).toBeDefined();
+    expect(updatePass(world)).toMatchObject({ kind: "ready" });
+  });
+
+  test("a correction saved while it posts stays pending for the update pass", async () => {
+    const world = setup(retriedRow());
+    const save = world.deps.repository.save;
+    world.deps.repository.save = async (...args) => {
+      const saved = await save(...args);
+      if (args[1].summaryMessageId) await world.correct("Synthetic rename");
+      return saved;
+    };
+    await world.finish(loads(finishInput()));
+    const delivery = world.current().updateDelivery!;
+    expect(delivery.parts.notesBody).toEqual({ desired: 1, acknowledged: 1 });
+    expect(delivery.parts.notesTitle.desired).toBeGreaterThan(
+      delivery.parts.notesTitle.acknowledged,
+    );
+    expect(world.current().updateDeliveryDueAt).toBeDefined();
+    expect(updatePass(world)).toMatchObject({ kind: "ready" });
   });
 
   test("a channel the bot lost leaves the notes unpublished and the retry succeeded", async () => {

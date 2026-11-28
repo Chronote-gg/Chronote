@@ -40,10 +40,15 @@ API-runtime worker.
   stored correction policy with `held` (`initial_publication_unsettled`), so
   the finisher edits the failure notice into the summary card, posts the
   notes and settles the hold to `active`, or to `unpublished` on a permanent
-  failure. `scripts/publish-retried-meetings.ts` makes the same change for
-  meetings retried before this amendment. Operator retries publish like
-  portal retries, and there is no age limit: both were explicit owner
-  decisions.
+  failure. The finish follow-ons (Notion auto-export, the completion event)
+  now run for these meetings too. A delivery attempt that posts every
+  message itself settles with the parts it rendered acknowledged, so no
+  update pass edits the messages it just posted; one that adopts chunks
+  already in the channel leaves them for the update pass to rewrite.
+  `scripts/publish-retried-meetings.ts` makes the same change for meetings
+  retried before this amendment, and skips a meeting while a publication
+  repair is running. Operator retries publish like portal retries, and there
+  is no age limit: both were explicit owner decisions.
 
 ## Consequences
 

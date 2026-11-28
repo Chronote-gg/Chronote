@@ -1,4 +1,5 @@
 import type { MeetingHistory } from "../../src/types/db";
+import type { RepairPublicationOwner } from "../../src/types/meetingPublication";
 import type { MeetingContentWrite } from "../../src/repositories/meetingUpdateDeliveryRepository";
 import {
   PROCESSING_RETRY_QUEUE,
@@ -56,6 +57,16 @@ export function regenerationRow(): MeetingHistory {
     processingRetryDueAt: now,
   };
 }
+
+/** A first publication repair still in flight. */
+export const runningRepair: RepairPublicationOwner = {
+  kind: "running",
+  purpose: "first_publication",
+  runId: "repair-1",
+  previewDigest: "a".repeat(64),
+  receiptKey: "receipt-1",
+  snapshot: "b".repeat(64),
+};
 
 export function regenerationPayload(): Regeneration {
   return {
@@ -421,6 +432,10 @@ export function regenerationContract(make: () => Harness) {
         ["a personal meeting", retried({ ownershipScope: "personal" })],
         ["mid-finish", retried({ finish: { attempts: 0, phase: "process" } })],
         ["active", retried({ updateDelivery: pending() })],
+        [
+          "under a running publication repair",
+          retried({ publicationRepair: runningRepair }),
+        ],
       ] satisfies [string, MeetingHistory][])(
         "a meeting %s is left alone",
         async (_, before) => {

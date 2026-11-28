@@ -4,7 +4,10 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { MeetingHistory } from "./db";
 import {
+  MEETING_UPDATE_DELIVERY_QUEUE,
   meetingUpdateDeliveryNextCheck,
+  presentationPartSchema,
+  readMeetingUpdateRevisions,
   type MeetingUpdateDelivery,
 } from "./meetingUpdateDelivery";
 
@@ -309,18 +312,92 @@ export function awaitsRetryPublication(
     row.processingRetry?.status === "succeeded" &&
     row.updateDelivery?.policy.kind === "unpublished" &&
     !("attempt" in row.updateDelivery.progress) &&
+    !publicationMutationExcluded(publicationSnapshot(row)) &&
     neverPublished(row) &&
     Boolean(row.notes?.trim())
   );
 }
 /**
- * A finish attempt on a row whose notes a processing retry produced: only the
- * hand-back above sends such a row to delivery, since every other retried
- * meeting had already settled its delivery.
+ * A finish attempt on a row the hand-back above armed. This relies on
+ * `lifecycleBlock` in processingRetryEligibility.ts refusing a retry while a
+ * lifecycle version 2 row has a finish marker, so such a row's marker
+ * postdates its succeeded retry only when the retry's own save (or the
+ * publish script) wrote it. A legacy row has no such guard and is excluded.
  */
 export function deliversRetriedNotes(row: MeetingHistory): boolean {
-  return row.processingRetry?.status === "succeeded";
+  return (
+    row.lifecycleVersion === 2 &&
+    row.finish !== undefined &&
+    row.processingRetry?.status === "succeeded"
+  );
 }
+/**
+ * A retried meeting's first delivery attempt places every message from the
+ * row it read, so the parts that row desired are on Discord once delivery
+ * settles; a correction saved after that read stays pending.
+ */
+function acknowledgeRetriedDelivery(
+  released: MeetingUpdateDelivery,
+  rendered: MeetingHistory,
+  at: number,
+) {
+  const parts = structuredClone(released.parts);
+  for (const part of presentationPartSchema.options)
+    parts[part].acknowledged = Math.max(
+      parts[part].acknowledged,
+      rendered.updateDelivery?.parts[part].desired ?? 0,
+    );
+  const pending = presentationPartSchema.options.some(
+    (part) => parts[part].desired !== parts[part].acknowledged,
+  );
+  const delivery: MeetingUpdateDelivery = {
+    ...released,
+    parts,
+    lastSuccess: {
+      at,
+      contentRevision: readMeetingUpdateRevisions(rendered).contentRevision,
+    },
+    progress: pending ? released.progress : { kind: "synced", syncedAt: at },
+  };
+  return { delivery, dueAt: meetingUpdateDeliveryNextCheck(delivery) };
+}
+export function releasedHoldFields(released: {
+  delivery: MeetingUpdateDelivery;
+  dueAt: number | undefined;
+}): Partial<MeetingHistory> {
+  return {
+    updateDelivery: released.delivery,
+    ...(released.dueAt === undefined
+      ? {}
+      : {
+          updateDeliveryQueue: MEETING_UPDATE_DELIVERY_QUEUE,
+          updateDeliveryDueAt: released.dueAt,
+        }),
+  };
+}
+
+/**
+ * The completing or abandoning delivery save releases a lifecycle hold on a
+ * correction. Retried notes delivered from `rendered` also acknowledge it.
+ */
+export function releasedHold(
+  row: MeetingHistory,
+  patch: Partial<MeetingHistory>,
+  rendered: MeetingHistory | undefined,
+  at: number,
+) {
+  const before = {
+    ...publicationSnapshot(row),
+    lifecycleVersion: row.lifecycleVersion,
+  };
+  const settled = settledLifecycleDelivery(before, patch);
+  const released =
+    settled && rendered
+      ? acknowledgeRetriedDelivery(settled.delivery, rendered, at)
+      : (settled ?? abandonedLifecycleDelivery(before, patch));
+  return released ? releasedHoldFields(released) : {};
+}
+
 /**
  * Sends a terminal row through the finish pipeline's delivery step, the shape
  * a delivery retry leaves, with corrections held until that delivery settles.
